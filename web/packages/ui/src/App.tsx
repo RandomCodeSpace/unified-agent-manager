@@ -386,6 +386,9 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [sheetOpen]);
 
+  // Settings or Routines over the selected Task: the owner is not looking at it, as if the page were hidden.
+  const viewOpen = settingsOpen || !!routinesFor;
+  const viewShown = useRef(false);
   // When the owner last looked at each Task: while it is on screen, and as they leave it.
   const markLooked = useCallback((id: string) => {
     try {
@@ -397,9 +400,10 @@ export default function App() {
 
   // The selected task counts as viewed as long as it is on screen: every frame that carries
   // its updated_at marks it, so nothing it does while open shows as unread later. A hidden
-  // page shows nothing: what the Task does meanwhile stays unread until the page is back.
+  // page, or Settings over the Task, shows nothing: what the Task does meanwhile stays unread
+  // until the page is back.
   const markViewed = useCallback((id: string, at: string) => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible' || viewShown.current) return;
     markLooked(id);
     setViewed((v) => {
       if (v[id] === at) return v;
@@ -408,10 +412,10 @@ export default function App() {
       return next;
     });
   }, [VIEWED_KEY, markLooked]);
-  // Leaving a Task, hiding the page or closing it ends the look at the Task on screen.
+  // Leaving a Task, hiding the page or closing it ends the look at the Task on screen; so does opening Settings over it.
   useEffect(() => {
     const id = state.selectedId;
-    if (!id) return;
+    if (!id || viewOpen) return;
     const onHide = () => markLooked(id);
     const onVisibility = () => { if (document.hidden) markLooked(id); };
     document.addEventListener('visibilitychange', onVisibility);
@@ -422,7 +426,7 @@ export default function App() {
       // A hidden page recorded the leave when it hid; it shows nothing since.
       if (!document.hidden) markLooked(id);
     };
-  }, [state.selectedId, markLooked]);
+  }, [state.selectedId, viewOpen, markLooked]);
   const markShown = useEffectEvent(() => {
     const shown = state.sessions.find((s) => s.id === state.selectedId);
     if (shown) markViewed(shown.id, shown.updated_at);
@@ -635,8 +639,9 @@ export default function App() {
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
   // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.
-  const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
-  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
+  // Coming back from Settings is a visit too: the look ended when Settings opened.
+  const [opened, setOpened] = useState<{ id: string | null; covered: boolean; mark?: string }>({ id: null, covered: false });
+  if (opened.id !== state.selectedId || opened.covered !== viewOpen) setOpened({ id: state.selectedId, covered: viewOpen, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
@@ -729,9 +734,8 @@ export default function App() {
   const pushView = useRef(false);
   // What opened Settings or Routines: closing the view gives it focus back.
   const opener = useRef<HTMLElement | null>(null);
-  const viewShown = useRef(false);
   useLayoutEffect(() => {
-    viewShown.current = settingsOpen || !!routinesFor;
+    viewShown.current = viewOpen;
   });
   const noteOpener = useCallback(() => {
     pushView.current = true;
@@ -803,7 +807,6 @@ export default function App() {
     requestAnimationFrame(() => (back?.isConnected && !back.closest('[inert]') && back.getClientRects().length ? back : conversation())?.focus());
   }, []);
   // Esc closes Settings or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
-  const viewOpen = settingsOpen || !!routinesFor;
   useEffect(() => {
     if (!viewOpen) return;
     const onKey = (e: KeyboardEvent) => {

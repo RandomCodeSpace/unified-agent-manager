@@ -4,11 +4,21 @@
 // the connected notices, each connected instance's), so a few tabs hold them all and every request stalls.
 // WebSockets have a pool of their own: `/api/events/socket` carries the same stream, served by the same handler,
 // and SocketEventSource reads it as an EventSource would. HTTPS (HTTP/2) shares one connection and needs none of it.
+//
+// Either way the stream is watched for silence: a connection the network dropped without a close (a half-open TCP
+// connection after a Wi-Fi or mobile handover, a laptop back from sleep, a proxy that stopped forwarding) stays
+// "open" for minutes while nothing arrives. The service writes a heartbeat every KEEP_ALIVE_MS; a stream that has
+// carried nothing for STREAM_SILENCE_MS is dropped, reported as an error while connecting, and reopened.
 
 let sockets = false;
 /** Set when sockets fail before any opened on this page (a proxy that does not pass them): EventSource from then on. */
 let socketsFailed = false;
 let socketOpened = false;
+
+/** The service writes a heartbeat on every stream this often (internal/web's heartbeatInterval). */
+export const KEEP_ALIVE_MS = 15_000;
+/** A stream that has carried nothing for this long, two and a half heartbeats, is dead whatever the connection says. */
+export const STREAM_SILENCE_MS = 2.5 * KEEP_ALIVE_MS;
 
 /** Event streams go over the event socket from now on. */
 export function enableSocketStreams(): void {
@@ -17,7 +27,7 @@ export function enableSocketStreams(): void {
 
 /** An event stream of this service at `url` (a path, as the API client builds it). */
 export function openEventStream(url: string): EventSource {
-  return sockets && !socketsFailed ? new SocketEventSource(url) as unknown as EventSource : new EventSource(url);
+  return new SocketEventSource(url) as unknown as EventSource;
 }
 
 /** The event socket's address for the stream at `url`, on the page's host. */
@@ -33,8 +43,9 @@ const CLOSED = 2;
 /**
  * The stream at `url` read from the event socket the way EventSource reads it: `open` once the stream's status is
  * 200; an `error` and CLOSED, without retrying, on any other status; an `error` and CONNECTING, then a reconnect after
- * the stream's `retry` time, when the connection drops. Named events and `message` carry their data; comments and
- * ids are not used by the service's streams. Lines end in LF (with an optional CR before it), as the service writes.
+ * the stream's `retry` time, when the connection drops or falls silent. Named events and `message` carry their data;
+ * comments and ids are not used by the service's streams. Lines end in LF (with an optional CR before it), as the
+ * service writes. While sockets are off or have failed, the same stream over EventSource, watched for silence too.
  */
 export class SocketEventSource extends EventTarget {
   static readonly CONNECTING = CONNECTING;
@@ -53,6 +64,8 @@ export class SocketEventSource extends EventTarget {
   private native: EventSource | null = null;
   private readonly types = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /** The silence watch: reset by every byte over the socket, by every heartbeat event over EventSource. */
+  private quiet: ReturnType<typeof setTimeout> | undefined;
   private retry = 3000;
   private decoder = new TextDecoder();
   private buffer = '';
@@ -74,13 +87,14 @@ export class SocketEventSource extends EventTarget {
   close(): void {
     this.readyState = CLOSED;
     clearTimeout(this.timer);
+    clearTimeout(this.quiet);
     this.socket?.close();
     this.native?.close();
   }
 
   private connect(): void {
     if (this.readyState === CLOSED) return;
-    if (socketsFailed) return this.fallBack();
+    if (socketsFailed || !sockets) return this.fallBack();
     this.decoder = new TextDecoder();
     this.buffer = '';
     this.type = '';
@@ -101,19 +115,18 @@ export class SocketEventSource extends EventTarget {
         }
         socketOpened = true;
         this.readyState = OPEN;
+        this.heard();
         this.fire(new Event('open'));
         return;
       }
+      this.heard();
       this.feed(typeof event.data === 'string' ? event.data : this.decoder.decode(event.data as ArrayBuffer, { stream: true }));
     };
     socket.onclose = () => {
       if (this.socket !== socket || this.readyState === CLOSED) return;
-      this.socket = null;
       // No socket has worked on this page: something on the way refuses them. EventSource takes over, here and for later streams.
       if (status === undefined && !socketOpened) socketsFailed = true;
-      this.readyState = CONNECTING;
-      this.fire(new Event('error'));
-      if (this.readyState === CONNECTING) this.timer = setTimeout(() => this.connect(), socketsFailed ? 0 : this.retry);
+      this.dropped(socketsFailed ? 0 : this.retry);
     };
   }
 
@@ -121,16 +134,48 @@ export class SocketEventSource extends EventTarget {
   private fallBack(): void {
     const native = new EventSource(this.url);
     this.native = native;
-    for (const type of new Set([...this.types, 'open', 'error', 'message'])) native.addEventListener(type, this.forward);
+    for (const type of new Set([...this.types, 'open', 'error', 'message', 'keep-alive'])) native.addEventListener(type, this.forward);
   }
 
   private readonly forward = (event: Event) => {
     if (this.native === null || this.readyState === CLOSED) return;
+    // EventSource never shows a comment, so the service sends its heartbeats as events; a stream whose heartbeats
+    // are comments (an older service's, another instance's notices) is never taken for silent.
+    if (event.type === 'keep-alive') return this.heard();
     if (event.type === 'open' || event.type === 'error') {
       this.readyState = this.native.readyState;
       this.fire(new Event(event.type));
     } else if (event instanceof MessageEvent) this.fire(new MessageEvent(event.type, { data: event.data }));
   };
+
+  /** The connection is gone: listeners hear an error, and the stream reopens after `delay` unless one closed it. */
+  private dropped(delay: number): void {
+    clearTimeout(this.quiet);
+    this.socket = null;
+    this.native = null;
+    this.readyState = CONNECTING;
+    this.fire(new Event('error'));
+    if (this.readyState === CONNECTING) this.timer = setTimeout(() => this.connect(), delay);
+  }
+
+  private heard(): void {
+    clearTimeout(this.quiet);
+    this.quiet = setTimeout(() => this.stalled(), STREAM_SILENCE_MS);
+  }
+
+  /** Nothing for STREAM_SILENCE_MS: the connection is dead, however it looks. */
+  private stalled(): void {
+    const { socket, native } = this;
+    if (socket) {
+      // Its close event, if it ever comes, is not this stream's any more.
+      this.socket = null;
+      socket.close();
+    } else if (native) {
+      this.native = null;
+      native.close();
+    } else return;
+    this.dropped(this.retry);
+  }
 
   private fire(event: Event): void {
     this.dispatchEvent(event);

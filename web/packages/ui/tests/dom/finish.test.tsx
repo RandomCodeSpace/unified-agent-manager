@@ -1,8 +1,9 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and branch evidence (mock t20).
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { UamApp } from '@uam/ui';
-import { api, type TurnEvidence } from '../../src/api';
+import { api, newRequestId, type TurnEvidence } from '../../src/api';
 import { install } from '../../src/mock/install';
 import { log, openTask, sidebar } from './render';
 
@@ -56,6 +57,26 @@ describe('since you left', () => {
     await openTask('t20');
     await screen.findByRole('button', { name: /evidence available/ });
     expect(screen.queryByText(/^Since you left/)).toBeNull();
+  });
+
+  test('leaving for Settings counts as leaving: what the Task does meanwhile is unseen, and the strip shows on the way back', async () => {
+    seen(500);
+    const { user } = await openTask('t20');
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    const aside = await sidebar();
+    await user.click(aside.getByRole('button', { name: 'Settings' }));
+    await screen.findByRole('heading', { name: 'Settings' });
+    const looked = () => (JSON.parse(localStorage.getItem('uam.looked') ?? '{}') as Record<string, string>).t20;
+    const left = looked();
+    expect(Date.now() - Date.parse(left)).toBeLessThan(5000);
+    // The Task takes a message while Settings covers it: its frames do not count as looks.
+    await api.prompt('t20', 'Run the tests again', newRequestId());
+    await api.cancel('t20');
+    await act(() => new Promise((r) => setTimeout(r, 100)));
+    expect(looked()).toBe(left);
+    await user.click(screen.getByRole('button', { name: 'Close settings' }));
+    const strip = await screen.findByText(/^Since you left/);
+    expect(strip.closest('p')?.textContent).toMatch(/^Since you left \(<1 min\)/);
   });
 });
 
@@ -166,6 +187,26 @@ describe('evidence inside Changes', () => {
     await screen.findByRole('button', { name: /not committed, evidence available/ });
     await new Promise((r) => setTimeout(r, 300));
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
+    evidence.mockRestore();
+  });
+
+  test('coming back to a finished Task reads its evidence once more, not twice', async () => {
+    const evidence = vi.spyOn(api, 'evidence');
+    history.replaceState(null, '', '/#task=t20');
+    install();
+    render(<UamApp />);
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    const aside = await sidebar();
+    await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull());
+    evidence.mockClear();
+    await user.click(aside.getAllByRole('button', { name: /Replay focus events on re-attach/ })[0]);
+    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await new Promise((r) => setTimeout(r, 300));
+    // The other read of the same route is "Since you left" (`since`/`until`), from the look that ended on leaving.
+    expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
+    expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && look)).toHaveLength(1);
     evidence.mockRestore();
   });
 

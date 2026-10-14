@@ -432,6 +432,8 @@ export function install(): { received: Received[] } {
       const t = src.session ? find(src.session) : undefined;
       if (src.session && !t) {
         src.onerror?.(new Event('error'));
+        // As in a browser, listeners hear it too (the stream wrapper reads EventSource that way).
+        src.dispatchEvent(new Event('error'));
         return () => sources.delete(src);
       }
       // A detail stream: an open subagent's first window. The mock's items carry their bodies, so no

@@ -993,8 +993,8 @@ export interface Item {
 /** `idle` is not terminal: the subagent finished and the main agent may resume it. */
 export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
-/** An outline entry: a user message (its first line) or a subagent's tool call (its name only). */
-export type OutlineItem = Pick<Item, 'id' | 'kind' | 'time' | 'text' | 'delivery'> & { tool?: { name: string } };
+/** An outline entry: a user message (its first line) or a subagent's tool call (its name; its status when it is an item held here). */
+export type OutlineItem = Pick<Item, 'id' | 'kind' | 'time' | 'text' | 'delivery'> & { tool?: { name: string; status?: ToolStatus } };
 
 export interface Subagent {
   preview?: string;

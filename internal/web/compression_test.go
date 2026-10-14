@@ -462,7 +462,7 @@ func TestCompressionStreamsFlushBeforeHandlerReturns(t *testing.T) {
 			for !sawTiny || !sawHeartbeat {
 				frame := next()
 				sawTiny = sawTiny || (strings.Contains(frame, "event: "+event+"\n") && strings.Contains(frame, `"id":"`+itemID+`"`) && (stream == "main" || strings.Contains(frame, `"text":"x"`)))
-				sawHeartbeat = sawHeartbeat || frame == ": keep-alive\n\n"
+				sawHeartbeat = sawHeartbeat || frame == string(keepAliveFrame)
 			}
 			cancel()
 			select {

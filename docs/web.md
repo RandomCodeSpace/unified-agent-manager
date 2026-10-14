@@ -2267,7 +2267,11 @@ run the same `ssh -N -L …` command and open the URL; the page loads the
 current state and continues streaming. Reconnecting never sends a prompt.
 A page whose live updates have not started within 20 seconds (a proxy that
 holds them back, a stalled connection) shows the connection as lost and
-opens them again.
+opens them again. The service sends a heartbeat on every stream every 15
+seconds; a page that has heard nothing for two and a half heartbeats (a
+connection the network dropped without closing it: a Wi-Fi or mobile
+handover, a laptop back from sleep, a proxy that stopped forwarding) does
+the same.
 
 Over plain HTTP, the page receives its live updates over WebSockets, because
 browsers allow only six HTTP/1.1 connections per server and each tab keeps

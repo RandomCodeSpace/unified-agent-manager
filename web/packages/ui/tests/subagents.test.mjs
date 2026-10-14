@@ -37,6 +37,14 @@ test('replies come from the identity index: every call counts, loaded or not, an
   assert.equal(r.byKey.get('u2').calls.length, 0);
 });
 
+test('a task call that failed before a subagent started is no call of its reply; one whose subagent failed is', () => {
+  const refused = { ...call('c1', 2), tool: { name: 'task', status: 'failed' } };
+  const crashed = { ...call('c2', 3), tool: { name: 'task', status: 'failed' } };
+  const r = replyIndex([user('u1', 1), refused, crashed, call('c3', 4)], [agent('a2', 'c2', 'failed'), agent('a3', 'c3')]);
+  assert.deepEqual(r.list.map((x) => [x.calls, x.subagents.map((s) => s.id)]), [[['c2', 'c3'], ['a2', 'a3']]]);
+  assert.equal(r.ofCall.has('c1'), false);
+});
+
 test('identity tones follow the call order within a reply of at most five calls; a bigger reply stays neutral', () => {
   const items = [user('u1', 0), call('c1', 1), call('c2', 2), user('u2', 3), ...Array.from({ length: 6 }, (_, n) => call(`d${n}`, 4 + n))];
   const subagents = [agent('a2', 'c2'), agent('a1', 'c1'), ...Array.from({ length: 6 }, (_, n) => agent(`b${n}`, `d${n}`))];

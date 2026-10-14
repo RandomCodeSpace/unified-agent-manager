@@ -100,7 +100,9 @@ func (s *webSession) compactOutline(items []agentapi.Item) []outlineItem {
 		case it.Kind == agentapi.ItemUser:
 			first, _, _ := strings.Cut(strings.TrimSpace(it.Text), "\n")
 			out = append(out, outlineItem{ID: it.ID, Kind: it.Kind, Time: it.Time, Text: clipRunes(strings.TrimSpace(first), maxOutlineText), Delivery: it.Delivery})
-		case it.Kind == agentapi.ItemTool && it.Tool != nil && (it.Tool.Name == subagentTool || spawned[it.ID]):
+		// A task call that failed before a subagent started (its arguments
+		// refused) spawned nothing and is no subagent of the outline.
+		case it.Kind == agentapi.ItemTool && it.Tool != nil && (spawned[it.ID] || it.Tool.Name == subagentTool && it.Tool.Status != agentapi.ToolFailed):
 			out = append(out, outlineItem{ID: it.ID, Kind: it.Kind, Time: it.Time, Tool: &outlineTool{Name: it.Tool.Name}})
 		}
 	}
