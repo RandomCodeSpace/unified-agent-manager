@@ -64,7 +64,7 @@ const modules = {
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
-  './ui/menu': { ContextMenu: menu, Menu: menu },
+  './ui/menu': { ContextMenu: menu, Menu: menu, useLazyContextMenu: () => ({ shell: {}, menu: () => null }) },
   './ui/tooltip': { Tip: shell },
 };
 runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText, {

@@ -1410,6 +1410,7 @@ export default function App() {
         connected={state.connection === 'connected'}
         historyRequest={state.historyRequest}
         historyItemSeq={state.historyItemSeq}
+        itemSeq={state.itemSeq}
         onHistoryReset={() => { recentTasks.remove(shown.id); confirmedDetail.current = null; setStreamKey(k => k + 1); }}
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}

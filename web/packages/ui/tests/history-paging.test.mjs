@@ -35,6 +35,18 @@ test('updates to unfetched items stay out of the tail; new items still append', 
   assert.deepEqual(state.detail.items.map(i => i.id), ['recent', 'new']);
 });
 
+test('itemSeq follows frames that change main transcript items, even ones not held', () => {
+  let state = loaded();
+  assert.equal(state.itemSeq, -1);
+  state = frame(state, { name: 'delta', seq: 11, item_id: 'older', kind: 'assistant', text: 'dropped' });
+  assert.equal(state.itemSeq, 11);
+  state = frame(state, { name: 'delta', seq: 12, item_id: 'child-item', agent_id: 'child', kind: 'assistant', text: 'subagent' });
+  assert.equal(state.itemSeq, 11);
+  state = frame(state, { name: 'items_trimmed', seq: 13, items: [{ id: 'recent' }] });
+  assert.equal(state.itemSeq, 13);
+  assert.equal(reducer(state, { type: 'select', id: 'other' }).itemSeq, -1);
+});
+
 test('an eviction during a page fetch cannot resurrect old items', () => {
   let state = loading(loaded());
   state = frame(state, { name: 'items_trimmed', seq: 14, items: [{ id: 'older' }] });

@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { ArrowDown, ChartLine, CircleAlert, CircleStop, Clock, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -74,6 +74,8 @@ interface Props {
   connected: boolean;
   historyRequest: HistoryRequest | null;
   historyItemSeq: Record<string, number>;
+  /** The newest frame that changed the transcript's items (State.itemSeq): a page read ahead is used only if read after it. */
+  itemSeq: number;
   onHistoryReset: () => void;
   sheetOpen: boolean;
   /** Side panels (Changes, Files) sit beside the column (wide) rather than over it. */
@@ -305,7 +307,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
 
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, allChangesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, itemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, allChangesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
   const api = useApi();
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
@@ -317,6 +319,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [changesTick, setChangesTick] = useState(0);
   /** The jump-to-bottom control shows while the reader is away from the bottom. */
   const [jump, setJump] = useState(false);
+  /** `jump` as last set: a scroll that does not change it must not schedule a render, which would restart a history page's render under way. */
+  const jumpShown = useRef(false);
   /** The file open in the side panel (Go to file's Enter), like the other right panels it replaces them. */
   const [filePath, setFilePath] = useState<string | null>(null);
   const filesOpen = !!filePath;
@@ -437,14 +441,44 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const historyAbort = useRef<AbortController | null>(null);
   const historyLive = useRef(active);
   const historyRetryAt = useRef(0);
+  /** The page before the last one that landed, read as it landed: scrolling on finds it here instead of waiting for the network. */
+  const readAhead = useRef<{ before: string; page: Promise<HistoryPage | null>; controller: AbortController } | null>(null);
+  const latestItemSeq = useRef(itemSeq);
+  useLayoutEffect(() => { latestItemSeq.current = itemSeq; }, [itemSeq]);
+  /** The cursor whose page went to the reducer: until that renders, a handler from an earlier render still offers it. */
+  const handed = useRef<string | null>(null);
+  useLayoutEffect(() => { handed.current = null; }, [session.history_before, session.history_after, historyRequest]);
   useLayoutEffect(() => {
     historyLive.current = active;
     return () => {
       historyLive.current = false;
       historyAbort.current?.abort();
       historyAbort.current = null;
+      readAhead.current?.controller.abort();
+      readAhead.current = null;
     };
   }, [active, session.id, snapshotSeq, historyGeneration]);
+
+  /** Starts reading the older page at `before` (a running turn's frames would leave it stale before it is needed). */
+  function readOlder(before: string) {
+    if (working || readAhead.current?.before === before) return;
+    readAhead.current?.controller.abort();
+    const controller = new AbortController();
+    const page = historyPage(api.cacheKey(session.id), '', before, 'older', session.epoch, () => api.history(session.id, before, controller.signal, 'older')).catch(() => null);
+    readAhead.current = { before, page, controller };
+  }
+
+  /** The page read ahead for `before`, unless a frame changed the transcript's items after it was read (the reducer drops frames for items it does not hold); archive items never change. */
+  async function takeReadAhead(before: string, direction: 'older' | 'newer'): Promise<HistoryPage | null> {
+    const ahead = readAhead.current;
+    readAhead.current = null;
+    if (!ahead || direction !== 'older' || ahead.before !== before) {
+      ahead?.controller.abort();
+      return null;
+    }
+    const page = await ahead.page;
+    return page && (page.archive || page.seq >= latestItemSeq.current) ? page : null;
+  }
   useEffect(() => {
     if (!historyRequest?.loading) return;
     // A page commit may start the next read before passive cleanup runs.
@@ -466,7 +500,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   });
 
   async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
-    if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
+    if (!historyLive.current || historyAbort.current || before === handed.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
     const widen = direction === 'older' && visibleStart > 0 && before === session.history_before;
     // With nothing earlier, the view stays pinned: a conversation emptied for a moment (a rewind's reread) puts it
     // at its top, with nothing to read there, and it must still follow what comes next.
@@ -483,13 +517,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!before) return null;
     const controller = new AbortController();
     historyAbort.current = controller;
-    dispatch({ type: 'history_loading', sessionId: session.id, before, direction });
+    // A page read ahead lands in the same transition, so neither interrupts a render under way.
+    const loading = () => dispatch({ type: 'history_loading', sessionId: session.id, before, direction });
+    if (synchronous) loading(); else startTransition(loading);
     const timeout = window.setTimeout(() => {
       controller.abort();
       dispatch({ type: 'history_failed', sessionId: session.id, before, error: 'History took too long to load. Scroll up to retry.' });
     }, 10000);
     try {
-      const page = await historyPage(api.cacheKey(session.id), '', before, direction, session.epoch, () => api.history(session.id, before, controller.signal, direction));
+      const page = await takeReadAhead(before, direction) ?? await historyPage(api.cacheKey(session.id), '', before, direction, session.epoch, () => api.history(session.id, before, controller.signal, direction));
       if (controller.signal.aborted) return null;
       if (session.epoch && page.epoch && session.epoch !== page.epoch) {
         onHistoryReset();
@@ -500,11 +536,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         await scrollSettled(controller.signal);
         if (controller.signal.aborted) return null;
       }
+      handed.current = before;
       commit(() => {
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
         if (!compactWindow && page.items.length) setFirstVisible(page.items[0].id);
       });
       landed.current = direction;
+      if (direction === 'older' && page.before) readOlder(page.before);
       return page;
     } catch (error) {
       if (controller.signal.aborted) return null;
@@ -574,6 +612,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     el.scrollTop = el.scrollHeight;
     lastScrollTop.current = el.scrollTop;
     atBottom.current = true;
+    jumpShown.current = false;
     setJump(false);
   }, [dispatch, session.id, session.history_after]);
   // The button leaves once pressed: focus moves to the conversation it scrolled, not to the page.
@@ -592,7 +631,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       return;
     }
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
-    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
+    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) {
+      jumpShown.current = true;
+      setJump(true);
+    }
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions, keepHeld]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
   useEffect(() => {
@@ -944,7 +986,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (h) held.current = { ...h, top: h.el?.getBoundingClientRect().top ?? h.top };
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
-    setJump(!atBottom.current);
+    if (jumpShown.current === atBottom.current) {
+      jumpShown.current = !atBottom.current;
+      setJump(!atBottom.current);
+    }
     if (upwards && landed.current !== 'newer' && nearEarlier(el)) void loadEarlier();
     else if (!upwards && landed.current !== 'older' && nearEdge(el, 'newer')) void loadNewer();
   }

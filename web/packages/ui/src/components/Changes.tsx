@@ -10,7 +10,7 @@ import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseRe
 import { FilePath, Highlighted, InstanceName, Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
-import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { ContextMenu, Menu, useLazyContextMenu, type ActionItem } from './ui/menu';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
@@ -435,50 +435,47 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
   ];
   const risk = riskOf(f.path);
   const letter = statusLetter(f.status);
+  const context = useLazyContextMenu();
   return (
     <li className="flex items-center">
       <label className="flex size-8 shrink-0 cursor-pointer items-center justify-center pointer-coarse:size-11" title={viewed === 'changed' ? 'Changed since you viewed it' : 'Viewed'}>
         <input type="checkbox" className="size-3.5 cursor-pointer accent-success" aria-label={`Viewed ${f.path}`} checked={viewed === 'viewed'} onChange={(e) => onViewed(e.target.checked)} />
       </label>
-      <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div className="group/file relative min-w-0 flex-1" />}>
-          <button
-            type="button"
-            aria-pressed={selected}
-            title={f.path}
-            className={cn('grid min-h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm py-1 pr-9 pl-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
-            onClick={onOpen}
-          >
-            <span className={cn('w-3 text-center font-mono font-semibold', STATUS_TONE[letter] ?? 'text-muted')} title={f.status}>{letter}</span>
-            <span className="min-w-0">
-              <FilePath path={f.path} />
-              {(risk || viewed === 'changed' || f.old_path) && (
-                <span className="flex flex-wrap items-center gap-x-2 text-meta">
-                  {f.old_path && <span className="min-w-0 truncate text-muted" title={f.old_path}>from {f.old_path}</span>}
-                  {risk && <span className="inline-flex items-center gap-1 text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
-                  {viewed === 'changed' && <span className="text-warning">Changed since you viewed</span>}
-                </span>
-              )}
-            </span>
-            {f.binary || f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">{f.binary ? 'binary' : '—'}</span> : (
-              <span className="tabular-nums">
-                <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
+      <div className="group/file relative min-w-0 flex-1" {...context.shell}>
+        <button
+          type="button"
+          aria-pressed={selected}
+          title={f.path}
+          className={cn('grid min-h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm py-1 pr-9 pl-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
+          onClick={onOpen}
+        >
+          <span className={cn('w-3 text-center font-mono font-semibold', STATUS_TONE[letter] ?? 'text-muted')} title={f.status}>{letter}</span>
+          <span className="min-w-0">
+            <FilePath path={f.path} />
+            {(risk || viewed === 'changed' || f.old_path) && (
+              <span className="flex flex-wrap items-center gap-x-2 text-meta">
+                {f.old_path && <span className="min-w-0 truncate text-muted" title={f.old_path}>from {f.old_path}</span>}
+                {risk && <span className="inline-flex items-center gap-1 text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
+                {viewed === 'changed' && <span className="text-warning">Changed since you viewed</span>}
               </span>
             )}
-          </button>
-          <Menu.Root modal={false}>
-            <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
-              <Ellipsis />
-            </Menu.Trigger>
-            <Menu.Content align="end">
-              <Menu.Actions items={items} />
-            </Menu.Content>
-          </Menu.Root>
-        </ContextMenu.Trigger>
-        <ContextMenu.Content>
-          <ContextMenu.Actions items={items} />
-        </ContextMenu.Content>
-      </ContextMenu.Root>
+          </span>
+          {f.binary || f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">{f.binary ? 'binary' : '—'}</span> : (
+            <span className="tabular-nums">
+              <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
+            </span>
+          )}
+        </button>
+        <Menu.Root modal={false}>
+          <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
+            <Ellipsis />
+          </Menu.Trigger>
+          <Menu.Content align="end">
+            <Menu.Actions items={items} />
+          </Menu.Content>
+        </Menu.Root>
+        {context.menu(<ContextMenu.Actions items={items} />)}
+      </div>
     </li>
   );
 }

@@ -1,7 +1,6 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
-import { Suspense, lazy, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
-import { flushSync } from 'react-dom';
+import { Suspense, lazy, memo, useCallback, useContext, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
@@ -29,7 +28,7 @@ import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest'
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
-import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { ContextMenu, Menu, useLazyContextMenu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
 /** A chart card loads with the first chart shown, never with the app; meanwhile it stands as the card does while its rows load. */
@@ -113,7 +112,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line, and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -226,7 +225,7 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
-}
+});
 
 /**
  * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
@@ -550,23 +549,12 @@ function TurnStatus({ working = false, timing, empty = false }: Readonly<{ worki
 
 interface ReplyActions { allChanges?: () => void; branch?: BranchReply; rewind?: BranchReply; edit?: BranchReply; active: boolean; generation: string }
 
-type CopyableMenuEvents = Pick<ComponentProps<'div'>, 'onContextMenu' | 'onTouchStart' | 'onTouchMove' | 'onTouchEnd' | 'onTouchCancel'>;
-
-/** Attach Base UI's handlers to the stable message shell without replaying DOM events. */
-function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & { handlersRef: RefObject<CopyableMenuEvents | null> }) {
-  useLayoutEffect(() => {
-    handlersRef.current = props;
-    return () => { handlersRef.current = null; };
-  }, [handlersRef, props]);
-  return <div {...props} />;
-}
-
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
 function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [], asideTurn }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const task = useContext(SessionContext) ?? '';
   const asides = useTurnHasAsides(task, foot ? asideTurn : undefined);
-  const [menuReady, setMenuReady] = useState(false);
+  const context = useLazyContextMenu();
   const anchor = useRef<HTMLDivElement>(null);
   const visible = useDetailVisibility();
   const [changesReader, setChangesReader] = useState<{ generation: string; phone: boolean; open: boolean; anchor: HTMLElement | null } | null>(null);
@@ -574,7 +562,6 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   // A turn that changed nothing says nothing: no "0 files" in its foot or its menu.
   const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
   const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
-  const menuHandlers = useRef<CopyableMenuEvents | null>(null);
   const run = () => { if (read) void read().then(copy, () => {}); else copy(text); };
   const turnItems: ActionItem[] = [
     ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
@@ -585,25 +572,11 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   ];
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...turnItems, ...extra];
 
-  function menuEvents(event: SyntheticEvent<HTMLDivElement>) {
-    // Portalled menu interactions do not originate in the message.
-    if (!event.currentTarget.contains(event.target as Node)) return null;
-    // Keep message/button parents stable. Base UI receives the original event once,
-    // including its native target, coordinates, modifiers and touch cancellation.
-    if (!menuReady) flushSync(() => setMenuReady(true));
-    return menuHandlers.current;
-  }
-
   return (
     <div
       ref={anchor}
       className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && 'not-last:mb-3', className)}
-      style={{ WebkitTouchCallout: 'none' }}
-      onContextMenu={event => menuEvents(event)?.onContextMenu?.(event)}
-      onTouchStart={event => menuEvents(event)?.onTouchStart?.(event)}
-      onTouchMove={menuReady ? event => menuEvents(event)?.onTouchMove?.(event) : undefined}
-      onTouchEnd={menuReady ? event => menuEvents(event)?.onTouchEnd?.(event) : undefined}
-      onTouchCancel={menuReady ? event => menuEvents(event)?.onTouchCancel?.(event) : undefined}
+      {...context.shell}
     >
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
@@ -635,14 +608,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
         </div>
       )}
       {changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onAllChanges={replyActions?.allChanges} /></Suspense>}
-      {menuReady && (
-        <ContextMenu.Root>
-          <ContextMenu.Trigger render={<CopyableMenuTarget handlersRef={menuHandlers} />} className="contents" />
-          <ContextMenu.Content>
-            <ContextMenu.Actions items={items} />
-          </ContextMenu.Content>
-        </ContextMenu.Root>
-      )}
+      {context.menu(<ContextMenu.Actions items={items} />)}
     </div>
   );
 }
@@ -977,51 +943,48 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     { key: 'cmd', label: toolKind(name) === 'command' ? 'Copy command' : 'Copy input', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => inputCopy.copyBody('input'), separator: true },
     { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => outputCopy.copyBody('output') },
   ];
+  const context = useLazyContextMenu();
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
-        <div ref={attach} id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              aria-expanded={open}
-              className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
-              title={ended ? 'The turn ended before this tool reported a result' : undefined}
-              onClick={toggle}
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center">
-                <ToolMark tone={step && tone === 'pending' ? 'running' : tone} />
-              </span>
-              <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
-              {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
-              <span className="sr-only">, {word}</span>
-              {decided.length > 0 && <ApprovalMark interactions={decided} />}
-              {t?.tests && <VisualBoundary fallback={null}><TestCount tests={t.tests} /></VisualBoundary>}
-            </button>
-          </div>
-          {t?.edit_event_id && <NativeEdits item={item} />}
-          {live && toolProgress(t)}
-          {opened && (
-            <Collapse open={open} appear>
-              <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
-            </Collapse>
-          )}
+    <div className={cn('group/tool relative', className)} {...context.shell}>
+      <div ref={attach} id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+            title={ended ? 'The turn ended before this tool reported a result' : undefined}
+            onClick={toggle}
+          >
+            <span className="flex size-4 shrink-0 items-center justify-center">
+              <ToolMark tone={step && tone === 'pending' ? 'running' : tone} />
+            </span>
+            <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
+            {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
+            <span className="sr-only">, {word}</span>
+            {decided.length > 0 && <ApprovalMark interactions={decided} />}
+            {t?.tests && <VisualBoundary fallback={null}><TestCount tests={t.tests} /></VisualBoundary>}
+          </button>
         </div>
-        {copyError && <p role="alert" className="text-caption text-error">{copyError}</p>}
-        {(images.length > 0 || item.images_note) && <ToolImages item={item} sessionId={sessionId} className="mt-1 mb-1.5 ml-7" />}
-        <Menu.Root modal={false}>
-          <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
-            <Ellipsis />
-          </Menu.Trigger>
-          <Menu.Content align="end" side="bottom">
-            <Menu.Actions items={items} />
-          </Menu.Content>
-        </Menu.Root>
-      </ContextMenu.Trigger>
-      <ContextMenu.Content>
-        <ContextMenu.Actions items={items} />
-      </ContextMenu.Content>
-    </ContextMenu.Root>
+        {t?.edit_event_id && <NativeEdits item={item} />}
+        {live && toolProgress(t)}
+        {opened && (
+          <Collapse open={open} appear>
+            <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
+          </Collapse>
+        )}
+      </div>
+      {copyError && <p role="alert" className="text-caption text-error">{copyError}</p>}
+      {(images.length > 0 || item.images_note) && <ToolImages item={item} sessionId={sessionId} className="mt-1 mb-1.5 ml-7" />}
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
+          <Ellipsis />
+        </Menu.Trigger>
+        <Menu.Content align="end" side="bottom">
+          <Menu.Actions items={items} />
+        </Menu.Content>
+      </Menu.Root>
+      {context.menu(<ContextMenu.Actions items={items} />)}
+    </div>
   );
 });
 
@@ -1100,27 +1063,24 @@ export const QuestionBlock = memo(function QuestionBlock({ id, asked, className 
     { key: 'a', label: 'Copy answer', icon: <Copy />, disabled: !asked.answer, onSelect: () => copy(asked.answer ?? '') },
   ];
   const pending = asked.outcome === 'pending';
+  const context = useLazyContextMenu();
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('rounded-md text-ui shadow-raised', pending ? 'flex flex-col gap-1.5 bg-raised px-3.5 py-3' : 'bg-tint-well', className)} />}>
-        {pending ? (
-          <>
-            <div className="flex items-center gap-1.5 text-caption text-muted">
-              <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
-              <span>Question</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-attention">Waiting for your answer</span>
-            </div>
-            <QuestionDetail asked={asked} />
-          </>
-        ) : (
-          <SettledQuestion id={id} asked={asked} />
-        )}
-      </ContextMenu.Trigger>
-      <ContextMenu.Content>
-        <ContextMenu.Actions items={items} />
-      </ContextMenu.Content>
-    </ContextMenu.Root>
+    <section id={`item-${id}`} aria-label="Question" className={cn('rounded-md text-ui shadow-raised', pending ? 'flex flex-col gap-1.5 bg-raised px-3.5 py-3' : 'bg-tint-well', className)} {...context.shell}>
+      {pending ? (
+        <>
+          <div className="flex items-center gap-1.5 text-caption text-muted">
+            <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
+            <span>Question</span>
+            <span aria-hidden="true">·</span>
+            <span className="text-attention">Waiting for your answer</span>
+          </div>
+          <QuestionDetail asked={asked} />
+        </>
+      ) : (
+        <SettledQuestion id={id} asked={asked} />
+      )}
+      {context.menu(<ContextMenu.Actions items={items} />)}
+    </section>
   );
 }, (a, b) => a.id === b.id && a.className === b.className && JSON.stringify(a.asked) === JSON.stringify(b.asked));
 

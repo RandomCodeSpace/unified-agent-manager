@@ -43,7 +43,7 @@ async function components(api, environment = {}) {
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
     exports, ...hooks, api: client, useApi: () => client, AbortController, ...review, LIVE: ['starting', 'working'], readOnly: () => false, defaultScope: (s) => (s.capabilities.session_diff ? 'session' : 'task'), newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
     jsxNode: (type, props, ...children) => ({ type, key: props?.key, props: { ...props, children } }),
-    describeError: String, structuredPatch: require('diff').structuredPatch, parsePatch: require('diff').parsePatch,
+    useLazyContextMenu: () => ({ shell: {}, menu: () => null }), describeError: String, structuredPatch: require('diff').structuredPatch, parsePatch: require('diff').parsePatch,
   });
   function mount(Component, props) {
     const owner = { slots: [], effects: [], props, dirty: true, cursor: 0, tree: null };
