@@ -89,7 +89,10 @@ test('unavailable native facts never display guessed zero or fetch historical ro
   const f = fixture();
   f.rerender(f.view(true, 'one', true, [{ ...timing, changes: { status: 'busy' } }]));
   expect(screen.queryByRole('button', { name: /0 files/ })).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Changes unavailable' }));
+  // Changes do not hold the foot in view: it fades in on hover like any other.
+  const unavailable = screen.getByRole('button', { name: 'Changes unavailable' });
+  expect(unavailable.parentElement!.classList.contains('opacity-100')).toBe(false);
+  await user.click(unavailable);
   const dialog = await screen.findByRole('dialog');
   expect(dialog.textContent).toContain('still busy');
   expect(f.read).not.toHaveBeenCalled();
