@@ -689,7 +689,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Thread is still in progress, is refused with "try Stop again"; a running
   autopilot turn that Stop could not switch to interactive at once is
   switched as soon as that other change ends, unless a mode was chosen or a
-  turn started since. The running turn's intent and
+  turn started since. A main-agent model request that gets no answer for
+  3 minutes, with no tool running and nothing waiting on you, is cancelled
+  and the turn continued: a connection the network dropped without telling
+  Copilot (a firewall's idle timeout on the way to a proxy) leaves a request
+  waiting for good, and the next request opens a new one. The turn keeps
+  running, and the note "No answer from the model for 180 s; uam retried the
+  request." stands in its transcript where uam's message to the agent went.
+  A second stall in the same turn ends it as Stopped with "No answer from
+  the model for 180 s, again after a retry. Send the message again to
+  retry." A request stalled inside a subagent is not caught; Stop ends it.
+  The running turn's intent and
   retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
   (`turn_activity.todos`): uam asks the agents, subagents included, to keep

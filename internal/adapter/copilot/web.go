@@ -2021,6 +2021,10 @@ type conversation struct {
 	// cancelled turn's note when uam ends the turn itself (stop.go).
 	stopping *stopWatch
 	stopNote string
+	// modelWaitAt is when the main agent's pending model request began, zero
+	// while none is; stall is the running turn's stall watch (stall.go).
+	modelWaitAt time.Time
+	stall       stallState
 	// modeOps counts execution mode choices (ensureExecutionMode), so a
 	// mode reset Stop deferred does not override a later one.
 	modeOps uint64
@@ -3508,6 +3512,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.tools.observe(ev)
 	}
 	agentID := agentOf(ev)
+	if agentID == "" {
+		c.noteModelWaitLocked(ev)
+	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
 	if c.observeActivityLocked(ev, agentID) {
 		return
@@ -3663,10 +3670,10 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
 		}
 	case *rpc.UserMessageData:
-		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
 			c.completionReady = false
 		}
-		if agentID == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+		if agentID == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
 			c.turnChangeUser, c.turnChangeEvent = "", ""
 			user := ev.ID
 			if d.MessageID != nil && *d.MessageID != "" {
@@ -3854,6 +3861,9 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	if c.foregroundIdle {
 		return
 	}
+	if aborted != nil && *aborted && c.continueStalledLocked() {
+		return
+	}
 	c.foregroundIdle, c.turnRunning = true, false
 	c.planStopped = true
 	c.expirePlansLocked()
@@ -3863,12 +3873,16 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	switch {
 	case aborted != nil && *aborted:
 		turn.State, turn.Reason, turn.Error = agentapi.TurnCancelled, c.act.abortReason, c.stopNote
+		if turn.Error == "" {
+			turn.Error = c.stall.note
+		}
 		c.expireLocked()
 	case c.turnErr != "":
 		turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
+	c.endStallLocked()
 	c.undeliveredLocked(turn.State, at)
 	c.emitTurnEndLocked(turn)
 	c.completion = nil
@@ -4224,6 +4238,11 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
 		if d.MessageID != nil && *d.MessageID != "" {
 			it.ID = *d.MessageID
+		}
+		if stallContinuation(d) {
+			// uam's continuation of a stalled request reads as its note.
+			it.Kind = agentapi.ItemNotice
+			return it, true
 		}
 		it.Attachments = blobAttachments(d.Attachments, d.SupportedNativeDocumentMIMETypes, d.NativeDocumentPathFallbackPaths)
 		if d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliverySteering {
