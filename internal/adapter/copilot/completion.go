@@ -57,7 +57,7 @@ func (t *completionTrace) observe(ev copilot.SessionEvent) (completionContext, b
 		return ctx, true
 	}
 	agentID := agentOf(ev)
-	if d, ok := ev.Data.(*rpc.UserMessageData); ok && completionID(agentID) == agentID && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+	if d, ok := ev.Data.(*rpc.UserMessageData); ok && completionID(agentID) == agentID && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
 		id := ev.ID
 		if d.MessageID != nil && *d.MessageID != "" {
 			id = *d.MessageID
