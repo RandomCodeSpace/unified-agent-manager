@@ -8,7 +8,6 @@ Run threads, follow tool calls and subagents, and return after closing the brows
 
 <p>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/ci.yml?branch=main&label=ci&style=for-the-badge&logo=githubactions&logoColor=white"></a>
-  <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/security.yml?branch=main&label=security&style=for-the-badge&logo=githubactions&logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/unified-agent-manager?style=for-the-badge&logo=github"></a>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/RandomCodeSpace/unified-agent-manager/total?style=for-the-badge&logo=github&label=downloads"></a>
   <a href="https://go.dev/"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/RandomCodeSpace/unified-agent-manager?style=for-the-badge&logo=go"></a>

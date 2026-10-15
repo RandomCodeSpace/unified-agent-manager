@@ -34,9 +34,10 @@ The release workflow repeats the source-parent/child checks, rebuilds the UI
 with the pinned Node version, and refuses a bundle that differs from the tag,
 including extra ignored files. `make check-web` checks existing build output
 without rebuilding it.
-GoReleaser builds the UI for snapshots. For releases it checks and embeds the
-tagged bundle already rebuilt and verified by the required quality job; the
-publishing job does not need Node.js or another UI build.
+GoReleaser builds the UI for local snapshots; CI snapshots embed the bundle the
+CI web job built. For releases it checks and embeds the tagged bundle already
+rebuilt and verified by the release verify job; the publishing job does not need
+Node.js or another UI build.
 Only the tag is pushed for the generated child; source PRs carry no bundle.
 
 After publication, install a specific release without Node.js:
@@ -67,23 +68,38 @@ alpha preparation, beta verification, version syntax, source isolation, stable a
 versioned Go install from a local module proxy, and rejection of source edits
 in a generated child. It does not publish tags or contact a provider.
 
-CI runs on pull requests and pushes to `main`. Release tags run the same CI
-through the release workflow, without a second standalone CI run. CI, security
-and distro checks cancel superseded runs for the same pull request; main,
-manual and release runs keep separate concurrency groups.
+CI (`.github/workflows/ci.yml`) is one workflow for pull requests, pushes to
+`main`, manual runs and the weekly schedule: tests, lint, security, the distro
+matrix, the macOS smoke and the GoReleaser snapshot. A newer push to the same
+pull request cancels the older run; main, manual and release runs keep separate
+concurrency groups.
 
-PR CI builds the web bundle once and shares it with the Go build and race tests.
-Web lint, unit coverage and typechecking run in the web job; component tests run
-with coverage in two parallel shards. Sonar imports those reports and the Go race
-coverage report without rerunning tests. The existing 85% Go coverage floor and
-Sonar quality gate remain in force. Missing coverage reports or Sonar credentials
-fail the check. Fork PRs cannot access the Sonar secret: a maintainer must review
-the change and run it on a branch in this repository before merging.
+The web job typechecks and builds the bundle once; every Go job, the macOS smoke
+and the snapshot embed that artifact instead of rebuilding it. Component tests run
+with coverage in two parallel shards; the first shard also lints and runs the web
+unit tests with coverage. Go tests run twice in parallel: `test-race` with the race
+detector, and `coverage` without it, which produces the coverage report and checks
+the 85% floor. Sonar imports the coverage reports without rerunning tests and fails
+when either input job failed. Missing coverage reports or Sonar credentials fail the
+check. Fork PRs cannot access the Sonar secret: a maintainer must review the change
+and run it on a branch in this repository before merging.
 
-Sonar runs in CI on PRs, main, manual runs and the weekly schedule. Release-tag CI
-repeats the tests and exact bundle verification without a separate Sonar scan.
-Require `web`, both `web-tests` shards
-and `SonarCloud quality gate` alongside the Go, security, CodeQL, distro and release
-smoke checks in branch protection, so a failed dependency cannot hide behind a
-skipped downstream job. Coverage thresholds are floors, not a guarantee that the
-percentage can never decrease.
+The snapshot job always cross-builds and checks the four release archives. It
+rehearses the release scripts (`scripts/test-release-packaging`,
+`scripts/test-version`, the Cosign contract and `goreleaser check`) only when
+release tooling changes (`scripts/`, `Makefile`, `.goreleaser.yml`, `go.mod`,
+`go.sum`, workflows, the web package manifests and Node version,
+`internal/version/`), and on the weekly schedule and manual runs.
+
+A release tag does not rerun CI when its source commit already has a passing CI
+run: the release verify job checks the tag and ancestry, validates the GoReleaser
+configuration, rebuilds and compares the tagged bundle, and runs govulncheck. A
+source commit without a passing CI run (one still running, or an unmerged alpha or
+beta source) runs the whole CI first. Sonar does not scan release tags.
+
+Require `web`, both `web-tests` shards, `test-race`, `coverage`, `lint`,
+`SonarCloud quality gate`, `build static binaries`, the five distro checks,
+`GoReleaser snapshot`, `Darwin-native lifecycle and version smoke`, `govulncheck`,
+`gosec` and `dependency-review` alongside CodeQL in branch protection, so a failed
+dependency cannot hide behind a skipped downstream job. Coverage thresholds are
+floors, not a guarantee that the percentage can never decrease.
