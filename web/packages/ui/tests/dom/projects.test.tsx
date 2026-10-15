@@ -9,6 +9,13 @@ async function addProjectDialog(user: User) {
   return within(await screen.findByRole('dialog', { name: 'Choose a project folder' }));
 }
 
+/** The folder path field once the listing has filled it: a clear before then changes nothing, and the listing's path lands ahead of the typed text. */
+async function folderPath(dialog: ReturnType<typeof within>) {
+  const path = await dialog.findByRole('textbox', { name: 'Folder path' });
+  await waitFor(() => expect(path).not.toHaveProperty('value', ''));
+  return path;
+}
+
 async function editProjectDialog(user: User, name: string) {
   const side = await sidebar();
   await user.click(side.getByRole('button', { name: 'Project filter: all projects' }));
@@ -23,7 +30,7 @@ describe('add project', () => {
     const requests = vi.spyOn(window, 'fetch');
     const projectWrites = () => requests.mock.calls.filter(([url, init]) => url === '/api/projects' && init?.method === 'POST');
     const dialog = await addProjectDialog(user);
-    const path = await dialog.findByRole('textbox', { name: 'Folder path' });
+    const path = await folderPath(dialog);
     await user.clear(path);
     await user.type(path, '/home/user/projects/scratch');
     await user.click(dialog.getByRole('button', { name: 'Open folder path' }));
@@ -65,7 +72,7 @@ describe('add project', () => {
   test('a relative folder path is refused with the reason and cannot be selected', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);
-    const path = await dialog.findByRole('textbox', { name: 'Folder path' });
+    const path = await folderPath(dialog);
     await user.clear(path);
     await user.type(path, 'relative/path');
     expect(dialog.getByRole('button', { name: 'Open folder path' })).toHaveProperty('disabled', true);
