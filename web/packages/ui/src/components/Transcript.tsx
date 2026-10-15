@@ -451,7 +451,8 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
   else if (step) text = step.label;
   else if (verb) text = `${turnVerb(turnId)}…`;
   return (
-    <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
+    // After a turn whose last block has a foot (the Thread works on past the turn's end), the foot keeps its 24px row.
+    <Collapse open={working} appear onClosed={onClosed} className="-mt-6 [:has(>[data-foot]:last-child)+&]:-mt-3" inner="pt-3">
       {working && verb && <output className="sr-only">Busy</output>}
       <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
         {current || (
@@ -575,13 +576,14 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   return (
     <div
       ref={anchor}
+      data-foot={foot ? '' : undefined}
       className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && 'not-last:mb-3', className)}
       {...context.shell}
     >
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || changes || asides) && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || asides) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
