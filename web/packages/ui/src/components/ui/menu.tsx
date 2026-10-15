@@ -1,7 +1,8 @@
 import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu';
 import { Menu as BaseMenu } from '@base-ui/react/menu';
 import { Check } from 'lucide-react';
-import { createContext, useCallback, useContext, useMemo, useRef, type ComponentProps, type FocusEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { cn } from '../../lib/cn';
 
 /**
@@ -206,3 +207,47 @@ export const ContextMenu = {
     return <>{renderActions({ Item: BaseContextMenu.Item, Separator: BaseContextMenu.Separator }, items, defer)}</>;
   },
 };
+
+type MenuEvents = Pick<ComponentProps<'div'>, 'onContextMenu' | 'onTouchStart' | 'onTouchMove' | 'onTouchEnd' | 'onTouchCancel'>;
+
+/** Base UI's trigger as an empty `display: contents` element: its handlers are kept for the shell to call. */
+function MenuEventsTarget({ handlersRef, ...props }: ComponentProps<'div'> & { handlersRef: RefObject<MenuEvents | null> }) {
+  useLayoutEffect(() => {
+    handlersRef.current = props;
+    return () => { handlersRef.current = null; };
+  }, [handlersRef, props]);
+  return <div {...props} />;
+}
+
+/**
+ * A right-click and long-press menu whose Base UI root mounts on the first right-click or touch inside `shell`, so
+ * a list does not set up a menu root per row. The shell element and everything in it (focus, a press under way) stay
+ * as they are, and Base UI receives the original event once, with its target, coordinates, modifiers and touch
+ * cancellation. Spread `shell` on the element the menu belongs to and render `menu(content)` inside it.
+ */
+export function useLazyContextMenu(onOpenChange?: (open: boolean) => void) {
+  const [ready, setReady] = useState(false);
+  const handlers = useRef<MenuEvents | null>(null);
+  const events = (event: SyntheticEvent<HTMLElement>) => {
+    // Portalled menu interactions do not originate in the shell.
+    if (!event.currentTarget.contains(event.target as Node)) return null;
+    if (!ready) flushSync(() => setReady(true));
+    return handlers.current;
+  };
+  const shell = {
+    style: { WebkitTouchCallout: 'none' },
+    onContextMenu: (event) => events(event)?.onContextMenu?.(event),
+    onTouchStart: (event) => events(event)?.onTouchStart?.(event),
+    onTouchMove: ready ? (event) => events(event)?.onTouchMove?.(event) : undefined,
+    onTouchEnd: ready ? (event) => events(event)?.onTouchEnd?.(event) : undefined,
+    onTouchCancel: ready ? (event) => events(event)?.onTouchCancel?.(event) : undefined,
+  } satisfies MenuEvents & Pick<ComponentProps<'div'>, 'style'>;
+  const menu = (content: ReactNode) => ready && (
+    <ContextMenu.Root onOpenChange={onOpenChange}>
+      <ContextMenu.Trigger render={<MenuEventsTarget handlersRef={handlers} />} className="contents" />
+      <ContextMenu.Content>{content}</ContextMenu.Content>
+    </ContextMenu.Root>
+  );
+  return { shell, menu };
+}
+

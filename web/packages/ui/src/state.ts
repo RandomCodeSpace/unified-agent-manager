@@ -59,6 +59,8 @@ export interface State {
   historyRequest: HistoryRequest | null;
   /** Older-page items already include frames through their HTTP snapshot. */
   historyItemSeq: Record<string, number>;
+  /** Newest frame that changed the main transcript's items: a page read before it may lack what that frame changed. */
+  itemSeq: number;
   connection: Connection;
   agents: Record<string, AgentTranscript>;
   /** Each subagent's latest step, kept from live frames even while its transcript is not open: kind and call only, never output. */
@@ -83,6 +85,7 @@ export const initialState: State = {
   bodyVersions: {},
   historyRequest: null,
   historyItemSeq: {},
+  itemSeq: -1,
   connection: 'connecting',
   agents: {},
   agentSteps: {},
@@ -129,7 +132,7 @@ export function reducer(state: State, action: Action): State {
     case 'select': {
       if (action.id === state.selectedId) return state;
       const cached = action.cached?.id === action.id && action.cached.representation === 'compact-v1' && action.cached.epoch ? action.cached : undefined;
-      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (cached ?? state.detail ?? state.previous) : null, previousCached: !!cached, detailSeq: -1, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (cached ?? state.detail ?? state.previous) : null, previousCached: !!cached, detailSeq: -1, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {}, itemSeq: -1 };
     }
     case 'connection': {
       if (state.connection === action.status) return state;
@@ -158,6 +161,7 @@ export function reducer(state: State, action: Action): State {
         detailGeneration: state.detailGeneration + 1,
         historyRequest: null,
         historyItemSeq: {},
+        itemSeq: -1,
         connection: 'connected',
         agents: {},
         agentSteps: {},
@@ -173,7 +177,7 @@ export function reducer(state: State, action: Action): State {
       // A reply started before navigation cannot activate a cached revisit.
       if (state.previousCached && !state.detail) return state;
       if (state.detail?.epoch && detail.epoch && detail.epoch !== state.detail.epoch) return state;
-      return { ...withSession(state, detail), detail, previous: null, previousCached: false, detailSeq: detail.seq, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+      return { ...withSession(state, detail), detail, previous: null, previousCached: false, detailSeq: detail.seq, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {}, itemSeq: -1 };
     }
     case 'history_latest':
       if (state.detail?.id !== action.sessionId || !state.detail.recent_items) return state;
@@ -317,6 +321,7 @@ export function reducer(state: State, action: Action): State {
           ? { ...request, loading: false, error: 'History changed too quickly. Scroll up to retry.', buffered: [], bufferedChars: 0 }
           : { ...request, buffered: [...request.buffered, d], bufferedChars: request.bufferedChars + size } };
       }
+      if (d.name === 'items_trimmed' || ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id)) state = { ...state, itemSeq: d.seq };
       if ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id) {
         const id = d.name === 'item' ? d.item.id : d.item_id;
         if (d.seq <= (state.historyItemSeq[id] ?? -1)) return state;
@@ -326,7 +331,7 @@ export function reducer(state: State, action: Action): State {
       }
       switch (d.name) {
         case 'history':
-          return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents, subagents_before: d.subagents_before }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+          return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents, subagents_before: d.subagents_before }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {}, itemSeq: -1 };
         case 'item':
           if (d.item.compact) state = { ...state, bodyVersions: { ...state.bodyVersions, [JSON.stringify([d.agent_id ?? '', d.item.id])]: d.seq } };
           if (d.agent_id) return routed(withAgentFrame(state, d.agent_id, d));

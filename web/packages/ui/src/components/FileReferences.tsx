@@ -1,11 +1,10 @@
 import { useApi } from '../ApiContext';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { subscribeAuthLoss, type Item } from '../api';
 import { FileReferences } from '../lib/fileReferences';
 import { useDetailVisibility } from './Details';
 
 const Files = createContext<FileReferences | null>(null);
-const NO_SUBSCRIBE = () => () => {};
 
 /** Keyed by task, workdir and history/auth lifetime at the Task boundary. */
 export function FileReferencesProvider({ sessionId, workdir, generation, active, items, children }: Readonly<{ sessionId: string; workdir: string; generation: string; active: boolean; items: Item[]; children: ReactNode }>) {
@@ -43,8 +42,19 @@ export function useFileReference(path: string | undefined, inlineText?: string) 
     if (!lookup || !path || (inlineText !== undefined && !lookup.eligible(inlineText, path))) return 0;
     return lookup.cache.get(path) === true ? 2 : 1;
   }, [lookup, path, inlineText]);
-  // Unknown and unavailable render alike; unrelated resolver answers need no render.
-  const state = useSyncExternalStore(lookup?.subscribe ?? NO_SUBSCRIBE, snapshot);
+  // Unknown and unavailable render alike; unrelated resolver answers need no render. Every render reads the store
+  // (answers expire); an answer renders as a transition, since a store React must render at once
+  // (useSyncExternalStore) restarts a history page's render under way.
+  const state = snapshot();
+  const rendered = useRef(state);
+  const [, render] = useState(0);
+  useEffect(() => { rendered.current = state; });
+  useEffect(() => {
+    if (!lookup) return;
+    const update = () => { if (snapshot() !== rendered.current) startTransition(() => render(n => n + 1)); };
+    update();
+    return lookup.subscribe(update);
+  }, [lookup, snapshot]);
   return { eligible: state !== 0, exists: state === 2 };
 }
 

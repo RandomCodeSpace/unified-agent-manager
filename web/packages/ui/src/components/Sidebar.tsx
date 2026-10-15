@@ -1,6 +1,6 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
 import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { memo, startTransition, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { createContext, memo, startTransition, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
@@ -13,7 +13,7 @@ import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
-import { ContextMenu } from './ui/menu';
+import { ContextMenu, useLazyContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './UsageButton';
 import { restartNotice } from './UamService';
@@ -412,16 +412,24 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
   );
 }
 
+/** Every row of the list is from one instance: a row's tip leaves out its name. Only an open tip reads it, so rows need not re-render when another instance's rows arrive. */
+const OneInstance = createContext(false);
+
+function TipMachine({ label }: Readonly<{ label: string }>) {
+  return useContext(OneInstance) ? null : <span className="block text-on-primary/70">{label}</span>;
+}
+
 /**
  * `compact`: a Settled shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
-const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, tabStop, rowKey = s.id, machine, named = true, oneInstance = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean; /** Every row of the list is from one instance: the tip leaves out its name. */ oneInstance?: boolean }>) {
+const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, tabStop, rowKey = s.id, machine, named = true }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
+  const context = useLazyContextMenu((open) => { contextOpen.current = open; });
   const revealSettleOnTouch = useRef(false);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
@@ -464,7 +472,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Thread name" />
         </div>
       ) : (
-        <Tip label={<>{machine && !unavailable && !oneInstance && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
+        <Tip label={<>{machine && !unavailable && <TipMachine label={machine.label} />}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
           <button
             type="button"
             data-nav={rowKey}
@@ -527,12 +535,10 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
 
   return (
     <li>
-      <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
-        <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
-        <ContextMenu.Content>
-          <ContextMenu.Actions items={items} />
-        </ContextMenu.Content>
-      </ContextMenu.Root>
+      <div {...context.shell}>
+        {row}
+        {context.menu(<ContextMenu.Actions items={items} />)}
+      </div>
     </li>
   );
 }, sameRowProps);
@@ -771,7 +777,7 @@ export const Sidebar = memo(function Sidebar({
   const renderRow = (r: ListRow, compact = false) => {
     // Inactive machines keep their own read marks; the active one follows App's open Task.
     const reader = r.machine && !r.machine.active ? r.machine.hasNews : hasNews;
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} oneInstance={oneInstance} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} tabStop={r.key === tabStop} />;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} tabStop={r.key === tabStop} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
@@ -865,9 +871,9 @@ export const Sidebar = memo(function Sidebar({
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
           {/* Each row names its machine to assistive technology by reference. */}
           {machines?.map((m) => <span key={m.id} id={machineLabelId(m)} className="sr-only">{m.label}{m.status.status === 'account-mismatch' ? ', unavailable: linked to a different Copilot account' : ''}</span>)}
-          {body}
+          <OneInstance.Provider value={oneInstance}>{body}</OneInstance.Provider>
         </div>
-        {shelvesBody}
+        <OneInstance.Provider value={oneInstance}>{shelvesBody}</OneInstance.Provider>
       </div>
 
       {connection !== 'connected' && (

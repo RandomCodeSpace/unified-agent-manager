@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -21,7 +21,7 @@ import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
 import { Chip, chipVariants } from './ui/chip';
 import { Input } from './ui/input';
-import { ContextMenu, type ActionItem } from './ui/menu';
+import { ContextMenu, useLazyContextMenu, type ActionItem } from './ui/menu';
 
 export const STATE_LABELS: Record<SessionState, string> = {
   idle: 'Idle',
@@ -270,12 +270,13 @@ export function timeAgo(iso: string, now = Date.now()): string {
  * Whether a scroll container has been scrolled away from its top, for the pane header's fade
  * (`data-scrolled`). Watches a sentinel placed first inside the container through an
  * IntersectionObserver, so nothing runs per scroll event; the returned ref goes on the sentinel.
+ * The fade is a transition: reaching the top must not restart a history page's render under way.
  */
 export function useScrolled(): [boolean, (el: HTMLElement | null) => void] {
   const [scrolled, setScrolled] = useState(false);
   const ref = useCallback((el: HTMLElement | null) => {
     if (!el?.parentElement) return;
-    const observer = new IntersectionObserver(([entry]) => setScrolled(!entry.isIntersecting), { root: el.parentElement });
+    const observer = new IntersectionObserver(([entry]) => startTransition(() => setScrolled(!entry.isIntersecting)), { root: el.parentElement });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -413,33 +414,30 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
   const [copied, copy] = useCopied();
   const read = () => text ?? pre.current?.textContent ?? '';
   const items: ActionItem[] = [{ key: 'copy', label: 'Copy code', icon: <Copy />, onSelect: () => copy(read()) }];
+  const context = useLazyContextMenu();
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md bg-code-bg shadow-well', className)} />}>
-        <div className="flex h-6 items-center gap-2 px-3 text-code-sm text-muted">
-          <span className="font-mono">{language ?? 'code'}</span>
-          {head ?? <span className="flex-1" />}
-          <Button
-            size="icon-sm"
-            variant="subtle"
-            aria-label={copied ? 'Copied' : 'Copy code'}
-            className={cn('text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
-            onClick={() => copy(read())}
-          >
-            {copied ? <Check /> : <Copy />}
-          </Button>
-        </div>
-        {body ?? (
-          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-x-hidden overflow-y-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {children}
-          </pre>
-        )}
-        {foot}
-      </ContextMenu.Trigger>
-      <ContextMenu.Content>
-        <ContextMenu.Actions items={items} />
-      </ContextMenu.Content>
-    </ContextMenu.Root>
+    <div className={cn('group/code relative my-2.5 overflow-hidden rounded-md bg-code-bg shadow-well', className)} {...context.shell}>
+      <div className="flex h-6 items-center gap-2 px-3 text-code-sm text-muted">
+        <span className="font-mono">{language ?? 'code'}</span>
+        {head ?? <span className="flex-1" />}
+        <Button
+          size="icon-sm"
+          variant="subtle"
+          aria-label={copied ? 'Copied' : 'Copy code'}
+          className={cn('text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+          onClick={() => copy(read())}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </div>
+      {body ?? (
+        <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-x-hidden overflow-y-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {children}
+        </pre>
+      )}
+      {foot}
+      {context.menu(<ContextMenu.Actions items={items} />)}
+    </div>
   );
 }
 
