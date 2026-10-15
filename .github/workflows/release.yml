@@ -12,20 +12,17 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Quality verification
+  # The tag's generated child adds only the web bundle to its source commit.
+  # That source commit's passing CI run stands for the tests, coverage, lint and
+  # security checks; this job verifies what the tag itself adds.
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-    uses: ./.github/workflows/ci.yml
-
-  security:
-    name: Security verification
-    uses: ./.github/workflows/security.yml
-
-  ancestry:
-    name: Verify release source and generated child
-    runs-on: ubuntu-latest
+      actions: read
+    outputs:
+      ci: ${{ steps.ci.outputs.result }}
     steps:
       - name: Checkout tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,15 +35,6 @@ jobs:
           test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = tag
           scripts/verify-release-source "${GITHUB_REF_NAME}" "${GITHUB_SHA}" origin/main
 
-  release-config:
-    name: Validate release configuration
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
       - name: Validate GoReleaser configuration
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -54,9 +42,56 @@ jobs:
           version: v2.18.0
           args: check
 
+      - name: Find a passing CI run for the source commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source="$(git rev-parse "${GITHUB_SHA}^")"
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source}&status=success&per_page=1" --jq '.total_count')"
+          if test "${passed}" -gt 0; then result=passed; else result=missing; fi
+          echo "result=${result}" >> "$GITHUB_OUTPUT"
+          echo "CI for source ${source}: ${result}"
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The tagged bundle must equal a fresh build from the source, with no extra files.
+      - name: Rebuild and compare the tagged web bundle
+        run: |
+          npm --prefix web ci
+          npm --prefix web --ignore-scripts run build
+          make check-web
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          govulncheck ./...
+
+  # Runs the whole CI only when the source commit has no passing CI run.
+  quality:
+    name: Quality verification
+    needs: verify
+    if: needs.verify.outputs.ci != 'passed'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: Publish release
-    needs: [quality, security, ancestry, release-config]
+    needs: [verify, quality]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.quality.result == 'success' || needs.quality.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
