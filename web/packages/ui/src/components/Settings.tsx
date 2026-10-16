@@ -22,6 +22,7 @@ import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSl
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { MODEL_PRICE_UNIT, modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
+import { SessionStatsSettings } from './SessionStatsSettings';
 import { WorktreesSettings } from './WorktreesSettings';
 import { diskLowText, percentFree, sizeText } from '../lib/worktrees';
 import { purposeLabel, resumeText } from '../lib/utility';
@@ -538,7 +539,7 @@ function railCurrentPage(searching: boolean, shown: SettingsPage | null, visible
 }
 
 /** The pages mounted only while on screen. */
-const ON_SCREEN_ONLY: readonly SettingsPage[] = ['token-costs', 'archived', 'connections', 'gitlab', 'worktrees'];
+const ON_SCREEN_ONLY: readonly SettingsPage[] = ['token-costs', 'archived', 'connections', 'gitlab', 'worktrees', 'session-stats'];
 
 /**
  * Whether a page's cards are in the tree: on screen, or shown once before and kept (hidden) with its forms and lists;
@@ -934,6 +935,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       </Section>}
     </>,
     connections: <Section id="connections" title="Connected instances">{connections}</Section>,
+    'session-stats': <Section id="session-stats" title="Session stats" help="Counts from every Copilot session on this server: prompts, turns, tools, stops, failures and permission prompts. No prompt or reply text is read into it. Take a screenshot to share it.">{api.supports('session-stats-v1') ? <SessionStatsSettings /> : <Unsupported what="session stats" />}</Section>,
     browser: <Section id="browser" title="Appearance & alerts">
       <NotifyRow />
       <Row id="theme" label="Theme" help="Match system follows your OS's light or dark setting as it changes.">

@@ -244,6 +244,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleProjectFiles)
 	mux.HandleFunc("GET /api/projects/{id}/branches", s.handleProjectBranches)
 	mux.HandleFunc("GET /api/worktrees", s.handleWorktrees)
+	mux.HandleFunc("GET /api/session-stats", s.handleSessionStats)
 	mux.HandleFunc("POST /api/worktrees/remove", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)

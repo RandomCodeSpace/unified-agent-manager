@@ -38,6 +38,7 @@ export const SETTINGS_GROUPS = [
   { label: 'Server', scope: 'service', pages: [
     { id: 'uam', label: 'UAM and access', blurb: 'Project folders, the version and restart, terminal access, and signing out.', keywords: 'default project location folder directory home path version restart update binary terminal shell access log out logout sign out session' },
     { id: 'connections', label: 'Connected instances', blurb: 'Other UAM servers to switch to.', keywords: 'instance instances federation pair remote server connect' },
+    { id: 'session-stats', label: 'Session stats', blurb: 'Counts from every Copilot session, to screenshot and share.', keywords: 'stats statistics usage counts sessions history prompts turns tools failures errors permissions stops screenshot feedback' },
   ] },
   { label: 'This browser', scope: 'browser', pages: [
     { id: 'browser', label: 'Appearance & alerts', blurb: 'Notifications, theme and motion.', keywords: 'theme dark light system motion animation reduced notifications notify push alerts' },

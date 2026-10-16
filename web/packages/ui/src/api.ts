@@ -478,6 +478,12 @@ export interface RemovedWorktree {
   at: string;
 }
 
+/** GET /api/session-stats: counts over every Copilot session journal, as written to `path`. Keys are `<group>.<name>`. */
+export interface SessionStats {
+  path: string;
+  stats: { key: string; value: string }[];
+}
+
 /** GET /api/worktrees: biggest first, from every folder worktrees went in. */
 export interface Worktrees {
   /** The folder new worktrees go in. */
@@ -1950,6 +1956,7 @@ const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boo
   ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
   ['usage-v1', (path) => path.startsWith('/api/usage')],
   ['branch-switch-v1', (path) => /^\/api\/sessions\/[^/]+\/git\/branch(?:[?]|$)/.test(path)],
+  ['session-stats-v1', (path) => /^\/api\/session-stats(?:[?]|$)/.test(path)],
   ['worktrees-v1', (path) => /^\/api\/(?:worktrees|projects\/[^/]+\/branches)(?:[/?]|$)/.test(path)],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
   ['files-v1', (path) => /^\/api\/fs(?:[/?]|$)/.test(path) || /\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path)],
@@ -2178,6 +2185,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     worktrees: () => call<Worktrees>('GET', '/api/worktrees'),
     /** Removes a listed worktree, keeping its branch; one with changes needs `force` (409 `worktree_unsaved` without). */
     removeWorktree: (path: string, force: boolean) => call<void>('POST', '/api/worktrees/remove', { path, force }),
+    /** Settings → Session stats: scans every Copilot session journal on the server and rewrites its key=value file. */
+    sessionStats: () => call<SessionStats>('GET', '/api/session-stats'),
     pushKey: () => call<{ public_key: string }>('GET', '/api/push'),
     pushSubscribe: (subscription: PushSubscriptionJSON) => call<void>('POST', '/api/push/subscribe', subscription),
     pushUnsubscribe: (endpoint: string) => call<void>('POST', '/api/push/unsubscribe', { endpoint }),
