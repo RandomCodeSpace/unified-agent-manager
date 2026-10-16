@@ -25,6 +25,7 @@ const (
 	stopOwner       = "owner"
 	stopTimeLimit   = "time_limit"
 	stopCreditLimit = "credit_limit"
+	stopBudget      = "budget"
 	stopRemote      = "remote"
 	stopMCP         = "mcp"
 )

@@ -11,6 +11,7 @@ const SHORT: Record<StopReason, string> = {
   owner: 'Stopped',
   time_limit: 'Stopped: time limit',
   credit_limit: 'Stopped: credit limit',
+  budget: 'Stopped: budget',
   remote: 'Stopped: remote command',
   mcp: 'Stopped: MCP server',
 };
@@ -36,7 +37,7 @@ export function stopWords(s: Pick<SessionSummary, 'stop_reason' | 'state_detail'
   if (!reason || reason === 'owner') return { short: 'Stopped', long: 'Stopped', title: reason ? 'You stopped it' : s.state_detail || 'Stopped', notYours: false };
   const short = SHORT[reason];
   const title = s.state_detail || short;
-  if (reason !== 'credit_limit') return { short, long: reason === 'time_limit' ? title : short, title, notYours: true };
+  if (reason !== 'credit_limit') return { short, long: reason === 'time_limit' || reason === 'budget' ? title : short, title, notYours: true };
   const objective = s.execution?.objective;
   const parts = ['Autopilot stopped: credit limit reached'];
   if (objective?.credits_used !== undefined && objective.credit_limit !== undefined) parts.push(`${formatCredits(objective.credits_used)} of ${formatCredits(objective.credit_limit)} credits used`);

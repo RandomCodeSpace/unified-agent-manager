@@ -536,13 +536,26 @@ type WebState struct {
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
 	// StopReason says why the last turn was cancelled (owner, time_limit,
-	// credit_limit, remote or mcp); empty otherwise.
+	// credit_limit, budget, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
+	// Budget is the owner's spending limit for the Thread; nil without one.
+	Budget *Budget `json:"budget,omitempty"`
 	// Place is the branch or worktree the Thread was started in; nil for a
 	// Thread on its Project's current branch.
 	Place *WebPlace `json:"place,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// Budget limits what a Thread may spend: Credits more AI units from the
+// conversation total From it had when the budget was set, and the account
+// quota used up to QuotaPercent. A zero limit is no limit. Reached is set
+// once either is met, and holds until the owner changes the budget.
+type Budget struct {
+	Credits      float64 `json:"credits,omitempty"`
+	From         float64 `json:"from,omitempty"`
+	QuotaPercent float64 `json:"quota_percent,omitempty"`
+	Reached      bool    `json:"reached,omitempty"`
 }
 
 // WebPlace is where a Thread runs when it is not on its Project's current

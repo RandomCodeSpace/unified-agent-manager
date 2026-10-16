@@ -46,6 +46,12 @@ func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.To
 
 func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
 	out := agentapi.ToolVerdict{Context: m.trailContextLocked(s, use)}
+	deny, note := m.budgetToolLocked(s)
+	out.Context = strings.TrimSpace(out.Context + "\n" + note)
+	if deny != "" {
+		out.Deny = deny
+		return out
+	}
 	kind := use.PermissionKind
 	if kind == "" {
 		kind = permissionToolKind(use.Tool)

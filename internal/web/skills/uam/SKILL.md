@@ -37,6 +37,8 @@ When uam attaches a `uam trail:` note, another running Thread recently edited th
 
 When uam reports repeated permission denials or a refused fetch with a reopening time, stop retrying that kind of action or URL segment; continue work that does not need it.
 
+The owner may give a Thread a budget: AI credits it may spend, or how much of the account quota may be used. `uam` `sense` reports `usage` and `budget` (`credits`, `spent`, `quota_percent`, `quota_used`, `reached`). Before long or costly work, check it and pace yourself. When a `uam budget:` note says you are close, finish the current step and report what is done and what is left. At the limit uam stops the turn and refuses further tools; do not try to work around it.
+
 ## GitLab via glab
 
 In a GitLab Project with glab installed and signed in, uam bounds supported
@@ -168,7 +170,8 @@ refresh it later without you.
 
 Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
 
-- `sense {}` gives your mode, model, context use, queue and sibling counts.
+- `sense {}` gives your mode, model, context use, AI credits used, budget,
+  queue and sibling counts.
 - `projects {}` lists visible Projects, their directories and Thread counts.
 - `tasks {project?, stage?, state?}` lists Threads. Project is an ID or exact
   name, defaulting to yours; stage is active, settled or archived.

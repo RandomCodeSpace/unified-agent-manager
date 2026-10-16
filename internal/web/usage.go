@@ -149,6 +149,7 @@ func (m *Manager) refreshQuota() {
 	if after.Stale != before.Stale || !slices.EqualFunc(after.Quotas, before.Quotas, sameQuota) {
 		m.broadcastLocked("usage", "", func(seq uint64) any { return usageEvent{Seq: seq, Usage: after} })
 	}
+	m.checkQuotaBudgetsLocked()
 }
 
 // AccountUsage returns the cached account quotas.
@@ -223,6 +224,7 @@ func (m *Manager) applyUsageLocked(s *webSession, u *agentapi.Usage) {
 	if m.infos[s.provider].Capabilities.Usage && validUsage(u) && (s.usage == nil || *s.usage != *u) {
 		usage := *u
 		s.usage = &usage
+		m.checkBudgetLocked(s)
 	}
 }
 

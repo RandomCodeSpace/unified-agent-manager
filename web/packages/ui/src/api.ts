@@ -821,6 +821,12 @@ export interface SessionSummary {
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
+  /**
+   * The owner's spending limit (Tools → Usage): `credits` more AI units from when it was set, `spent` of them so far,
+   * and the account quota used up to `quota_percent` (`quota_used` now, while known). Once `reached`, uam stops the
+   * Thread's turns and refuses sends until the budget changes.
+   */
+  budget?: { credits?: number; spent: number; quota_percent?: number; quota_used?: number; reached?: boolean };
   mode?: PermissionMode;
   /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
   mode_unknown?: boolean;
@@ -853,7 +859,7 @@ export interface SessionSummary {
   /** The open conversation's compaction threshold in percent: Settings' value when it opened; absent while none is open. */
   compact_threshold?: number;
   /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command or an MCP server; absent otherwise, also when the provider gave no reason. */
-  stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'remote' | 'mcp';
+  stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'budget' | 'remote' | 'mcp';
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -2210,7 +2216,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
-    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: PermissionMode; agent?: string }) =>
+    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: PermissionMode; agent?: string; budget?: { credits: number; quota_percent: number } }) =>
       call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, body),
     /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
     taskAgents: (projectId: string, provider: string) =>

@@ -1029,9 +1029,13 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       if (method === 'GET') return json(200, detail(t));
       if (method === 'PATCH') {
-        const keys = ['name', 'model', 'effort', 'context_size', 'mode', 'agent'].filter((k) => body[k] !== undefined);
-        if (keys.length === 0) return fail(400, 'name, model, effort, context_size, mode or agent required');
+        const keys = ['name', 'model', 'effort', 'context_size', 'mode', 'agent', 'budget'].filter((k) => body[k] !== undefined);
+        if (keys.length === 0) return fail(400, 'name, model, effort, context_size, mode, agent or budget required');
         if (t.stage === 'archived' && keys.some((k) => k !== 'name')) return fail(409, 'an archived thread is read-only');
+        if (body.budget !== undefined) {
+          const { credits = 0, quota_percent = 0 } = body.budget as { credits?: number; quota_percent?: number };
+          t.budget = credits || quota_percent ? { credits: credits || undefined, spent: 0, quota_percent: quota_percent || undefined } : undefined;
+        }
         if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled thread takes no changes; reopen it first');
         if (typeof body.name === 'string') t.name = body.name.trim();
         if (body.mode !== undefined) {

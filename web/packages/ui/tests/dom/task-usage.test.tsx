@@ -193,3 +193,23 @@ test('oversized connected errors are bounded and closing disposes the reader err
   await screen.findByText('Current model: native-current');
   expect(screen.queryByRole('status')).toBeNull();
 });
+
+test('a running Thread takes a budget in AI units and quota percent, shows what is spent, and can drop it', async () => {
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  const settings = vi.spyOn(api, 'settings').mockResolvedValue(session);
+  const view = draw({ ...session, state: 'working' } as SessionDetail);
+  await openUsage();
+  const setBudget = await screen.findByRole('button', { name: 'Set budget' }) as HTMLButtonElement;
+  expect(setBudget.disabled).toBe(true);
+  await userEvent.type(screen.getByLabelText(/Stop after/), '2.5');
+  await userEvent.type(screen.getByLabelText(/Stop at/), '80');
+  await userEvent.click(setBudget);
+  expect(settings).toHaveBeenCalledWith('task-1', { budget: { credits: 2.5, quota_percent: 80 } });
+
+  view.select({ ...session, state: 'cancelled', budget: { credits: 2.5, spent: 2.6, quota_percent: 80, quota_used: 41, reached: true } } as SessionDetail);
+  expect(screen.getByText('2.6 of 2.5 AI units')).toBeTruthy();
+  expect(screen.getByText('41% · limit 80%')).toBeTruthy();
+  expect(screen.getByText(/Budget reached: uam stopped this Thread/)).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+  expect(settings).toHaveBeenLastCalledWith('task-1', { budget: { credits: 0, quota_percent: 0 } });
+});

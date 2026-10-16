@@ -923,12 +923,16 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 		ContextSize *string `json:"context_size"`
 		Mode        *string `json:"mode"`
 		Agent       *string `json:"agent"`
+		Budget      *struct {
+			Credits      float64 `json:"credits"`
+			QuotaPercent float64 `json:"quota_percent"`
+		} `json:"budget"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Model == nil && body.Effort == nil && body.ContextSize == nil && body.Mode == nil && body.Agent == nil {
-		writeError(w, http.StatusBadRequest, "name, model, effort, context_size, mode or agent is required")
+	if body.Name == nil && body.Model == nil && body.Effort == nil && body.ContextSize == nil && body.Mode == nil && body.Agent == nil && body.Budget == nil {
+		writeError(w, http.StatusBadRequest, "name, model, effort, context_size, mode, agent or budget is required")
 		return
 	}
 	if body.Name != nil {
@@ -966,6 +970,12 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name != nil {
 		if summary, err = s.m.Rename(id, *body.Name); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	if body.Budget != nil {
+		if summary, err = s.m.SetBudget(id, body.Budget.Credits, body.Budget.QuotaPercent); err != nil {
 			writeFailure(w, err)
 			return
 		}
