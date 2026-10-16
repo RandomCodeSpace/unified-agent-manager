@@ -80,3 +80,25 @@ func TestDoneVerdictDropsOnSave(t *testing.T) {
 		t.Fatalf("saved = %s", encoded)
 	}
 }
+
+// A saved budget loads as the field, not as a newer version's: a later
+// save writes the current budget, also when it was removed or reached.
+func TestBudgetSavesItsCurrentValue(t *testing.T) {
+	var web WebState
+	if err := json.Unmarshal([]byte(`{"turn":"working","budget":{"credits":2,"from":5}}`), &web); err != nil {
+		t.Fatal(err)
+	}
+	if web.Budget == nil || web.Budget.Credits != 2 || web.Budget.From != 5 {
+		t.Fatalf("loaded budget = %+v", web.Budget)
+	}
+	reached := *web.Budget
+	reached.Reached = true
+	web.Update(WebState{Turn: "cancelled", Budget: &reached})
+	if encoded, _ := json.Marshal(web); !strings.Contains(string(encoded), `"reached":true`) {
+		t.Fatalf("reached budget saved as %s", encoded)
+	}
+	web.Update(WebState{Turn: "cancelled"})
+	if encoded, _ := json.Marshal(web); strings.Contains(string(encoded), "budget") {
+		t.Fatalf("removed budget saved as %s", encoded)
+	}
+}

@@ -613,6 +613,7 @@ var knownWebStateFields = map[string]struct{}{
 	"suggestions":         {},
 	"unseen_end":          {},
 	"stop_reason":         {},
+	"budget":              {},
 	"place":               {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
