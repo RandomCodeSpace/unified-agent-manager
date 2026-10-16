@@ -754,6 +754,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   fails. The input-cost estimate beside it excludes output; the model menu
   shows the same estimate for each model. No estimate appears without prices
   or reported context.
+- **Session stats**: Settings → Session stats counts every Copilot session
+  journal under `COPILOT_HOME/session-state` (sessions, prompts, turns,
+  tools, failures, stops, errors and permission outcomes; never their text),
+  writes the counts as `key=value` lines to `session-stats.txt` beside uam's
+  config, and shows them grouped for a screenshot. Each visit and Scan again
+  scans anew (`GET /api/session-stats`). Connected instances advertise
+  `session-stats-v1`.
 - **Conversation**: your messages sit on the right, the agent's on the left,
   both rendered as markdown (never as HTML) while they stream; in your
   messages a single line break (Shift+Enter) stays a line break. The agent's

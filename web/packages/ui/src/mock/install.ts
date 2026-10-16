@@ -693,6 +693,52 @@ export function install(): { received: Received[] } {
     if (path === '/api/logout') return json(204);
     if (path === '/api/connections') return json(200, { instance_id: 'mock-home', connections: [] });
     if (path === '/api/meta') return json(200, { ...st.meta, disk: worktrees.disk });
+    if (path === '/api/session-stats' && method === 'GET') return json(200, {
+      path: '/home/user/.config/uam/session-stats.txt',
+      stats: [
+        { key: 'scan.at', value: '2026-10-16T09:00:00Z' },
+        { key: 'scan.skipped', value: '0' },
+        { key: 'sessions.total', value: '214' },
+        { key: 'sessions.with_prompts', value: '201' },
+        { key: 'sessions.first', value: '2026-08-02' },
+        { key: 'sessions.last', value: '2026-10-16' },
+        { key: 'sessions.resumes', value: '1180' },
+        { key: 'work.prompts', value: '642' },
+        { key: 'work.turns', value: '1904' },
+        { key: 'work.tool_calls', value: '1711' },
+        { key: 'work.subagents', value: '38' },
+        { key: 'work.skills', value: '27' },
+        { key: 'work.compactions', value: '9' },
+        { key: 'work.model_changes', value: '1302' },
+        { key: 'work.mode_changes', value: '41' },
+        { key: 'friction.turns_unfinished', value: '118' },
+        { key: 'friction.tool_failures', value: '137' },
+        { key: 'friction.tool_failure_pct', value: '8' },
+        { key: 'friction.permission_prompts', value: '1033' },
+        { key: 'friction.session_errors', value: '3' },
+        { key: 'aborts.user_initiated', value: '22' },
+        { key: 'errors.query', value: '3' },
+        { key: 'permissions.approved', value: '921' },
+        { key: 'permissions.denied-no-approval-rule-and-could-not-request-from-user', value: '84' },
+        { key: 'permissions.cancelled', value: '14' },
+        { key: 'permissions.denied-interactively-by-user', value: '6' },
+        { key: 'tools.bash', value: '612' },
+        { key: 'tools.view', value: '201' },
+        { key: 'tools.ask_user', value: '133' },
+        { key: 'tools.web_fetch', value: '118' },
+        { key: 'tools.apply_patch', value: '74' },
+        { key: 'tools.web_search', value: '52' },
+        { key: 'tools.glob', value: '31' },
+        { key: 'tools.task', value: '28' },
+        { key: 'tools.edit', value: '22' },
+        { key: 'tools.rg', value: '17' },
+        { key: 'tool_failures.bash', value: '96' },
+        { key: 'tool_failures.web_fetch', value: '29' },
+        { key: 'tool_failures.view', value: '6' },
+        { key: 'tool_failures.apply_patch', value: '4' },
+        { key: 'tool_failures.edit', value: '2' },
+      ],
+    });
     const worktreed = worktrees.route(method, path, body);
     if (worktreed) return worktreed;
     if (path === '/api/glab' && method === 'GET') return json(200, {
