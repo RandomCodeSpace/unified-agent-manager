@@ -524,6 +524,12 @@ type webSession struct {
 	// fuses are transient Task-local refusals shared with subagents.
 	fuses map[fuseKey]*fuseEntry
 
+	// budget is the owner's spending limit (budget.go). budgetWarned is set
+	// once the agent was told to wrap up, budgetStopping while uam's stop
+	// for it is on its way.
+	budget                       store.Budget
+	budgetWarned, budgetStopping bool
+
 	// edits maps each file the Task's edit tools touched, as the tool gave
 	// its path, to when it was last touched, and turnStart is when the
 	// latest ordinary prompt to the main agent began (task_changes.go).
@@ -593,6 +599,7 @@ type persistKey struct {
 	settledBy                                                                                                        string
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
+	budget                                                                                                           store.Budget
 	agent                                                                                                            string
 	place                                                                                                            store.WebPlace
 }
@@ -661,7 +668,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, budget: s.budget}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -940,6 +947,9 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		s.agent = web.Agent
+		if web.Budget != nil {
+			s.budget = *web.Budget
+		}
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -1205,7 +1215,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	out := SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s),
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
@@ -2289,7 +2299,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
-				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(),
+				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget),
 			},
 		})
 	}
@@ -3490,6 +3500,10 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		m.mu.Unlock()
 		return Submission{}, err
 	}
+	if s.budget.Reached {
+		m.mu.Unlock()
+		return Submission{}, errBudgetReached
+	}
 	workdir := s.workdir
 	m.mu.Unlock()
 	// Checked before anything is queued or sent; a queued prompt's files are
@@ -3865,7 +3879,7 @@ func (m *Manager) drain(s *webSession) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || s.queueSending != "" || busy(s.state()) {
+	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || s.queueSending != "" || busy(s.state()) || s.budget.Reached {
 		m.mu.Unlock()
 		return
 	}

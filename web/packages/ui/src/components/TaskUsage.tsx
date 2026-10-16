@@ -1,8 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, readOnly, type SessionDetail, type TaskUsageMetrics, type UsageMetricAgent, type UsageMetricModel, type UsageTokenDetail } from '../api';
 import { formatCredits } from '../lib/cost';
+import { Note } from './common';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { PanelSection } from './ui/panel';
 import { HelpTip } from './ui/tooltip';
 
@@ -100,10 +102,65 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
   </>;
 }
 
-/** The Tools panel's Usage tab: the recorded Task report, then the native metrics where the provider reads them. Mounted only while shown. */
+/** A limit field's number: empty is no limit (0); anything else must be a finite number of at least 0. */
+function limit(text: string): number {
+  return text.trim() === '' ? 0 : Number(text);
+}
+
+/**
+ * The Thread's budget, set or changed while it runs: AI units it may still spend, and how much of the account quota
+ * may be used. uam stops the Thread at either; it stays stopped until the budget changes.
+ */
+function Budget({ session }: Readonly<{ session: SessionDetail }>) {
+  const api = useApi();
+  const id = useId();
+  const b = session.budget;
+  const [credits, setCredits] = useState(b?.credits ? String(b.credits) : '');
+  const [quota, setQuota] = useState(b?.quota_percent ? String(b.quota_percent) : '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const save = (budget: { credits: number; quota_percent: number }) => {
+    setSaving(true);
+    api.settings(session.id, { budget }).then(() => setError(''), (e: unknown) => setError(describeError(e))).finally(() => setSaving(false));
+  };
+  const parsed = { credits: limit(credits), quota_percent: limit(quota) };
+  const invalid = !(parsed.credits >= 0) || !(parsed.quota_percent >= 0 && parsed.quota_percent <= 100);
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!invalid && !saving) save(parsed);
+  };
+  const rows: [string, string][] = [];
+  if (b?.credits) rows.push(['Spent since set', `${formatCredits(b.spent)} of ${units(b.credits)}`]);
+  if (b?.quota_percent) rows.push(['Account quota used', `${b.quota_used === undefined ? 'Not read yet' : `${formatCredits(b.quota_used)}%`} · limit ${b.quota_percent}%`]);
+  return <PanelSection label="Budget">
+    {rows.length > 0 && <Counts rows={rows} />}
+    {b?.reached && <Note tone="warn" role="status" className="mt-2">Budget reached: uam stopped this Thread. Raise or remove the budget to send more.</Note>}
+    <form className="mt-2 flex flex-col gap-2" onSubmit={onSubmit}>
+      {/* One grid, so both fields line up whatever their labels' widths. */}
+      <div className="grid grid-cols-[auto_6rem_1fr] items-center gap-x-2 gap-y-2 text-ui text-body">
+        <label htmlFor={`${id}-credits`}>Stop after</label>
+        <Input id={`${id}-credits`} size="md" inputMode="decimal" className="tabular-nums" placeholder="No limit" value={credits} aria-invalid={!(parsed.credits >= 0)} onChange={(e) => setCredits(e.target.value)} />
+        <span className="min-w-0">more AI units</span>
+        <label htmlFor={`${id}-quota`}>Stop at</label>
+        <Input id={`${id}-quota`} size="md" inputMode="decimal" className="tabular-nums" placeholder="No limit" value={quota} aria-invalid={!(parsed.quota_percent >= 0 && parsed.quota_percent <= 100)} onChange={(e) => setQuota(e.target.value)} />
+        <span className="min-w-0">% account quota used</span>
+      </div>
+      <p className="text-caption text-muted">Near the limit the agent is told to wrap up; at it, uam stops the turn. Changing the budget counts AI units from then.</p>
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" variant="primary" disabled={saving || invalid || (parsed.credits === 0 && parsed.quota_percent === 0)}>Set budget</Button>
+        {b && <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={() => { setCredits(''); setQuota(''); save({ credits: 0, quota_percent: 0 }); }}>Remove</Button>}
+      </div>
+      {error && <Note tone="error" role="alert">{error}</Note>}
+    </form>
+  </PanelSection>;
+}
+
+/** The Tools panel's Usage tab: the recorded Task report, the budget, then the native metrics where the provider reads them. Mounted only while shown. */
 export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
+  const api = useApi();
   return <>
     <PanelSection label="Recorded Thread report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI units not reported yet'}</p></PanelSection>
+    {session.id && !readOnly(session) && api.supports('thread-budget-v1') && <Budget session={session} />}
     {session.capabilities.usage_metrics && <Metrics session={session} />}
   </>;
 }

@@ -46,7 +46,7 @@ type federationPairResponse struct {
 }
 
 func (s *Server) federationDescriptor() federationDescriptor {
-	capabilities := append(slices.Clone(federationCoreCapabilities), "files-v1", "terminal-v1", "configuration-v1", "provider-accounts-v1", "routines-v1", "usage-v1", "project-location-v1", "unarchive-v1", "gitlab-status-v1", "gitlab-pipelines-v1", "gitlab-reviews-v1", "worktrees-v1", "gitlab-mr-prompt-v1", "gitlab-items-v1", "worktree-folder-v1", "branch-switch-v1", "session-stats-v1")
+	capabilities := append(slices.Clone(federationCoreCapabilities), "files-v1", "terminal-v1", "configuration-v1", "provider-accounts-v1", "routines-v1", "usage-v1", "project-location-v1", "unarchive-v1", "gitlab-status-v1", "gitlab-pipelines-v1", "gitlab-reviews-v1", "worktrees-v1", "gitlab-mr-prompt-v1", "gitlab-items-v1", "worktree-folder-v1", "branch-switch-v1", "session-stats-v1", "thread-budget-v1")
 	if s.notices != nil {
 		capabilities = append(capabilities, "notices-v1")
 	}

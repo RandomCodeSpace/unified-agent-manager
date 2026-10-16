@@ -754,6 +754,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   fails. The input-cost estimate beside it excludes output; the model menu
   shows the same estimate for each model. No estimate appears without prices
   or reported context.
+- **Budget**: Tools → Usage sets a Thread's budget, also while it runs: stop
+  after N more AI units (counted from when it is set), stop once the account
+  quota reaches a percentage used (the highest of the provider's limited
+  quotas), or both. `PATCH /api/sessions/{id}` with `{"budget":
+  {"credits", "quota_percent"}}` sets it, zeros remove it; setting it again
+  counts AI units afresh. The summary's `budget` carries `credits`, `spent`,
+  `quota_percent`, `quota_used` and `reached`, and is saved with the Thread.
+  Near the limit (80% of the units, or 5 points short of the quota limit)
+  the agent's next tool call carries a note to wrap up. At the limit uam
+  stops the turn (`stop_reason` `budget`), denies further tool calls, keeps
+  the queue waiting and refuses sends with 409 `budget_reached` until the
+  budget changes. AI units arrive after each model call, so a turn can pass
+  the limit by one call; the quota is read at most once a minute and counts
+  every client of the account. The agent reads it with `uam` `sense`.
+  Connected instances advertise `thread-budget-v1`.
 - **Session stats**: Settings → Session stats counts every Copilot session
   journal under `COPILOT_HOME/session-state` (sessions, prompts, turns,
   tools, failures, stops, errors and permission outcomes; never their text),

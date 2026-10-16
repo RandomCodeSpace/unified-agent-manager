@@ -277,6 +277,9 @@ type SessionSummary struct {
 	// subagents together, once the provider reports them; it is not
 	// persisted and after a restart comes back only from provider history.
 	Usage *agentapi.Usage `json:"usage,omitempty"`
+	// Budget is the Thread's spending limit and how much of it is used;
+	// omitted without one.
+	Budget *BudgetView `json:"budget,omitempty"`
 	// Title is the provider-generated title. Name may be empty; browsers
 	// display name || title || "New task".
 	Title string `json:"title"`
@@ -365,7 +368,7 @@ type SessionSummary struct {
 	CompactThreshold int `json:"compact_threshold,omitempty"`
 	// StopReason says why the last turn was cancelled, while the Task is:
 	// owner (Stop), time_limit (a routine's), credit_limit (autopilot's),
-	// remote (a remote command) or mcp (an MCP server). Omitted otherwise,
+	// budget (the Thread's), remote (a remote command) or mcp (an MCP server). Omitted otherwise,
 	// also when the provider gave no reason.
 	StopReason string `json:"stop_reason,omitempty"`
 }
