@@ -176,6 +176,18 @@ func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSu
 	return m.summaryLocked(s), nil
 }
 
+// creditText writes AI units as the web UI does (formatCredits): "<0.01"
+// for a tiny non-zero amount, two decimals below 1, one below 10.
 func creditText(v float64) string {
-	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
+	switch {
+	case v == 0:
+		return "0"
+	case v < 0.005:
+		return "<0.01"
+	case v < 1:
+		return strconv.FormatFloat(v, 'f', 2, 64)
+	case v < 10:
+		return strconv.FormatFloat(v, 'f', 1, 64)
+	}
+	return strconv.FormatFloat(math.Round(v), 'f', 0, 64)
 }

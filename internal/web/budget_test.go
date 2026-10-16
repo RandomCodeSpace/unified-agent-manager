@@ -54,7 +54,7 @@ func TestBudgetCreditsOnARunningThreadStopsItAndHoldsUntilChanged(t *testing.T) 
 		t.Fatalf("tool after budget = %+v", v)
 	}
 	conv.EmitTurn(agentapi.TurnCancelled, "")
-	if got := detail(t, m, sum.ID); got.StopReason != stopBudget || !strings.Contains(got.StateDetail, "2.1 of 2 AI units") {
+	if got := detail(t, m, sum.ID); got.StopReason != stopBudget || !strings.Contains(got.StateDetail, "2.1 of 2.0 AI units") {
 		t.Fatalf("stop = %q %q", got.StopReason, got.StateDetail)
 	}
 	_, err = m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend})
@@ -101,5 +101,13 @@ func TestBudgetQuotaPercentStopsAfterAQuotaRead(t *testing.T) {
 	waitUntil(t, "the quota budget stop", func() bool { return conv.Cancels() == 1 })
 	if d := detail(t, m, sum.ID); d.Budget == nil || !d.Budget.Reached || !strings.Contains(d.StateDetail+budgetSession(t, m, sum.ID).stopReason, "account quota 84% used") {
 		t.Fatalf("budget = %+v, detail %q", d.Budget, d.StateDetail)
+	}
+}
+
+func TestBudgetCreditTextMatchesTheWebUI(t *testing.T) {
+	for v, want := range map[float64]string{0: "0", 0.0001: "<0.01", 0.0196: "0.02", 2: "2.0", 2.14: "2.1", 84: "84", 1234.6: "1235"} {
+		if got := creditText(v); got != want {
+			t.Errorf("creditText(%v) = %q, want %q", v, got, want)
+		}
 	}
 }
