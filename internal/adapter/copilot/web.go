@@ -93,6 +93,8 @@ type sdkClient interface {
 // sdkSession is the part of a Copilot SDK session the web provider drives.
 type sdkSession interface {
 	ID() string
+	// WorkspacePath is the session's folder in the CLI's session state.
+	WorkspacePath() string
 	// Send submits a message and returns the message ID the CLI assigned to
 	// it.
 	Send(ctx context.Context, msg copilot.MessageOptions) (string, error)
@@ -229,6 +231,7 @@ func (a sdkClientAdapter) CheckInUse(ctx context.Context, ids []string) ([]strin
 type sdkSessionAdapter struct{ s *copilot.Session }
 
 func (a sdkSessionAdapter) ID() string                      { return a.s.SessionID }
+func (a sdkSessionAdapter) WorkspacePath() string           { return a.s.WorkspacePath() }
 func (a sdkSessionAdapter) Abort(ctx context.Context) error { return a.s.Abort(ctx) }
 func (a sdkSessionAdapter) Disconnect() error               { return a.s.Disconnect() }
 func (a sdkSessionAdapter) Events(ctx context.Context) ([]copilot.SessionEvent, error) {
@@ -1064,7 +1067,9 @@ When you ask the owner a question with ask_user, pass each answer option as its 
 
 Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.
 
-For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes.`
+For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes.
+
+Narrow broad shell output with grep, head or tail, or a command's own filters, before it reaches you. Output over 8 KB is saved to a file and you get a preview and the file's path; read that file in parts rather than all at once.`
 
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
@@ -1143,6 +1148,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			SkillDirectories:      req.SkillDirectories,
 			DisabledMCPServers:    disabled,
 			InfiniteSessions:      compaction,
+			LargeOutput:           largeOutput(),
 		})
 	} else {
 		p.awaitDetach(ctx, req.ConversationID)
@@ -1173,6 +1179,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			SkillDirectories:      req.SkillDirectories,
 			DisabledMCPServers:    disabled,
 			InfiniteSessions:      compaction,
+			LargeOutput:           largeOutput(),
 		})
 	}
 	if err != nil {
