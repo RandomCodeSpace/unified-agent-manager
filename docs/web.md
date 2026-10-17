@@ -1227,15 +1227,6 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     Editing a recalled prompt makes it the new draft. Only the text changes;
     picked files and uploads stay. When a `/`, `$` or `@` list is open, Up
     and Down move through the list instead.
-  - **Spelling and grammar**: the composer checks English spelling and
-    grammar as you type, in a worker on this device (Harper); the draft is
-    not sent anywhere for it. Each issue gets a wavy underline (red for
-    spelling, blue for grammar). Click one, or the **Spelling and
-    grammar** button (its dot means there are suggestions), to see the
-    suggestion with **Apply** and **Keep original**, and step through the
-    rest. Drafts over 12,000 characters
-    are not checked. If the checker cannot load, you can still type and
-    send.
   Prompt requests accept optional `settings: {model, effort, context_size}`;
   omitted settings snapshot the current Thread selection. The service validates
   them again before dispatch. Unsupported selections return 400; different
