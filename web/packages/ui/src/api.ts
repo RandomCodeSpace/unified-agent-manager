@@ -1084,8 +1084,32 @@ export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omi
 /** A turn's todo list as uam kept it when the turn ended: the rows it changed and those still open, at most 50 (`counts.omitted` past them), each with the name its subagent had then. */
 export interface TurnTodos { timing_id: string; ended_at: string; intent?: string; todos: (Todo & { agent?: string })[]; counts: TodoCounts }
 
-/** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, and the todo list; never persisted. */
-export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView }
+/** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, the todo list and the phase; never persisted. */
+export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView; phase?: Phase }
+
+/**
+ * What the running turn waits on now, from Copilot's events: the owner (`waiting`, a request is pending), the model
+ * (`model`, a call in flight, the main agent's or a subagent's) or a tool running with no model call (`local`), the
+ * first that holds; absent when none does. `since` is when the request, the oldest call or the tool started;
+ * `detail` is the local tool's short argument or what the owner is asked ("approve bash", "answer question",
+ * "review plan"); `calls` counts the model calls in flight in any phase, `subagents` how many are subagents'.
+ */
+export interface Phase {
+  kind: 'model' | 'local' | 'waiting';
+  since: string;
+  model?: string;
+  tool?: string;
+  detail?: string;
+  calls?: number;
+  subagents?: number;
+}
+
+/**
+ * The snapshot's and the `model_calls` frame's counts across this service's Threads: those whose main agent has a
+ * model call in flight, the subagent calls in flight, the Background AI calls in flight, and the Threads running a
+ * tool with no model call; live only.
+ */
+export interface ModelCalls { threads: number; subagents: number; background: number; local: number }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {
@@ -1566,6 +1590,8 @@ export interface SnapshotData extends Representation {
   settings?: Settings;
   /** Absent from a service older than usage (#188). */
   usage?: AccountUsage;
+  /** Absent from a service older than model call counts. */
+  model_calls?: ModelCalls;
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }
@@ -1579,6 +1605,7 @@ export type UpdateData =
   | { name: 'project_removed'; seq: number; project_id: string }
   | { name: 'settings'; seq: number; settings: Settings }
   | { name: 'usage'; seq: number; usage: AccountUsage }
+  | { name: 'model_calls'; seq: number; model_calls: ModelCalls }
   | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string; append?: boolean }
   | { name: 'tool_output'; seq: number; session_id: string; item_id: string; text: string; agent_id?: string }
   | { name: 'items_trimmed'; seq: number; session_id: string; items: { id: string; agent_id?: string }[] }
@@ -1610,6 +1637,7 @@ export const UPDATE_EVENTS = [
   'project_removed',
   'settings',
   'usage',
+  'model_calls',
   'item',
   'delta',
   'tool_output',

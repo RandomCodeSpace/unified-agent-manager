@@ -74,12 +74,15 @@ func (m *Manager) turnActivityTurnLocked(s *webSession, state agentapi.TurnState
 		}
 		s.todoBase, todos.Touched = todos, false
 		s.turnIntent = ""
+	} else {
+		s.workPhase = nil
 	}
 	m.setTurnActivityLocked(s, TurnActivity{Todos: todos})
 }
 
 // applyActivityLocked takes the adapter's activity of the running turn. It
-// is published, never persisted: an intent or a retry writes nothing.
+// is published, never persisted: an intent, a retry or a phase writes
+// nothing.
 func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	next := TurnActivity{Plan: a.Plan && s.activeTiming >= 0, Intent: clipRunes(strings.TrimSpace(displaytext.Sanitize(a.Intent)), maxIntentRunes), Todos: s.turnActivity.Todos}
 	if a.Retry != nil {
@@ -89,14 +92,19 @@ func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	if next.Intent != "" {
 		s.turnIntent = next.Intent
 	}
+	s.workPhase = a.Phase
+	next.Phase = m.phaseLocked(s)
 	m.setTurnActivityLocked(s, next)
 }
 
 func (m *Manager) setTurnActivityLocked(s *webSession, a TurnActivity) {
 	cur := s.turnActivity
 	sameRetry := a.Retry == cur.Retry || a.Retry != nil && cur.Retry != nil && *a.Retry == *cur.Retry
-	if a.Plan == cur.Plan && a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) {
+	if a.Plan == cur.Plan && a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) && samePhase(a.Phase, cur.Phase) {
 		return
+	}
+	if !samePhase(a.Phase, cur.Phase) {
+		m.kickModelCallsLocked()
 	}
 	s.turnActivity = a
 	m.broadcastLocked("turn_activity", s.id, func(seq uint64) any {

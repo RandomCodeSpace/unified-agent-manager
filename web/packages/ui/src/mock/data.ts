@@ -327,7 +327,8 @@ export function seed(): MockState {
       background_tasks_running: 1,
       capabilities: { ...CAPS, execution_modes: true, assisted_permissions: true },
       execution: { known: true, mode: 'interactive' },
-      turn_activity: { intent: 'Running the redraw tests', todos: { known: false, touched: false, todos: [], counts: {} } },
+      // No model call in flight: the tests run locally.
+      turn_activity: { intent: 'Running the redraw tests', todos: { known: false, touched: false, todos: [], counts: {} }, phase: { kind: 'local', since: ago(0.7), tool: 'bash', detail: 'go test ./internal/vterm/... -run Redraw -count=1' } },
       background_tasks: {
         known: true,
         tasks: [
@@ -536,6 +537,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       pending: 1,
       created_at: ago(7),
       updated_at: ago(3),
+      turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} }, phase: { kind: 'waiting', since: ago(3), detail: 'approve bash' } },
       items: [
         { id: 'i1', kind: 'user', time: ago(7), text: 'Startup takes 800ms. Find what is slow and move the aliases into their own file.' },
         tool('i2', 6, { name: 'bash', title: 'zsh -xv -i -c exit 2>&1 | head -200', status: 'completed', output: '… compinit: 412ms\n… nvm.sh: 290ms' }),
@@ -575,7 +577,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'working',
       subagents_running: 2,
       // The agents' todo list in all four stages: two subagents' rows in progress, one blocked, one to do.
+      // The main agent and one subagent wait on the model.
       turn_activity: {
+        phase: { kind: 'model', since: ago(0.25), model: 'claude-haiku-4.5', calls: 2, subagents: 1 },
         todos: {
           known: true,
           touched: true,

@@ -858,7 +858,7 @@ func TestWebToolEventsUpsertOneItem(t *testing.T) {
 	h.fs.onEvent(ev("e4", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "done"}}))
 	h.fs.onEvent(ev("e5", &rpc.ToolExecutionStartData{ToolCallID: "t2", ToolName: "view"}))
 	h.fs.onEvent(ev("e6", &rpc.ToolExecutionCompleteData{ToolCallID: "t2", Error: &rpc.ToolExecutionCompleteError{Message: "no such file"}}))
-	evs := h.sink.all()
+	evs := notActivity(h.sink.all())
 	if len(evs) != 6 {
 		t.Fatalf("events = %d", len(evs))
 	}
@@ -1090,7 +1090,7 @@ func TestWebPermissionNamesItsToolCall(t *testing.T) {
 			t.Errorf("%s: ToolCallID = %q, want %q", c.name, got, c.want)
 		}
 	}
-	tool := h.sink.all()[0].Item
+	tool := notActivity(h.sink.all())[0].Item
 	if tool == nil || tool.Kind != agentapi.ItemTool || tool.ID != h.sink.interaction("shell").ToolCallID {
 		t.Fatalf("tool item %+v does not match the shell request's tool call", tool)
 	}
@@ -1948,7 +1948,7 @@ func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
 	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "moved to background"}}))
 	h.fs.onEvent(ev("e3", &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: 7, Text: "first-done\n"}))
-	evs := h.sink.all()
+	evs := notActivity(h.sink.all())
 	if last := evs[len(evs)-1].Item; len(evs) != 2 || last.Tool.Name != "bash" || last.Tool.Status != agentapi.ToolCompleted {
 		t.Fatalf("events = %d, last tool %+v", len(evs), last.Tool)
 	}
@@ -2370,7 +2370,7 @@ func TestWebToolImagesFromALiveResult(t *testing.T) {
 	}}))
 	// A failed call has no result and no images.
 	h.fs.onEvent(ev("e4", &rpc.ToolExecutionCompleteData{ToolCallID: "t3", Error: &rpc.ToolExecutionCompleteError{Message: "no display"}}))
-	evs := h.sink.all()
+	evs := notActivity(h.sink.all())
 	if len(evs) != 4 {
 		t.Fatalf("events = %d", len(evs))
 	}

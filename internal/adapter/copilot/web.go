@@ -2069,6 +2069,8 @@ type conversation struct {
 	turnModel string
 	// act is the running turn's live activity (activity.go).
 	act activity
+	// phase is the running turn's model calls and tools in flight (phase.go).
+	phase phaseState
 	// todos is the todo list and its reads (todos.go).
 	todos todoReads
 	// byom is what the session has of the custom models.
@@ -3523,6 +3525,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.noteModelWaitLocked(ev)
 	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
+	c.observePhaseLocked(ev, agentID)
 	if c.observeActivityLocked(ev, agentID) {
 		return
 	}
@@ -3889,6 +3892,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
+	c.phase = phaseState{}
 	c.endStallLocked()
 	c.undeliveredLocked(turn.State, at)
 	c.emitTurnEndLocked(turn)

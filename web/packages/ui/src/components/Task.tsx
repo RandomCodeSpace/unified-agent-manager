@@ -29,6 +29,7 @@ import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
+import { PhasePill } from './ModelPhase';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
@@ -1175,6 +1176,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             )}
             <PlaceFoot session={session} project={project} />
+            <PhasePill phase={session.turn_activity?.phase} provider={session.provider} />
             <TimeSplitSummary session={session} />
           </ComposerFoot>
         </div>
@@ -1196,7 +1198,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   );
 }
 
-/** The strip under the composer: where the Thread runs (PlacePicker). */
+/** The strip under the composer: where the Thread runs (PlacePicker), then what its turn waits on now (ModelPhase). */
 function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
   return <div className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
 }

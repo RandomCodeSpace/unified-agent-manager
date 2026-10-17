@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, DEFAULT_MR_PROMPT, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, DEFAULT_MR_PROMPT, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type ModelCalls, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
 import { worktreesMock } from './worktrees';
@@ -166,6 +166,13 @@ export function install(): { received: Received[] } {
     const older = t.recordSubagents?.length && t.subagents.length ? { subagents_before: `a.${itemCursor(t.subagents[0].id)}` } : {};
     return { ...rest, ...older, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
   };
+  // The service's counts across the Threads, from their phases as the service derives them; no Background AI call runs.
+  const modelCalls = (): ModelCalls => st.tasks.reduce((c, t) => {
+    const p = t.turn_activity?.phase;
+    if (!p) return c;
+    const calls = p.calls ?? 0, subagents = p.subagents ?? 0;
+    return { ...c, threads: c.threads + (calls > subagents ? 1 : 0), subagents: c.subagents + subagents, local: c.local + (p.kind === 'local' ? 1 : 0) };
+  }, { threads: 0, subagents: 0, background: 0, local: 0 });
   /**
    * One history page the way the service pages: the `held` newest items come from memory; older
    * ones from Copilot's record, as pages marked `archive` whose cursors survive a restart. Neither
@@ -447,7 +454,7 @@ export function install(): { received: Received[] } {
         }
         return () => sources.delete(src);
       }
-      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, model_calls: modelCalls(), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) later(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {

@@ -8,6 +8,7 @@ import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
+import { ModelCallsContext } from './components/ModelPhase';
 import { Login } from './components/Login';
 import { Home } from './components/Home';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
@@ -1462,6 +1463,7 @@ export default function App() {
 
   return (
     <AppContext.Provider value={ctx}>
+      <ModelCallsContext.Provider value={state.modelCalls}>
       <TaskList.Provider value={taskList}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
@@ -1638,6 +1640,7 @@ export default function App() {
         </TooltipProvider>
       </TaskActionsContext.Provider>
       </TaskList.Provider>
+      </ModelCallsContext.Provider>
     </AppContext.Provider>
   );
 }
