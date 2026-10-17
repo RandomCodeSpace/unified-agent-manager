@@ -146,6 +146,19 @@ func compactionDone(s float64, used string) string {
 func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 	got := readSplit(t,
 		compactionStart(0),
+		toolStart(17, "", "c1", "bash"),
+		toolDone(19, "", "c1"), // inside the compaction's call
+		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
+	)
+	// A CLI that records no model calls has no model time: the compactions
+	// alone would understate it. Their time still is not local time.
+	if got.ModelMS != nil || got.ModelCalls != 0 || got.LocalMS != 0 || got.LocalRuns != 1 {
+		t.Fatalf("without usage records: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
+	}
+	got = readSplit(t,
+		splitLine(0, "session.start", "", `{}`),
+		modelCall(50, "", 1000), // [49,50]
+		compactionStart(0),
 		toolStart(1, "", "c1", "bash"),
 		toolDone(3, "", "c1"),
 		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
@@ -154,8 +167,8 @@ func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 		compactionStart(40),
 		compactionDone(40.5, ""), // nothing to compact: no model call
 	)
-	if got.ModelMS == nil || *got.ModelMS != 10000 || got.ModelCalls != 2 || got.LocalMS != 2000 {
-		t.Fatalf("without usage records: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
+	if got.ModelMS == nil || *got.ModelMS != 11000 || got.ModelCalls != 3 || got.LocalMS != 2000 {
+		t.Fatalf("with a usage record: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
 	}
 	// With the turns' own calls: overlapping time counts once.
 	got = readSplit(t,

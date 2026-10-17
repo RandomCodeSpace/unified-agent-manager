@@ -29,15 +29,17 @@ const timeSplitCacheSize = 256
 // call was running (main agent and subagents; parallel calls counted once),
 // each call spanning its duration up to its record. Compaction counts as a
 // model call: session.usage_record never records it, so its time comes from
-// its session.compaction_complete. Local time is the wall
+// its session.compaction_complete; a journal without usage records has no
+// model time, compactions or not. Local time is the wall
 // time tools ran, parallel runs counted once, without the time spent waiting
 // on the owner and without time a model call was running. Waiting time is
 // reported apart and is in neither. Tools that only wrap subagents are left
 // out: their model calls already count.
 type TimeSplit struct {
 	// ModelMS is nil when the journal records no model call durations (CLIs
-	// before session.usage_record) and no compaction. ModelCalls counts the
-	// compactions too.
+	// before session.usage_record), compactions or not: their time alone
+	// would understate it. ModelCalls counts the compactions too, when
+	// ModelMS is set.
 	ModelMS    *int64 `json:"model_ms"`
 	ModelCalls int    `json:"model_calls"`
 	LocalMS    int64  `json:"local_ms"`
@@ -174,6 +176,7 @@ type splitFold struct {
 	model, waits []span
 	runs         []toolRun
 	modelCalls   int
+	compactions  int // compactions that called a model
 	waitCount    int
 	recorded     bool
 	open         map[[2]string]toolRun // running tools by agent and call
@@ -241,8 +244,7 @@ func (f *splitFold) add(e *splitEvent) {
 		if d.CompactionTokensUsed == nil && d.StatusCode == nil {
 			break
 		}
-		f.recorded = true
-		f.modelCalls++
+		f.compactions++
 		if u := d.CompactionTokensUsed; u != nil && u.Duration != nil && *u.Duration >= 0 {
 			from = at - int64(*u.Duration)
 		}
@@ -304,10 +306,11 @@ func (f *splitFold) wait(from, to int64) {
 
 func (f *splitFold) split() TimeSplit {
 	out := TimeSplit{ModelCalls: f.modelCalls, LocalRuns: len(f.runs), Waits: f.waitCount, Tools: []TimeSplitTool{}}
+	// Compaction time is model time, out of local time, recorded or not.
 	model, waits := spanUnion(f.model), spanUnion(f.waits)
 	if f.recorded {
 		total := spanLength(model)
-		out.ModelMS = &total
+		out.ModelMS, out.ModelCalls = &total, out.ModelCalls+f.compactions
 	}
 	out.WaitingMS = spanLength(waits)
 	all := make([]span, 0, len(f.runs))

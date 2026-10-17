@@ -60,7 +60,7 @@ func (c *conversation) observePhaseLocked(ev copilot.SessionEvent, agentID strin
 	changed := false
 	switch d := ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
-		if _, ok := p.calls[agentID]; !ok {
+		if _, ok := p.calls[agentID]; !ok && c.phaseAgentLocked(agentID, ev.Timestamp, true) {
 			p.calls[agentID] = phaseCall{at: at, model: c.callModelLocked(agentID, d.Model), agent: c.agentLabelLocked(agentID)}
 			changed = true
 		}
@@ -89,7 +89,7 @@ func (c *conversation) observePhaseLocked(ev copilot.SessionEvent, agentID strin
 		}
 	case *rpc.ToolExecutionStartData:
 		changed = p.endCall(agentID)
-		if d.ToolName != taskTool {
+		if d.ToolName != taskTool && c.phaseAgentLocked(agentID, ev.Timestamp, false) {
 			// The short argument from the whole arguments, as the transcript
 			// picks it: a cut JSON prefix would not parse.
 			arg, _ := toolargs.Compact(d.ToolName, compactJSON(d.Arguments))
@@ -150,7 +150,7 @@ func (c *conversation) settlePhaseLocked(tasks []rpc.TaskInfo) {
 		if id == "" || t == nil || t.Status == rpc.TaskStatusRunning {
 			continue
 		}
-		if ended := cmp.Or(t.CompletedAt, t.IdleSince); ended != nil && !ended.Before(since) {
+		if ended := taskEndedAt(t); ended != nil && !ended.Before(since) {
 			changed = c.phase.endAgent(id) || changed
 		}
 	}
@@ -159,11 +159,39 @@ func (c *conversation) settlePhaseLocked(tasks []rpc.TaskInfo) {
 	}
 }
 
+// taskEndedAt is when a task-list entry ended, as applyTasksLocked reads
+// it: an idle entry's IdleSince, else its CompletedAt; nil when unknown.
+func taskEndedAt(t *rpc.TaskAgentInfo) *time.Time {
+	if t.IdleSince != nil && t.Status == rpc.TaskStatusIdle {
+		return t.IdleSince
+	}
+	return t.CompletedAt
+}
+
 func laterOf(a, b time.Time) time.Time {
 	if b.After(a) {
 		return b
 	}
 	return a
+}
+
+// phaseAgentLocked reports whether an event of agentID at at may start a
+// model call or a tool: the main agent's, a subagent's uam does not know or
+// one running, or a turn start that resumes a finished or idle one, as
+// resumeSubagentLocked takes it. The trailing events of a stopped, failed,
+// cancelled or settled subagent start nothing.
+func (c *conversation) phaseAgentLocked(agentID string, at time.Time, turnStart bool) bool {
+	if agentID == "" {
+		return true
+	}
+	sa := c.subs.byID[agentID]
+	switch {
+	case c.stoppedSubagents[agentID]:
+		return false
+	case sa == nil || sa.Status == agentapi.SubagentRunning:
+		return true
+	}
+	return turnStart && (sa.Status == agentapi.SubagentCompleted || sa.Status == agentapi.SubagentIdle) && at.After(sa.EndedAt)
 }
 
 // subagentRunsLocked reports whether agentID is a subagent still running.

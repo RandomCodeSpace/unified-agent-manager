@@ -830,9 +830,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `compactionTokensUsed.duration` up to its timestamp, or from its
   `session.compaction_start` without one, and one with nothing to compact
   adds nothing; `model_calls` counts both, and the tip says "compaction
-  included"); `model_ms` is null when neither is recorded,
-  as for a CLI that does not record model calls ("Model time not recorded for this
-  Thread's CLI version"; local time still shows). Local time is the wall time
+  included"); `model_ms` is null, and `model_calls` 0, for a CLI that
+  records no `session.usage_record`, compactions or not, since their time
+  alone would understate it ("Model time not recorded for this Thread's CLI
+  version"; local time still shows, without the compactions' time). Local time is the wall time
   tools ran (start to completion, parallel runs counted once), minus time
   waiting on you and minus time a model call was running. Waiting on you is
   permission requests, `ask_user` questions and elicitations; it is shown

@@ -224,10 +224,21 @@ func TestWebPhaseSubagentOutlivesTheTurn(t *testing.T) {
 	if p := lastPhase(t, h); p == nil || p.Calls != 1 || p.Subagents != 1 {
 		t.Fatalf("after the next turn = %+v", p)
 	}
-	// Its end ends it: nothing is left.
+	// Its end ends it: nothing is left, and a trailing turn start or tool
+	// no later than its end starts nothing.
 	h.fs.onEvent(phaseEv("bd", "bg", 112, &rpc.SubagentCompletedData{ToolCallID: "call-bg"}))
 	if p := lastPhase(t, h); p != nil {
 		t.Fatalf("after it completed = %+v", p)
+	}
+	h.fs.onEvent(phaseEv("b3", "bg", 112, &rpc.AssistantTurnStartData{TurnID: "2"}))
+	h.fs.onEvent(phaseEv("bt3", "bg", 113, &rpc.ToolExecutionStartData{ToolCallID: "c3", ToolName: "bash"}))
+	if p := lastPhase(t, h); p != nil {
+		t.Fatalf("after its trailing events = %+v", p)
+	}
+	// A later start is a follow-up that resumes it.
+	h.fs.onEvent(phaseEv("b4", "bg", 120, &rpc.AssistantTurnStartData{TurnID: "3"}))
+	if p := lastPhase(t, h); p == nil || p.Subagents != 1 || !p.CallsSince.Equal(time.Unix(120, 0)) {
+		t.Fatalf("a follow-up = %+v", p)
 	}
 }
 
@@ -279,6 +290,12 @@ func TestWebPhaseBetweenTurnsEndsWithTheSubagent(t *testing.T) {
 		if p := lastPhase(t, h); p != nil {
 			t.Fatalf("after it failed = %+v", p)
 		}
+		// Its trailing events start nothing.
+		h.fs.onEvent(phaseEv("b3", "bg", 107, &rpc.AssistantTurnStartData{TurnID: "2"}))
+		h.fs.onEvent(phaseEv("bt3", "bg", 107, &rpc.ToolExecutionStartData{ToolCallID: "c3", ToolName: "bash"}))
+		if p := lastPhase(t, h); p != nil {
+			t.Fatalf("after its trailing events = %+v", p)
+		}
 	})
 	t.Run("aborted", func(t *testing.T) {
 		h := between(t)
@@ -296,6 +313,11 @@ func TestWebPhaseBetweenTurnsEndsWithTheSubagent(t *testing.T) {
 		if p := lastPhase(t, h); p != nil {
 			t.Fatalf("after the stop = %+v", p)
 		}
+		h.fs.onEvent(phaseEv("b3", "bg", 107, &rpc.AssistantTurnStartData{TurnID: "2"}))
+		h.fs.onEvent(phaseEv("bt3", "bg", 107, &rpc.ToolExecutionStartData{ToolCallID: "c3", ToolName: "bash"}))
+		if p := lastPhase(t, h); p != nil {
+			t.Fatalf("after its trailing events = %+v", p)
+		}
 	})
 	t.Run("settled by the task list", func(t *testing.T) {
 		h := between(t)
@@ -312,6 +334,18 @@ func TestWebPhaseBetweenTurnsEndsWithTheSubagent(t *testing.T) {
 		settleTasks(t, h, reads+2)
 		if p := lastPhase(t, h); p != nil {
 			t.Fatalf("after the list settled it = %+v", p)
+		}
+	})
+	t.Run("settled idle by the task list", func(t *testing.T) {
+		h := between(t)
+		reads := h.fs.lists()
+		// An idle entry ended when it went idle, whatever run completed
+		// before, as applyTasksLocked reads it.
+		h.fs.setTasks(&rpc.TaskAgentInfo{ID: "bg", Status: rpc.TaskStatusIdle, CompletedAt: option(time.Unix(104, 0)), IdleSince: option(time.Unix(106, 0))})
+		h.fs.onEvent(ev("tc1", &rpc.SessionBackgroundTasksChangedData{}))
+		settleTasks(t, h, reads+1)
+		if p := lastPhase(t, h); p != nil {
+			t.Fatalf("after the list showed it idle = %+v", p)
 		}
 	})
 }
