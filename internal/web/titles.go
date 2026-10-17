@@ -425,6 +425,10 @@ var (
 	titleTagRE    = regexp.MustCompile(`(?is)<(title|session-title)>(.*?)</(?:title|session-title)>`)
 	titlePrefixRE = regexp.MustCompile(`(?i)^title\s*:\s*`)
 	spacesRE      = regexp.MustCompile(`\s+`)
+	// Inline Markdown: a link keeps its text; strong emphasis, code marks
+	// and a leading heading mark go.
+	mdLinkRE = regexp.MustCompile(`\[([^\]]*)\]\([^)\s]*\)`)
+	mdMarkRE = regexp.MustCompile("\\*\\*|`|^#{1,6}\\s+")
 )
 
 // titleWrappers are the pairs stripped from both ends of a title.
@@ -432,9 +436,9 @@ var titleWrappers = [][2]string{{`"`, `"`}, {`'`, `'`}, {"`", "`"}, {"*", "*"}, 
 
 // cleanGeneratedTitle turns a model's reply into a title: without reasoning
 // blocks, the content of a title element when there is one, its first line,
-// sanitized, without a "Title:" label, wrapping quotes or emphasis, or
-// trailing punctuation, and cut to maxTitleRunes at a word boundary. It
-// returns "" when nothing is left.
+// sanitized, without inline Markdown, a "Title:" label, wrapping quotes or
+// emphasis, or trailing punctuation, and cut to maxTitleRunes at a word
+// boundary. It returns "" when nothing is left.
 func cleanGeneratedTitle(reply string) string {
 	title := titleLine(reply)
 	if utf8.RuneCountInString(title) > maxTitleRunes {
@@ -487,6 +491,7 @@ func titleLine(reply string) string {
 		}
 	}
 	title := spacesRE.ReplaceAllString(displaytext.Sanitize(line), " ")
+	title = strings.TrimSpace(mdMarkRE.ReplaceAllString(mdLinkRE.ReplaceAllString(title, "$1"), ""))
 	for {
 		before := title
 		title = strings.TrimSpace(titlePrefixRE.ReplaceAllString(title, ""))
