@@ -109,10 +109,14 @@ func (p *webProvider) subagentModel(allowed []string, requested, task string) st
 
 // succeededToolUse observes completed calls, including subagent calls. The
 // provider result is deliberately not used as proof of filesystem changes.
+// Output the CLI saved to a file is kept with the session (keepSpill).
 func (c *conversation) succeededToolUse(in copilot.PostToolUseHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
 	if c.hooks.Succeeded != nil {
 		args, _ := in.ToolArgs.(map[string]any)
 		c.hooks.Succeeded(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)})
+	}
+	if result := c.keepSpill(in.ToolResult); result != nil {
+		return &copilot.PostToolUseHookOutput{ModifiedResult: result}, nil
 	}
 	return nil, nil
 }

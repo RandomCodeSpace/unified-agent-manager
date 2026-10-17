@@ -234,11 +234,12 @@ func (f *fakeClient) counts() (started, forced int) {
 }
 
 type fakeSession struct {
-	id      string
-	onEvent copilot.SessionEventHandler
-	askUser copilot.UserInputHandler
-	elicit  copilot.ElicitationHandler
-	perm    copilot.PermissionHandlerFunc
+	id        string
+	workspace string
+	onEvent   copilot.SessionEventHandler
+	askUser   copilot.UserInputHandler
+	elicit    copilot.ElicitationHandler
+	perm      copilot.PermissionHandlerFunc
 
 	mu        sync.Mutex
 	sent      []string
@@ -486,7 +487,8 @@ func (s *fakeSession) InvokeCommand(_ context.Context, name, input string) (rpc.
 	return s.invoke, s.invokeErr
 }
 
-func (s *fakeSession) ID() string { return s.id }
+func (s *fakeSession) ID() string            { return s.id }
+func (s *fakeSession) WorkspacePath() string { return s.workspace }
 func (s *fakeSession) Abort(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
