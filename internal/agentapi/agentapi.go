@@ -1107,10 +1107,11 @@ type Phase struct {
 	// oldest subagent call; CallsSince is when the oldest call started.
 	Model      string    `json:"model,omitempty"`
 	CallsSince time.Time `json:"calls_since,omitzero"`
-	// Tool names the oldest running tool call, "" when none runs; Input is
-	// its arguments as JSON, bounded; ToolSince is when it started.
+	// Tool names the oldest running tool call, "" when none runs; Detail is
+	// the short argument it is shown by (toolargs.Compact), bounded;
+	// ToolSince is when it started.
 	Tool      string    `json:"tool,omitempty"`
-	Input     string    `json:"input,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
 	ToolSince time.Time `json:"tool_since,omitzero"`
 }
 

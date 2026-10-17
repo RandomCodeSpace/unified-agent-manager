@@ -2839,7 +2839,9 @@ func (c *conversation) CancelSubagent(ctx context.Context, agentID string) error
 	}
 	c.stoppedSubagents[agentID] = true
 	c.expireSubagentLocked(agentID)
-	// A stopped follow-up may end without a subagent event.
+	// A stopped follow-up may end without a subagent event, and without the
+	// end of its model call.
+	c.endAgentPhaseLocked(agentID)
 	c.checkTasksLocked()
 	return nil
 }
@@ -3408,6 +3410,7 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 			c.expireSubagentLocked(id)
 		}
 		sa.Status = status
+		c.endAgentPhaseLocked(id)
 		if sa.EndedAt.IsZero() {
 			sa.EndedAt = time.Now()
 			if t.IdleSince != nil && t.Status == rpc.TaskStatusIdle {

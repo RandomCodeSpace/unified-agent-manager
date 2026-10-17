@@ -195,10 +195,9 @@ type Manager struct {
 	// latest read began.
 	quota       map[string]*quotaCache
 	quotaPolled time.Time
-	// utilityLive counts the Utility calls in flight; modelCallsSent is the
-	// last model_calls frame and modelCallsTimer its pending one (phase.go).
+	// utilityLive counts the Utility calls in flight; modelCallsTimer is the
+	// pending model_calls frame (phase.go).
 	utilityLive     int
-	modelCallsSent  ModelCalls
 	modelCallsTimer *time.Timer
 	// quotaKick asks the usage loop for a read; quotaTick is how often the
 	// loop checks for a due one (tests set it before Start).

@@ -30,8 +30,7 @@ func (m *Manager) phaseLocked(s *webSession) *Phase {
 		p.Kind, p.Since, p.Model = PhaseModel, w.CallsSince, phaseText(w.Model, maxNameRunes)
 	} else if w != nil && w.Tool != "" {
 		p.Kind, p.Since, p.Tool = PhaseLocal, w.ToolSince, phaseText(w.Tool, maxNameRunes)
-		arg, _ := compactArgument(&agentapi.ToolCall{Name: w.Tool, Input: w.Input})
-		p.Detail = phaseText(arg, maxIntentRunes)
+		p.Detail = phaseText(w.Detail, maxIntentRunes)
 	} else {
 		return nil
 	}
@@ -118,17 +117,28 @@ func (m *Manager) kickModelCallsLocked() {
 	}
 }
 
-// flushModelCalls sends the counts when they differ from the last frame's.
+// flushModelCalls sends the counts as they are now, even when they equal the
+// last frame's: a snapshot taken meanwhile may have carried others.
 func (m *Manager) flushModelCalls() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.modelCallsTimer = nil
 	next := m.modelCallsLocked()
-	if next == m.modelCallsSent {
-		return
-	}
-	m.modelCallsSent = next
 	m.broadcastLocked("model_calls", "", func(seq uint64) any { return modelCallsEvent{Seq: seq, ModelCalls: next} })
+}
+
+// countUtilityCall makes a Utility call through call, counted in flight
+// until it returns or panics.
+func (m *Manager) countUtilityCall(call func() (string, error)) (string, error) {
+	m.mu.Lock()
+	m.utilityCallLocked(1)
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.utilityCallLocked(-1)
+		m.mu.Unlock()
+	}()
+	return call()
 }
 
 // utilityCallLocked counts a Utility call starting (+1) or ending (-1).

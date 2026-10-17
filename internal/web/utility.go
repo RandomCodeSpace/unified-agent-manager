@@ -276,14 +276,8 @@ func (m *Manager) runUtilityChecked(ctx context.Context, call UtilityCall, promp
 		return "", pausedError(reason, limit)
 	}
 	var usage *agentapi.UtilityUsage
-	m.mu.Lock()
-	m.utilityCallLocked(1)
-	m.mu.Unlock()
 	start := time.Now()
-	reply, err := run(ctx, func(u agentapi.UtilityUsage) { usage = &u })
-	m.mu.Lock()
-	m.utilityCallLocked(-1)
-	m.mu.Unlock()
+	reply, err := m.countUtilityCall(func() (string, error) { return run(ctx, func(u agentapi.UtilityUsage) { usage = &u }) })
 	call.DurationMS = time.Since(start).Milliseconds()
 	call.PromptChars, call.ReplyChars = utf8.RuneCountInString(prompt), utf8.RuneCountInString(reply)
 	if usage != nil {

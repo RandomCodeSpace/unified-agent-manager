@@ -8,10 +8,11 @@ import (
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/toolargs"
 )
 
-// maxPhaseInput bounds a running tool's arguments on the phase, in bytes.
-const maxPhaseInput = 2048
+// maxPhaseDetailRunes bounds a running tool's short argument on the phase.
+const maxPhaseDetailRunes = 200
 
 // phaseState is the running turn's model calls in flight, by agent ID (""
 // for the main agent), and its running tool calls, by call ID. It follows
@@ -27,8 +28,8 @@ type phaseCall struct {
 }
 
 type phaseTool struct {
-	agentID, name, input string
-	at                   time.Time
+	agentID, name, detail string
+	at                    time.Time
 }
 
 // observePhaseLocked folds ev into the turn's phase and reports a change on
@@ -57,7 +58,10 @@ func (c *conversation) observePhaseLocked(ev copilot.SessionEvent, agentID strin
 	case *rpc.ToolExecutionStartData:
 		changed = p.endCall(agentID)
 		if d.ToolName != taskTool {
-			p.tools[d.ToolCallID] = phaseTool{agentID: agentID, name: d.ToolName, input: clip(compactJSON(d.Arguments), maxPhaseInput), at: at}
+			// The short argument from the whole arguments, as the transcript
+			// picks it: a cut JSON prefix would not parse.
+			arg, _ := toolargs.Compact(d.ToolName, compactJSON(d.Arguments))
+			p.tools[d.ToolCallID] = phaseTool{agentID: agentID, name: d.ToolName, detail: clipRuneCount(arg, maxPhaseDetailRunes), at: at}
 			changed = true
 		}
 	case *rpc.ToolExecutionCompleteData:
@@ -69,6 +73,14 @@ func (c *conversation) observePhaseLocked(ev copilot.SessionEvent, agentID strin
 		changed = p.endAgent(c.subagentOf(agentID, d.ToolCallID))
 	}
 	if changed {
+		c.emitPhaseLocked()
+	}
+}
+
+// endAgentPhaseLocked ends a subagent's model call and running tools that
+// ended without its events: one uam stopped, or one the task list settled.
+func (c *conversation) endAgentPhaseLocked(agentID string) {
+	if c.phase.endAgent(agentID) {
 		c.emitPhaseLocked()
 	}
 }
@@ -146,12 +158,12 @@ func (p *phaseState) snapshot() *agentapi.Phase {
 	} else if out.Calls > 0 {
 		out.Model = p.calls[oldest].model
 	}
-	first := true
+	first, oldest := true, ""
 	for id, tool := range p.tools {
 		if first || tool.at.Before(out.ToolSince) || tool.at.Equal(out.ToolSince) && id < oldest {
 			first = false
 			out.ToolSince, oldest = tool.at, id
-			out.Tool, out.Input = tool.name, tool.input
+			out.Tool, out.Detail = tool.name, tool.detail
 		}
 	}
 	return &out

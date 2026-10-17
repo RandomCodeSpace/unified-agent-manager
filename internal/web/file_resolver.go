@@ -7,14 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/toolargs"
 )
 
 const (
-	maxResolvePaths     = 64
-	maxResolvePathBytes = 4096
+	maxResolvePaths     = toolargs.MaxPaths
+	maxResolvePathBytes = toolargs.MaxPathBytes
 	maxResolveBodyBytes = 512 << 10
 )
 
@@ -24,9 +25,7 @@ type resolvedFile struct {
 	Kind   string `json:"kind"`
 }
 
-func validResolvePath(path string) bool {
-	return path != "" && len(path) <= maxResolvePathBytes && utf8.ValidString(path) && !strings.ContainsRune(path, 0)
-}
+func validResolvePath(path string) bool { return toolargs.ValidPath(path) }
 
 func (s *Server) handleResolveFiles(w http.ResponseWriter, r *http.Request) {
 	// Read the complete bounded envelope so an oversized trailing suffix also

@@ -50,7 +50,7 @@ func TestPhaseWaitingBeatsModelBeatsLocal(t *testing.T) {
 	}
 
 	// No call in flight and a tool running: local, with its argument.
-	conv.Emit(phaseEvent(&agentapi.Phase{Tool: "bash", Input: `{"command":"go test\n  ./internal/vterm/..."}`, ToolSince: at(13)}))
+	conv.Emit(phaseEvent(&agentapi.Phase{Tool: "bash", Detail: "go test\n  ./internal/vterm/...", ToolSince: at(13)}))
 	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseLocal || p.Tool != "bash" || p.Detail != "go test ./internal/vterm/..." || !p.Since.Equal(at(13)) || p.Calls != 0 {
 		t.Fatalf("local phase = %+v", p)
 	}
@@ -80,7 +80,7 @@ func TestPhaseWaitingBeatsModelBeatsLocal(t *testing.T) {
 
 func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 	defer func(d time.Duration) { modelCallsDelay = d }(modelCallsDelay)
-	modelCallsDelay = 5 * time.Millisecond
+	modelCallsDelay = 50 * time.Millisecond
 	m, prov, _ := newTestManager(t)
 	sub, snapshot, err := m.Subscribe("")
 	if err != nil {
@@ -138,5 +138,47 @@ func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 	}
 	if p := shownPhase(t, m, a.ID); p == nil || p.Kind != PhaseWaiting {
 		t.Fatalf("thread A phase = %+v", p)
+	}
+}
+
+// A browser that subscribed while the counts were briefly other gets them
+// back, even when they return to what the last frame said.
+func TestModelCallsFrameFollowsASnapshotTakenMeanwhile(t *testing.T) {
+	defer func(d time.Duration) { modelCallsDelay = d }(modelCallsDelay)
+	modelCallsDelay = 100 * time.Millisecond
+	m, prov, _ := newTestManager(t)
+	_, conv := createSession(t, m, prov)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, CallsSince: time.Unix(1, 0)}))
+	sub, snapshot, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":1,"subagents":0,"background":0,"local":0}` {
+		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
+	}
+	conv.Emit(phaseEvent(nil))
+	var got ModelCalls
+	decodeField(t, frameOf(t, sub, "model_calls"), "model_calls", &got)
+	if got != (ModelCalls{}) {
+		t.Fatalf("counts after the call = %+v", got)
+	}
+}
+
+// A Utility call that panics is no longer counted.
+func TestUtilityCallThatPanicsIsNotCountedAfter(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = m.runUtility(context.Background(), UtilityCall{Purpose: "title", Provider: prov.Name(), Model: "gpt-6-luna"}, "prompt", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
+			panic("provider")
+		})
+	}()
+	m.mu.Lock()
+	live := m.utilityLive
+	m.mu.Unlock()
+	if live != 0 {
+		t.Fatalf("Utility calls in flight after a panic = %d", live)
 	}
 }

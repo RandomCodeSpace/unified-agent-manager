@@ -6,10 +6,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/toolargs"
 )
 
 const (
-	maxFileHintBytes = 16 << 10
 	// Copilot clips serialized input at 64 KiB. Never infer a complete hint set
 	// from input at that boundary, even if the clipped prefix looks valid.
 	maxFileHintInputBytes = 64 << 10
@@ -55,84 +55,5 @@ func localToolFilePaths(tool *agentapi.ToolCall) []string {
 	return []string{path}
 }
 
-// Parse only the supported patch framing and file headers. Content lines must
-// belong to Add or Update sections; unknown/truncated syntax discards all hints.
-func patchFilePaths(patch string) []string {
-	lines := strings.Split(strings.TrimSuffix(patch, "\n"), "\n")
-	for i := range lines {
-		lines[i] = strings.TrimSuffix(lines[i], "\r")
-	}
-	if len(lines) < 3 || lines[0] != "*** Begin Patch" || lines[len(lines)-1] != "*** End Patch" {
-		return nil
-	}
-	var paths []string
-	seen := make(map[string]bool)
-	bytes := 0
-	add := func(path string) bool {
-		if !validResolvePath(path) {
-			return false
-		}
-		if seen[path] {
-			return true
-		}
-		bytes += len(path)
-		if len(paths) == maxResolvePaths || bytes > maxFileHintBytes {
-			return false
-		}
-		seen[path] = true
-		paths = append(paths, path)
-		return true
-	}
-	section, hunk, content, moved, ended := "", false, false, false, false
-	complete := func() bool { return section != "update" || (hunk && content) }
-	for _, line := range lines[1 : len(lines)-1] {
-		next, path := "", ""
-		for _, header := range []struct{ prefix, section string }{
-			{"*** Add File: ", "add"}, {"*** Update File: ", "update"}, {"*** Delete File: ", "delete"},
-		} {
-			if strings.HasPrefix(line, header.prefix) {
-				next, path = header.section, strings.TrimPrefix(line, header.prefix)
-				break
-			}
-		}
-		if next != "" {
-			if !complete() || !add(path) {
-				return nil
-			}
-			section, hunk, content, moved, ended = next, false, false, false, false
-			continue
-		}
-		if strings.HasPrefix(line, "*** Move to: ") {
-			if section != "update" || hunk || moved || !add(strings.TrimPrefix(line, "*** Move to: ")) {
-				return nil
-			}
-			moved = true
-			continue
-		}
-		if section == "update" && !ended {
-			if line == "@@" || strings.HasPrefix(line, "@@ ") {
-				if hunk && !content {
-					return nil
-				}
-				hunk, content = true, false
-				continue
-			}
-			if line == "*** End of File" && hunk && content {
-				ended = true
-				continue
-			}
-			if hunk && len(line) > 0 && strings.ContainsRune(" +-", rune(line[0])) {
-				content = true
-				continue
-			}
-		}
-		if section == "add" && strings.HasPrefix(line, "+") {
-			continue
-		}
-		return nil
-	}
-	if !complete() {
-		return nil
-	}
-	return paths
-}
+// patchFilePaths is the files a patch names (toolargs.PatchFilePaths).
+func patchFilePaths(patch string) []string { return toolargs.PatchFilePaths(patch) }
