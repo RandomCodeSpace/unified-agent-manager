@@ -841,7 +841,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   including those answered at once. Tools that only drive subagents (`task`,
   `read_agent`, `write_agent`, `list_agents`) are left out, since their
   subagents' model calls already count. Open runs and requests end at a
-  `session.shutdown` or `abort`; at a `session.resume` without a shutdown
+  `session.shutdown` or `abort`, a subagent's also at its
+  `subagent.completed` or `subagent.failed` (a stopped subagent records no
+  completion for its running tool); at a `session.resume` without a shutdown
   before it, they end at the last event the stopped CLI wrote, so the time it
   was down counts as neither local time nor waiting. A
   tool's row is its own run time without waiting, so the rows can add up to

@@ -127,6 +127,36 @@ func TestTimeSplitWithoutUsageRecordsReportsLocalOnly(t *testing.T) {
 	}
 }
 
+// A stopped subagent records subagent.completed (or failed) but no completion
+// for its running tool: its runs and waits end there, other agents' do not.
+func TestTimeSplitEndsAStoppedSubagentsRunsAtItsEnd(t *testing.T) {
+	for _, end := range []string{
+		splitLine(20, "subagent.completed", "a1", `{"toolCallId":"t1","agentName":"general-purpose","cancelled":true}`),
+		splitLine(20, "subagent.failed", "a1", `{"toolCallId":"t1","agentName":"general-purpose","error":"stopped"}`),
+	} {
+		got := readSplit(t,
+			splitLine(0, "session.start", "", `{}`),
+			toolStart(5, "", "m1", "bash"), // the main agent's: runs to the journal's end
+			toolStart(10, "a1", "c1", "bash"),
+			toolStart(10, "a2", "c1", "bash"), // another subagent, same call ID
+			splitLine(12, "permission.requested", "a1", `{"requestId":"r1"}`),
+			end,                      // a1's c1 ends here: [10,20], its wait [12,20]
+			toolDone(25, "a2", "c1"), // [10,25]
+			splitLine(100, "assistant.message", "", `{"content":"x"}`), // m1 [5,100]
+		)
+		want := TimeSplit{
+			LocalMS: (95 - 8) * 1000, LocalRuns: 3,
+			WaitingMS: 8000, Waits: 1,
+			Tools: []TimeSplitTool{{Name: "bash", MS: (2 + 7 + 87) * 1000, Runs: 3}},
+		}
+		if !reflect.DeepEqual(got, want) {
+			g, _ := json.Marshal(got)
+			w, _ := json.Marshal(want)
+			t.Fatalf("%s\ngot  %s\nwant %s", end, g, w)
+		}
+	}
+}
+
 func compactionStart(s float64) string {
 	return splitLine(s, "session.compaction_start", "", `{"trigger":"threshold"}`)
 }
