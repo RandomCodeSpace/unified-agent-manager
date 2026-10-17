@@ -18,9 +18,11 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
-// uam_create_task is the host tool through which a Task starts another Task
-// in an existing Project, with a first message (docs/web.md). The new Task
-// starts in safe mode and records its creator (spawnedBy); it does not get
+// uam_create_task is the host tool through which a Task starts another Task,
+// with a first message (docs/web.md): in an existing Project, or in the
+// Project of a folder, which the owner confirms adding when it has none
+// (spawn_path.go). The new Task starts in yolo mode when its creator is in
+// yolo, else in safe mode; it records its creator (spawnedBy), does not get
 // the tool, and one Task may create at most maxSpawns.
 
 const (
@@ -36,11 +38,14 @@ const (
 
 var createTaskTool = agentapi.HostTool{
 	Name: createTaskToolName,
-	Description: fmt.Sprintf("Start a new uam thread in an existing project, with prompt as its first message. "+
-		"The thread starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
+	Description: fmt.Sprintf("Start a new uam thread with prompt as its first message, in a project or in the project of a folder. "+
+		"Use it for any change outside your own thread's folder. Give project or path, not both. "+
+		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
+		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
 		"You can start at most %d threads.", maxSpawns),
-	Parameters: toolSchema([]string{"project", "prompt"}, map[string]any{
+	Parameters: toolSchema([]string{"prompt"}, map[string]any{
 		"project": stringProp("An existing project: its ID, or its exact name."),
+		"path":    stringProp("A folder to work in: absolute, ~/..., or relative to your folder."),
 		"prompt":  stringProp(fmt.Sprintf("The new thread's first message, up to %d bytes.", maxSpawnPrompt)),
 		"name":    stringProp(fmt.Sprintf("The new thread's name, up to %d characters. Without one, the thread is titled from its prompt.", maxNameRunes)),
 		"model":   stringProp("A model ID the provider offers. Without one, the owner's default for new threads."),
@@ -49,6 +54,7 @@ var createTaskTool = agentapi.HostTool{
 
 type createTaskArgs struct {
 	Project string `json:"project"`
+	Path    string `json:"path"`
 	Prompt  string `json:"prompt"`
 	Name    string `json:"name"`
 	Model   string `json:"model"`
@@ -199,13 +205,28 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	if err := checkSpawnPrompt(in.Prompt); err != nil {
 		return "", err
 	}
+	if (in.Project == "") == (in.Path == "") {
+		return "", errors.New("give project or path, not both")
+	}
 	ctx, end, err := m.startCall(ctx, taskID)
 	if err != nil {
 		return "", err
 	}
 	defer end()
 	req := CreateRequest{Name: in.Name, Model: in.Model, Prompt: in.Prompt, Mode: string(store.ModeSafe), spawnedBy: taskID}
+	if in.Path != "" {
+		var folder string
+		if in.Project, folder, err = m.spawnPathProject(ctx, taskID, call.CallID, in.Path); err != nil {
+			return "", err
+		}
+		if folder != "" {
+			req.Prompt = "Work in the folder " + folder + ".\n\n" + req.Prompt
+		}
+	}
 	m.mu.Lock()
+	if caller := m.sessions[taskID]; caller != nil && caller.mode == store.ModeYolo && !caller.modeUnknown {
+		req.Mode = string(store.ModeYolo)
+	}
 	var projectName string
 	req.ProjectID, projectName, err = m.spawnProjectLocked(in.Project)
 	var model string
@@ -256,8 +277,8 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	if req.Name != "" {
 		task = fmt.Sprintf("thread %s %q", req.id, req.Name)
 	}
-	tail := fmt.Sprintf("It starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and no reply comes back to you. "+
-		"You can start %d more.", maxSpawns-n-1)
+	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar, and no reply comes back to you. "+
+		"You can start %d more.", req.Mode, maxSpawns-n-1)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {

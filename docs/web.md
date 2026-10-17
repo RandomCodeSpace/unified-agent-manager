@@ -858,15 +858,23 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   still changed against HEAD. Settled or archived Threads cannot call the
   tool. Calls fold into the turn's activity like other tool calls.
 - **Threads started by an agent**: the agent can call `uam_create_task` to
-  start a new Thread in an existing Project. It gives the Project's ID or
-  exact name, the first message (up to 16 KiB, with no control characters
+  start a new Thread. It gives the Project's ID or exact name, or a `path`,
+  and the first message (up to 16 KiB, with no control characters
   other than newlines and tabs), and optionally a name (up to 120
-  characters) and a model. The tool never creates a Project and takes no
-  directory. A name several Projects share is refused with their IDs. A
+  characters) and a model. A name several Projects share is refused with
+  their IDs. A `path` (absolute, `~/...`, or relative to the calling Thread's
+  folder) inside a Project's folder starts the Thread in the Project with the
+  deepest such folder; a subfolder is named in the first message
+  ("Work in the folder ..."). A path in no Project must be inside the
+  service's home folder, and is never added unasked: the call puts an
+  **Add a project** question on the calling Thread (Add project or Cancel)
+  and waits for the owner. Add project makes a missing folder (0750), adds it
+  as a Project and starts the Thread; Cancel, Stop, a rewind or closing the
+  Thread adds nothing. A
   model is checked as for New thread; without one, the Thread gets the model
   New thread would pick from the Thread defaults in Settings, and effort and
-  context size stay at their defaults. The new Thread always starts in safe
-  mode. The call waits up to 15 seconds for the Thread to be created and
+  context size stay at their defaults. The new Thread starts in yolo mode
+  when the calling Thread is in yolo, otherwise in safe mode. The call waits up to 15 seconds for the Thread to be created and
   sent the message, then returns the new Thread's ID. If the create fails in
   that time, the call fails with the reason. If the conversation is still
   opening, the call says so, and the Thread appears in the sidebar once it
@@ -877,6 +885,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   most 5 Threads, its subagents' calls included. Every Thread it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Thread can call the tool.
+- **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or
+  `apply_patch` call that writes outside the Thread's folder (its worktree
+  for a Thread in one), its Copilot session folder or the temporary
+  directory, judging links by their target. The refusal tells the agent to
+  start a Thread there with `uam_create_task`, so the change is tracked in
+  that folder's Project. Shell commands are not checked: uam cannot tell
+  before they run where they write.
 - **Tables**: Markdown tables fill the message width. Long cells wrap; a
   table wider than the message (its headings never break inside a word)
   scrolls sideways within its own box, never the page. Each completed table
