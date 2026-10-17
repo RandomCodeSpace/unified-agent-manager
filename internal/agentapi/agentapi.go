@@ -1090,29 +1090,39 @@ type Activity struct {
 	Intent string `json:"intent,omitempty"`
 	// Retry is set while the turn's current model call is being retried.
 	Retry *Retry `json:"retry,omitempty"`
-	// Phase is what the turn's agents, subagents included, wait on now; nil
-	// while no model call is in flight and no tool runs.
+	// Phase is what the conversation's agents, subagents included, wait on
+	// now; nil while no model call is in flight and no tool runs. Between
+	// turns it holds only subagents that outlived the turn and compaction.
 	Phase *Phase `json:"phase,omitempty"`
 }
 
-// Phase is the running turn's model calls in flight and its oldest running
-// tool call, from the provider's events alone. A subagent-spawning call is
-// not a running tool: its subagent reports its own calls and tools.
+// Phase is the conversation's model calls in flight and its oldest running
+// tool call, from the provider's events alone: the running turn's, and
+// between turns those of subagents still running and of compaction. A
+// subagent-spawning call is not a running tool: its subagent reports its own
+// calls and tools.
 type Phase struct {
-	// Calls counts the model calls in flight, the main agent's and its
-	// subagents'; Subagents how many of them are subagents'.
+	// Calls counts the model calls in flight, the main agent's (compaction
+	// included) and its subagents'; Subagents how many of them are
+	// subagents'.
 	Calls     int `json:"calls,omitempty"`
 	Subagents int `json:"subagents,omitempty"`
-	// Model is the model of the main agent's call in flight, else of the
-	// oldest subagent call; CallsSince is when the oldest call started.
+	// Model is the model of the main agent's call in flight, else of its
+	// compaction, else of the oldest subagent call; CallsSince is when the
+	// oldest call started. Compacting is set when Model's call is the
+	// compaction; Agent describes the subagent when it is a subagent's.
 	Model      string    `json:"model,omitempty"`
 	CallsSince time.Time `json:"calls_since,omitzero"`
+	Compacting bool      `json:"compacting,omitempty"`
+	Agent      string    `json:"agent,omitempty"`
 	// Tool names the oldest running tool call, "" when none runs; Detail is
 	// the short argument it is shown by (toolargs.Compact), bounded;
-	// ToolSince is when it started.
-	Tool      string    `json:"tool,omitempty"`
-	Detail    string    `json:"detail,omitempty"`
-	ToolSince time.Time `json:"tool_since,omitzero"`
+	// ToolSince is when it started. ToolSubagent is set when a subagent runs
+	// it.
+	Tool         string    `json:"tool,omitempty"`
+	Detail       string    `json:"detail,omitempty"`
+	ToolSince    time.Time `json:"tool_since,omitzero"`
+	ToolSubagent bool      `json:"tool_subagent,omitempty"`
 }
 
 // Retry describes a model call the provider is retrying.

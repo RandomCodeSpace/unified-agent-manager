@@ -721,16 +721,32 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   model call runs from its `assistant.turn_start` to its usage report, its
   first tool call, the end of its turn, an abort, its `assistant.idle` or an
   error, and a retry keeps it; a `task` call, which runs a subagent, is not
-  a running tool, as its subagent reports its own. It comes as
-  `turn_activity.phase` (`kind` `model`, `local` or `waiting`, `since`,
-  `model`, `tool`, `detail`, and `calls` and `subagents`, the model calls in
-  flight in any phase and how many are subagents'). The sidebar's foot has
+  a running tool, as its subagent reports its own. Compaction is a model
+  call of the Thread's own, in a turn or between turns: from
+  `session.compaction_start` to `session.compaction_complete`, failed or
+  not, or to the main agent's abort, error or idle; its start names no
+  model, so the pill shows **Model · compacting** with the Thread's model.
+  A subagent still running when the turn ends (one in the background, or a
+  follow-up) keeps its calls and tools after it: between turns the pill
+  shows **Model · subagent** with its description, or **Local · subagent**
+  with its tool, until it completes, fails, is stopped or aborted, the task
+  list shows it ended, or the conversation closes, exits or is reopened; the
+  next turn keeps it. A subagent uam never saw start does not outlive the
+  turn. It comes as `turn_activity.phase` (`kind` `model`, `local` or
+  `waiting`, `by` `compaction` or, between turns, `subagent`, `since`,
+  `model`, `tool`, `detail`, and `calls` and `subagents`, the model calls
+  in flight in any phase, compaction included, and how many are
+  subagents'). The sidebar's foot has
   an **AI** chip after Usage: the model calls in flight across the service's
   Threads, their subagents and Background AI, in the accent while any is and
   muted without a count while none is; its tip says for what ("2 Threads · 1
   subagent · Background AI idle") and how many Threads run a tool locally.
   The snapshot's `model_calls` and the `model_calls` event carry `threads`
-  (main-agent calls), `subagents`, `background` and `local`, a few times a
+  (Threads whose main agent has a call in flight, compaction included),
+  `subagents` (subagent calls, a turn's and those after it; a Thread whose
+  subagent alone calls the model is not counted under `threads`),
+  `background` and `local` (Threads running a tool with no call in flight,
+  a subagent's between turns included), a few times a
   second at most. Both are live only, never saved; a connected instance shows
   its own.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
@@ -807,10 +823,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   modification time changes. It returns `{"model_ms", "model_calls",
   "local_ms", "local_runs", "waiting_ms", "waits", "tools": [{"name", "ms",
   "runs"}]}` in milliseconds. Model time is the wall time any model call was
-  running, subagents included and parallel calls counted once (each
-  `session.usage_record` spans its `duration` up to its timestamp;
-  `model_calls` counts them); `model_ms` is null
-  for a CLI that does not record it ("Model time not recorded for this
+  running, subagents and compaction included and parallel calls counted once
+  (each `session.usage_record` spans its `duration` up to its timestamp;
+  `session.usage_record` never records compaction, so each
+  `session.compaction_complete` that called a model spans its
+  `compactionTokensUsed.duration` up to its timestamp, or from its
+  `session.compaction_start` without one, and one with nothing to compact
+  adds nothing; `model_calls` counts both, and the tip says "compaction
+  included"); `model_ms` is null when neither is recorded,
+  as for a CLI that does not record model calls ("Model time not recorded for this
   Thread's CLI version"; local time still shows). Local time is the wall time
   tools ran (start to completion, parallel runs counted once), minus time
   waiting on you and minus time a model call was running. Waiting on you is

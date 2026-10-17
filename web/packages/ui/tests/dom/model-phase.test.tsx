@@ -1,6 +1,6 @@
 // When the LLM is engaged and when work runs locally: the open Thread's phase under the composer, and the sidebar's
 // AI chip counting the model calls in flight across the service. Mock: t1 runs a tool locally, t8 waits on the model
-// with one subagent, t6 waits on you.
+// with one subagent, t6 waits on you, t7 compacts, and t22's audits run on after its turn ended.
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { ModelCalls, Phase, SnapshotData } from '../../src/api';
@@ -88,6 +88,35 @@ describe('the phase under the composer', () => {
     await openTask('t8');
     await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('ModelClaude Haiku 4.5'));
   });
+
+  test('between turns a subagent still running says so, with what it does', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+    const model = pill({ kind: 'model', by: 'subagent', since: ago(12), model: 'gpt-6-luna', detail: 'Survey the docs', calls: 1, subagents: 1 });
+    expect(spoken(model.querySelector('[data-phase="model"]'))).toBe('Model · subagentSurvey the docs0:12');
+    // Without a description it names the model.
+    expect(spoken(pill({ kind: 'model', by: 'subagent', since: ago(3), model: 'gpt-6-luna', calls: 1, subagents: 1 }).querySelector('[data-phase]'))).toBe('Model · subagentgpt-6-luna0:03');
+    expect(spoken(pill({ kind: 'local', by: 'subagent', since: ago(4), tool: 'bash', detail: 'go test ./...' }).querySelector('[data-phase="local"]'))).toBe('Local · subagentbash go test ./...0:04');
+    // The phone keeps its short word; nothing spins.
+    expect([...model.querySelectorAll('[aria-hidden="true"]')].map((n) => n.textContent)).toContain('Model');
+    expect(model.querySelector('.animate-spin, .animate-pulse')).toBeNull();
+  });
+
+  test('compaction is the Thread’s own model call: it says compacting, with the model', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+    expect(spoken(pill({ kind: 'model', by: 'compaction', since: ago(20), model: 'gpt-6-luna', calls: 1 }).querySelector('[data-phase="model"]'))).toBe('Model · compactinggpt-6-luna0:20');
+  });
+
+  test('t22 shows its audits running after the turn', async () => {
+    await openTask('t22');
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · subagentList the exported symbols of web/src/lib that nothing calls.'));
+  });
+
+  test('t7 shows its compaction', async () => {
+    await openTask('t7');
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · compactingClaude Haiku 4.5'));
+  });
 });
 
 describe('the AI chip', () => {
@@ -133,7 +162,8 @@ describe('the AI chip', () => {
     await sidebar();
     const foot = within(screen.getByRole('navigation', { name: 'Threads' }).querySelector('footer')!);
     const button = await foot.findByRole('button', { name: /^AI\./ });
-    expect(button.getAttribute('aria-label')).toBe('AI. Model working now. 1 Thread · 1 subagent · Background AI idle. Local: 1 Thread running a tool');
+    // t8's main agent and t7's compaction, t8's subagent and t22's three audits after its turn; t1 runs locally.
+    expect(button.getAttribute('aria-label')).toBe('AI. Model working now. 2 Threads · 4 subagents · Background AI idle. Local: 1 Thread running a tool');
     expect(foot.getByRole('button', { name: 'Usage' }).compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

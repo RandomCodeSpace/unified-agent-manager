@@ -27,14 +27,17 @@ const timeSplitCacheSize = 256
 // TimeSplit is GET /api/sessions/{id}/time-split: where a Thread's time went,
 // read from its Copilot session journal. Model time is the wall time any model
 // call was running (main agent and subagents; parallel calls counted once),
-// each call spanning its duration up to its record. Local time is the wall
+// each call spanning its duration up to its record. Compaction counts as a
+// model call: session.usage_record never records it, so its time comes from
+// its session.compaction_complete. Local time is the wall
 // time tools ran, parallel runs counted once, without the time spent waiting
 // on the owner and without time a model call was running. Waiting time is
 // reported apart and is in neither. Tools that only wrap subagents are left
 // out: their model calls already count.
 type TimeSplit struct {
 	// ModelMS is nil when the journal records no model call durations (CLIs
-	// before session.usage_record).
+	// before session.usage_record) and no compaction. ModelCalls counts the
+	// compactions too.
 	ModelMS    *int64 `json:"model_ms"`
 	ModelCalls int    `json:"model_calls"`
 	LocalMS    int64  `json:"local_ms"`
@@ -150,6 +153,12 @@ type splitEvent struct {
 		Usage      struct {
 			Duration *float64 `json:"duration"`
 		} `json:"usage"`
+		// Of session.compaction_complete: absent when nothing was compacted,
+		// so no model was called. StatusCode is a failed call's.
+		CompactionTokensUsed *struct {
+			Duration *float64 `json:"duration"`
+		} `json:"compactionTokensUsed"`
+		StatusCode *int64 `json:"statusCode"`
 	} `json:"data"`
 }
 
@@ -169,6 +178,7 @@ type splitFold struct {
 	recorded     bool
 	open         map[[2]string]toolRun // running tools by agent and call
 	asking       map[string]int64      // owner requests by request ID, from
+	compacting   int64                 // the running compaction's start, 0 for none
 	last         int64                 // the latest event's time
 }
 
@@ -220,6 +230,25 @@ func (f *splitFold) add(e *splitEvent) {
 			f.modelCalls++
 			f.model = append(f.model, span{at - int64(*d.Usage.Duration), at})
 		}
+	case "session.compaction_start":
+		f.compacting = at
+	case "session.compaction_complete":
+		// A compaction that called no model (nothing to compact) adds
+		// nothing; one that did spans its duration up to here, else its
+		// start.
+		from := f.compacting
+		f.compacting = 0
+		if d.CompactionTokensUsed == nil && d.StatusCode == nil {
+			break
+		}
+		f.recorded = true
+		f.modelCalls++
+		if u := d.CompactionTokensUsed; u != nil && u.Duration != nil && *u.Duration >= 0 {
+			from = at - int64(*u.Duration)
+		}
+		if from > 0 {
+			f.model = append(f.model, span{from, at})
+		}
 	case "tool.execution_start":
 		if !subagentTools[d.ToolName] {
 			f.open[[2]string{e.AgentID, d.ToolCallID}] = toolRun{d.ToolName, span{at, at}}
@@ -241,6 +270,7 @@ func (f *splitFold) add(e *splitEvent) {
 		f.end(at)
 	case "session.resume":
 		f.end(prev)
+		f.compacting = 0 // the stopped CLI's compaction never completes
 	}
 }
 

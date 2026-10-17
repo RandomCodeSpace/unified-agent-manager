@@ -223,6 +223,7 @@ func (c *conversation) emitTurnEndLocked(turn agentapi.Turn) {
 	t := &c.todos
 	if len(t.pending.agents) == 0 && !t.reading {
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
+		c.emitPhaseAfterTurnLocked()
 		return
 	}
 	c.releaseTurnLocked()
@@ -252,6 +253,7 @@ func (c *conversation) releaseTurnLocked() {
 	t.release.Stop()
 	t.held, t.release = nil, nil
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: turn})
+	c.emitPhaseAfterTurnLocked()
 }
 
 // ReadTodos reads the session's todo rows through the experimental plan

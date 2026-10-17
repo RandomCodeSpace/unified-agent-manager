@@ -26,13 +26,14 @@ func TestPhaseWaitingBeatsModelBeatsLocal(t *testing.T) {
 	sum, conv := createSession(t, m, prov)
 	at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
 
-	// A call reported before the turn starts shows once it does.
+	// The phase the provider reports before the turn starts shows, and the
+	// turn's start keeps it.
 	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 2, Subagents: 1, Model: "gpt-6-\x1b[1mluna", CallsSince: at(10)}))
-	if p := shownPhase(t, m, sum.ID); p != nil {
-		t.Fatalf("phase outside a turn = %+v", p)
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != "" || p.Calls != 2 {
+		t.Fatalf("phase before the turn = %+v", p)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.Model != "gpt-6-luna" || !p.Since.Equal(at(10)) || p.Calls != 2 || p.Subagents != 1 {
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != "" || p.Model != "gpt-6-luna" || !p.Since.Equal(at(10)) || p.Calls != 2 || p.Subagents != 1 {
 		t.Fatalf("model phase = %+v", p)
 	}
 
@@ -180,5 +181,102 @@ func TestUtilityCallThatPanicsIsNotCountedAfter(t *testing.T) {
 	m.mu.Unlock()
 	if live != 0 {
 		t.Fatalf("Utility calls in flight after a panic = %d", live)
+	}
+}
+
+func modelCallsNow(m *Manager) ModelCalls {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.modelCallsLocked()
+}
+
+// A subagent that outlives its turn shows and counts between turns as a
+// subagent's call or tool, never as the Thread's own; compaction counts as
+// the Thread's own call; a close ends both.
+func TestPhaseBetweenTurnsShowsSubagentsAndCompaction(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 2, Subagents: 1, Model: "gpt-6-luna", CallsSince: at(1)}))
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if p := shownPhase(t, m, sum.ID); p != nil {
+		t.Fatalf("at the turn's end = %+v", p)
+	}
+
+	// The provider reports the subagent still running after the end.
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Subagents: 1, Model: "ollama/deepseek-v4.1-flash", Agent: "Survey\nthe docs", CallsSince: at(2)}))
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != PhaseBySubagent || p.Detail != "Survey the docs" || p.Model != "ollama/deepseek-v4.1-flash" || !p.Since.Equal(at(2)) {
+		t.Fatalf("subagent call between turns = %+v", p)
+	}
+	if got := modelCallsNow(m); got != (ModelCalls{Subagents: 1}) {
+		t.Fatalf("counts with a subagent call between turns = %+v", got)
+	}
+	conv.Emit(phaseEvent(&agentapi.Phase{Tool: "bash", Detail: "go test ./...", ToolSince: at(3), ToolSubagent: true}))
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseLocal || p.By != PhaseBySubagent || p.Tool != "bash" || p.Detail != "go test ./..." {
+		t.Fatalf("subagent tool between turns = %+v", p)
+	}
+	if got := modelCallsNow(m); got != (ModelCalls{Local: 1}) {
+		t.Fatalf("counts with a subagent tool between turns = %+v", got)
+	}
+
+	// Compaction between turns: the Thread's own model call.
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Model: "gpt-6-luna", Compacting: true, CallsSince: at(4)}))
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != PhaseByCompaction || p.Model != "gpt-6-luna" || p.Detail != "" {
+		t.Fatalf("compaction between turns = %+v", p)
+	}
+	if got := modelCallsNow(m); got != (ModelCalls{Threads: 1}) {
+		t.Fatalf("counts while compacting = %+v", got)
+	}
+
+	// A new turn keeps what runs; in a turn a subagent's call is not marked.
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Subagents: 1, Model: "m", Agent: "Survey", CallsSince: at(5)}))
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != "" || p.Detail != "" || !p.Since.Equal(at(5)) {
+		t.Fatalf("at the next turn's start = %+v", p)
+	}
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 2, Model: "m", Compacting: true, CallsSince: at(5)}))
+	if p := shownPhase(t, m, sum.ID); p == nil || p.By != PhaseByCompaction {
+		t.Fatalf("compaction in a turn = %+v", p)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Subagents: 1, Model: "m", CallsSince: at(6)}))
+
+	// The conversation's exit ends it: nothing is left counted.
+	conv.Emit(agentapi.Event{Kind: agentapi.EventExit, Error: "gone"})
+	if p := shownPhase(t, m, sum.ID); p != nil {
+		t.Fatalf("after the exit = %+v", p)
+	}
+	if got := modelCallsNow(m); got != (ModelCalls{}) {
+		t.Fatalf("counts after the exit = %+v", got)
+	}
+}
+
+// Closing a Thread whose subagent outlived its turn takes the call off the
+// count, with a frame.
+func TestModelCallsDropAClosedThreadsSubagent(t *testing.T) {
+	defer func(d time.Duration) { modelCallsDelay = d }(modelCallsDelay)
+	modelCallsDelay = 50 * time.Millisecond
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Subagents: 1, CallsSince: time.Unix(1, 0)}))
+	sub, snapshot, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":1,"background":0,"local":0}` {
+		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
+	}
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p := shownPhase(t, m, sum.ID); p != nil {
+		t.Fatalf("after the close = %+v", p)
+	}
+	var got ModelCalls
+	decodeField(t, frameOf(t, sub, "model_calls"), "model_calls", &got)
+	if got != (ModelCalls{}) {
+		t.Fatalf("counts after the close = %+v", got)
 	}
 }

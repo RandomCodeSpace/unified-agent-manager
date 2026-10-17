@@ -392,9 +392,22 @@ const (
 	PhaseLocal   = "local"
 )
 
-// Phase is what the running turn waits on now (phase.go); live only.
+// Who a model or local phase is, when not the main agent's own turn: a
+// subagent that outlived the turn, or the main agent compacting the
+// conversation.
+const (
+	PhaseBySubagent   = "subagent"
+	PhaseByCompaction = "compaction"
+)
+
+// Phase is what the running turn, or between turns a subagent or
+// compaction, waits on now (phase.go); live only.
 type Phase struct {
 	Kind string `json:"kind"`
+	// By is PhaseByCompaction while the call shown compacts, and
+	// PhaseBySubagent between turns for a subagent's call or tool; ""
+	// otherwise.
+	By string `json:"by,omitempty"`
 	// Since is when the request, the oldest model call or the tool shown
 	// started.
 	Since time.Time `json:"since"`
@@ -402,11 +415,13 @@ type Phase struct {
 	// phase runs.
 	Model string `json:"model,omitempty"`
 	Tool  string `json:"tool,omitempty"`
-	// Detail is the local tool's short argument, or what the owner is
-	// asked: "approve bash", "answer question", "review plan".
+	// Detail is the local tool's short argument, a subagent's description
+	// for its call (By subagent), or what the owner is asked: "approve
+	// bash", "answer question", "review plan".
 	Detail string `json:"detail,omitempty"`
-	// Calls counts the model calls in flight, the main agent's and its
-	// subagents', in any phase; Subagents how many are subagents'.
+	// Calls counts the model calls in flight, the main agent's (compaction
+	// included) and its subagents', in any phase; Subagents how many are
+	// subagents'.
 	Calls     int `json:"calls,omitempty"`
 	Subagents int `json:"subagents,omitempty"`
 }
@@ -416,12 +431,14 @@ type Phase struct {
 // it, never persisted.
 type ModelCalls struct {
 	// Threads counts the Threads whose main agent has a model call in
-	// flight; Subagents the subagent model calls in flight; Background the
-	// Background AI (Utility) calls in flight.
+	// flight, compaction included; Subagents the subagent model calls in
+	// flight, in a turn or after it; Background the Background AI (Utility)
+	// calls in flight.
 	Threads    int `json:"threads"`
 	Subagents  int `json:"subagents"`
 	Background int `json:"background"`
-	// Local counts the Threads running a tool with no model call in flight.
+	// Local counts the Threads running a tool, a subagent's between turns
+	// included, with no model call in flight.
 	Local int `json:"local"`
 }
 

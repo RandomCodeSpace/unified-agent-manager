@@ -45,16 +45,28 @@ const FACES: Record<Phase['kind'], { label: string; short: string; Icon: LucideI
   waiting: { label: 'Waiting on you', short: 'You', Icon: Hand, tone: 'attention', wash: '' },
 };
 
-/** The phase's second words: the model called, by its catalog name, the tool and its argument, or what the owner is asked. */
+/** The phase's words: whose work it is when not the turn's main agent's, a subagent's between turns or compaction. */
+function phaseLabel(phase: Phase): string {
+  const face = FACES[phase.kind];
+  if (phase.kind === 'waiting') return face.label;
+  if (phase.by === 'compaction' && phase.kind === 'model') return 'Model · compacting';
+  if (phase.by === 'subagent') return `${face.short} · subagent`;
+  return face.label;
+}
+
+/**
+ * The phase's second words: the model called, by its catalog name, or the subagent calling it, the tool and its
+ * argument, or what the owner is asked.
+ */
 function phaseDetail(phase: Phase, name: (id: string) => string): string {
-  if (phase.kind === 'model') return phase.model ? name(phase.model) : '';
+  if (phase.kind === 'model') return (phase.by === 'subagent' && phase.detail) || (phase.model ? name(phase.model) : '');
   if (phase.kind === 'local') return [phase.tool, phase.detail].filter(Boolean).join(' ');
   return phase.detail ?? '';
 }
 
 /**
  * Under the composer, at the right: what the open Thread's turn waits on now, the model, a tool running locally or
- * you, with the detail and a clock since it started. Words carry the state; nothing spins. Nothing while none holds.
+ * you, with the detail and a clock since it started; between turns, a subagent still running or compaction. Words carry the state; nothing spins. Nothing while none holds.
  * A phone shows the glyph, a short word and the clock, so the branch keeps its room. A hairline parts it from the
  * time split that may follow it (TimeSplitSummary), only while one does; a phone shows the pill alone (Task).
  */
@@ -69,7 +81,7 @@ export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefin
     <span data-phase={phase.kind} className="flex min-w-0 shrink items-center gap-2 text-caption [&:has(+*)_[data-phase-rule]]:block">
       <Chip tone={face.tone} className={cn('rounded-full px-2 font-medium max-sm:gap-1 max-sm:px-1.5', face.wash)}>
         <face.Icon aria-hidden="true" className="size-3.5" />
-        <span className="max-sm:sr-only">{face.label}</span>
+        <span className="max-sm:sr-only">{phaseLabel(phase)}</span>
         <span aria-hidden="true" className="sm:hidden">{face.short}</span>
       </Chip>
       {detail && <span className="min-w-0 max-w-80 truncate text-muted max-sm:hidden">{detail}</span>}

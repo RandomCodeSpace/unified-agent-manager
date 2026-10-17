@@ -562,6 +562,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'working',
       // The provider compacts the conversation while the turn runs; an earlier compaction left its notice.
       compacting: true,
+      // Compaction is a model call of the Thread's own, with the Thread's model.
+      turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} }, phase: { kind: 'model', by: 'compaction', since: ago(0.3), model: 'claude-haiku-4.5', calls: 1 } },
       created_at: ago(0),
       updated_at: ago(0),
       items: [{ id: 'n0', kind: 'notice', time: ago(0), text: 'Compacted the conversation · freed 41,210 tokens.' }, { id: 'i1', kind: 'user', time: ago(0), text: 'Which of these aliases are never used? Check the zsh history file.\n\n```sh\nalias gs="git status"\nalias gl="git log --oneline"\nalias dcu="docker compose up"\nalias serve="python -m http.server"\n```' }],
@@ -1124,6 +1126,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         title: '',
         state: 'completed',
         subagents_running: 4,
+        // The turn has ended; three of the audits still running wait on the model.
+        turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} }, phase: { kind: 'model', by: 'subagent', since: ago(0.4), model: 'gpt-5-mini', detail: 'List the exported symbols of web/src/lib that nothing calls.', calls: 3, subagents: 3 } },
         created_at: ago(60),
         updated_at: ago(5),
         items,

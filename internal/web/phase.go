@@ -12,15 +12,14 @@ import (
 // Tests shorten it.
 var modelCallsDelay = 250 * time.Millisecond
 
-// phaseLocked is what s's running turn waits on now: the owner, while a
-// request waits for them; else a model call in flight; else a running tool.
-// nil when none holds, and for model calls and tools outside a turn.
+// phaseLocked is what s waits on now: the owner, while a request waits for
+// them; else a model call in flight; else a running tool. nil when none
+// holds. Between turns the provider reports only subagents that outlived the
+// turn and compaction; a subagent's call or tool shown then says so.
 func (m *Manager) phaseLocked(s *webSession) *Phase {
 	var p Phase
 	w := s.workPhase
-	if s.activeTiming < 0 {
-		w = nil
-	}
+	between := s.activeTiming < 0
 	if w != nil {
 		p.Calls, p.Subagents = max(w.Calls, 0), min(max(w.Subagents, 0), max(w.Calls, 0))
 	}
@@ -28,9 +27,17 @@ func (m *Manager) phaseLocked(s *webSession) *Phase {
 		p.Kind, p.Since, p.Detail = PhaseWaiting, ix.Time, s.waitDetail(ix)
 	} else if p.Calls > 0 {
 		p.Kind, p.Since, p.Model = PhaseModel, w.CallsSince, phaseText(w.Model, maxNameRunes)
+		if w.Compacting {
+			p.By = PhaseByCompaction
+		} else if between && p.Calls == p.Subagents {
+			p.By, p.Detail = PhaseBySubagent, phaseText(w.Agent, maxIntentRunes)
+		}
 	} else if w != nil && w.Tool != "" {
 		p.Kind, p.Since, p.Tool = PhaseLocal, w.ToolSince, phaseText(w.Tool, maxNameRunes)
 		p.Detail = phaseText(w.Detail, maxIntentRunes)
+		if between && w.ToolSubagent {
+			p.By = PhaseBySubagent
+		}
 	} else {
 		return nil
 	}
