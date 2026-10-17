@@ -582,8 +582,10 @@ func (w *WebState) Update(v WebState) {
 type webStateAlias WebState
 
 var knownWebStateFields = map[string]struct{}{
-	"turn":         {},
-	"turn_timings": {},
+	"native_changes": {},
+	"agent":          {},
+	"turn":           {},
+	"turn_timings":   {},
 	// Retired: the generated subagent summaries of older versions. Known, so
 	// it is not kept as a newer version's field and drops on the next save.
 	"subagent_summaries":  {},

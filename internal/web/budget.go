@@ -81,7 +81,7 @@ func (m *Manager) budgetViewLocked(s *webSession) *BudgetView {
 func (m *Manager) budgetOverLocked(s *webSession) string {
 	b := s.budget
 	if b.Credits > 0 && s.budgetSpent() >= b.Credits {
-		return fmt.Sprintf("Stopped at its budget: %s of %s AI units", creditText(s.budgetSpent()), creditText(b.Credits))
+		return fmt.Sprintf("Stopped at its budget: %s of %s AI credits", creditText(s.budgetSpent()), creditText(b.Credits))
 	}
 	if used, ok := m.quotaUsedLocked(s.provider); ok && b.QuotaPercent > 0 && used >= b.QuotaPercent {
 		return fmt.Sprintf("Stopped at its budget: account quota %s%% used, limit %s%%", creditText(used), creditText(b.QuotaPercent))

@@ -32,18 +32,18 @@ test('native usage reads on open, on pushed usage changes and on Refresh, preser
   await openUsage();
   expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
   await screen.findByText('Current model: native-current');
-  expect(screen.getByText('9.0 AI units')).toBeTruthy();
-  expect(screen.getAllByText('2.0 AI units').length).toBe(2);
+  expect(screen.getByText('9.0 AI credits')).toBeTruthy();
+  expect(screen.getAllByText('2.0 AI credits').length).toBe(2);
   expect(screen.getByText('User-initiated requests')).toBeTruthy();
   // The cost unit is the premium row's tip; the counter caveats live in docs/web.md.
   expect(screen.getByRole('button', { name: 'About Premium request cost', description: 'A multiplier, not USD.' })).toBeTruthy();
   expect(screen.queryByText(/Do not add the two views together|not added to input or output here/)).toBeNull();
-  expect(screen.getAllByText('Not reported').length).toBe(4); // model AI units/reasoning remain unknown in both projections
+  expect(screen.getAllByText('Not reported').length).toBe(4); // model AI credits/reasoning remain unknown in both projections
   expect(read).toHaveBeenCalledTimes(1);
   expect(read.mock.calls[0][0]).toBe('task-1');
   // A pushed usage report reads the snapshot again while the reader stays open; nothing polls.
   view.select({ ...session, usage: { ai_units: 10 }, context: { used: 60, limit: 200 } });
-  expect(screen.getByText('10 AI units')).toBeTruthy();
+  expect(screen.getByText('10 AI credits')).toBeTruthy();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(screen.getByText('Current model: native-current')).toBeTruthy();
   vi.useFakeTimers();
@@ -87,7 +87,7 @@ test('closed and inactive Tasks never read or resume, while unsupported services
   const view = draw({ ...session, open: false });
   await openUsage();
   expect(await screen.findByText('Native usage metrics are unavailable for a closed or inactive Thread.')).toBeTruthy();
-  expect(screen.getByText('9.0 AI units')).toBeTruthy();
+  expect(screen.getByText('9.0 AI credits')).toBeTruthy();
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, stage: 'settled' });
   await openUsage();
@@ -96,7 +96,7 @@ test('closed and inactive Tasks never read or resume, while unsupported services
   view.select({ ...session, capabilities: { ...session.capabilities, usage_metrics: undefined } });
   // Without native metrics the Usage tab keeps the recorded report alone.
   await openUsage();
-  expect(await screen.findByText('9.0 AI units')).toBeTruthy();
+  expect(await screen.findByText('9.0 AI credits')).toBeTruthy();
   expect(screen.queryByText(/Native usage metrics|Loading native/)).toBeNull();
   expect(read).not.toHaveBeenCalled();
 });
@@ -105,16 +105,16 @@ test('native optional counters remain unknown and failures never become zero tot
   const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue({ ...metrics, ai_units: undefined, premium_request_cost: .000001, agents: [], truncated: true });
   draw({ ...session, usage: undefined });
   await openUsage();
-  await screen.findByText('Native AI units');
-  expect(screen.getByText('AI units not reported yet')).toBeTruthy();
-  expect(screen.queryByText('0 AI units')).toBeNull();
+  await screen.findByText('Native AI credits');
+  expect(screen.getByText('AI credits not reported yet')).toBeTruthy();
+  expect(screen.queryByText('0 AI credits')).toBeNull();
   expect(screen.getByText('0.000001')).toBeTruthy();
   expect(screen.getByText(/Some breakdown rows are not shown/)).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   read.mockRejectedValue(new Error('Native metrics unavailable'));
   await openUsage();
   expect(await screen.findByText('Native metrics unavailable')).toBeTruthy();
-  expect(screen.queryByText('Native AI units')).toBeNull();
+  expect(screen.queryByText('Native AI credits')).toBeNull();
 });
 
 test('Task selection and close abort native reads and ignore late snapshots', async () => {
@@ -194,7 +194,7 @@ test('oversized connected errors are bounded and closing disposes the reader err
   expect(screen.queryByRole('status')).toBeNull();
 });
 
-test('a running Thread takes a budget in AI units and quota percent, shows what is spent, and can drop it', async () => {
+test('a running Thread takes a budget in AI credits and quota percent, shows what is spent, and can drop it', async () => {
   vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   const settings = vi.spyOn(api, 'settings').mockResolvedValue(session);
   const view = draw({ ...session, state: 'working' } as SessionDetail);
@@ -207,7 +207,7 @@ test('a running Thread takes a budget in AI units and quota percent, shows what 
   expect(settings).toHaveBeenCalledWith('task-1', { budget: { credits: 2.5, quota_percent: 80 } });
 
   view.select({ ...session, state: 'cancelled', budget: { credits: 2.5, spent: 2.6, quota_percent: 80, quota_used: 41, reached: true } } as SessionDetail);
-  expect(screen.getByText('2.6 of 2.5 AI units')).toBeTruthy();
+  expect(screen.getByText('2.6 of 2.5 AI credits')).toBeTruthy();
   expect(screen.getByText('41% · limit 80%')).toBeTruthy();
   expect(screen.getByText(/Budget reached: uam stopped this Thread/)).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Remove' }));

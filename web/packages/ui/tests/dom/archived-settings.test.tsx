@@ -44,7 +44,7 @@ describe('Settings → Archived', () => {
     const confirm = await screen.findByRole('alertdialog', { name: /Delete “Pin GitHub Actions to Node 24”\?/ });
     await user.click(within(confirm).getByRole('button', { name: 'Delete thread' }));
     await waitFor(() => expect(list.queryByRole('button', { name: /Node 24.*archived/ })).toBeNull());
-    expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
   });
 
   test('Unarchive opens the same Task as Finished without sending a prompt', async () => {
