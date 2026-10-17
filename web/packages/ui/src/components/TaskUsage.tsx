@@ -11,7 +11,7 @@ import { HelpTip } from './ui/tooltip';
 const number = new Intl.NumberFormat('en-US');
 const requestCost = new Intl.NumberFormat('en-US', { maximumSignificantDigits: 15 });
 const count = (n: number | undefined) => n === undefined ? 'Not reported' : number.format(n);
-const units = (n: number | undefined) => n === undefined ? 'Not reported' : `${formatCredits(n)} AI units`;
+const units = (n: number | undefined) => n === undefined ? 'Not reported' : `${formatCredits(n)} AI credits`;
 const duration = (n: number) => `${number.format(n)} ms`;
 const premium = <span className="inline-flex items-center gap-0.5">Premium request cost<HelpTip label="Premium request cost">A multiplier, not USD.</HelpTip></span>;
 
@@ -27,7 +27,7 @@ function ModelMetrics({ models }: Readonly<{ models: readonly UsageMetricModel[]
   return models.length ? <div className="space-y-2">{models.map((model) => <details key={model.model} className="py-1">
     <summary className="cursor-pointer break-words text-ui text-ink">{model.model}</summary>
     <div className="mt-2 space-y-2"><Counts rows={[
-      ['Model API requests', count(model.requests)], ['Premium request cost', requestCost.format(model.premium_request_cost)], ['AI units', units(model.ai_units)],
+      ['Model API requests', count(model.requests)], ['Premium request cost', requestCost.format(model.premium_request_cost)], ['AI credits', units(model.ai_units)],
       ['Input tokens', count(model.input)], ['Output tokens', count(model.output)], ['Cache read tokens', count(model.cache_read)], ['Cache write tokens', count(model.cache_write)], ['Reasoning output tokens', count(model.reasoning)],
     ]} />
       {model.cache_expires_at && <p className="text-caption text-muted">Last reported prompt cache expiry: {new Date(model.cache_expires_at).toLocaleString()}</p>}
@@ -75,7 +75,7 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
       <PanelSection label="Native session snapshot">
         {snapshot.current_model && <p className="mb-2 break-words text-caption text-muted">Current model: {snapshot.current_model}</p>}
         <Counts rows={[
-          ['User-initiated requests', count(snapshot.user_requests)], [premium, requestCost.format(snapshot.premium_request_cost)], ['Native AI units', units(snapshot.ai_units)], ['Model API time', duration(snapshot.api_duration_ms)],
+          ['User-initiated requests', count(snapshot.user_requests)], [premium, requestCost.format(snapshot.premium_request_cost)], ['Native AI credits', units(snapshot.ai_units)], ['Model API time', duration(snapshot.api_duration_ms)],
           ['Latest main input tokens', count(snapshot.last_input)], ['Latest main output tokens', count(snapshot.last_output)],
         ]} />
         <TokenTypes entries={snapshot.token_details} />
@@ -87,7 +87,7 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
         {snapshot.agents.length ? snapshot.agents.map((agent) => <details key={agent.id} className="py-1">
           <summary className="cursor-pointer break-words text-ui text-ink"><AgentName agent={agent} session={session} /></summary>
           <div className="mt-2 space-y-2"><Counts rows={[
-            ['AI units', units(agent.ai_units)], ['Model API time', duration(agent.api_duration_ms)],
+            ['AI credits', units(agent.ai_units)], ['Model API time', duration(agent.api_duration_ms)],
           ]} /><ModelMetrics models={agent.models} /></div>
         </details>) : <p className="text-caption text-muted">No agent metrics reported.</p>}
       </PanelSection>
@@ -108,7 +108,7 @@ function limit(text: string): number {
 }
 
 /**
- * The Thread's budget, set or changed while it runs: AI units it may still spend, and how much of the account quota
+ * The Thread's budget, set or changed while it runs: AI credits it may still spend, and how much of the account quota
  * may be used. uam stops the Thread at either; it stays stopped until the budget changes.
  */
 function Budget({ session }: Readonly<{ session: SessionDetail }>) {
@@ -140,12 +140,12 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
       <div className="grid grid-cols-[auto_6rem_1fr] items-center gap-x-2 gap-y-2 text-ui text-body">
         <label htmlFor={`${id}-credits`}>Stop after</label>
         <Input id={`${id}-credits`} size="md" inputMode="decimal" className="tabular-nums" placeholder="No limit" value={credits} aria-invalid={!(parsed.credits >= 0)} onChange={(e) => setCredits(e.target.value)} />
-        <span className="min-w-0">more AI units</span>
+        <span className="min-w-0">more AI credits</span>
         <label htmlFor={`${id}-quota`}>Stop at</label>
         <Input id={`${id}-quota`} size="md" inputMode="decimal" className="tabular-nums" placeholder="No limit" value={quota} aria-invalid={!(parsed.quota_percent >= 0 && parsed.quota_percent <= 100)} onChange={(e) => setQuota(e.target.value)} />
         <span className="min-w-0">% account quota used</span>
       </div>
-      <p className="text-caption text-muted">Near the limit the agent is told to wrap up; at it, uam stops the turn. Changing the budget counts AI units from then.</p>
+      <p className="text-caption text-muted">Near the limit the agent is told to wrap up; at it, uam stops the turn. Changing the budget counts AI credits from then.</p>
       <div className="flex gap-2">
         <Button type="submit" size="sm" variant="primary" disabled={saving || invalid || (parsed.credits === 0 && parsed.quota_percent === 0)}>Set budget</Button>
         {b && <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={() => { setCredits(''); setQuota(''); save({ credits: 0, quota_percent: 0 }); }}>Remove</Button>}
@@ -159,7 +159,7 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
 export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   const api = useApi();
   return <>
-    <PanelSection label="Recorded Thread report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI units not reported yet'}</p></PanelSection>
+    <PanelSection label="Recorded Thread report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI credits not reported yet'}</p></PanelSection>
     {session.id && !readOnly(session) && api.supports('thread-budget-v1') && <Budget session={session} />}
     {session.capabilities.usage_metrics && <Metrics session={session} />}
   </>;

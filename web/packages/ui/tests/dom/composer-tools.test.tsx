@@ -35,10 +35,10 @@ test('one Tools button carries the context ring and opens a tab per tool, switch
   const context = panel.getByRole('tab', { name: 'Context' });
   expect(context.getAttribute('aria-selected')).toBe('true');
   await waitFor(() => expect(document.activeElement).toBe(context));
-  // Context: one section with the breakdown's total, the latest report's lines and the native breakdown; AI units live on Usage.
+  // Context: one section with the breakdown's total, the latest report's lines and the native breakdown; AI credits live on Usage.
   expect(await panel.findByText('75 of 200 tokens')).toBeTruthy();
   expect(panel.queryByText(/not reported yet/)).toBeNull();
-  expect(panel.queryByText(/AI units/)).toBeNull();
+  expect(panel.queryByText(/AI credits/)).toBeNull();
   expect(panel.getByText('switch tab')).toBeTruthy();
   // One fixed height for every tab: the body never takes its content's height.
   const body = panel.getByRole('tabpanel');
@@ -48,7 +48,7 @@ test('one Tools button carries the context ring and opens a tab per tool, switch
   await userEvent.keyboard('{ArrowRight}');
   expect(panel.getByRole('tab', { name: 'Usage' }).getAttribute('aria-selected')).toBe('true');
   expect(await panel.findByText('Current model: native-current')).toBeTruthy();
-  expect(panel.getByText('9.0 AI units')).toBeTruthy();
+  expect(panel.getByText('9.0 AI credits')).toBeTruthy();
   expect(panel.getByRole('tabpanel')).toBe(body);
   // Agent: the Project's agents as radios; picking one changes the Task's agent.
   await userEvent.keyboard('{ArrowRight}');

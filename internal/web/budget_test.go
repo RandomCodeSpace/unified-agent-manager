@@ -54,7 +54,7 @@ func TestBudgetCreditsOnARunningThreadStopsItAndHoldsUntilChanged(t *testing.T) 
 		t.Fatalf("tool after budget = %+v", v)
 	}
 	conv.EmitTurn(agentapi.TurnCancelled, "")
-	if got := detail(t, m, sum.ID); got.StopReason != stopBudget || !strings.Contains(got.StateDetail, "2.1 of 2.0 AI units") {
+	if got := detail(t, m, sum.ID); got.StopReason != stopBudget || !strings.Contains(got.StateDetail, "2.1 of 2.0 AI credits") {
 		t.Fatalf("stop = %q %q", got.StopReason, got.StateDetail)
 	}
 	_, err = m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend})
