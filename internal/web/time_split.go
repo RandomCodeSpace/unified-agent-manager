@@ -172,6 +172,13 @@ type toolRun struct {
 	span
 }
 
+// asked is an owner request waiting since from; agent is "" for the main
+// agent's.
+type asked struct {
+	agent string
+	from  int64
+}
+
 type splitFold struct {
 	model, waits []span
 	runs         []toolRun
@@ -180,18 +187,20 @@ type splitFold struct {
 	waitCount    int
 	recorded     bool
 	open         map[[2]string]toolRun // running tools by agent and call
-	asking       map[string]int64      // owner requests by request ID, from
+	asking       map[string]asked      // owner requests by request ID
 	compacting   int64                 // the running compaction's start, 0 for none
 	last         int64                 // the latest event's time
 }
 
 // readTimeSplit folds one journal. Lines that do not parse are skipped.
-// Open runs and requests end at session.shutdown and abort; at a
+// Open runs and requests end at session.shutdown and abort, a subagent's
+// also at its subagent.completed or subagent.failed (a stopped subagent
+// records no completion for its running tool); at a
 // session.resume (a CLI that stopped without shutting down) they end at the
 // last event the old CLI wrote, so the time it was down never counts; at the
 // journal's end they end at its last event.
 func readTimeSplit(ctx context.Context, r io.Reader) (TimeSplit, error) {
-	f := splitFold{open: map[[2]string]toolRun{}, asking: map[string]int64{}}
+	f := splitFold{open: map[[2]string]toolRun{}, asking: map[string]asked{}}
 	br := bufio.NewReader(r)
 	for n := 0; ; n++ {
 		if n%4096 == 0 {
@@ -262,11 +271,15 @@ func (f *splitFold) add(e *splitEvent) {
 			f.finish(run, at)
 		}
 	case "permission.requested", "elicitation.requested":
-		f.asking[d.RequestID] = at
+		f.asking[d.RequestID] = asked{e.AgentID, at}
 	case "permission.completed", "elicitation.completed":
-		if from, ok := f.asking[d.RequestID]; ok {
+		if a, ok := f.asking[d.RequestID]; ok {
 			delete(f.asking, d.RequestID)
-			f.wait(from, at)
+			f.wait(a.from, at)
+		}
+	case "subagent.completed", "subagent.failed":
+		if e.AgentID != "" {
+			f.endAgent(e.AgentID, at)
 		}
 	case "session.shutdown", "abort":
 		f.end(at)
@@ -282,9 +295,25 @@ func (f *splitFold) end(at int64) {
 		delete(f.open, key)
 		f.finish(run, at)
 	}
-	for id, from := range f.asking {
+	for id, a := range f.asking {
 		delete(f.asking, id)
-		f.wait(from, at)
+		f.wait(a.from, at)
+	}
+}
+
+// endAgent closes one subagent's open tool runs and waits at at.
+func (f *splitFold) endAgent(agent string, at int64) {
+	for key, run := range f.open {
+		if key[0] == agent {
+			delete(f.open, key)
+			f.finish(run, at)
+		}
+	}
+	for id, a := range f.asking {
+		if a.agent == agent {
+			delete(f.asking, id)
+			f.wait(a.from, at)
+		}
 	}
 }
 
