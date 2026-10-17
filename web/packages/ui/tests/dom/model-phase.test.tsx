@@ -17,13 +17,21 @@ function pill(phase: Phase | undefined) {
   return render(<PhasePill phase={phase} provider="copilot" />).container;
 }
 
+/** What assistive technology reads of el: its text without what is hidden from it. */
+function spoken(el: Element | null | undefined): string {
+  if (!el) return '';
+  const copy = el.cloneNode(true) as Element;
+  copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+  return copy.textContent ?? '';
+}
+
 describe('the phase under the composer', () => {
   test('a local tool says so in words, with the tool, its argument and a clock that ticks each second', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
     const box = pill({ kind: 'local', since: ago(42), tool: 'bash', detail: 'go test ./internal/vterm/...' });
     const shown = box.querySelector('[data-phase="local"]')!;
-    expect(shown.textContent).toBe('Local · no modelbash go test ./internal/vterm/...0:42');
+    expect(spoken(shown)).toBe('Local · no modelbash go test ./internal/vterm/...0:42');
     await act(async () => { vi.advanceTimersByTime(1000); });
     expect(shown.textContent).toContain('0:43');
     // Nothing spins: the Working glyph and the running step keep the only rings.
@@ -33,9 +41,27 @@ describe('the phase under the composer', () => {
   test('a model call names the model; waiting on you says what is asked; none shows nothing', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    expect(pill({ kind: 'model', since: ago(65), model: 'gpt-6-luna', calls: 2, subagents: 1 }).querySelector('[data-phase="model"]')!.textContent).toBe('Modelgpt-6-luna1:05');
-    expect(pill({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]')!.textContent).toBe('Waiting on youapprove bash1:02:05');
+    expect(spoken(pill({ kind: 'model', since: ago(65), model: 'gpt-6-luna', calls: 2, subagents: 1 }).querySelector('[data-phase="model"]'))).toBe('Modelgpt-6-luna1:05');
+    expect(spoken(pill({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]'))).toBe('Waiting on youapprove bash1:02:05');
     expect(pill(undefined).childElementCount).toBe(0);
+  });
+
+  test('a phone shows the glyph, a short word and the clock: the words and the detail give way', () => {
+    for (const [kind, short, label] of [['model', 'Model', 'Model'], ['local', 'Local', 'Local · no model'], ['waiting', 'You', 'Waiting on you']] as const) {
+      const shown = pill({ kind, since: ago(5), detail: 'approve bash', tool: 'bash', model: 'gpt-6-luna' }).querySelector(`[data-phase="${kind}"]`)!;
+      const word = [...shown.querySelectorAll('span')].find((s) => s.textContent === short && s.getAttribute('aria-hidden') === 'true')!;
+      expect(word.className).toContain('sm:hidden');
+      expect([...shown.querySelectorAll('span')].find((s) => s.textContent === label && !s.getAttribute('aria-hidden'))!.className).toContain('max-sm:sr-only');
+      const detail = [...shown.children].find((c) => c.className.includes('truncate'));
+      expect(detail?.className).toContain('max-sm:hidden');
+    }
+  });
+
+  test('the hairline after the pill shows only while the time split follows it', () => {
+    const shown = pill({ kind: 'model', since: ago(5) }).querySelector('[data-phase]')!;
+    const rule = shown.querySelector('[data-phase-rule]')!;
+    expect(rule.className.split(' ')).toContain('hidden');
+    expect(shown.className).toContain('[&:has(+*)_[data-phase-rule]]:block');
   });
 
   test('the clock reads minutes and seconds, hours past the hour', () => {
@@ -44,13 +70,13 @@ describe('the phase under the composer', () => {
 
   test('the open Thread shows its own phase: local on t1, the model on t8', async () => {
     await openTask('t1');
-    await waitFor(() => expect(document.querySelector('[data-phase="local"]')?.textContent).toContain('Local · no modelbash go test ./internal/vterm/... -run Redraw -count=1'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="local"]'))).toContain('Local · no modelbash go test ./internal/vterm/... -run Redraw -count=1'));
     expect(document.querySelector('[data-phase="model"]')).toBeNull();
   });
 
   test('t8 waits on the model', async () => {
     await openTask('t8');
-    await waitFor(() => expect(document.querySelector('[data-phase="model"]')?.textContent).toContain('ModelClaude Haiku 4.5'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('ModelClaude Haiku 4.5'));
   });
 });
 

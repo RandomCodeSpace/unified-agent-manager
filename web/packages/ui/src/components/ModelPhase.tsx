@@ -38,10 +38,11 @@ function useSecondTick(on: boolean): number {
   return now;
 }
 
-const FACES: Record<Phase['kind'], { label: string; Icon: LucideIcon; tone: 'accent' | 'success' | 'attention'; wash: string }> = {
-  model: { label: 'Model', Icon: Sparkle, tone: 'accent', wash: 'bg-accent-wash' },
-  local: { label: 'Local · no model', Icon: Terminal, tone: 'success', wash: 'bg-success-wash' },
-  waiting: { label: 'Waiting on you', Icon: Hand, tone: 'attention', wash: '' },
+/** Each phase's pill: its words, and the short word a phone shows. */
+const FACES: Record<Phase['kind'], { label: string; short: string; Icon: LucideIcon; tone: 'accent' | 'success' | 'attention'; wash: string }> = {
+  model: { label: 'Model', short: 'Model', Icon: Sparkle, tone: 'accent', wash: 'bg-accent-wash' },
+  local: { label: 'Local · no model', short: 'Local', Icon: Terminal, tone: 'success', wash: 'bg-success-wash' },
+  waiting: { label: 'Waiting on you', short: 'You', Icon: Hand, tone: 'attention', wash: '' },
 };
 
 /** The phase's second words: the model called, by its catalog name, the tool and its argument, or what the owner is asked. */
@@ -54,7 +55,8 @@ function phaseDetail(phase: Phase, name: (id: string) => string): string {
 /**
  * Under the composer, at the right: what the open Thread's turn waits on now, the model, a tool running locally or
  * you, with the detail and a clock since it started. Words carry the state; nothing spins. Nothing while none holds.
- * The detail gives way on a phone.
+ * A phone shows the glyph, a short word and the clock, so the branch keeps its room. A hairline parts it from the
+ * time split that may follow it (TimeSplitSummary), only while one does.
  */
 export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefined; provider: string }>) {
   const { meta } = useApp();
@@ -64,14 +66,15 @@ export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefin
   const detail = phaseDetail(phase, (id) => modelName(meta, provider, id));
   const since = Date.parse(phase.since);
   return (
-    <span data-phase={phase.kind} className="ml-auto flex min-w-0 shrink items-center gap-2 text-caption">
-      <Chip tone={face.tone} className={cn('rounded-full px-2 font-medium', face.wash)}>
+    <span data-phase={phase.kind} className="flex min-w-0 shrink items-center gap-2 text-caption [&:has(+*)_[data-phase-rule]]:block">
+      <Chip tone={face.tone} className={cn('rounded-full px-2 font-medium max-sm:gap-1 max-sm:px-1.5', face.wash)}>
         <face.Icon aria-hidden="true" className="size-3.5" />
-        {face.label}
+        <span className="max-sm:sr-only">{face.label}</span>
+        <span aria-hidden="true" className="sm:hidden">{face.short}</span>
       </Chip>
       {detail && <span className="min-w-0 max-w-80 truncate text-muted max-sm:hidden">{detail}</span>}
       {Number.isFinite(since) && <span className="shrink-0 text-muted tabular-nums">{phaseClock(now - since)}</span>}
-      <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-hairline-strong" />
+      <span aria-hidden="true" data-phase-rule="" className="mx-1 hidden h-4 w-px shrink-0 bg-hairline-strong" />
     </span>
   );
 }

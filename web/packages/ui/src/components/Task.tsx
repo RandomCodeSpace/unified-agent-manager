@@ -1176,8 +1176,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             )}
             <PlaceFoot session={session} project={project} />
-            <PhasePill phase={session.turn_activity?.phase} provider={session.provider} />
-            <TimeSplitSummary session={session} />
+            {/* At the right: what the turn waits on now, then the time split. */}
+            <span className="ml-auto flex min-w-0 shrink items-center empty:hidden">
+              <PhasePill phase={session.turn_activity?.phase} provider={session.provider} />
+              <TimeSplitSummary session={session} />
+            </span>
           </ComposerFoot>
         </div>
       </div>
