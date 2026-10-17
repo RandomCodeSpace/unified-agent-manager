@@ -25,8 +25,9 @@ const timeSplitTools = 64
 const timeSplitCacheSize = 256
 
 // TimeSplit is GET /api/sessions/{id}/time-split: where a Thread's time went,
-// read from its Copilot session journal. Model time is the sum of the model
-// calls' own durations (main agent and subagents). Local time is the wall
+// read from its Copilot session journal. Model time is the wall time any model
+// call was running (main agent and subagents; parallel calls counted once),
+// each call spanning its duration up to its record. Local time is the wall
 // time tools ran, parallel runs counted once, without the time spent waiting
 // on the owner and without time a model call was running. Waiting time is
 // reported apart and is in neither. Tools that only wrap subagents are left
@@ -173,10 +174,9 @@ type splitFold struct {
 
 // readTimeSplit folds one journal. Lines that do not parse are skipped.
 // Open runs and requests end at session.shutdown and abort; at a
-// session.resume (a CLI that stopped without shutting down) waiting ends at
-// the resume, while a tool counts only to the last event the old CLI wrote,
-// so the time it was down never counts as local; at the journal's end they
-// end at its last event.
+// session.resume (a CLI that stopped without shutting down) they end at the
+// last event the old CLI wrote, so the time it was down never counts; at the
+// journal's end they end at its last event.
 func readTimeSplit(ctx context.Context, r io.Reader) (TimeSplit, error) {
 	f := splitFold{open: map[[2]string]toolRun{}, asking: map[string]int64{}}
 	br := bufio.NewReader(r)
@@ -200,7 +200,7 @@ func readTimeSplit(ctx context.Context, r io.Reader) (TimeSplit, error) {
 			return TimeSplit{}, err
 		}
 	}
-	f.end(f.last, f.last)
+	f.end(f.last)
 	return f.split(), nil
 }
 
@@ -238,25 +238,21 @@ func (f *splitFold) add(e *splitEvent) {
 			f.wait(from, at)
 		}
 	case "session.shutdown", "abort":
-		f.end(at, at)
+		f.end(at)
 	case "session.resume":
-		f.end(prev, at)
+		f.end(prev)
 	}
 }
 
-// end closes every open tool run at tools and every open wait at waits.
-func (f *splitFold) end(tools, waits int64) {
+// end closes every open tool run and wait at at.
+func (f *splitFold) end(at int64) {
 	for key, run := range f.open {
 		delete(f.open, key)
-		if waitingTools[run.name] {
-			f.finish(run, waits)
-		} else {
-			f.finish(run, tools)
-		}
+		f.finish(run, at)
 	}
 	for id, from := range f.asking {
 		delete(f.asking, id)
-		f.wait(from, waits)
+		f.wait(from, at)
 	}
 }
 
@@ -280,10 +276,7 @@ func (f *splitFold) split() TimeSplit {
 	out := TimeSplit{ModelCalls: f.modelCalls, LocalRuns: len(f.runs), Waits: f.waitCount, Tools: []TimeSplitTool{}}
 	model, waits := spanUnion(f.model), spanUnion(f.waits)
 	if f.recorded {
-		var total int64
-		for _, s := range f.model {
-			total += s.to - s.from
-		}
+		total := spanLength(model)
 		out.ModelMS = &total
 	}
 	out.WaitingMS = spanLength(waits)

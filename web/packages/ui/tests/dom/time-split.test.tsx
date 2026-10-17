@@ -71,6 +71,19 @@ test('the composer summary shows the shares, both times once idle, the whole sen
   expect(button.textContent).toBe('38% model · 62% local· 4m 12s / 6m 51s');
 });
 
+test('a connected instance without the split shows neither the section nor the summary, and is never asked', async () => {
+  const read = vi.fn().mockResolvedValue(split);
+  const client = { ...api, supports: (capability: string) => capability !== 'time-split-v1', taskTimeSplit: read, taskUsageMetrics: vi.fn().mockResolvedValue(metrics) } as typeof api;
+  render(<ApiContext.Provider value={client}><AppContext.Provider value={app}><ComposerTools session={session} onAgent={() => {}} /><TimeSplitSummary session={session} /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  await userEvent.click(await screen.findByRole('tab', { name: 'Usage' }));
+  await screen.findByRole('region', { name: 'Recorded Thread report' });
+  expect(screen.queryByRole('region', { name: 'Time in this Thread' })).toBeNull();
+  expect(screen.queryByText('Reading the session journal…')).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Time in this Thread/ })).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+});
+
 test('the composer summary is absent until something is recorded', async () => {
   const read = vi.spyOn(api, 'taskTimeSplit').mockResolvedValue({ model_ms: null, model_calls: 0, local_ms: 0, local_runs: 0, waiting_ms: 0, waits: 0, tools: [] });
   const view = render(summary(session));

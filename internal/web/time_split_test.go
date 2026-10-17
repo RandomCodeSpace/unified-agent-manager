@@ -72,8 +72,9 @@ func TestTimeSplitIntervalMath(t *testing.T) {
 		toolDone(1001, "", "c7"), // already ended
 		toolStart(1010, "", "c8", "bash"),
 		splitLine(1010, "permission.requested", "", `{"requestId":"r2"}`),
-		// The CLI stopped without a shutdown; a new one resumed. The wait
-		// lasts until the resume, the tool only to the old CLI's last event.
+		splitLine(1015, "assistant.message", "", `{"content":"secret"}`),
+		// The CLI stopped without a shutdown; a new one resumed. The wait and
+		// the tool last only to the old CLI's last event: [1010,1015].
 		splitLine(2010, "session.resume", "", `{}`),
 		toolStart(2020, "", "c9", "bash"),
 		toolDone(2021, "", "c9"), // local [2020,2021]
@@ -88,13 +89,27 @@ func TestTimeSplitIntervalMath(t *testing.T) {
 	want := TimeSplit{
 		ModelMS: &model, ModelCalls: 3,
 		LocalMS: (10 + 2 + 3 + 4 + 5 + 1 + 3 + 2) * 1000, LocalRuns: 10,
-		WaitingMS: (10 + 6 + 1000) * 1000, Waits: 3,
+		WaitingMS: (10 + 6 + 5) * 1000, Waits: 3,
 		Tools: []TimeSplitTool{{Name: "bash", MS: (10 + 2 + 3 + 6 + 5 + 0 + 1 + 3 + 2) * 1000, Runs: 9}, {Name: "view", MS: 3000, Runs: 1}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		g, _ := json.Marshal(got)
 		w, _ := json.Marshal(want)
 		t.Fatalf("got  %s\nwant %s", g, w)
+	}
+}
+
+func TestTimeSplitModelTimeCountsParallelCallsOnce(t *testing.T) {
+	got := readSplit(t,
+		modelCall(10, "", 10000),  // main [0,10]
+		modelCall(8, "a1", 6000),  // subagent [2,8], inside main's call
+		modelCall(14, "a2", 8000), // subagent [6,14], past it
+		modelCall(30, "a1", 5000), // [25,30], apart
+		toolStart(12, "", "c1", "bash"),
+		toolDone(20, "", "c1"), // local [14,20]
+	)
+	if got.ModelMS == nil || *got.ModelMS != 19000 || got.ModelCalls != 4 || got.LocalMS != 6000 {
+		t.Fatalf("got model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
 	}
 }
 

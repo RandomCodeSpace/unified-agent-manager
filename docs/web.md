@@ -781,8 +781,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   archived Thread has it too, and is cached until the journal's size or
   modification time changes. It returns `{"model_ms", "model_calls",
   "local_ms", "local_runs", "waiting_ms", "waits", "tools": [{"name", "ms",
-  "runs"}]}` in milliseconds. Model time is the sum of every model call's own
-  duration (`session.usage_record`), subagents included; `model_ms` is null
+  "runs"}]}` in milliseconds. Model time is the wall time any model call was
+  running, subagents included and parallel calls counted once (each
+  `session.usage_record` spans its `duration` up to its timestamp;
+  `model_calls` counts them); `model_ms` is null
   for a CLI that does not record it ("Model time not recorded for this
   Thread's CLI version"; local time still shows). Local time is the wall time
   tools ran (start to completion, parallel runs counted once), minus time
@@ -793,8 +795,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `read_agent`, `write_agent`, `list_agents`) are left out, since their
   subagents' model calls already count. Open runs and requests end at a
   `session.shutdown` or `abort`; at a `session.resume` without a shutdown
-  before it, waiting ends at the resume while a tool counts only to the last
-  event the stopped CLI wrote, so a restart never counts as local time. A
+  before it, they end at the last event the stopped CLI wrote, so the time it
+  was down counts as neither local time nor waiting. A
   tool's row is its own run time without waiting, so the rows can add up to
   more than the local total. The shares are model / (model + local).
   Connected instances advertise `time-split-v1`.

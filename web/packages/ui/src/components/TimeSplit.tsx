@@ -18,9 +18,9 @@ const plural = (n: number, one: string, many = `${one}s`) => `${number.format(n)
 
 /**
  * The Thread's split, read from its journal on mount and again when its state, usage or context report changes (as
- * the native metrics do); nothing polls. Null until read, and on a Thread without an id or a service without the split.
+ * the native metrics do); nothing polls. `supported` is false on a Thread without an id or a service without the split.
  */
-function useTimeSplit(session: SessionSummary): { split: TimeSplit | null; error: string } {
+function useTimeSplit(session: SessionSummary): { supported: boolean; split: TimeSplit | null; error: string } {
   const api = useApi();
   const [split, setSplit] = useState<TimeSplit | null>(null);
   const [error, setError] = useState('');
@@ -35,7 +35,7 @@ function useTimeSplit(session: SessionSummary): { split: TimeSplit | null; error
     );
     return () => controller.abort();
   }, [api, session.id, supported, live]);
-  return supported ? { split, error } : { split: null, error: '' };
+  return supported ? { supported, split, error } : { supported, split: null, error: '' };
 }
 
 /** Whole percentages of model and local time, adding up to 100; null without both recorded or with neither. */
@@ -103,8 +103,8 @@ function Swatch({ tone }: Readonly<{ tone: string }>) {
 
 /** The Usage tab's sections: the split with its legend and counts, then each tool's own local time. */
 export function TimeSplitSection({ session }: Readonly<{ session: SessionSummary }>) {
-  const { split, error } = useTimeSplit(session);
-  if (!session.id) return null;
+  const { supported, split, error } = useTimeSplit(session);
+  if (!supported) return null;
   if (error) return <PanelSection label="Time in this Thread"><p className="text-caption text-muted">{error}</p></PanelSection>;
   if (!split) return <PanelSection label="Time in this Thread"><p className="text-caption text-muted">Reading the session journal…</p></PanelSection>;
   if (!recorded(split)) return <PanelSection label="Time in this Thread"><p className="text-caption text-muted">Nothing recorded yet.</p></PanelSection>;
