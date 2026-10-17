@@ -456,6 +456,7 @@ func (m *Manager) resetRewoundLocked(s *webSession) agentapi.Conversation {
 	}
 	m.cancelHistoryLocked(s)
 	m.dropHistoryLocked(s)
+	m.expireOwnLocked(s, "the conversation was rewound")
 	s.interactions, s.ixIdx, s.ask = nil, map[string]*interaction{}, nil
 	s.outcome, s.suggestions = "", nil
 	s.outcomeRun++

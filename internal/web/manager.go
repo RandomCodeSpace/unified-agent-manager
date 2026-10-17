@@ -579,6 +579,9 @@ type interaction struct {
 	// assisted is also set, claimed the interaction; it no longer waits for
 	// the user.
 	yolo, assisted bool
+	// reply is set on a question uam itself asks (owner_confirm.go): the
+	// answer goes to it instead of the provider, and expiry closes it.
+	reply chan agentapi.Answer
 }
 
 // public is ix as a browser sees it: Auto says yolo mode is answering it.
@@ -4054,6 +4057,7 @@ func (m *Manager) cancelBecause(id, by, reason string) (SessionSummary, error) {
 	s.stopSeq++
 	s.stopReason, s.stopBy = reason, by
 	before := m.summaryLocked(s)
+	m.expireOwnLocked(s, "the turn was stopped")
 	m.pauseQueueLocked(s)
 	m.changedLocked(s, before)
 	m.mu.Unlock()
@@ -4679,6 +4683,10 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 	if err := validateAnswer(ix.Interaction, answer); err != nil {
 		m.mu.Unlock()
 		return agentapi.Interaction{}, err
+	}
+	if ix.reply != nil {
+		defer m.mu.Unlock()
+		return m.answerOwnLocked(s, ix, answer), nil
 	}
 	conv := s.conv
 	if conv == nil {

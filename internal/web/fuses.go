@@ -52,6 +52,10 @@ func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) age
 		out.Deny = deny
 		return out
 	}
+	if deny := m.editScopeDenyLocked(s, use); deny != "" {
+		out.Deny = deny
+		return out
+	}
 	kind := use.PermissionKind
 	if kind == "" {
 		kind = permissionToolKind(use.Tool)

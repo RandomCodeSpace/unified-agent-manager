@@ -750,6 +750,10 @@ func (m *Manager) expireLocked(s *webSession, ix *interaction, reason string) {
 	ix.Plan = clampPlanReview(ix.Plan, false)
 	ix.Resolution = reason
 	ix.answering = false
+	if ix.reply != nil {
+		close(ix.reply)
+		ix.reply = nil
+	}
 	m.publishInteractionLocked(s, ix)
 }
 

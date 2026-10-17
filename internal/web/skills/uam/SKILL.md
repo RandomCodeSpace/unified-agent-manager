@@ -192,19 +192,29 @@ repeat the same operation and arguments with `cursor` set to `next`.
 
 ## Starting another Thread: uam_create_task
 
-`uam_create_task` starts a new Thread in an existing Project, with your prompt
-as its first message. Use it when the owner asks for work to run as its own
-Thread.
+`uam_create_task` starts a new Thread with your prompt as its first message.
+Use it when the owner asks for work to run as its own Thread, and for any
+change outside your own Thread's folder: uam refuses edit tools there
+(`uam scope:`), because such a change is tracked by no Thread. Do not write
+outside your folder with shell commands either; uam cannot see where they
+write, but the rule is the same.
 
-- `project` (required): the Project's ID or exact name. A name several
-  Projects share is refused with their IDs.
+- `project` or `path` (one of them): `project` is the Project's ID or exact
+  name; a name several Projects share is refused with their IDs. `path` is a
+  folder: absolute, `~/...`, or relative to your folder. A path inside a
+  Project, or below its folder, starts the Thread in that Project and names
+  the subfolder in its first message. A folder in no Project must be inside
+  the home folder: uam asks the owner to confirm adding it as a Project (and
+  makes it when missing), and the call waits for the answer. If the owner
+  declines, do not call again for it; say what you need in your reply.
 - `prompt` (required): up to 16 KiB. The new Thread sees nothing of this
   conversation, so write a prompt that stands alone.
 - `name`: up to 120 characters; without one, the Thread is titled from its
   prompt. `model`: a model ID; without one, the owner's default for new
   Threads.
 
-The new Thread starts in Safe mode, runs on its own and shows in the owner's
+The new Thread starts in Yolo mode when you are in Yolo, else in Safe mode.
+When the owner names a model for the new Thread, pass it as `model`. It runs on its own and shows in the owner's
 sidebar; no reply comes back to you. A Thread can start at most 5; deleting
 one frees its place. A Thread started this way, or by one of the owner's
 routines (scheduled runs), does not have the tool: tell the owner what to
