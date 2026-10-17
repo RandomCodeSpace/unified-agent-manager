@@ -350,7 +350,7 @@ func TestCompletionCreateAndResumeLiveReceiptsReplayWithoutDuplicates(t *testing
 		}
 		fc.sessions[0].events = journal
 		got, err := conv.History(context.Background())
-		if err != nil || len(got.Items) != 4 || got.Items[1].Text != "First" || got.Items[2].Completion == nil || got.Items[3].Completion == nil || got.Items[2].Completion.Summary != "First" || got.Items[3].Completion.Summary != "Second" {
+		if err != nil || len(got.Items) != 5 || got.Items[1].Text != "First" || got.Items[3].Text != "Second" || got.Items[2].Completion == nil || got.Items[4].Completion == nil || got.Items[2].Completion.Summary != "First" || got.Items[4].Completion.Summary != "Second" {
 			t.Fatalf("create/resume=%v history=%+v %v", resumed, got.Items, err)
 		}
 		var receipts []agentapi.Item
@@ -550,9 +550,10 @@ func TestCompletionLiveStreamMatchesJournalReplay(t *testing.T) {
 	}
 }
 
-// A receipt's summary is the turn's reply only when the main agent wrote
-// none since the owner's prompt; then it keeps its lines for Markdown.
-func TestCompletionSummaryIsTheReplyOnlyWithoutOne(t *testing.T) {
+// A receipt's summary is the turn's reply only when it is longer than every
+// main-agent reply since the owner's prompt, as when the agent wrote only
+// progress notes; then it keeps its lines for Markdown.
+func TestCompletionSummaryIsTheReplyWhenItHoldsTheAnswer(t *testing.T) {
 	tr := newTranscript()
 	accepted := func(id, parent, summary string) []agentapi.Item {
 		return tr.items(completionEvent(id, parent, completeData(copilot.Bool(true), "completed", summary)))
@@ -563,8 +564,9 @@ func TestCompletionSummaryIsTheReplyOnlyWithoutOne(t *testing.T) {
 		t.Fatalf("a turn with a reply = %+v", got)
 	}
 	tr.items(completionEvent("u2", "c1", userMessage("m2", rpc.UserMessageDeliveryIdle, "second")))
-	sub := agentEv("sub", "child", &rpc.AssistantMessageData{MessageID: "r2", Content: "child text"})
-	sub.ParentID = copilot.String("u2")
+	tr.items(completionEvent("note", "u2", &rpc.AssistantMessageData{MessageID: "r2", Content: "Reading the data."}))
+	sub := agentEv("sub", "child", &rpc.AssistantMessageData{MessageID: "r3", Content: strings.Repeat("a long child reply ", 20)})
+	sub.ParentID = copilot.String("note")
 	tr.items(sub)
 	table := "Report:\n\n| Day | Units |\n|---|---|\n| 1 | 0.5 |"
 	got := accepted("c2", "sub", "\x1b[31m"+table+"\n")

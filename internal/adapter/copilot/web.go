@@ -4154,10 +4154,11 @@ type transcript struct {
 	// hidden holds the IDs of running skill tool calls, which are not
 	// transcript items.
 	hidden map[string]struct{}
-	// replied marks a main-agent reply since the owner's last prompt;
-	// promoted is the receipt whose summary became that reply.
-	replied  bool
-	promoted string
+	// longest is the length of the main agent's longest reply since the
+	// owner's last prompt; promoted records, by receipt ID, whether a
+	// receipt's summary became a reply.
+	longest  int
+	promoted map[string]bool
 }
 
 func (t *transcript) isHidden(id string) bool {
@@ -4204,12 +4205,12 @@ func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: t.thoughtStart(agentID, ev.Timestamp), EndedAt: ev.Timestamp, AgentID: agentID})
 		}
 		delete(t.reasoned, agentID)
-		if agentID == "" && d.Content != "" {
-			t.replied = true
+		if agentID == "" {
+			t.longest = max(t.longest, len(d.Content))
 		}
 	}
 	if d, ok := ev.Data.(*rpc.UserMessageData); ok && agentOf(ev) == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
-		t.replied = false
+		t.longest = 0
 	}
 	if it, ok := t.item(ev); ok {
 		if reply, ok := t.completionReply(ev, &it); ok {
@@ -4221,13 +4222,15 @@ func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 }
 
 // completionReply is an accepted main-agent receipt's summary as the turn's
-// reply when the agent wrote none since the owner's prompt it answers:
-// autopilot agents often put their whole answer there. It is whole and
-// Markdown like any reply, and the receipt's notice then leaves the summary
-// out. The same receipt delivered again yields the same items.
+// reply when it is longer than every reply since the owner's prompt it
+// answers: autopilot agents often put their whole answer there, after short
+// progress notes at most. It is whole and Markdown like any reply, and the
+// receipt's notice then leaves the summary out. A summary of a reply above
+// stays in the notice. The same receipt delivered again yields the same
+// items.
 func (t *transcript) completionReply(ev copilot.SessionEvent, it *agentapi.Item) (agentapi.Item, bool) {
 	d, ok := ev.Data.(*rpc.SessionTaskCompleteData)
-	if !ok || it.AgentID != "" || (t.replied && (ev.ID == "" || ev.ID != t.promoted)) || it.Completion == nil || it.Completion.Decision != agentapi.CompletionAccepted || d.Summary == nil {
+	if !ok || it.AgentID != "" || it.Completion == nil || it.Completion.Decision != agentapi.CompletionAccepted || d.Summary == nil {
 		return agentapi.Item{}, false
 	}
 	// A late receipt of an earlier turn is not this turn's reply.
@@ -4235,10 +4238,20 @@ func (t *transcript) completionReply(ev copilot.SessionEvent, it *agentapi.Item)
 		return agentapi.Item{}, false
 	}
 	text := strings.TrimSpace(displaytext.SanitizeText(*d.Summary))
-	if text == "" {
+	reply, seen := t.promoted[ev.ID]
+	if !seen {
+		reply = text != "" && len(text) > t.longest
+		if ev.ID != "" {
+			if t.promoted == nil || len(t.promoted) >= maxCompletionEvents {
+				t.promoted = map[string]bool{}
+			}
+			t.promoted[ev.ID] = reply
+		}
+	}
+	if !reply {
 		return agentapi.Item{}, false
 	}
-	t.replied, t.promoted = true, ev.ID
+	t.longest = max(t.longest, len(text))
 	notice := *it.Completion
 	notice.Summary = ""
 	it.Text = completionNotice(&notice)
