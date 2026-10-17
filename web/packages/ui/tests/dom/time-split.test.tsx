@@ -65,7 +65,7 @@ test('the composer summary shows the shares, both times once idle, the whole sen
   const view = render(summary({ ...session, state: 'working' }));
   const button = await screen.findByRole('button', { name: /^Time in this Thread/ });
   expect(button.textContent).toBe('38% model · 62% local');
-  expect(button.getAttribute('aria-label')).toBe('Time in this Thread: 4m 12s in the model (47 calls) and 6m 51s running local tools and scripts (112 runs). 2m 58s waiting on you is not counted.');
+  expect(button.getAttribute('aria-label')).toBe('Time in this Thread: 4m 12s in the model (47 calls, compaction included) and 6m 51s running local tools and scripts (112 runs). 2m 58s waiting on you is not counted.');
   view.rerender(summary({ ...session, state: 'idle' }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(button.textContent).toBe('38% model · 62% local· 4m 12s / 6m 51s');

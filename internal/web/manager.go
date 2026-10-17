@@ -467,7 +467,8 @@ type webSession struct {
 	// turnActivity is the running turn's live activity (turn_activity.go);
 	// not persisted.
 	turnActivity TurnActivity
-	// workPhase is the provider's latest phase of the running turn, which
+	// workPhase is the provider's latest phase, of the running turn or, between
+	// turns, of the subagents that outlived it and compaction, which
 	// turnActivity shows with the owner's pending requests (phase.go).
 	workPhase *agentapi.Phase
 	// todoBase is the todo list as the running or last turn found it.

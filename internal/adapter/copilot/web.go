@@ -3422,6 +3422,7 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 		v := sa.Snapshot()
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
 	}
+	c.settlePhaseLocked(tasks)
 }
 
 // agentTask returns the task list's entry for exactly agentID, or nil.
@@ -3867,6 +3868,10 @@ func (c *conversation) startTurnLocked() {
 	c.completion = nil
 	c.completionReady = false
 	c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
+	// The phase now with the main agent's own call, and the subagents and
+	// compaction that ran before the turn; it goes first, as the call that
+	// starts a turn does.
+	c.emitPhaseLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 }
 
@@ -3895,7 +3900,10 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
-	c.phase = phaseState{}
+	// Subagents still running go on between turns: their phase follows the
+	// turn's end (emitTurnEndLocked).
+	c.endTurnPhaseLocked()
+	c.act.now.Phase = c.phase.snapshot(false)
 	c.endStallLocked()
 	c.undeliveredLocked(turn.State, at)
 	c.emitTurnEndLocked(turn)

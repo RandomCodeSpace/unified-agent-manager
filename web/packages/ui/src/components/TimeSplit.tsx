@@ -49,10 +49,10 @@ function shares(split: TimeSplit): { model: number; local: number } | null {
 
 const recorded = (split: TimeSplit) => split.model_calls > 0 || split.local_runs > 0 || split.waiting_ms > 0;
 
-/** The tip's sentence: both times, and the waiting left out. */
+/** The tip's sentence: both times, and the waiting left out. Model calls include compaction, which the service counts. */
 function sentence(split: TimeSplit): string {
   const local = `${time(split.local_ms)} running local tools and scripts (${plural(split.local_runs, 'run')})`;
-  const model = split.model_ms === null ? 'Model time is not recorded for this Thread\'s CLI version; ' : `${time(split.model_ms)} in the model (${plural(split.model_calls, 'call')}) and `;
+  const model = split.model_ms === null ? 'Model time is not recorded for this Thread\'s CLI version; ' : `${time(split.model_ms)} in the model (${plural(split.model_calls, 'call')}, compaction included) and `;
   const waiting = split.waiting_ms > 0 ? ` ${time(split.waiting_ms)} waiting on you is not counted.` : '';
   return `${model}${local}.${waiting}`;
 }

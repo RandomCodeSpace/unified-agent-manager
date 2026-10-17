@@ -37,12 +37,13 @@ type callFailure struct {
 	network bool
 }
 
-// startActivityLocked starts the activity afresh for a new turn, with the
-// model call that started it. The CLI starts the main agent's turn again for
-// each model call; those keep it.
+// startActivityLocked starts the activity afresh for a new turn; its phase,
+// with the model call that starts the turn, comes with the turn's start
+// (startTurnLocked). The CLI starts the main agent's turn again for each
+// model call; those keep it.
 func (c *conversation) startActivityLocked() {
 	if !c.turnRunning {
-		c.act = activity{now: agentapi.Activity{Phase: c.phase.snapshot()}}
+		c.act = activity{}
 	}
 }
 

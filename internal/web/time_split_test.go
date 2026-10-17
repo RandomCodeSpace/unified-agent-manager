@@ -127,6 +127,65 @@ func TestTimeSplitWithoutUsageRecordsReportsLocalOnly(t *testing.T) {
 	}
 }
 
+func compactionStart(s float64) string {
+	return splitLine(s, "session.compaction_start", "", `{"trigger":"threshold"}`)
+}
+
+// compactionDone completes a compaction; used is its compactionTokensUsed,
+// "" for none (nothing to compact).
+func compactionDone(s float64, used string) string {
+	data := `{"success":false,"error":"Nothing to compact."}`
+	if used != "" {
+		data = `{"success":true,"compactionTokensUsed":` + used + `}`
+	}
+	return splitLine(s, "session.compaction_complete", "", data)
+}
+
+// Compaction calls a model that session.usage_record never records: its
+// duration up to its completion is model time, else its whole run.
+func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
+	got := readSplit(t,
+		compactionStart(0),
+		toolStart(17, "", "c1", "bash"),
+		toolDone(19, "", "c1"), // inside the compaction's call
+		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
+	)
+	// A CLI that records no model calls has no model time: the compactions
+	// alone would understate it. Their time still is not local time.
+	if got.ModelMS != nil || got.ModelCalls != 0 || got.LocalMS != 0 || got.LocalRuns != 1 {
+		t.Fatalf("without usage records: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
+	}
+	got = readSplit(t,
+		splitLine(0, "session.start", "", `{}`),
+		modelCall(50, "", 1000), // [49,50]
+		compactionStart(0),
+		toolStart(1, "", "c1", "bash"),
+		toolDone(3, "", "c1"),
+		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
+		compactionStart(30),
+		compactionDone(36, `{"model":"gpt-6-luna"}`), // no duration: [30,36]
+		compactionStart(40),
+		compactionDone(40.5, ""), // nothing to compact: no model call
+	)
+	if got.ModelMS == nil || *got.ModelMS != 11000 || got.ModelCalls != 3 || got.LocalMS != 2000 {
+		t.Fatalf("with a usage record: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
+	}
+	// With the turns' own calls: overlapping time counts once.
+	got = readSplit(t,
+		modelCall(10, "", 10000), // [0,10]
+		compactionStart(5),
+		compactionDone(12, `{"duration":5000}`), // [7,12]
+		modelCall(30, "a1", 2000),               // [28,30]
+	)
+	if got.ModelMS == nil || *got.ModelMS != 14000 || got.ModelCalls != 3 {
+		t.Fatalf("with usage records: model=%v calls=%d", got.ModelMS, got.ModelCalls)
+	}
+	// Only nothing to compact: still no model time recorded.
+	if got = readSplit(t, compactionStart(0), compactionDone(1, "")); got.ModelMS != nil || got.ModelCalls != 0 {
+		t.Fatalf("nothing compacted: %+v", got)
+	}
+}
+
 func TestTaskTimeSplitRouteReadsJournalAndRefreshesWhenItGrows(t *testing.T) {
 	home := filepath.Join(t.TempDir(), ".copilot")
 	t.Setenv("COPILOT_HOME", home)

@@ -75,14 +75,15 @@ func (m *Manager) turnActivityTurnLocked(s *webSession, state agentapi.TurnState
 		s.todoBase, todos.Touched = todos, false
 		s.turnIntent = ""
 	} else {
+		// The provider reports what outlives the turn after its end.
 		s.workPhase = nil
 	}
 	m.setTurnActivityLocked(s, TurnActivity{Todos: todos})
 }
 
-// applyActivityLocked takes the adapter's activity of the running turn. It
-// is published, never persisted: an intent, a retry or a phase writes
-// nothing.
+// applyActivityLocked takes the adapter's activity of the running turn, and
+// between turns its phase. It is published, never persisted: an intent, a
+// retry or a phase writes nothing.
 func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	next := TurnActivity{Plan: a.Plan && s.activeTiming >= 0, Intent: clipRunes(strings.TrimSpace(displaytext.Sanitize(a.Intent)), maxIntentRunes), Todos: s.turnActivity.Todos}
 	if a.Retry != nil {

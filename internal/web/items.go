@@ -978,6 +978,9 @@ func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
 	m.forgetMCPStatusLocked(s)
 	m.forgetTurnTimingLocked(s)
 	m.forgetTodosLocked(s)
+	// No subagent or compaction outlives its conversation here.
+	s.workPhase = nil
+	m.updatePhaseLocked(s)
 	if s.schedules != nil {
 		m.schedulesLocked(s, nil)
 	}

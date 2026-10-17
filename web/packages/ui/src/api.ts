@@ -1088,14 +1088,18 @@ export interface TurnTodos { timing_id: string; ended_at: string; intent?: strin
 export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView; phase?: Phase }
 
 /**
- * What the running turn waits on now, from Copilot's events: the owner (`waiting`, a request is pending), the model
- * (`model`, a call in flight, the main agent's or a subagent's) or a tool running with no model call (`local`), the
- * first that holds; absent when none does. `since` is when the request, the oldest call or the tool started;
- * `detail` is the local tool's short argument or what the owner is asked ("approve bash", "answer question",
- * "review plan"); `calls` counts the model calls in flight in any phase, `subagents` how many are subagents'.
+ * What the running turn, or between turns a subagent that outlived it or compaction, waits on now, from Copilot's
+ * events: the owner (`waiting`, a request is pending), the model (`model`, a call in flight, the main agent's, its
+ * compaction or a subagent's) or a tool running with no model call (`local`), the first that holds; absent when none
+ * does. `by` is `compaction` while the call shown compacts the conversation, `subagent` between turns for a
+ * subagent's call or tool. `since` is when the request, the oldest call or the tool started; `detail` is the local
+ * tool's short argument, a subagent's description for its call, or what the owner is asked ("approve bash", "answer
+ * question", "review plan"); `calls` counts the model calls in flight in any phase, compaction included,
+ * `subagents` how many are subagents'.
  */
 export interface Phase {
   kind: 'model' | 'local' | 'waiting';
+  by?: 'subagent' | 'compaction';
   since: string;
   model?: string;
   tool?: string;
@@ -1106,8 +1110,8 @@ export interface Phase {
 
 /**
  * The snapshot's and the `model_calls` frame's counts across this service's Threads: those whose main agent has a
- * model call in flight, the subagent calls in flight, the Background AI calls in flight, and the Threads running a
- * tool with no model call; live only.
+ * model call in flight (compaction included), the subagent calls in flight (in a turn or after it), the Background AI
+ * calls in flight, and the Threads running a tool with no model call; live only.
  */
 export interface ModelCalls { threads: number; subagents: number; background: number; local: number }
 
