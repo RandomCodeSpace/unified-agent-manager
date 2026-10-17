@@ -61,7 +61,7 @@ func (c *conversation) keepSpill(result any) any {
 }
 
 func copySpill(from, dir, to string) error {
-	src, err := os.OpenFile(from, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	src, err := os.OpenFile(from, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- a CLI output file directly in the temp directory (keepSpill).
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func copySpill(from, dir, to string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	dst, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	dst, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- the session folder joined with the CLI file's base name.
 	if err != nil {
 		return err
 	}
