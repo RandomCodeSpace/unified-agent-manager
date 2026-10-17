@@ -40,11 +40,7 @@ const (
 	streamWriteWait   = 15 * time.Second
 	maxLoggedValue    = 512
 	contentSecurity   = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-	// The spelling/grammar engine compiles WebAssembly in its own same-origin
-	// worker. Only that worker gets this permission; the page cannot evaluate
-	// WebAssembly or JavaScript strings. Checking drafts stays in the browser.
-	writingWorkerSecurity = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-	// frameDocument has a separate policy for the document
+	// frameDocument is the only response with another policy: the document
 	// Mermaid renders in (ADR 0004, "Diagrams in a sandboxed frame"). The page
 	// embeds it with sandbox="allow-scripts" and no allow-same-origin, so its
 	// origin is opaque: it holds no cookie and, with connect-src 'none', can
@@ -1571,9 +1567,6 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 		case strings.HasPrefix(name, "assets/"):
 			// Vite names every file under assets/ by its content hash.
 			w.Header().Set(headerCacheControl, "public, max-age=31536000, immutable")
-			if path.Dir(name) == "assets" && strings.HasPrefix(path.Base(name), "writing-checker.worker-") && ext == ".js" {
-				w.Header().Set(headerContentSecurity, writingWorkerSecurity)
-			}
 		case path.Dir(name) == "." && (ext == ".png" || ext == ".svg"):
 			// App icons keep their names: cached for a day, not for good.
 			w.Header().Set(headerCacheControl, "public, max-age=86400")
