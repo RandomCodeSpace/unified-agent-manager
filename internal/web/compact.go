@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/toolargs"
 )
 
 const compactRepresentation = "compact-v1"
@@ -132,31 +132,6 @@ type compactSubagentDetail struct {
 	Archive        bool            `json:"archive,omitempty"`
 }
 
-func boundedPreview(s string, limit int) string {
-	var out strings.Builder
-	out.Grow(min(len(s), limit))
-	space := false
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			space = out.Len() > 0
-			continue
-		}
-		size := utf8.RuneLen(r)
-		if space {
-			size++
-		}
-		if out.Len()+size > limit {
-			break
-		}
-		if space {
-			out.WriteByte(' ')
-			space = false
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
-}
-
 // Keep line boundaries for the browser's existing Markdown first-line formatter.
 func boundedResultSummary(s string) string {
 	const limit = 512
@@ -168,57 +143,6 @@ func boundedResultSummary(s string) string {
 		end--
 	}
 	return s[:end]
-}
-
-var toolArgumentKeys = map[string][]string{
-	"bash": {"command", "cmd"}, "shell": {"command", "cmd"}, "powershell": {"command", "cmd"}, "sql": {"query", "sql"},
-	"web_fetch": {"url"}, "webfetch": {"url"}, "fetch": {"url"},
-	"view": {"path", "file_path", "filePath"}, "read": {"path", "file_path", "filePath"}, "create": {"path", "file_path", "filePath"}, "edit": {"path", "file_path", "filePath"}, "write": {"path", "file_path", "filePath"}, "list": {"path"},
-	"grep": {"pattern", "query"}, "glob": {"pattern"}, "task": {"description", "name", "agent_type"}, "skill": {"skill", "name"}, "store_memory": {"fact"}, "ask_user": {"question"},
-}
-var genericArgumentKeys = []string{"command", "cmd", "url", "path", "file_path", "filePath", "pattern", "query", "skill", "name", "description", "question", "prompt", "fact", "intent"}
-
-func compactArgument(tool *agentapi.ToolCall) (arg, path string) {
-	// An input that is one JSON string (apply_patch's patch): the files a
-	// patch names, else the text decoded, never its quoted escapes.
-	var text string
-	if strings.HasPrefix(tool.Input, `"`) && json.Unmarshal([]byte(tool.Input), &text) == nil {
-		if paths := patchFilePaths(text); len(paths) > 0 {
-			return boundedPreview(strings.Join(paths, ", "), 512), ""
-		}
-		return boundedPreview(text, 512), ""
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal([]byte(tool.Input), &obj) == nil && obj != nil {
-		value := func(key string) string { var s string; _ = json.Unmarshal(obj[key], &s); return s }
-		for _, key := range []string{"path", "file_path", "filePath"} {
-			if s := value(key); strings.TrimSpace(s) != "" {
-				path = s
-				break
-			}
-		}
-		for _, keys := range [][]string{toolArgumentKeys[strings.ToLower(tool.Name)], genericArgumentKeys} {
-			for _, key := range keys {
-				if s := value(key); strings.TrimSpace(s) != "" {
-					return boundedPreview(s, 512), path
-				}
-			}
-		}
-		// Preserve JSON field order for the same fallback the browser used.
-		dec := json.NewDecoder(strings.NewReader(tool.Input))
-		_, _ = dec.Token()
-		for dec.More() {
-			_, _ = dec.Token()
-			var v any
-			if dec.Decode(&v) != nil {
-				break
-			}
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				return boundedPreview(s, 512), path
-			}
-		}
-	}
-	return boundedPreview(tool.Input, 512), path
 }
 
 func projectItem(it agentapi.Item) compactItem {
@@ -523,3 +447,10 @@ func (m *Manager) CompactHistoryPage(id, agent, before, after string) (compactHi
 		}
 	}
 }
+
+// compactArgument is the argument tool is shown by and the path it names (toolargs.Compact).
+func compactArgument(tool *agentapi.ToolCall) (arg, path string) {
+	return toolargs.Compact(tool.Name, tool.Input)
+}
+
+func boundedPreview(s string, limit int) string { return toolargs.BoundedPreview(s, limit) }

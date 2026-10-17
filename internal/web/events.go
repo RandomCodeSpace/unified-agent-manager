@@ -49,12 +49,18 @@ func (s *Subscriber) Gone() <-chan struct{} { return s.gone }
 func (s *Subscriber) Sent(frame []byte) { s.queued.Add(-int64(len(frame))) }
 
 type snapshotEvent struct {
-	Seq      uint64           `json:"seq"`
-	Projects []Project        `json:"projects"`
-	Settings Settings         `json:"settings"`
-	Usage    AccountUsage     `json:"usage"`
-	Sessions []SessionSummary `json:"sessions"`
-	Session  *SessionDetail   `json:"session"`
+	Seq        uint64           `json:"seq"`
+	Projects   []Project        `json:"projects"`
+	Settings   Settings         `json:"settings"`
+	Usage      AccountUsage     `json:"usage"`
+	ModelCalls ModelCalls       `json:"model_calls"`
+	Sessions   []SessionSummary `json:"sessions"`
+	Session    *SessionDetail   `json:"session"`
+}
+
+type modelCallsEvent struct {
+	Seq        uint64     `json:"seq"`
+	ModelCalls ModelCalls `json:"model_calls"`
 }
 
 type usageEvent struct {
@@ -267,7 +273,7 @@ func (m *Manager) captureSubscription(sessionID string, toolDeltas, recentHistor
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), Sessions: m.summariesLocked()}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked()}
 	for i := range snapshot.Sessions {
 		snapshot.Sessions[i] = snapshotSummary(snapshot.Sessions[i])
 	}

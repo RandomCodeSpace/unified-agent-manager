@@ -171,6 +171,11 @@ func TestWebSubagentFollowUpRunsAndReturnsToIdle(t *testing.T) {
 	} {
 		h.fs.onEvent(e)
 	}
+	// A model call the follow-up starts and never reports the end of.
+	h.fs.onEvent(agentEv("f10", "agent-1", &rpc.AssistantTurnStartData{TurnID: "2"}))
+	if p := lastPhase(t, h); p == nil || p.Calls != 1 || p.Subagents != 1 {
+		t.Fatalf("follow-up model call = %+v", p)
+	}
 	var user *agentapi.Item
 	for _, e := range h.sink.all()[mark:] {
 		switch e.Kind {
@@ -199,15 +204,27 @@ func TestWebSubagentFollowUpRunsAndReturnsToIdle(t *testing.T) {
 	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentIdle || sa.EndedAt.IsZero() {
 		t.Fatalf("after the follow-up = %+v", sa)
 	}
+	// The list settled the follow-up: its model call is over with it.
+	if p := lastPhase(t, h); p != nil {
+		t.Fatalf("phase after the list settled the follow-up = %+v", p)
+	}
 	h.fs.setTasks(agentTaskInfo("agent-1", rpc.TaskStatusRunning, rpc.TaskExecutionModeSync))
 	if err := h.conv.PromptSubagent(ctx, "agent-1", "third"); err != nil || len(h.fs.messages()) != 2 {
 		t.Fatalf("second follow-up = %v, messages %v", err, h.fs.messages())
 	}
 	settleTasks(t, h, 5)
+	h.fs.onEvent(agentEv("g1", "agent-1", &rpc.AssistantTurnStartData{TurnID: "3"}))
+	if p := lastPhase(t, h); p == nil || p.Subagents != 1 {
+		t.Fatalf("second follow-up model call = %+v", p)
+	}
 	// Stop still works on a running follow-up; the list reports the end.
 	h.fs.setTasks(agentTaskInfo("agent-1", rpc.TaskStatusCancelled, rpc.TaskExecutionModeSync))
 	if err := h.conv.CancelSubagent(ctx, "agent-1"); err != nil || len(h.fs.subCancels) != 1 || h.fs.subCancels[0] != "agent-1" {
 		t.Fatalf("stop = %v, cancels %v", err, h.fs.subCancels)
+	}
+	// Its model call ends with the stop, no subagent event needed.
+	if p := lastPhase(t, h); p != nil {
+		t.Fatalf("phase after stop = %+v", p)
 	}
 	settleTasks(t, h, 6)
 	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCancelled {

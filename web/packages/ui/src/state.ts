@@ -1,6 +1,6 @@
 import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
-import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
+import type { AccountUsage, HistoryPage, ModelCalls, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -69,6 +69,8 @@ export interface State {
   settings: Settings;
   /** The account quotas, from the snapshot and `usage` frames; null until a snapshot carries them (#188). */
   usage: AccountUsage | null;
+  /** Model calls in flight across the service's Threads, from the snapshot and `model_calls` frames; null until a snapshot carries them. */
+  modelCalls: ModelCalls | null;
 }
 
 export const initialState: State = {
@@ -91,6 +93,7 @@ export const initialState: State = {
   agentSteps: {},
   settings: DEFAULT_SETTINGS,
   usage: null,
+  modelCalls: null,
 };
 
 export type Action =
@@ -142,7 +145,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.status, detail };
     }
     case 'snapshot': {
-      const { seq, sessions, session, projects, settings, usage } = action.data;
+      const { seq, sessions, session, projects, settings, usage, model_calls } = action.data;
       const detail = session?.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
@@ -167,6 +170,7 @@ export function reducer(state: State, action: Action): State {
         agentSteps: {},
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
+        modelCalls: model_calls ?? null,
       };
     }
     case 'settings':
@@ -304,6 +308,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, settings: d.settings };
         case 'usage':
           return { ...state, usage: d.usage };
+        case 'model_calls':
+          return { ...state, modelCalls: d.model_calls };
       }
       const detail = state.detail;
       if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;

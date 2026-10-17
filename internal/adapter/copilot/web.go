@@ -2069,6 +2069,8 @@ type conversation struct {
 	turnModel string
 	// act is the running turn's live activity (activity.go).
 	act activity
+	// phase is the running turn's model calls and tools in flight (phase.go).
+	phase phaseState
 	// todos is the todo list and its reads (todos.go).
 	todos todoReads
 	// byom is what the session has of the custom models.
@@ -2837,7 +2839,9 @@ func (c *conversation) CancelSubagent(ctx context.Context, agentID string) error
 	}
 	c.stoppedSubagents[agentID] = true
 	c.expireSubagentLocked(agentID)
-	// A stopped follow-up may end without a subagent event.
+	// A stopped follow-up may end without a subagent event, and without the
+	// end of its model call.
+	c.endAgentPhaseLocked(agentID)
 	c.checkTasksLocked()
 	return nil
 }
@@ -3406,6 +3410,7 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 			c.expireSubagentLocked(id)
 		}
 		sa.Status = status
+		c.endAgentPhaseLocked(id)
 		if sa.EndedAt.IsZero() {
 			sa.EndedAt = time.Now()
 			if t.IdleSince != nil && t.Status == rpc.TaskStatusIdle {
@@ -3523,6 +3528,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.noteModelWaitLocked(ev)
 	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
+	c.observePhaseLocked(ev, agentID)
 	if c.observeActivityLocked(ev, agentID) {
 		return
 	}
@@ -3889,6 +3895,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
+	c.phase = phaseState{}
 	c.endStallLocked()
 	c.undeliveredLocked(turn.State, at)
 	c.emitTurnEndLocked(turn)

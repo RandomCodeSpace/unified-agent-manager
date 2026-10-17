@@ -1090,6 +1090,29 @@ type Activity struct {
 	Intent string `json:"intent,omitempty"`
 	// Retry is set while the turn's current model call is being retried.
 	Retry *Retry `json:"retry,omitempty"`
+	// Phase is what the turn's agents, subagents included, wait on now; nil
+	// while no model call is in flight and no tool runs.
+	Phase *Phase `json:"phase,omitempty"`
+}
+
+// Phase is the running turn's model calls in flight and its oldest running
+// tool call, from the provider's events alone. A subagent-spawning call is
+// not a running tool: its subagent reports its own calls and tools.
+type Phase struct {
+	// Calls counts the model calls in flight, the main agent's and its
+	// subagents'; Subagents how many of them are subagents'.
+	Calls     int `json:"calls,omitempty"`
+	Subagents int `json:"subagents,omitempty"`
+	// Model is the model of the main agent's call in flight, else of the
+	// oldest subagent call; CallsSince is when the oldest call started.
+	Model      string    `json:"model,omitempty"`
+	CallsSince time.Time `json:"calls_since,omitzero"`
+	// Tool names the oldest running tool call, "" when none runs; Detail is
+	// the short argument it is shown by (toolargs.Compact), bounded;
+	// ToolSince is when it started.
+	Tool      string    `json:"tool,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+	ToolSince time.Time `json:"tool_since,omitzero"`
 }
 
 // Retry describes a model call the provider is retrying.

@@ -195,6 +195,10 @@ type Manager struct {
 	// latest read began.
 	quota       map[string]*quotaCache
 	quotaPolled time.Time
+	// utilityLive counts the Utility calls in flight; modelCallsTimer is the
+	// pending model_calls frame (phase.go).
+	utilityLive     int
+	modelCallsTimer *time.Timer
 	// quotaKick asks the usage loop for a read; quotaTick is how often the
 	// loop checks for a due one (tests set it before Start).
 	quotaKick chan struct{}
@@ -463,6 +467,9 @@ type webSession struct {
 	// turnActivity is the running turn's live activity (turn_activity.go);
 	// not persisted.
 	turnActivity TurnActivity
+	// workPhase is the provider's latest phase of the running turn, which
+	// turnActivity shows with the owner's pending requests (phase.go).
+	workPhase *agentapi.Phase
 	// todoBase is the todo list as the running or last turn found it.
 	todoBase TodoView
 	// turnIntent is the running turn's last intent, for its todo snapshot.
@@ -2169,6 +2176,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 // part or its queue changed.
 func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	m.updateTurnTimingPauseLocked(s)
+	m.updatePhaseLocked(s)
 	after := m.summaryLocked(s)
 	after.UpdatedAt = before.UpdatedAt
 	key := s.key()

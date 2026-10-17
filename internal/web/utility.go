@@ -277,7 +277,7 @@ func (m *Manager) runUtilityChecked(ctx context.Context, call UtilityCall, promp
 	}
 	var usage *agentapi.UtilityUsage
 	start := time.Now()
-	reply, err := run(ctx, func(u agentapi.UtilityUsage) { usage = &u })
+	reply, err := m.countUtilityCall(func() (string, error) { return run(ctx, func(u agentapi.UtilityUsage) { usage = &u }) })
 	call.DurationMS = time.Since(start).Milliseconds()
 	call.PromptChars, call.ReplyChars = utf8.RuneCountInString(prompt), utf8.RuneCountInString(reply)
 	if usage != nil {

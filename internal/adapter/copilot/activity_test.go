@@ -59,12 +59,12 @@ func TestWebActivityIntentIsTheMainAgentsAndPerTurn(t *testing.T) {
 	h.fs.onEvent(ev("n2", &rpc.AssistantIntentData{Intent: "Building the index page"}))
 	h.fs.onEvent(agentEv("n3", "child", &rpc.AssistantIntentData{Intent: "Child work"}))
 	// The CLI starts the main agent's turn again for each model call; the
-	// turn keeps its intent.
+	// turn keeps its intent, and the call shows as its phase.
 	h.fs.onEvent(ev("ts", &rpc.AssistantTurnStartData{TurnID: "2"}))
 	h.fs.onEvent(ev("r0", &rpc.AssistantTurnRetryData{TurnID: "2"}))
 	h.fs.onEvent(ev("n4", &rpc.AssistantIntentData{Intent: strings.Repeat("é", 200)}))
 	got := activities(h, n)
-	if len(got) != 3 || got[0].Intent != "Building the index page" || got[1].Intent != "Building the index page" || got[1].Retry == nil || got[2].Intent != strings.Repeat("é", maxIntentRunes) {
+	if len(got) != 4 || got[0].Intent != "Building the index page" || got[1].Intent != "Building the index page" || got[1].Phase == nil || got[2].Retry == nil || got[2].Phase == nil || got[3].Intent != strings.Repeat("é", maxIntentRunes) {
 		t.Fatalf("activities = %+v", got)
 	}
 	for _, e := range h.sink.all()[n:] {

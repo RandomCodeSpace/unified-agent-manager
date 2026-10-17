@@ -708,6 +708,31 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   sends at most 100 rows with the counts of all: `done`, `total`,
   `in_progress`, `pending` and `blocked`, a stage with no rows left out, and
   `open`, `in_progress` plus `pending`.
+- **Model or local**: while a Thread's turn runs, the right end of the strip
+  under the composer says what it waits on now, with a clock since that
+  began: **Model** and the model's name while a model call is in flight (the
+  main agent's or a subagent's), **Local · no model** and the tool with its
+  short argument ("bash go test ./…") while a tool runs and no model call
+  is in flight, and **Waiting on you** with what is asked ("approve bash",
+  "answer question", "review plan") while a request waits for you; the first
+  of these that holds wins, and nothing shows otherwise. A phone shows only
+  the glyph, a short word (Model, Local or You) and the clock, without the
+  time split beside it, so the branch keeps its room. uam reads this from Copilot's events only: an agent's
+  model call runs from its `assistant.turn_start` to its usage report, its
+  first tool call, the end of its turn, an abort, its `assistant.idle` or an
+  error, and a retry keeps it; a `task` call, which runs a subagent, is not
+  a running tool, as its subagent reports its own. It comes as
+  `turn_activity.phase` (`kind` `model`, `local` or `waiting`, `since`,
+  `model`, `tool`, `detail`, and `calls` and `subagents`, the model calls in
+  flight in any phase and how many are subagents'). The sidebar's foot has
+  an **AI** chip after Usage: the model calls in flight across the service's
+  Threads, their subagents and Background AI, in the accent while any is and
+  muted without a count while none is; its tip says for what ("2 Threads · 1
+  subagent · Background AI idle") and how many Threads run a tool locally.
+  The snapshot's `model_calls` and the `model_calls` event carry `threads`
+  (main-agent calls), `subagents`, `background` and `local`, a few times a
+  second at most. Both are live only, never saved; a connected instance shows
+  its own.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
   left it. Its last reply's foot reads "Todo 4/7 · 1 in progress · 1 blocked
   · 1 to do" and stays on screen (the turn has ended, so "in progress" is
@@ -2003,7 +2028,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     rail and the conversation takes the width. The rail keeps, top to bottom,
     the UAM mark alone (shows the sidebar again, with the Needs you count on it),
     the Project filter, Routines, Add project, New thread, and at the foot
-    Settings, Usage and the connection dot; each opens exactly what the sidebar's
+    Settings, Usage, AI and the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Thread and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.

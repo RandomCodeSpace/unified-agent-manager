@@ -16,6 +16,7 @@ import { Collapse } from './ui/collapse';
 import { ContextMenu, useLazyContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './UsageButton';
+import { ModelCallsChip } from './ModelPhase';
 import { restartNotice } from './UamService';
 import { BUILD_VERSION, shortVersion } from '../lib/update';
 import { InstanceSwitcher } from './InstanceSwitcher';
@@ -231,6 +232,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         <SettingsButton actions={actions} side="right" />
         <UsageButton side="right" onAddPrices={() => actions.onSettings('token-prices')} />
+        <ModelCallsChip variant="rail" side="right" />
         <ConnectionMark connection={connection} side="right" />
       </div>
     </nav>
@@ -888,6 +890,7 @@ export const Sidebar = memo(function Sidebar({
         <div className="flex min-w-0 items-center gap-1">
           <SettingsButton actions={actions} />
           <UsageButton variant="chip" side="top" className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
+          <ModelCallsChip className="ml-1" />
           <span className="flex-1" />
           {version && <VersionMeta version={version} />}
           {connection === 'connected' && <output className="sr-only">{CONNECTION_TEXT.connected}</output>}

@@ -381,6 +381,48 @@ type TurnActivity struct {
 	Intent string          `json:"intent,omitempty"`
 	Retry  *agentapi.Retry `json:"retry,omitempty"`
 	Todos  TodoView        `json:"todos"`
+	Phase  *Phase          `json:"phase,omitempty"`
+}
+
+// Phase kinds: waiting on the owner, a model call in flight, or a tool
+// running with no model call in flight. The first that holds wins.
+const (
+	PhaseWaiting = "waiting"
+	PhaseModel   = "model"
+	PhaseLocal   = "local"
+)
+
+// Phase is what the running turn waits on now (phase.go); live only.
+type Phase struct {
+	Kind string `json:"kind"`
+	// Since is when the request, the oldest model call or the tool shown
+	// started.
+	Since time.Time `json:"since"`
+	// Model is the model a model phase calls; Tool is the tool a local
+	// phase runs.
+	Model string `json:"model,omitempty"`
+	Tool  string `json:"tool,omitempty"`
+	// Detail is the local tool's short argument, or what the owner is
+	// asked: "approve bash", "answer question", "review plan".
+	Detail string `json:"detail,omitempty"`
+	// Calls counts the model calls in flight, the main agent's and its
+	// subagents', in any phase; Subagents how many are subagents'.
+	Calls     int `json:"calls,omitempty"`
+	Subagents int `json:"subagents,omitempty"`
+}
+
+// ModelCalls counts, across this service's Threads, what waits on a model
+// now and what runs locally; the model_calls frame and the snapshot carry
+// it, never persisted.
+type ModelCalls struct {
+	// Threads counts the Threads whose main agent has a model call in
+	// flight; Subagents the subagent model calls in flight; Background the
+	// Background AI (Utility) calls in flight.
+	Threads    int `json:"threads"`
+	Subagents  int `json:"subagents"`
+	Background int `json:"background"`
+	// Local counts the Threads running a tool with no model call in flight.
+	Local int `json:"local"`
 }
 
 // TodoView is the open conversation's todo list.
