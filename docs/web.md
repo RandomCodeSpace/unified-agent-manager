@@ -474,9 +474,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
   **Tools** (the context ring and "Tools") opens one panel with a tab for
-  each tool the Thread has: Context (see **Context usage**), Usage (the AI
-  units recorded for the Thread and Copilot's own usage metrics for the
-  conversation) and Agent (see **Agent**; shown only when the Project has a
+  each tool the Thread has: Context (see **Context usage**), Usage (the time
+  split, see **Time split**, the AI units recorded for the Thread and
+  Copilot's own usage metrics for the conversation) and Agent (see **Agent**; shown only when the Project has a
   custom agent or the Thread names one). The open panel reads its counts again
   whenever the Thread reports new usage or context. The arrow keys move
   between tabs and Esc closes it; on a phone it is a bottom sheet, and so is
@@ -769,6 +769,35 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the limit by one call; the quota is read at most once a minute and counts
   every client of the account. The agent reads it with `uam` `sense`.
   Connected instances advertise `thread-budget-v1`.
+- **Time split**: Tools → Usage opens with "Time in this Thread": a bar and
+  the shares of time spent in the model and running local tools and scripts,
+  then each tool's own local time (the top five, the rest folded). The row
+  under the composer ends with the same split ("38% model · 62% local", both
+  times added once the Thread is idle; the whole sentence in its tip), shown
+  once anything is recorded. Both read `GET /api/sessions/{id}/time-split`,
+  again when the Thread's state, usage or context changes; nothing polls. It
+  folds the conversation's Copilot journal
+  (`COPILOT_HOME/session-state/<id>/events.jsonl`), so a closed, settled or
+  archived Thread has it too, and is cached until the journal's size or
+  modification time changes. It returns `{"model_ms", "model_calls",
+  "local_ms", "local_runs", "waiting_ms", "waits", "tools": [{"name", "ms",
+  "runs"}]}` in milliseconds. Model time is the sum of every model call's own
+  duration (`session.usage_record`), subagents included; `model_ms` is null
+  for a CLI that does not record it ("Model time not recorded for this
+  Thread's CLI version"; local time still shows). Local time is the wall time
+  tools ran (start to completion, parallel runs counted once), minus time
+  waiting on you and minus time a model call was running. Waiting on you is
+  permission requests, `ask_user` questions and elicitations; it is shown
+  apart and is in neither share, and `waits` counts every such request,
+  including those answered at once. Tools that only drive subagents (`task`,
+  `read_agent`, `write_agent`, `list_agents`) are left out, since their
+  subagents' model calls already count. Open runs and requests end at a
+  `session.shutdown` or `abort`; at a `session.resume` without a shutdown
+  before it, waiting ends at the resume while a tool counts only to the last
+  event the stopped CLI wrote, so a restart never counts as local time. A
+  tool's row is its own run time without waiting, so the rows can add up to
+  more than the local total. The shares are model / (model + local).
+  Connected instances advertise `time-split-v1`.
 - **Session stats**: Settings → Session stats counts every Copilot session
   journal under `COPILOT_HOME/session-state` (sessions, prompts, turns,
   tools, failures, stops, errors and permission outcomes; never their text),

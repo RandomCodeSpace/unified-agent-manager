@@ -211,6 +211,23 @@ export interface TaskUsageMetrics {
   truncated?: boolean;
 }
 export interface UsageTokenDetail { type: string; tokens: number }
+/**
+ * GET /api/sessions/{id}/time-split: where a Thread's time went, from its Copilot session journal (ms). Model time is
+ * the sum of the model calls' own durations, subagents included; null when the CLI did not record them. Local time is
+ * the wall time tools and scripts ran (parallel runs once), without waiting on the owner and without model time.
+ * Waiting is reported apart and is in neither. `tools` is each tool's own run time without waiting, longest first;
+ * its rows may add up to more than `local_ms`.
+ */
+export interface TimeSplit {
+  model_ms: number | null;
+  model_calls: number;
+  local_ms: number;
+  local_runs: number;
+  waiting_ms: number;
+  /** Permission requests, questions and elicitations, answered at once or not. */
+  waits: number;
+  tools: { name: string; ms: number; runs: number }[];
+}
 export interface UsageMetricModel {
   model: string;
   requests: number;
@@ -2333,6 +2350,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
     taskUsageMetrics: (id: string, signal?: AbortSignal) => call<TaskUsageMetrics>('GET', `/api/sessions/${enc(id)}/usage-metrics`, undefined, false, signal),
+    taskTimeSplit: (id: string, signal?: AbortSignal) => call<TimeSplit>('GET', `/api/sessions/${enc(id)}/time-split`, undefined, false, signal),
     /** `question` goes to the model; `typed`, what the owner asked, is what the Task keeps. */
     askAside: (id: string, question: string, typed: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question, typed }, false, signal),
     asides: (id: string) => call<{ asides: Aside[] }>('GET', `/api/sessions/${enc(id)}/asides`).then((r) => r.asides),

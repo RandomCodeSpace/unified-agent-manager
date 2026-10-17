@@ -3,6 +3,7 @@ import { useApi } from '../ApiContext';
 import { describeError, readOnly, type SessionDetail, type TaskUsageMetrics, type UsageMetricAgent, type UsageMetricModel, type UsageTokenDetail } from '../api';
 import { formatCredits } from '../lib/cost';
 import { Note } from './common';
+import { TimeSplitSection } from './TimeSplit';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { PanelSection } from './ui/panel';
@@ -155,10 +156,11 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
   </PanelSection>;
 }
 
-/** The Tools panel's Usage tab: the recorded Task report, the budget, then the native metrics where the provider reads them. Mounted only while shown. */
+/** The Tools panel's Usage tab: the time split, the recorded Task report, the budget, then the native metrics where the provider reads them. Mounted only while shown. */
 export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   const api = useApi();
   return <>
+    <TimeSplitSection session={session} />
     <PanelSection label="Recorded Thread report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI credits not reported yet'}</p></PanelSection>
     {session.id && !readOnly(session) && api.supports('thread-budget-v1') && <Budget session={session} />}
     {session.capabilities.usage_metrics && <Metrics session={session} />}
