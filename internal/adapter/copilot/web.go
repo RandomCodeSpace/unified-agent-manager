@@ -4154,6 +4154,10 @@ type transcript struct {
 	// hidden holds the IDs of running skill tool calls, which are not
 	// transcript items.
 	hidden map[string]struct{}
+	// replied marks a main-agent reply since the owner's last prompt;
+	// promoted is the receipt whose summary became that reply.
+	replied  bool
+	promoted string
 }
 
 func (t *transcript) isHidden(id string) bool {
@@ -4200,11 +4204,45 @@ func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: t.thoughtStart(agentID, ev.Timestamp), EndedAt: ev.Timestamp, AgentID: agentID})
 		}
 		delete(t.reasoned, agentID)
+		if agentID == "" && d.Content != "" {
+			t.replied = true
+		}
+	}
+	if d, ok := ev.Data.(*rpc.UserMessageData); ok && agentOf(ev) == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
+		t.replied = false
 	}
 	if it, ok := t.item(ev); ok {
+		if reply, ok := t.completionReply(ev, &it); ok {
+			out = append(out, reply)
+		}
 		out = append(out, it)
 	}
 	return out
+}
+
+// completionReply is an accepted main-agent receipt's summary as the turn's
+// reply when the agent wrote none since the owner's prompt it answers:
+// autopilot agents often put their whole answer there. It is whole and
+// Markdown like any reply, and the receipt's notice then leaves the summary
+// out. The same receipt delivered again yields the same items.
+func (t *transcript) completionReply(ev copilot.SessionEvent, it *agentapi.Item) (agentapi.Item, bool) {
+	d, ok := ev.Data.(*rpc.SessionTaskCompleteData)
+	if !ok || it.AgentID != "" || (t.replied && (ev.ID == "" || ev.ID != t.promoted)) || it.Completion == nil || it.Completion.Decision != agentapi.CompletionAccepted || d.Summary == nil {
+		return agentapi.Item{}, false
+	}
+	// A late receipt of an earlier turn is not this turn's reply.
+	if u := it.Completion.UserItemID; u == "" || u != t.completions.users[""] {
+		return agentapi.Item{}, false
+	}
+	text := strings.TrimSpace(displaytext.SanitizeText(*d.Summary))
+	if text == "" {
+		return agentapi.Item{}, false
+	}
+	t.replied, t.promoted = true, ev.ID
+	notice := *it.Completion
+	notice.Summary = ""
+	it.Text = completionNotice(&notice)
+	return agentapi.Item{ID: "completion-reply:" + it.ID, Kind: agentapi.ItemAssistant, Text: text, Time: it.Time}, true
 }
 
 // thoughtStart is when the agent's current model call began: the CLI

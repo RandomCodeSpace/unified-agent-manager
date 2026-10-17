@@ -68,6 +68,14 @@ func TestCompletionDecisionsPreserveTypedNativeFacts(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := tr.items(native)
+			accepted := tc.want == agentapi.CompletionAccepted
+			if accepted {
+				// No reply since the prompt: the summary is the reply.
+				if len(got) != 2 || got[0].Kind != agentapi.ItemAssistant || got[0].ID != "completion-reply:receipt" || got[0].Text != "Native summary" || got[0].Time != native.Timestamp {
+					t.Fatalf("reply=%+v", got)
+				}
+				got = got[1:]
+			}
 			if len(got) != 1 || got[0].Kind != agentapi.ItemNotice || got[0].ID != "receipt" || got[0].Time != native.Timestamp {
 				t.Fatalf("receipt=%+v", got)
 			}
@@ -75,7 +83,10 @@ func TestCompletionDecisionsPreserveTypedNativeFacts(t *testing.T) {
 			if c == nil || c.Decision != tc.want || c.UserItemID != "user-message" || c.Summary != "Native summary" || c.Reason != "label-safe reason" || c.Blocker == nil || c.Blocker.Kind != "permission" || c.Blocker.Reason != "denied" || !c.Blocker.Resumable {
 				t.Fatalf("completion=%+v", c)
 			}
-			for _, fact := range []string{"Summary: ` Native summary `", "Reason: ` label-safe reason `", "Blocker kind: ` permission `", "Blocker reason: ` denied `", "Resumable: yes"} {
+			if accepted == strings.Contains(got[0].Text, "Summary:") {
+				t.Fatalf("notice summary with accepted=%v: %s", accepted, got[0].Text)
+			}
+			for _, fact := range []string{"Reason: ` label-safe reason `", "Blocker kind: ` permission `", "Blocker reason: ` denied `", "Resumable: yes"} {
 				if !strings.Contains(got[0].Text, fact) {
 					t.Fatalf("notice hides %q: %s", fact, got[0].Text)
 				}
@@ -101,10 +112,13 @@ func TestCompletionBoundsAndReplay(t *testing.T) {
 	for _, e := range journal {
 		live = append(live, tr.items(e)...)
 	}
-	if len(live) != 6 {
+	if len(live) != 7 {
 		t.Fatalf("completion notices missing: %+v", live)
 	}
-	for _, idx := range []int{4, 5} {
+	if r := live[5]; r.Kind != agentapi.ItemAssistant || r.Text != strings.Repeat("界", 500) {
+		t.Fatalf("main summary not the whole reply: %+v", r)
+	}
+	for _, idx := range []int{4, 6} {
 		c := live[idx].Completion
 		want := "exact-message-id"
 		if idx == 4 {
@@ -135,11 +149,11 @@ func TestCompletionBoundsAndReplay(t *testing.T) {
 	}
 	tr = newTranscript()
 	tr.items(ev("event-id", &rpc.UserMessageData{Content: "no message ID"}))
-	if got := tr.items(completionEvent("done", "event-id", d))[0].Completion.UserItemID; got != "event-id" {
+	if got := tr.items(completionEvent("done", "event-id", d))[1].Completion.UserItemID; got != "event-id" {
 		t.Fatalf("event fallback=%q", got)
 	}
 	tr.items(ev("too-long", userMessage(strings.Repeat("u", 257), rpc.UserMessageDeliveryIdle, "root")))
-	if got := tr.items(ev("unsafe", d))[0].Completion.UserItemID; got != "" {
+	if got := tr.items(ev("unsafe", d)); len(got) != 1 || got[0].Completion.UserItemID != "" {
 		t.Fatal("identity was truncated or retained")
 	}
 }
@@ -336,7 +350,7 @@ func TestCompletionCreateAndResumeLiveReceiptsReplayWithoutDuplicates(t *testing
 		}
 		fc.sessions[0].events = journal
 		got, err := conv.History(context.Background())
-		if err != nil || len(got.Items) != 3 || got.Items[1].Completion == nil || got.Items[2].Completion == nil || got.Items[1].Completion.Summary != "First" || got.Items[2].Completion.Summary != "Second" {
+		if err != nil || len(got.Items) != 4 || got.Items[1].Text != "First" || got.Items[2].Completion == nil || got.Items[3].Completion == nil || got.Items[2].Completion.Summary != "First" || got.Items[3].Completion.Summary != "Second" {
 			t.Fatalf("create/resume=%v history=%+v %v", resumed, got.Items, err)
 		}
 		var receipts []agentapi.Item
@@ -379,7 +393,8 @@ func TestCompletionDelayedReceiptPreservesItsOriginalUserAnchor(t *testing.T) {
 	for _, e := range journal {
 		items = append(items, tr.items(e)...)
 	}
-	if items[3].Completion.UserItemID != "message-1" || items[4].Completion.UserItemID != "message-2" {
+	// The late receipt's turn had its reply; only the current one becomes one.
+	if len(items) != 6 || items[3].Completion.UserItemID != "message-1" || !strings.Contains(items[3].Text, "Old summary") || items[4].Text != "Current summary" || items[5].Completion.UserItemID != "message-2" {
 		t.Fatalf("anchors=%+v", items)
 	}
 }
@@ -532,5 +547,34 @@ func TestCompletionLiveStreamMatchesJournalReplay(t *testing.T) {
 				t.Fatalf("turn=%+v", ended)
 			}
 		})
+	}
+}
+
+// A receipt's summary is the turn's reply only when the main agent wrote
+// none since the owner's prompt; then it keeps its lines for Markdown.
+func TestCompletionSummaryIsTheReplyOnlyWithoutOne(t *testing.T) {
+	tr := newTranscript()
+	accepted := func(id, parent, summary string) []agentapi.Item {
+		return tr.items(completionEvent(id, parent, completeData(copilot.Bool(true), "completed", summary)))
+	}
+	tr.items(ev("u1", userMessage("m1", rpc.UserMessageDeliveryIdle, "first")))
+	tr.items(completionEvent("a1", "u1", &rpc.AssistantMessageData{MessageID: "r1", Content: "The answer."}))
+	if got := accepted("c1", "a1", "Done."); len(got) != 1 || got[0].Kind != agentapi.ItemNotice || !strings.Contains(got[0].Text, "Summary: ` Done. `") {
+		t.Fatalf("a turn with a reply = %+v", got)
+	}
+	tr.items(completionEvent("u2", "c1", userMessage("m2", rpc.UserMessageDeliveryIdle, "second")))
+	sub := agentEv("sub", "child", &rpc.AssistantMessageData{MessageID: "r2", Content: "child text"})
+	sub.ParentID = copilot.String("u2")
+	tr.items(sub)
+	table := "Report:\n\n| Day | Units |\n|---|---|\n| 1 | 0.5 |"
+	got := accepted("c2", "sub", "\x1b[31m"+table+"\n")
+	if len(got) != 2 || got[0].Kind != agentapi.ItemAssistant || got[0].Text != table || got[1].Text != "Completion accepted" {
+		t.Fatalf("a turn without a reply = %+v", got)
+	}
+	if again := accepted("c2", "sub", table); len(again) != 2 || !reflect.DeepEqual(again, got) {
+		t.Fatalf("the receipt again = %+v", again)
+	}
+	if later := accepted("c3", "c2", "More."); len(later) != 1 {
+		t.Fatalf("a second receipt in the turn = %+v", later)
 	}
 }
