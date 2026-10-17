@@ -17,7 +17,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type Works
 import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
-import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
+import { createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, pendingWork, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
@@ -910,6 +910,9 @@ export default function App() {
     },
     [state.projects, state.settings.task_defaults, state.settings.hidden_models, meta, select],
   );
+  // Read at a press, so the Thread actions keep their identity (and the rows their renders) as Projects or Settings change.
+  const latestStartTask = useRef(startTask);
+  useLayoutEffect(() => { latestStartTask.current = startTask; }, [startTask]);
   const draftTick = newTask?.tick;
   useEffect(() => {
     if (draftTick !== undefined && !window.matchMedia(COARSE).matches) document.getElementById('composer-text')?.focus();
@@ -1155,6 +1158,16 @@ export default function App() {
       runAgain: (id) => void rerun(id).catch(() => {}),
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread').catch(() => {}),
+      // A handoff's Continue: the Project's new-Thread draft gets the handoff (after any text already in it), then opens.
+      continueFrom: (projectId, text) => {
+        const key = api.storageKey(newTaskKey(projectId));
+        try {
+          const old = parseDraft(localStorage.getItem(key));
+          const raw = serializeDraft({ ...old, text: old?.text.trim() ? `${old.text}\n\n${text}` : text, files: old?.files ?? [], attachments: old?.attachments ?? [] });
+          if (raw) localStorage.setItem(key, raw);
+        } catch { /* Without storage the draft opens empty. */ }
+        latestStartTask.current(projectId);
+      },
     }),
     [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway],
   );

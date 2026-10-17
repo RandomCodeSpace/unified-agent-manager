@@ -280,6 +280,11 @@ type SessionSummary struct {
 	// Budget is the Thread's spending limit and how much of it is used;
 	// omitted without one.
 	Budget *BudgetView `json:"budget,omitempty"`
+	// Handoff is what the Thread left when it reached its budget: the main
+	// agent's reply that is the handoff (reply_id; no_reply says why there
+	// is none) and uam's facts in Markdown. Omitted without one; the
+	// Thread's next turn clears it.
+	Handoff *store.WebHandoff `json:"handoff,omitempty"`
 	// Title is the provider-generated title. Name may be empty; browsers
 	// display name || title || "New task".
 	Title string `json:"title"`

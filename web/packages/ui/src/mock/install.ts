@@ -15,7 +15,7 @@ import { serviceMock } from './service';
 import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
-import { seed, type MockState, type MockTask } from './data';
+import { budgetTasks, seed, type MockState, type MockTask } from './data';
 import { seedAsides } from './asides';
 import { seedUtility, utilityLog } from './utility';
 import { cleanPath } from '../lib/folders';
@@ -145,6 +145,7 @@ export function install(): { received: Received[] } {
   if (new URLSearchParams(window.location.search).has('manychanges')) {
     for (let i = 1; i <= 40; i++) st.changes.p1.push({ path: `web/src/generated/module-${i}.ts`, status: 'M', additions: i, deletions: 1, patch: '' });
   }
+  if (new URLSearchParams(window.location.search).has('budget')) st.tasks.push(...budgetTasks(st.projects.find((p) => p.id === 'p1')!.dir));
   // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
   st.settings.utility_daily_limit = 40;
   const utility = seedUtility(40);

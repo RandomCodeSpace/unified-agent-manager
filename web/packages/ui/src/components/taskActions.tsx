@@ -41,6 +41,8 @@ export interface TaskActions {
   tryModel?: (id: string) => void;
   /** Downloads the whole conversation as a Markdown file. */
   exportMarkdown?: (id: string) => void;
+  /** Opens a new Thread draft in the Project with `text` as its message (a handoff); nothing is sent. */
+  continueFrom?: (projectId: string, text: string) => void;
 }
 
 export const TaskActionsContext = createContext<TaskActions>({

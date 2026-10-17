@@ -31,6 +31,7 @@ import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
 import { PhasePill } from './ModelPhase';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
+import { HandoffCard } from './Handoff';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
@@ -162,6 +163,10 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
   if (compacting) {
     text = 'Compacting…';
     title = 'Compacting the conversation';
+  } else if (state === 'working' && session.budget?.wrapping_up) {
+    // The working mark stays; only the word says the budget is reached.
+    text = 'Wrapping up';
+    title = 'Budget reached: tools are denied and the agent is writing a handoff';
   } else if (stop) {
     text = stop.short;
     title = stop.title;
@@ -1127,6 +1132,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Collapse>
             ))}
             {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
+            {session.handoff && !live && !session.history_after && (
+              <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
+            )}
             {session.state === 'failed' && !noticed && (
               <Note tone="error" role="alert">
                 Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}

@@ -90,7 +90,7 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Not started' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Wrapping up' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Not started' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /** A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished. */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
@@ -130,6 +130,8 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       return { label: 'Starting', text: 'Starting', tone: 'accent' };
     case 'working': {
       if (s.compacting) return { label: 'Compacting', text: 'Compacting…', tone: 'accent' };
+      // At its budget: tools are denied and the agent writes its handoff.
+      if (s.budget?.wrapping_up) return { label: 'Wrapping up', text: 'Wrapping up: budget reached, writing a handoff', tone: 'accent' };
       const quiet = now - Date.parse(s.event_at ?? s.updated_at);
       return { label: 'Working', text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }

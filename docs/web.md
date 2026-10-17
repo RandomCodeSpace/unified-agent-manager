@@ -801,15 +801,41 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   quotas), or both. `PATCH /api/sessions/{id}` with `{"budget":
   {"credits", "quota_percent"}}` sets it, zeros remove it; setting it again
   counts AI credits afresh. The summary's `budget` carries `credits`, `spent`,
-  `quota_percent`, `quota_used` and `reached`, and is saved with the Thread.
-  Near the limit (80% of the credits, or 5 points short of the quota limit)
-  the agent's next tool call carries a note to wrap up. At the limit uam
-  stops the turn (`stop_reason` `budget`), denies further tool calls, keeps
-  the queue waiting and refuses sends with 409 `budget_reached` until the
-  budget changes. AI credits arrive after each model call, so a turn can pass
-  the limit by one call; the quota is read at most once a minute and counts
-  every client of the account. The agent reads it with `uam` `sense`.
-  Connected instances advertise `thread-budget-v1`.
+  `quota_percent`, `quota_used`, `reached` and `wrapping_up`, and is saved
+  with the Thread. Near the limit (80% of the credits, or 5 points short of
+  the quota limit) the agent's next tool call carries a note to wrap up.
+  At the limit a running turn is not cut off; it **wraps up** (`wrapping_up`,
+  "Wrapping up" on the Thread's row and header): a tool already running
+  finishes (tools cost no AI credits, model calls do), the model call in
+  flight finishes, and uam denies every further tool call with the
+  instruction to stop and reply with a handoff in Markdown (Done, In
+  progress, Next steps, How to resume). A turn that ends before the agent
+  got that instruction gets it once as a follow-up turn from uam, its tools
+  still denied; it is a turn of its own rather than a steer, since Copilot
+  folds a steer in only before a next model call and interrupting the turn
+  would drop the reply in flight. The wrap-up may make 2 model calls,
+  subagents' included; uam stops the turn at a third (`stop_reason`
+  `budget`), as it does on the owner's Stop. A reply after the instruction is
+  the handoff. uam adds its own facts, computed without a model: AI credits
+  spent and the quota used, the time split, the last intent, the todo list,
+  the turn's failed tool calls and the files changed in the Thread's folder
+  (git status against `HEAD`, those this Thread edited marked). Without a
+  handoff reply (Stop, the third call, a failed turn, a send uam could not
+  make, or a restart during the wrap-up) the facts alone are the handoff.
+  The summary's `handoff` carries `at`, `reply_id` (the reply), `no_reply`
+  (why there is none) and `facts` (Markdown); it is saved with the Thread,
+  never written into the Project folder, and goes when the Thread next works.
+  The conversation ends with the facts and **Continue in a new Thread**,
+  which opens a new Thread draft in the same Project with the handoff (the
+  reply, then the facts) as its message; nothing is created or sent until the
+  owner sends it. After the wrap-up the Thread keeps the queue waiting and
+  refuses sends with 409 `budget_reached` until the budget changes; raising
+  the budget during the wrap-up ends it and the turn goes on with its tools.
+  AI credits arrive after each model call, so a turn can pass the limit by
+  one call; the quota is read at most once a minute and counts every client
+  of the account. Autopilot between its turns is stopped at the limit, with
+  no wrap-up. The agent reads it with `uam` `sense`. Connected instances
+  advertise `thread-budget-v1`.
 - **Time split**: Tools → Usage opens with "Time in this Thread": a bar and
   the shares of time spent in the model and running local tools and scripts,
   then each tool's own local time (the top five, the rest folded). The row

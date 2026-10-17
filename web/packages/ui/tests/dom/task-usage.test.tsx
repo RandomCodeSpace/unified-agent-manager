@@ -206,6 +206,12 @@ test('a running Thread takes a budget in AI credits and quota percent, shows wha
   await userEvent.click(setBudget);
   expect(settings).toHaveBeenCalledWith('task-1', { budget: { credits: 2.5, quota_percent: 80 } });
 
+  // At the limit a running turn wraps up first, then its handoff ends the conversation.
+  view.select({ ...session, state: 'working', budget: { credits: 2.5, spent: 2.6, reached: true, wrapping_up: true } } as SessionDetail);
+  expect(screen.getByText(/Budget reached: the Thread is wrapping up\. A tool already running finishes; uam denies new ones and has the agent write a handoff\./)).toBeTruthy();
+  view.select({ ...session, state: 'completed', budget: { credits: 2.5, spent: 2.6, reached: true }, handoff: { at: '2026-10-17T00:00:00Z', reply_id: 'r', facts: '## Facts' } } as SessionDetail);
+  expect(screen.getByText(/Budget reached: the handoff is at the end of the conversation\. Raise or remove the budget to send more\./)).toBeTruthy();
+
   view.select({ ...session, state: 'cancelled', budget: { credits: 2.5, spent: 2.6, quota_percent: 80, quota_used: 41, reached: true } } as SessionDetail);
   expect(screen.getByText('2.6 of 2.5 AI credits')).toBeTruthy();
   expect(screen.getByText('41% · limit 80%')).toBeTruthy();

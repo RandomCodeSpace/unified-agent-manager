@@ -537,9 +537,12 @@ type webSession struct {
 
 	// budget is the owner's spending limit (budget.go). budgetWarned is set
 	// once the agent was told to wrap up, budgetStopping while uam's stop
-	// for it is on its way.
+	// for it is on its way. wrap is the wrap-up at the limit, and handoff
+	// what it left.
 	budget                       store.Budget
 	budgetWarned, budgetStopping bool
+	wrap                         *budgetWrap
+	handoff                      *store.WebHandoff
 
 	// edits maps each file the Task's edit tools touched, as the tool gave
 	// its path, to when it was last touched, and turnStart is when the
@@ -614,6 +617,7 @@ type persistKey struct {
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
 	budget                                                                                                           store.Budget
+	handoff                                                                                                          store.WebHandoff
 	agent                                                                                                            string
 	place                                                                                                            store.WebPlace
 }
@@ -683,6 +687,9 @@ func (s *webSession) durableState() string {
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, budget: s.budget}
+	if s.handoff != nil {
+		k.handoff = *s.handoff
+	}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -806,6 +813,10 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 		s.persisted = s.key()
 		m.sessions[s.id] = s
+		if s.budget.WrapUp {
+			// The restart ended its wrap-up: it gets the handoff of uam's facts.
+			m.finishWrapLocked(s, "", "uam restarted during the wrap-up")
+		}
 	}
 	usage := m.usageProviderLocked()
 	cliNames := m.cliProvidersLocked()
@@ -964,6 +975,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		if web.Budget != nil {
 			s.budget = *web.Budget
 		}
+		s.handoff = web.Handoff
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -1229,7 +1241,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	out := SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s),
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
@@ -2314,7 +2326,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
-				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget),
+				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff),
 			},
 		})
 	}
@@ -2600,6 +2612,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.Tokens != nil {
 			m.recordTokensLocked(s.provider, *ev.Tokens)
 			m.countTurnTokensLocked(s, *ev.Tokens)
+			m.wrapCallLocked(s)
 		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
@@ -2620,6 +2633,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		m.endSubagentsLocked(s)
 		m.forgetBackgroundTaskStateLocked(s)
 		m.pauseQueueLocked(s)
+		if s.wrap != nil {
+			m.finishWrapLocked(s, "", "the conversation ended")
+		}
 		if !lost {
 			log.Info("idle web provider conversation exited", "session", s.id, "provider", s.provider)
 			break
@@ -2652,6 +2668,10 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	switch turn.State {
 	case agentapi.TurnWorking:
 		s.setBase(StateWorking, "")
+		if s.wrap == nil && !s.budget.Reached {
+			// The handoff stays only until the Thread works again.
+			s.handoff = nil
+		}
 	case agentapi.TurnCompleted:
 		s.setBase(StateCompleted, "")
 		// A stop that lost the race to the turn's end must not explain a
@@ -2695,6 +2715,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 			m.kickPlaceNameLocked(s) // when the wait ended without a job
 		}
 		m.replyFallbackLocked(s)
+		m.wrapTurnEndLocked(s, turn.State)
 	}
 }
 
@@ -4061,6 +4082,17 @@ func (m *Manager) cancelBecause(id, by, reason string) (SessionSummary, error) {
 	if !caps.Cancel {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "this provider does not support cancelling a turn")
+	}
+	if w := s.wrap; w != nil && by == stopOwner && !w.done {
+		// The owner's Stop ends the wrap-up: no prompt, uam's facts only.
+		w.stop, w.stopWhy = true, "you stopped the wrap-up"
+		if !busy(state) {
+			before := m.summaryLocked(s)
+			m.finishWrapLocked(s, "", w.stopWhy)
+			m.changedLocked(s, before)
+			m.mu.Unlock()
+			return m.Summary(id)
+		}
 	}
 	if conv == nil || state == StateStarting || (!busy(state) && (s.execution == nil || s.execution.Mode != "autopilot")) {
 		m.mu.Unlock()
