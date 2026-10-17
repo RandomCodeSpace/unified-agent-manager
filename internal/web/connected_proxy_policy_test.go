@@ -71,6 +71,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/usage-metrics", true},
 		{"POST", "/api/sessions/task/usage-metrics", false},
 		{"GET", "/api/sessions/task/usage-metrics/extra", false},
+		{"GET", "/api/sessions/task/time-split", true},
+		{"POST", "/api/sessions/task/time-split", false},
 		{"GET", "/api/sessions/task/items/tool/diff", true},
 		{"POST", "/api/sessions/task/items/tool/diff", false},
 		// The plan reader's reviewed snapshot and current draft are reads, as the transcript is.

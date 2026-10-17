@@ -103,6 +103,9 @@ type Manager struct {
 	// taking it, so a later write never carries older state.
 	persistMu sync.Mutex
 	wake      chan struct{}
+
+	// timeSplits caches each journal's model/local time split.
+	timeSplits timeSplitCache
 	// projectMu serializes Project changes, Task creation's final write and
 	// Project removal, each of which checks and then writes the store. It is
 	// taken before any session.op and never while holding mu.

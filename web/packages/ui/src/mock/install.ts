@@ -1405,6 +1405,15 @@ export function install(): { received: Received[] } {
         code_changes: { files: 2, added: 31, removed: 4 }, token_details: [], models: [model], agents: [{ id: 'main', api_duration_ms: 58_200, ai_units: 1.84, models: [model] }],
       });
     }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/time-split$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (!t.items.length) return json(200, { model_ms: null, model_calls: 0, local_ms: 0, local_runs: 0, waiting_ms: 0, waits: 0, tools: [] });
+      return json(200, {
+        model_ms: 252_000, model_calls: 47, local_ms: 411_000, local_runs: 112, waiting_ms: 178_000, waits: 3,
+        tools: [{ name: 'bash', ms: 340_000, runs: 38 }, { name: 'edit', ms: 38_000, runs: 41 }, { name: 'view', ms: 21_000, runs: 27 }, { name: 'uam_receipts', ms: 12_000, runs: 6 }, { name: 'glob', ms: 4_000, runs: 3 }, { name: 'web_fetch', ms: 2_000, runs: 1 }],
+      });
+    }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/aside$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
