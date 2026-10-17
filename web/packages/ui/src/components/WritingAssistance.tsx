@@ -39,7 +39,7 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
   const [announcement, setAnnouncement] = useState('');
   const mirror = useRef<HTMLDivElement>(null);
   const reviewButton = useRef<HTMLButtonElement>(null);
-  const pointer = useRef<{ x: number; y: number; selection: WritingSelection } | null>(null);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
   const blocked = disabled || suspended || composing;
   if (draft.text !== text) {
     setDraft({ text, revision: draft.revision + 1 });
@@ -135,7 +135,7 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
     if (!input || blocked) return;
     const down = (event: PointerEvent) => {
       pointer.current = event.button === 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-        ? { x: event.clientX, y: event.clientY, selection: writingSelection(input) } : null;
+        ? { x: event.clientX, y: event.clientY } : null;
     };
     const click = (event: MouseEvent) => {
       const before = pointer.current;
@@ -151,10 +151,9 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
         const rect = Array.from(range.getClientRects()).find(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom + 3);
         if (!rect) continue;
         const index = Number(span.dataset.writingIssue);
-        // A click that opens correction review keeps the owner's typing position.
+        // The caret stays where the click put it, so the word can still be fixed by hand.
         // Drag and multi-click selections take the ordinary textarea path above.
-        input.setSelectionRange(before.selection.start, before.selection.end, before.selection.direction);
-        setOpened({ revision: draft.revision, index, anchor: { getBoundingClientRect: () => rect }, selection: before.selection });
+        setOpened({ revision: draft.revision, index, anchor: { getBoundingClientRect: () => rect }, selection: writingSelection(input) });
         break;
       }
     };

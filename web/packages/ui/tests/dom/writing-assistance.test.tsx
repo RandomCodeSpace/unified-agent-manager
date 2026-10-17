@@ -159,16 +159,39 @@ test('Escape from the textarea closes writing review before composer history or 
     input().focus();
     input().setSelectionRange(12, 12);
     fireEvent.pointerDown(input(), { button: 0, clientX: 20, clientY: 20 });
-    // Native pointerdown moves the caret before click; activating the underline restores it.
     input().setSelectionRange(2, 2);
     fireEvent.click(input(), { detail: 1, clientX: 20, clientY: 20 });
     expect(await screen.findByRole('dialog')).toBeTruthy();
     expect(document.activeElement).toBe(input());
-    expect(input().selectionStart).toBe(12);
+    expect(input().selectionStart).toBe(2);
     await user.keyboard('{Escape}');
     expect(handler).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(input().selectionStart).toBe(12);
+    expect(input().selectionStart).toBe(2);
+  } finally { rectangles.mockRestore(); }
+});
+
+test('clicking an underline leaves the caret where it landed so the word can be fixed by hand', async () => {
+  render(<Harness />);
+  const user = userEvent.setup();
+  await checked();
+  const rectangles = vi.spyOn(Range.prototype, 'getClientRects').mockReturnValue([new DOMRect(10, 10, 60, 20)] as unknown as DOMRectList);
+  try {
+    input().focus();
+    input().setSelectionRange(SAMPLE.length, SAMPLE.length);
+    fireEvent.pointerDown(input(), { button: 0, clientX: 40, clientY: 20 });
+    // Native pointerdown places the caret inside the underlined word before click.
+    input().setSelectionRange(8, 8);
+    fireEvent.click(input(), { detail: 1, clientX: 40, clientY: 20 });
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(document.activeElement).toBe(input());
+    expect(input().selectionStart).toBe(8);
+    await user.keyboard('{Backspace}{Backspace}are');
+    expect(input().value).toBe('There are two checks.');
+    expect(input().selectionStart).toBe(9);
+    await user.keyboard('{ArrowLeft}');
+    expect(input().selectionStart).toBe(8);
+    expect(screen.queryByRole('dialog')).toBeNull();
   } finally { rectangles.mockRestore(); }
 });
 
