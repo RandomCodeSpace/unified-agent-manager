@@ -71,3 +71,46 @@ func TestSavedToolOutputIsKeptWithTheSession(t *testing.T) {
 		}
 	}
 }
+
+// A saved output that cannot be copied keeps the CLI's own result.
+func TestSavedToolOutputCopyFailuresKeepTheResult(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	name := func(n string) string { return filepath.Join(tmp, "1-copilot-tool-output-"+n+".txt") }
+	spill := name("a")
+	if err := os.WriteFile(spill, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(spill, name("link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(name("dir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	taken := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(taken, "tool-output", filepath.Base(spill)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		sess sdkSession
+		from string
+	}{
+		{"no session", nil, spill},
+		{"no session folder", &fakeSession{id: "s-1"}, spill},
+		{"symbolic link", &fakeSession{id: "s-1", workspace: t.TempDir()}, name("link")},
+		{"directory", &fakeSession{id: "s-1", workspace: t.TempDir()}, name("dir")},
+		{"session folder is a file", &fakeSession{id: "s-1", workspace: notDir}, spill},
+		{"copy already there", &fakeSession{id: "s-1", workspace: taken}, spill},
+	} {
+		c := &conversation{id: "s-1", sess: tc.sess}
+		in := map[string]any{"contents": []any{map[string]any{"outputFilePath": tc.from}}}
+		if out, err := c.succeededToolUse(copilot.PostToolUseHookInput{ToolName: "bash", ToolResult: in}, copilot.HookInvocation{}); out != nil || err != nil {
+			t.Errorf("%s: succeededToolUse = %+v, %v; want nil", tc.name, out, err)
+		}
+	}
+}
