@@ -35,12 +35,14 @@ func (p *webProvider) subagentModels() []string {
 	return slices.Clone(p.subagent)
 }
 
-// preToolUse keeps every subagent on an allowed model. A task call always
-// leaves with an allowed model argument, because the model the CLI would
-// otherwise pick is not known here; the call is refused when no allowed model
-// is usable.
+// preToolUse runs uam's checks on every call, a subagent-starting task call
+// included, so a refusal (a reached budget, a fuse) also stops new
+// subagents. A task call it lets through then always leaves with an allowed
+// model argument, because the model the CLI would otherwise pick is not known
+// here; the call is refused when no allowed model is usable.
 func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
-	if in.ToolName != taskTool && c.hooks.Pre != nil {
+	var note string
+	if c.hooks.Pre != nil {
 		args, _ := in.ToolArgs.(map[string]any)
 		if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
 			args = map[string]any{"patch": patch}
@@ -64,12 +66,20 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 			if verdict.Deny != "" {
 				out.PermissionDecision, out.PermissionDecisionReason = "deny", verdict.Deny
 			}
-			return out, nil
+			// A task call uam lets through goes on to the model check, with
+			// uam's context.
+			if in.ToolName != taskTool || verdict.Deny != "" {
+				return out, nil
+			}
+			note = verdict.Context
 		}
 	}
 	allowed := c.p.subagentModels()
-	if in.ToolName != taskTool || len(allowed) == 0 {
+	if in.ToolName != taskTool {
 		return nil, nil
+	}
+	if len(allowed) == 0 {
+		return contextOnly(note), nil
 	}
 	args, _ := in.ToolArgs.(map[string]any)
 	requested, _ := args["model"].(string)
@@ -81,7 +91,7 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		return &copilot.PreToolUseHookOutput{PermissionDecision: "deny", PermissionDecisionReason: "No model allowed for subagents in UAM Settings is usable: a custom model's API key is missing. Do the work without a subagent."}, nil
 	}
 	if model == requested {
-		return nil, nil
+		return contextOnly(note), nil
 	}
 	out := maps.Clone(args)
 	if out == nil {
@@ -91,7 +101,15 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 	// Without the reason an agent sees its arguments changed, takes it for its
 	// own mistake and starts the subagent again.
 	reason := fmt.Sprintf("UAM started this subagent on %s, because the owner's settings let subagents use only %s. This is expected and final: do not start it again to change the model.", model, strings.Join(allowed, ", "))
-	return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: reason}, nil
+	return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: strings.TrimSpace(note + "\n" + reason)}, nil
+}
+
+// contextOnly is a hook answer that only adds note; nil without one.
+func contextOnly(note string) *copilot.PreToolUseHookOutput {
+	if note == "" {
+		return nil
+	}
+	return &copilot.PreToolUseHookOutput{AdditionalContext: note}
 }
 
 // subagentModel is the model a subagent runs on: the requested one, else the

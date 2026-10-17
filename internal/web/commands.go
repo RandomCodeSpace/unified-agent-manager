@@ -56,6 +56,9 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		if busy(state) {
 			return Submission{}, errTurnRunning
 		}
+		if err := m.commandBudget(s, nil); err != nil {
+			return Submission{}, err
+		}
 		return m.send(s, turnInput{text: req.Arguments, command: req.Name, files: req.Files, attachments: req.Attachments}, req.RequestID)
 	}
 	commands, err := m.listCommands(conv)
@@ -75,6 +78,9 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 	}
 	if offered.DisabledReason != "" {
 		return Submission{}, newError(http.StatusConflict, "%s", offered.DisabledReason)
+	}
+	if err := m.commandBudget(s, offered); err != nil {
+		return Submission{}, err
 	}
 	if busy(state) && !offered.AllowDuringTurn {
 		return Submission{}, errTurnRunning
@@ -136,6 +142,25 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		return reserved, newError(http.StatusServiceUnavailable, "command ran but its result could not be saved: %s", shortError(saveErr))
 	}
 	return sub, nil
+}
+
+// modelCommands are the built-in commands that start a prompt turn or
+// otherwise call the model (compact); a skill command does too.
+var modelCommands = map[string]bool{"init": true, "review": true, "blame": true, "fleet": true, "research": true, "security-review": true, "compact": true}
+
+// commandBudget refuses, at the Thread's budget, a command that would
+// spend AI credits: offered is nil for a provider whose commands are all
+// prompts. Read-only and settings commands still run.
+func (m *Manager) commandBudget(s *webSession, offered *agentapi.Command) error {
+	if offered != nil && offered.Kind != agentapi.CommandSkill && !modelCommands[offered.Name] {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.budget.Reached {
+		return errBudgetReached
+	}
+	return nil
 }
 
 func isTaskCommand(name string) bool {

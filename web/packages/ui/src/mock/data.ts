@@ -132,6 +132,98 @@ function removedExports(): string {
   return lines.join('\n');
 }
 
+/** `?mock&budget`: two Threads at their budget, one wrapping up and one with its handoff written. */
+export function budgetTasks(dir: string): MockTask[] {
+  return [
+    // At its budget: tools are denied while the agent writes its handoff.
+    task({
+      id: 't-wrap',
+      project_id: 'p1',
+      workdir: dir,
+      model: 'gpt-6-luna',
+      name: 'Port the pager tests to the new harness',
+      title: '',
+      state: 'working',
+      usage: { ai_units: 26.4 },
+      budget: { credits: 20, spent: 20.4, reached: true, wrapping_up: true },
+      context: { used: 96_000, limit: 200_000 },
+      capabilities: { ...CAPS, usage: true },
+      created_at: ago(22),
+      updated_at: ago(1),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(22), text: 'Port the pager tests in internal/vterm to the new PTY harness.' },
+        tool('i2', 18, { name: 'edit', title: 'Edit internal/vterm/pager_test.go', status: 'completed', output: '@@ -1,4 +1,6 @@' }),
+        tool('i3', 6, { name: 'bash', title: 'go test ./internal/vterm/ -run Pager', status: 'completed', output: 'ok  internal/vterm 3.1s' }),
+        tool('i4', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'failed', output: 'uam budget: this Thread reached the spending limit its owner set. Do not start new work and do not call tools. Reply now with a handoff for whoever continues this work.' }),
+      ],
+    }),
+    // Its handoff written: the reply, uam's facts and Continue in a new Thread.
+    task({
+      id: 't-handoff',
+      project_id: 'p1',
+      workdir: dir,
+      model: 'gpt-6-luna',
+      name: 'Split the dashboard tone table',
+      title: '',
+      state: 'completed',
+      usage: { ai_units: 31.2 },
+      budget: { credits: 25, spent: 25.6, reached: true },
+      handoff: {
+        at: ago(3),
+        reply_id: 'i5',
+        facts: [
+          '## Facts',
+          '',
+          '_Recorded by uam, not written by the agent._',
+          '',
+          '- **AI credits:** 25.6 spent; budget 25, counted from when it was set.',
+          '- **Time:** 6m12s in the model, 9m40s running tools.',
+          '- **Last intent:** Moving the warning tones',
+          '- **Todo list:** 2 done, 1 in progress, 1 to do, 0 blocked.',
+          '  - [x] Move the success and error tones',
+          '  - [x] Update the tone test',
+          '  - [ ] Move the warning tones (in progress)',
+          '  - [ ] Delete the old table',
+          '- **Failed tool calls in the last turn:** 1',
+          '  - `bash`: `go test ./internal/tui/...` (exit 1)',
+          '- **Files changed** against `HEAD` (git status of the Thread\'s folder; * edited by this Thread): 3',
+          '  - `internal/tui/tone.go` modified +48 −31 *',
+          '  - `internal/tui/tone_test.go` modified +12 −2 *',
+          '  - `internal/tui/legacy_tones.go` modified +0 −14 *',
+        ].join('\n'),
+      },
+      created_at: ago(40),
+      updated_at: ago(3),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(40), text: 'Split the dashboard tone table into status and chrome tones, and keep the no-colour-only test green.' },
+        tool('i2', 30, { name: 'edit', title: 'Edit internal/tui/tone.go', status: 'completed', output: '@@ -10,8 +10,12 @@' }),
+        tool('i3', 8, { name: 'bash', title: 'go test ./internal/tui/...', status: 'failed', output: '--- FAIL: TestToneTableHasNoColourOnlyDatum (0.00s)\nFAIL' }),
+        { id: 'i4', kind: 'user', time: ago(5), text: 'uam: this Thread reached the spending limit its owner set. Stop here: do not call tools or start new work. Reply with a handoff for whoever continues this work.' },
+        {
+          id: 'i5',
+          kind: 'assistant',
+          time: ago(4),
+          text: [
+            '## Done',
+            'Success and error tones moved to `statusTones` in `internal/tui/tone.go`; the tone test reads the new table.',
+            '',
+            '## In progress',
+            'Warning tones: half moved. `tone.go` has `statusTones.warning`, but `legacy_tones.go` still defines `warnFg`, so `TestToneTableHasNoColourOnlyDatum` fails on the duplicate.',
+            '',
+            '## Next steps',
+            '1. Delete `warnFg` and `warnBg` from `legacy_tones.go`.',
+            '2. Point the three callers in `dashboard.go` at `statusTones.warning`.',
+            '3. Delete `legacy_tones.go` once it is empty.',
+            '',
+            '## How to resume',
+            'Read `internal/tui/tone.go` first, then run `go test ./internal/tui/ -run ToneTable`.',
+          ].join('\n'),
+        },
+      ],
+    }),
+  ];
+}
+
 export function seed(): MockState {
   const wholeTexts: Record<string, string> = {};
   const meta: Meta = {

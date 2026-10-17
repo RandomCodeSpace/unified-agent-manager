@@ -110,7 +110,7 @@ function limit(text: string): number {
 
 /**
  * The Thread's budget, set or changed while it runs: AI credits it may still spend, and how much of the account quota
- * may be used. uam stops the Thread at either; it stays stopped until the budget changes.
+ * may be used. At either the Thread wraps up with a handoff; it then takes no messages until the budget changes.
  */
 function Budget({ session }: Readonly<{ session: SessionDetail }>) {
   const api = useApi();
@@ -135,7 +135,9 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
   if (b?.quota_percent) rows.push(['Account quota used', `${b.quota_used === undefined ? 'Not read yet' : `${formatCredits(b.quota_used)}%`} · limit ${b.quota_percent}%`]);
   return <PanelSection label="Budget">
     {rows.length > 0 && <Counts rows={rows} />}
-    {b?.reached && <Note tone="warn" role="status" className="mt-2">Budget reached: uam stopped this Thread. Raise or remove the budget to send more.</Note>}
+    {b?.wrapping_up
+      ? <Note tone="warn" role="status" className="mt-2">Budget reached: the Thread is wrapping up. A tool already running finishes; uam denies new ones and has the agent write a handoff.</Note>
+      : b?.reached && <Note tone="warn" role="status" className="mt-2">Budget reached: {session.handoff ? 'the handoff is at the end of the conversation.' : 'uam stopped this Thread.'} Raise or remove the budget to send more.</Note>}
     <form className="mt-2 flex flex-col gap-2" onSubmit={onSubmit}>
       {/* One grid, so both fields line up whatever their labels' widths. */}
       <div className="grid grid-cols-[auto_6rem_1fr] items-center gap-x-2 gap-y-2 text-ui text-body">
@@ -146,7 +148,7 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
         <Input id={`${id}-quota`} size="md" inputMode="decimal" className="tabular-nums" placeholder="No limit" value={quota} aria-invalid={!(parsed.quota_percent >= 0 && parsed.quota_percent <= 100)} onChange={(e) => setQuota(e.target.value)} />
         <span className="min-w-0">% account quota used</span>
       </div>
-      <p className="text-caption text-muted">Near the limit the agent is told to wrap up; at it, uam stops the turn. Changing the budget counts AI credits from then.</p>
+      <p className="text-caption text-muted">Near the limit the agent is told to wrap up. At it, uam denies new tools and has the agent write a handoff, then holds the Thread. Changing the budget counts AI credits from then.</p>
       <div className="flex gap-2">
         <Button type="submit" size="sm" variant="primary" disabled={saving || invalid || (parsed.credits === 0 && parsed.quota_percent === 0)}>Set budget</Button>
         {b && <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={() => { setCredits(''); setQuota(''); save({ credits: 0, quota_percent: 0 }); }}>Remove</Button>}

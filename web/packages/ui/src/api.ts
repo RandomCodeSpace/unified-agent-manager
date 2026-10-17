@@ -806,6 +806,14 @@ export interface PinnedChart extends Omit<Chart, 'pinned_id'> {
   error_at?: string;
 }
 
+/** A Thread's handoff at its budget (SessionSummary.handoff). */
+export interface Handoff {
+  at: string;
+  reply_id?: string;
+  no_reply?: string;
+  facts: string;
+}
+
 export interface SessionSummary {
   id: string;
   project_id: string;
@@ -840,10 +848,12 @@ export interface SessionSummary {
   usage?: { ai_units: number };
   /**
    * The owner's spending limit (Tools → Usage): `credits` more AI units from when it was set, `spent` of them so far,
-   * and the account quota used up to `quota_percent` (`quota_used` now, while known). Once `reached`, uam stops the
-   * Thread's turns and refuses sends until the budget changes.
+   * and the account quota used up to `quota_percent` (`quota_used` now, while known). Once `reached`, a running turn
+   * wraps up (`wrapping_up`: tools denied, the agent writes a handoff), and uam refuses sends until the budget changes.
    */
-  budget?: { credits?: number; spent: number; quota_percent?: number; quota_used?: number; reached?: boolean };
+  budget?: { credits?: number; spent: number; quota_percent?: number; quota_used?: number; reached?: boolean; wrapping_up?: boolean };
+  /** What the Thread left at its budget: `reply_id` is the agent's handoff reply (`no_reply` says why there is none), `facts` uam's Markdown. Gone once the Thread works again. */
+  handoff?: Handoff;
   mode?: PermissionMode;
   /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
   mode_unknown?: boolean;

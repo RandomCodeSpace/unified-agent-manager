@@ -364,6 +364,7 @@ const STATUS_MARKS = {
   Input: { icon: MessageCircleQuestion, tone: 'text-warning' },
   Starting: { icon: WorkingMark, tone: 'text-accent' },
   Working: { icon: WorkingMark, tone: 'text-accent' },
+  'Wrapping up': { icon: WorkingMark, tone: 'text-accent' },
   Compacting: { icon: Minimize2, tone: 'text-badge-violet' },
   Review: { icon: Eye, tone: 'text-badge-teal' },
   Finished: { icon: CircleCheck, tone: 'text-success' },

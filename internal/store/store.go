@@ -540,6 +540,9 @@ type WebState struct {
 	StopReason string `json:"stop_reason,omitempty"`
 	// Budget is the owner's spending limit for the Thread; nil without one.
 	Budget *Budget `json:"budget,omitempty"`
+	// Handoff is what the Thread left for whoever continues its work when it
+	// reached its budget; nil without one, and cleared by its next turn.
+	Handoff *WebHandoff `json:"handoff,omitempty"`
 	// Place is the branch or worktree the Thread was started in; nil for a
 	// Thread on its Project's current branch.
 	Place *WebPlace `json:"place,omitempty"`
@@ -551,11 +554,24 @@ type WebState struct {
 // conversation total From it had when the budget was set, and the account
 // quota used up to QuotaPercent. A zero limit is no limit. Reached is set
 // once either is met, and holds until the owner changes the budget.
+// WrapUp is set while the Thread, at its limit, writes its handoff; a
+// Thread loaded with it set was interrupted in its wrap-up.
 type Budget struct {
 	Credits      float64 `json:"credits,omitempty"`
 	From         float64 `json:"from,omitempty"`
 	QuotaPercent float64 `json:"quota_percent,omitempty"`
 	Reached      bool    `json:"reached,omitempty"`
+	WrapUp       bool    `json:"wrap_up,omitempty"`
+}
+
+// WebHandoff is a Thread's handoff at its budget: ReplyID is the main
+// agent's reply that is the handoff, empty when it wrote none (NoReply
+// says why), and Facts is the Markdown uam wrote from its own records.
+type WebHandoff struct {
+	At      time.Time `json:"at"`
+	ReplyID string    `json:"reply_id,omitempty"`
+	NoReply string    `json:"no_reply,omitempty"`
+	Facts   string    `json:"facts"`
 }
 
 // WebPlace is where a Thread runs when it is not on its Project's current
@@ -616,6 +632,7 @@ var knownWebStateFields = map[string]struct{}{
 	"unseen_end":          {},
 	"stop_reason":         {},
 	"budget":              {},
+	"handoff":             {},
 	"place":               {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
