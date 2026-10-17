@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,35 @@ func TestBudgetSavesItsCurrentValue(t *testing.T) {
 	web.Update(WebState{Turn: "cancelled"})
 	if encoded, _ := json.Marshal(web); strings.Contains(string(encoded), "budget") {
 		t.Fatalf("removed budget saved as %s", encoded)
+	}
+}
+
+// Every saved WebState field is known: an unknown key is kept as a newer
+// version's field, and its loaded copy would overwrite later changes.
+func TestEveryWebStateFieldIsKnown(t *testing.T) {
+	for f := range reflect.TypeFor[WebState]().Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, ok := knownWebStateFields[name]; !ok {
+			t.Errorf("%s (%s) is missing from knownWebStateFields", name, f.Name)
+		}
+	}
+}
+
+// A cleared agent and capture mark stay cleared after a save.
+func TestClearedAgentAndNativeChangesStayCleared(t *testing.T) {
+	var web WebState
+	if err := json.Unmarshal([]byte(`{"turn":"completed","agent":"reviewer","native_changes":true}`), &web); err != nil {
+		t.Fatal(err)
+	}
+	web.Agent, web.NativeChanges = "", false
+	encoded, err := json.Marshal(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "reviewer") || strings.Contains(string(encoded), "native_changes") {
+		t.Fatalf("saved = %s", encoded)
 	}
 }
