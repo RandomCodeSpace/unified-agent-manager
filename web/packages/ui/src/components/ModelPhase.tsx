@@ -56,7 +56,7 @@ function phaseDetail(phase: Phase, name: (id: string) => string): string {
  * Under the composer, at the right: what the open Thread's turn waits on now, the model, a tool running locally or
  * you, with the detail and a clock since it started. Words carry the state; nothing spins. Nothing while none holds.
  * A phone shows the glyph, a short word and the clock, so the branch keeps its room. A hairline parts it from the
- * time split that may follow it (TimeSplitSummary), only while one does.
+ * time split that may follow it (TimeSplitSummary), only while one does; a phone shows the pill alone (Task).
  */
 export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefined; provider: string }>) {
   const { meta } = useApp();
@@ -74,7 +74,7 @@ export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefin
       </Chip>
       {detail && <span className="min-w-0 max-w-80 truncate text-muted max-sm:hidden">{detail}</span>}
       {Number.isFinite(since) && <span className="shrink-0 text-muted tabular-nums">{phaseClock(now - since)}</span>}
-      <span aria-hidden="true" data-phase-rule="" className="mx-1 hidden h-4 w-px shrink-0 bg-hairline-strong" />
+      <span aria-hidden="true" data-phase-rule="" className="mx-1 hidden h-4 w-px shrink-0 bg-hairline-strong max-sm:hidden!" />
     </span>
   );
 }

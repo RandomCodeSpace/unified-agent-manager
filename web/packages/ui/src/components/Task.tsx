@@ -1176,8 +1176,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             )}
             <PlaceFoot session={session} project={project} />
-            {/* At the right: what the turn waits on now, then the time split. */}
-            <span className="ml-auto flex min-w-0 shrink items-center empty:hidden">
+            {/* At the right: what the turn waits on now, then the time split. A phone keeps the branch: the phase, when
+                there is one, stands alone there. */}
+            <span className="ml-auto flex min-w-0 shrink-0 items-center empty:hidden max-sm:[&>[data-phase]+*]:hidden">
               <PhasePill phase={session.turn_activity?.phase} provider={session.provider} />
               <TimeSplitSummary session={session} />
             </span>

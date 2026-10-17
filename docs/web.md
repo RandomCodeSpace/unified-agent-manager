@@ -716,8 +716,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   is in flight, and **Waiting on you** with what is asked ("approve bash",
   "answer question", "review plan") while a request waits for you; the first
   of these that holds wins, and nothing shows otherwise. A phone shows only
-  the glyph, a short word (Model, Local or You) and the clock, so the branch
-  keeps its room. uam reads this from Copilot's events only: an agent's
+  the glyph, a short word (Model, Local or You) and the clock, without the
+  time split beside it, so the branch keeps its room. uam reads this from Copilot's events only: an agent's
   model call runs from its `assistant.turn_start` to its usage report, its
   first tool call, the end of its turn, an abort, its `assistant.idle` or an
   error, and a retry keeps it; a `task` call, which runs a subagent, is not

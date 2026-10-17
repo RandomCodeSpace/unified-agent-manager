@@ -62,6 +62,16 @@ describe('the phase under the composer', () => {
     const rule = shown.querySelector('[data-phase-rule]')!;
     expect(rule.className.split(' ')).toContain('hidden');
     expect(shown.className).toContain('[&:has(+*)_[data-phase-rule]]:block');
+    // A phone shows the pill alone: no hairline, and the open Thread's strip hides the split after it.
+    expect(rule.className).toContain('max-sm:hidden!');
+  });
+
+  test('the time split follows the pill in the strip under the composer, and gives way to it on a phone', async () => {
+    await openTask('t1');
+    await waitFor(() => expect(document.querySelector('[data-phase="local"]')).not.toBeNull());
+    const group = document.querySelector('[data-phase="local"]')!.parentElement!;
+    expect(group.className).toContain('max-sm:[&>[data-phase]+*]:hidden');
+    await waitFor(() => expect(group.lastElementChild?.getAttribute('aria-label')).toMatch(/^Time in this Thread/));
   });
 
   test('the clock reads minutes and seconds, hours past the hour', () => {
