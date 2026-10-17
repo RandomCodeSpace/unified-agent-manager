@@ -4154,6 +4154,11 @@ type transcript struct {
 	// hidden holds the IDs of running skill tool calls, which are not
 	// transcript items.
 	hidden map[string]struct{}
+	// longest is the length of the main agent's longest reply since the
+	// owner's last prompt; promoted records, by receipt ID, whether a
+	// receipt's summary became a reply.
+	longest  int
+	promoted map[string]bool
 }
 
 func (t *transcript) isHidden(id string) bool {
@@ -4200,11 +4205,57 @@ func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: t.thoughtStart(agentID, ev.Timestamp), EndedAt: ev.Timestamp, AgentID: agentID})
 		}
 		delete(t.reasoned, agentID)
+		if agentID == "" {
+			t.longest = max(t.longest, len(d.Content))
+		}
+	}
+	if d, ok := ev.Data.(*rpc.UserMessageData); ok && agentOf(ev) == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {
+		t.longest = 0
 	}
 	if it, ok := t.item(ev); ok {
+		if reply, ok := t.completionReply(ev, &it); ok {
+			out = append(out, reply)
+		}
 		out = append(out, it)
 	}
 	return out
+}
+
+// completionReply is an accepted main-agent receipt's summary as the turn's
+// reply when it is longer than every reply since the owner's prompt it
+// answers: autopilot agents often put their whole answer there, after short
+// progress notes at most. It is whole and Markdown like any reply, and the
+// receipt's notice then leaves the summary out. A summary of a reply above
+// stays in the notice. The same receipt delivered again yields the same
+// items.
+func (t *transcript) completionReply(ev copilot.SessionEvent, it *agentapi.Item) (agentapi.Item, bool) {
+	d, ok := ev.Data.(*rpc.SessionTaskCompleteData)
+	if !ok || it.AgentID != "" || it.Completion == nil || it.Completion.Decision != agentapi.CompletionAccepted || d.Summary == nil {
+		return agentapi.Item{}, false
+	}
+	// A late receipt of an earlier turn is not this turn's reply.
+	if u := it.Completion.UserItemID; u == "" || u != t.completions.users[""] {
+		return agentapi.Item{}, false
+	}
+	text := strings.TrimSpace(displaytext.SanitizeText(*d.Summary))
+	reply, seen := t.promoted[ev.ID]
+	if !seen {
+		reply = text != "" && len(text) > t.longest
+		if ev.ID != "" {
+			if t.promoted == nil || len(t.promoted) >= maxCompletionEvents {
+				t.promoted = map[string]bool{}
+			}
+			t.promoted[ev.ID] = reply
+		}
+	}
+	if !reply {
+		return agentapi.Item{}, false
+	}
+	t.longest = max(t.longest, len(text))
+	notice := *it.Completion
+	notice.Summary = ""
+	it.Text = completionNotice(&notice)
+	return agentapi.Item{ID: "completion-reply:" + it.ID, Kind: agentapi.ItemAssistant, Text: text, Time: it.Time}, true
 }
 
 // thoughtStart is when the agent's current model call began: the CLI
