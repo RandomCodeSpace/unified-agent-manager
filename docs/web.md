@@ -815,13 +815,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   folds a steer in only before a next model call and interrupting the turn
   would drop the reply in flight. The wrap-up may make 2 model calls,
   subagents' included; uam stops the turn at a third (`stop_reason`
-  `budget`), as it does on the owner's Stop. A reply after the instruction is
-  the handoff. uam adds its own facts, computed without a model: AI credits
+  `budget`), and tries the stop again at each later call while the provider
+  refuses it. Starting a subagent (`task`) is a tool call too and is denied
+  the same way, and commands that call the model (skills, `/review`,
+  `/research`, `/fleet`, `/init`, `/blame`, `/security-review`, `/compact`)
+  get 409 `budget_reached`; read-only and settings commands still run. The
+  main agent's reply after it got the instruction (a denied call of its own,
+  or uam's follow-up turn) is the handoff; a subagent's denied call does not
+  count. uam adds its own facts, computed without a model: AI credits
   spent and the quota used, the time split, the last intent, the todo list,
   the turn's failed tool calls and the files changed in the Thread's folder
   (git status against `HEAD`, those this Thread edited marked). Without a
   handoff reply (Stop, the third call, a failed turn, a send uam could not
-  make, or a restart during the wrap-up) the facts alone are the handoff.
+  make, an uncertain send followed by no turn within 2 minutes, closing the
+  conversation, or a restart during the wrap-up) the facts alone are the
+  handoff.
   The summary's `handoff` carries `at`, `reply_id` (the reply), `no_reply`
   (why there is none) and `facts` (Markdown); it is saved with the Thread,
   never written into the Project folder, and goes when the Thread next works.
@@ -830,7 +838,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   reply, then the facts) as its message; nothing is created or sent until the
   owner sends it. After the wrap-up the Thread keeps the queue waiting and
   refuses sends with 409 `budget_reached` until the budget changes; raising
-  the budget during the wrap-up ends it and the turn goes on with its tools.
+  the budget during the wrap-up ends it: the turn goes on with its tools, and
+  a handoff still being written is dropped.
   AI credits arrive after each model call, so a turn can pass the limit by
   one call; the quota is read at most once a minute and counts every client
   of the account. Autopilot between its turns is stopped at the limit, with

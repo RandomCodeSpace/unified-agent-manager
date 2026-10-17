@@ -134,6 +134,38 @@ func TestPreToolUseDeniesWhenNoAllowedModelIsUsable(t *testing.T) {
 	}
 }
 
+// uam's checks run on task calls too: a refusal (a reached budget) stops a
+// subagent from starting, and uam's note comes along with the model rewrite.
+func TestPreToolUseRunsUamChecksOnTaskCalls(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	var seen []string
+	verdict := agentapi.ToolVerdict{Deny: "uam budget: reached"}
+	c.hooks.Pre = func(_ context.Context, use agentapi.ToolUse) agentapi.ToolVerdict {
+		seen = append(seen, use.Tool)
+		return verdict
+	}
+	for _, allowed := range [][]string{nil, {"gpt-6-luna"}} {
+		h.p.SetSubagentModels(allowed)
+		out, err := c.preToolUse(taskCall(map[string]any{"model": "other"}), copilot.HookInvocation{})
+		if err != nil || out == nil || out.PermissionDecision != "deny" || out.PermissionDecisionReason != "uam budget: reached" || out.ModifiedArgs != nil {
+			t.Fatalf("allowed %v: task at the limit = %+v, %v", allowed, out, err)
+		}
+	}
+	verdict = agentapi.ToolVerdict{Context: "uam budget: close"}
+	out, err := c.preToolUse(taskCall(map[string]any{"model": "other"}), copilot.HookInvocation{})
+	if got, _ := out.ModifiedArgs.(map[string]any); err != nil || got["model"] != "gpt-6-luna" || !strings.HasPrefix(out.AdditionalContext, "uam budget: close\n") || !strings.Contains(out.AdditionalContext, "do not start it again") {
+		t.Fatalf("task with a note = %+v, %v", out, err)
+	}
+	h.p.SetSubagentModels(nil)
+	if out, err := c.preToolUse(taskCall(map[string]any{"model": "other"}), copilot.HookInvocation{}); err != nil || out == nil || out.AdditionalContext != "uam budget: close" || out.ModifiedArgs != nil {
+		t.Fatalf("task with a note, no allowlist = %+v, %v", out, err)
+	}
+	if len(seen) != 4 || seen[0] != "task" {
+		t.Fatalf("uam checks ran for %v", seen)
+	}
+}
+
 // Created and resumed sessions both carry the hook, bound to their
 // conversation.
 func TestWebPreToolUseHookOnCreateAndResume(t *testing.T) {

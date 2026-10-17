@@ -2513,6 +2513,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			m.notePlanAliasLocked(s, it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
+			m.wrapItemLocked(s, it)
 			if s.noteEdits(it) {
 				m.kickDiffLocked(s)
 			}
@@ -2668,6 +2669,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	switch turn.State {
 	case agentapi.TurnWorking:
 		s.setBase(StateWorking, "")
+		if s.wrap != nil && s.wrap.prompted {
+			s.wrap.started = true
+		}
 		if s.wrap == nil && !s.budget.Reached {
 			// The handoff stays only until the Thread works again.
 			s.handoff = nil
@@ -4316,6 +4320,9 @@ func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
 	m.pauseQueueLocked(s)
 	s.fuses = nil
 	s.setBase(StateClosed, "")
+	if s.wrap != nil {
+		m.finishWrapLocked(s, "", "the conversation was closed")
+	}
 	m.releaseClosedHistoryLocked(s)
 	return conv
 }
@@ -4373,6 +4380,9 @@ func (m *Manager) suspendLocked(s *webSession, dropHistory bool) agentapi.Conver
 	s.gen++
 	m.endSubagentsLocked(s)
 	m.forgetBackgroundTaskStateLocked(s)
+	if s.wrap != nil {
+		m.finishWrapLocked(s, "", "the conversation was closed")
+	}
 	if dropHistory && m.infos[s.provider].Capabilities.History {
 		m.dropHistoryLocked(s)
 	}

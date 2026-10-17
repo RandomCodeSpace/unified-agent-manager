@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +109,10 @@ func TestBudgetLimitMidToolWrapsUpWithTheHandoffReply(t *testing.T) {
 	if v := m.preToolUse(t.Context(), s, use); !strings.Contains(v.Deny, "Reply now with a handoff") || !strings.Contains(v.Deny, "## How to resume") {
 		t.Fatalf("tool while wrapping up = %+v", v)
 	}
+	if v := m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "task"}); v.Deny != wrapDeny {
+		t.Fatalf("subagent start while wrapping up = %+v", v)
+	}
+	denied(conv, "d1", "")
 	_, err := m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend})
 	var coded *Error
 	if !errors.As(err, &coded) || coded.Status != http.StatusConflict || coded.Code != "budget_reached" {
@@ -241,6 +247,7 @@ func TestBudgetQuotaLimitWrapsUpAfterAQuotaRead(t *testing.T) {
 	if v := m.preToolUse(t.Context(), budgetSession(t, m, sum.ID), agentapi.ToolUse{Tool: "bash"}); v.Deny != wrapDeny {
 		t.Fatalf("tool at the quota limit = %+v", v)
 	}
+	denied(conv, "d1", "")
 	reply(conv, "r1", "## Done\nHalf.")
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	h := handoffOf(t, m, sum.ID)
@@ -328,6 +335,167 @@ func TestBudgetRestartDuringTheWrapUpLeavesTheFacts(t *testing.T) {
 	}
 	if rec, _ := loadRecord(t, st, "fake", sum.ID); rec.Web == nil || rec.Web.Handoff == nil || rec.Web.Budget.WrapUp {
 		t.Fatalf("stored after the restart = %+v", rec.Web)
+	}
+}
+
+// denied reports a tool call uam's hook denied, as Copilot CLI 1.0.98 does:
+// a failed call whose output starts "Denied by preToolUse hook: ".
+func denied(conv *agenttest.Conversation, id, agent string) {
+	emitItem(conv, agentapi.Item{ID: id, Kind: agentapi.ItemTool, AgentID: agent, Time: usageT0, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolFailed, Output: "Denied by preToolUse hook: " + wrapDeny}})
+}
+
+// A subagent's denied call does not tell the main agent: its reply is not
+// the handoff, and the wrap-up prompt goes out.
+func TestBudgetSubagentDenialDoesNotTellTheMainAgent(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, t.TempDir())
+	reportUnits(conv, 7.1)
+	wrapping(t, m, conv, sum.ID)
+	_ = m.preToolUse(t.Context(), budgetSession(t, m, sum.ID), agentapi.ToolUse{Tool: "bash"})
+	denied(conv, "sub-call", "agent-1")
+	reply(conv, "r1", "Summary of the work so far.")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the wrap-up prompt", func() bool { return len(conv.Sends()) == 2 })
+	if d := detail(t, m, sum.ID); d.Handoff != nil || !d.Budget.WrappingUp {
+		t.Fatalf("after a subagent's denial = %+v %+v", d.Handoff, d.Budget)
+	}
+}
+
+// Commands that call the model are refused at the budget; read-only and
+// settings commands still run.
+func TestBudgetRefusesModelCommands(t *testing.T) {
+	m, _, _, sum, conv, wrapped := commandManager(t)
+	var ran []string
+	wrapped.execute = func(_ context.Context, name string, _ agentapi.Prompt) (*agentapi.CommandResult, error) {
+		ran = append(ran, name)
+		return &agentapi.CommandResult{Kind: "text", Text: "ok"}, nil
+	}
+	m.mu.Lock()
+	m.sessions[sum.ID].budget = store.Budget{Credits: 1, Reached: true}
+	m.mu.Unlock()
+	_, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review"})
+	var coded *Error
+	if !errors.As(err, &coded) || coded.Code != "budget_reached" {
+		t.Fatalf("/review at the budget = %v", err)
+	}
+	if sub, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "autopilot"}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("/autopilot at the budget = %+v, %v", sub, err)
+	}
+	if len(ran) != 1 || ran[0] != "autopilot" || len(conv.Sends()) != 0 {
+		t.Fatalf("ran %v, sends %q", ran, conv.Sends())
+	}
+}
+
+func TestBudgetCloseDuringTheWrapUpLeavesTheFacts(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, t.TempDir())
+	reportUnits(conv, 7.1)
+	wrapping(t, m, conv, sum.ID)
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if h := handoffOf(t, m, sum.ID); h.ReplyID != "" || h.NoReply != "the conversation was closed" {
+		t.Fatalf("handoff = %+v", h)
+	}
+}
+
+func TestBudgetUncertainWrapUpPromptLapses(t *testing.T) {
+	wait := wrapPromptWait
+	wrapPromptWait = 50 * time.Millisecond
+	t.Cleanup(func() { wrapPromptWait = wait })
+	for _, turnStarts := range []bool{false, true} {
+		m, prov := startUsageManager(t, nil, nil)
+		sum, conv := budgetThread(t, m, prov, t.TempDir())
+		conv.SetSendHook(func(_ context.Context, prompt string) error {
+			if prompt == wrapPrompt {
+				return agentapi.ErrSubmissionUncertain
+			}
+			return nil
+		})
+		reportUnits(conv, 7.1)
+		wrapping(t, m, conv, sum.ID)
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+		waitUntil(t, "the wrap-up prompt", func() bool { return len(conv.Sends()) == 2 })
+		if !turnStarts {
+			h := handoffOf(t, m, sum.ID)
+			if h.ReplyID != "" || h.NoReply != "the wrap-up prompt was not confirmed and no turn started" {
+				t.Fatalf("lapsed handoff = %+v", h)
+			}
+			continue
+		}
+		// The provider had it after all: its turn keeps the wrap-up going past
+		// the deadline, and its reply is the handoff.
+		conv.EmitTurn(agentapi.TurnWorking, "")
+		time.Sleep(4 * wrapPromptWait)
+		if d := detail(t, m, sum.ID); d.Handoff != nil || !d.Budget.WrappingUp {
+			t.Fatalf("lapsed during its turn = %+v %+v", d.Handoff, d.Budget)
+		}
+		reply(conv, "r2", "## Done\nAll.")
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+		if h := handoffOf(t, m, sum.ID); h.ReplyID != "r2" {
+			t.Fatalf("handoff = %+v", h)
+		}
+	}
+}
+
+func TestBudgetBackstopStopRetriesAfterARefusedStop(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, t.TempDir())
+	var refused atomic.Bool
+	conv.SetCancelHook(func(context.Context) error {
+		if refused.CompareAndSwap(false, true) {
+			return fmt.Errorf("%w: another operation is in progress", agentapi.ErrBusy)
+		}
+		return nil
+	})
+	reportUnits(conv, 7.1)
+	wrapping(t, m, conv, sum.ID)
+	for range wrapCalls + 1 {
+		wrapModelCall(conv)
+	}
+	waitUntil(t, "the refused stop", func() bool { return conv.Cancels() == 1 && !budgetStopping(m, sum.ID) })
+	wrapModelCall(conv)
+	waitUntil(t, "the stop again", func() bool { return conv.Cancels() == 2 })
+	conv.EmitTurn(agentapi.TurnCancelled, "")
+	if h := handoffOf(t, m, sum.ID); h.NoReply != "the wrap-up used its 2 model calls" {
+		t.Fatalf("handoff = %+v", h)
+	}
+}
+
+func budgetStopping(m *Manager, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessions[id].budgetStopping
+}
+
+// A budget changed while the facts are read drops the handoff on its way.
+func TestBudgetRaisedWhileTheFactsAreReadDropsTheHandoff(t *testing.T) {
+	reading, release := make(chan struct{}), make(chan struct{})
+	files := handoffFiles
+	handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, start time.Time) (taskListing, error) {
+		close(reading)
+		<-release
+		return files(ctx, workdir, edits, start)
+	}
+	t.Cleanup(func() { handoffFiles = files })
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, t.TempDir())
+	reportUnits(conv, 7.1)
+	wrapping(t, m, conv, sum.ID)
+	_ = m.preToolUse(t.Context(), budgetSession(t, m, sum.ID), agentapi.ToolUse{Tool: "bash"})
+	denied(conv, "d1", "")
+	reply(conv, "r1", "## Done\nAll.")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	<-reading
+	if got, err := m.SetBudget(sum.ID, 10, 0); err != nil || got.Budget.Reached || got.Budget.WrappingUp {
+		t.Fatalf("raised = %+v, %v", got.Budget, err)
+	}
+	close(release)
+	if err := m.Shutdown(context.Background()); err != nil { // waits for the facts
+		t.Fatal(err)
+	}
+	if d := detail(t, m, sum.ID); d.Handoff != nil {
+		t.Fatalf("stale handoff = %+v", d.Handoff)
 	}
 }
 

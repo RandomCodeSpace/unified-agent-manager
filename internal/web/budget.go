@@ -119,7 +119,7 @@ func (m *Manager) checkBudgetLocked(s *webSession) {
 	why = cmp.Or(why, "Stopped at its budget")
 	running := busy(s.state())
 	if running && s.handoff == nil {
-		s.wrap = &budgetWrap{since: lastReplyID(s), why: why, turnStart: s.turnStart}
+		s.wrap = newWrap(s, why)
 		s.budget.WrapUp = true
 		return
 	}
@@ -164,10 +164,7 @@ func (m *Manager) checkQuotaBudgetsLocked() {
 // wrap up, once, as it nears.
 func (m *Manager) budgetToolLocked(s *webSession) (deny, note string) {
 	b := s.budget
-	if w := s.wrap; w != nil {
-		if !w.done {
-			w.told = true
-		}
+	if s.wrap != nil {
 		return wrapDeny, ""
 	}
 	if b.Reached {
@@ -190,7 +187,8 @@ func (m *Manager) budgetToolLocked(s *webSession) (deny, note string) {
 // SetBudget sets the Thread's budget, running or not: credits more AI
 // units from now and the account quota used up to quotaPercent; zero is no
 // limit, both zero remove it. Setting it again starts its credits afresh,
-// and ends a wrap-up that has not finished: the turn goes on with its tools.
+// and ends a wrap-up: the turn goes on with its tools, and a handoff still
+// being written is dropped.
 func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSummary, error) {
 	if !(credits >= 0 && credits <= maxBudgetCredits) || !(quotaPercent >= 0 && quotaPercent <= 100) {
 		return SessionSummary{}, newError(http.StatusBadRequest, "budget credits must be 0 to %d and quota_percent 0 to 100", maxBudgetCredits)
@@ -205,9 +203,7 @@ func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSu
 		return SessionSummary{}, s.readOnlyLocked()
 	}
 	before := m.summaryLocked(s)
-	if s.wrap != nil && !s.wrap.done {
-		s.wrap = nil
-	}
+	m.dropWrapLocked(s)
 	s.budget, s.budgetWarned = store.Budget{}, false
 	if credits > 0 || quotaPercent > 0 {
 		s.budget = store.Budget{Credits: credits, From: s.usedUnits(), QuotaPercent: quotaPercent}
@@ -249,16 +245,60 @@ const (
 )
 
 // budgetWrap is a Thread's wrap-up. since is the main agent's last reply
-// when it began and turnStart its turn's start; told is set once the agent
-// got the instruction (a denied tool or the wrap-up prompt), prompted once
-// uam sent the prompt; calls counts model calls. stop is set when the turn
-// is to end without a handoff reply (stopWhy says why), done once uam
-// records the handoff.
+// when it began and turnStart its turn's start; before holds the tool calls
+// already in the transcript then, so a call that shows up later is one uam
+// denied. told is set once the main agent got the instruction (a denied
+// call of its own, or the wrap-up prompt), prompted once uam sent the
+// prompt, started once a turn ran after it; calls counts model calls. stop
+// is set when the turn is to end without a handoff reply (stopWhy says
+// why), done once uam reads the facts. promptWait ends a wrap-up whose
+// prompt the provider may not have received.
 type budgetWrap struct {
-	since, why, stopWhy        string
-	turnStart                  time.Time
-	told, prompted, stop, done bool
-	calls                      int
+	since, why, stopWhy                 string
+	turnStart                           time.Time
+	before                              map[string]bool
+	told, prompted, started, stop, done bool
+	calls                               int
+	promptWait                          *time.Timer
+}
+
+// wrapPromptWait is how long a wrap-up waits for a turn after a prompt the
+// provider may not have received.
+var wrapPromptWait = 2 * time.Minute
+
+// handoffFiles lists the files changed for the facts.
+var handoffFiles = listTaskChanges
+
+// newWrap begins s's wrap-up.
+func newWrap(s *webSession, why string) *budgetWrap {
+	w := &budgetWrap{since: lastReplyID(s), why: why, turnStart: s.turnStart, before: map[string]bool{}}
+	for _, it := range s.items {
+		if it.Tool != nil {
+			w.before[it.ID] = true
+		}
+	}
+	return w
+}
+
+// dropWrapLocked ends s's wrap-up without a handoff.
+func (m *Manager) dropWrapLocked(s *webSession) {
+	if w := s.wrap; w != nil && w.promptWait != nil {
+		w.promptWait.Stop()
+	}
+	s.wrap = nil
+}
+
+// wrapItemLocked notes a tool call of the wrap-up: every call that started
+// after it began was denied, and a main agent's call says it got the
+// instruction. Subagents' denials do not tell the main agent anything.
+func (m *Manager) wrapItemLocked(s *webSession, it agentapi.Item) {
+	w := s.wrap
+	if w == nil || w.done || it.Tool == nil || w.before[it.ID] || it.AgentID != "" {
+		return
+	}
+	if it.Tool.Status == agentapi.ToolFailed || it.Tool.Status == agentapi.ToolCompleted {
+		w.told = true
+	}
 }
 
 // lastReplyID is the ID of the main agent's last reply with text; "" when
@@ -273,14 +313,17 @@ func lastReplyID(s *webSession) string {
 }
 
 // wrapCallLocked counts a model call of the wrap-up, and stops the turn at
-// the call past wrapCalls.
+// each call past wrapCalls: a stop the provider refused (busy, a timeout) is
+// tried again at the next.
 func (m *Manager) wrapCallLocked(s *webSession) {
 	w := s.wrap
-	if w == nil || w.done || w.stop {
+	if w == nil || w.done {
 		return
 	}
 	if w.calls++; w.calls > wrapCalls {
-		w.stop, w.stopWhy = true, fmt.Sprintf("the wrap-up used its %d model calls", wrapCalls)
+		if !w.stop {
+			w.stop, w.stopWhy = true, fmt.Sprintf("the wrap-up used its %d model calls", wrapCalls)
+		}
 		m.budgetStopLocked(s, w.why)
 	}
 }
@@ -332,17 +375,37 @@ func (m *Manager) sendWrapPromptLocked(s *webSession, w *budgetWrap) {
 			return
 		}
 		sub, err := m.send(s, turnInput{text: wrapPrompt}, reqID)
-		if err == nil && sub.Status != SubmissionRejected {
-			return
-		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if err == nil && sub.Status == SubmissionAccepted {
+			return
+		}
+		if err == nil && sub.Status == SubmissionUncertain {
+			// The provider may have it: a turn may still come. Without one the
+			// wrap-up ends with the facts.
+			if s.wrap == w && !w.done && !w.started && !m.closed {
+				w.promptWait = time.AfterFunc(wrapPromptWait, func() { m.wrapPromptLapsed(s, w) })
+			}
+			return
+		}
 		if s.wrap == w && !w.done && !m.closed {
 			before := m.summaryLocked(s)
 			m.finishWrapLocked(s, "", "uam could not send the wrap-up prompt")
 			m.changedLocked(s, before)
 		}
 	}()
+}
+
+// wrapPromptLapsed ends a wrap-up whose uncertain prompt started no turn.
+func (m *Manager) wrapPromptLapsed(s *webSession, w *budgetWrap) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || s.removed || s.wrap != w || w.done || w.started || busy(s.state()) {
+		return
+	}
+	before := m.summaryLocked(s)
+	m.finishWrapLocked(s, "", "the wrap-up prompt was not confirmed and no turn started")
+	m.changedLocked(s, before)
 }
 
 // handoffNotes is what the facts take from memory when the wrap-up ends.
@@ -372,17 +435,20 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 		return
 	}
 	w.done = true
+	if w.promptWait != nil {
+		w.promptWait.Stop()
+	}
 	in := handoffNotes{id: s.id, workdir: s.workdir, noReply: noReply, edits: maps.Clone(s.edits), turnStart: s.turnStart,
 		spent: s.budgetSpent(), spentKnown: s.usage != nil, credits: s.budget.Credits, quotaPercent: s.budget.QuotaPercent, intent: s.turnIntent, todos: s.turnActivity.Todos}
 	if used, ok := m.quotaUsedLocked(s.provider); ok {
 		in.quotaUsed = &used
 	}
-	in.failed = failedTools(s.items, w.turnStart)
+	in.failed = failedTools(s.items, w.turnStart, w.before)
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		ctx, cancel := context.WithTimeout(m.ctx, handoffReadWait)
-		files, filesErr := listTaskChanges(ctx, in.workdir, in.edits, in.turnStart)
+		files, filesErr := handoffFiles(ctx, in.workdir, in.edits, in.turnStart)
 		split, _ := m.TaskTimeSplit(ctx, in.id)
 		cancel()
 		facts := in.markdown(files, filesErr, split)
@@ -399,13 +465,13 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 }
 
 // failedTools names the tool calls that failed since from (the whole
-// transcript when from is zero), newest last, without uam's own budget
-// denials.
-func failedTools(items []agentapi.Item, from time.Time) []string {
+// transcript when from is zero), newest last. Calls not in before started
+// in the wrap-up, which denied them: they are left out.
+func failedTools(items []agentapi.Item, from time.Time, before map[string]bool) []string {
 	var out []string
 	for _, it := range items {
 		tc := it.Tool
-		if tc == nil || tc.Status != agentapi.ToolFailed || it.Time.Before(from) || strings.Contains(tc.Output, "uam budget:") {
+		if tc == nil || tc.Status != agentapi.ToolFailed || it.Time.Before(from) || before != nil && !before[it.ID] {
 			continue
 		}
 		what := cmp.Or(toolCommand(tc), tc.Title)
