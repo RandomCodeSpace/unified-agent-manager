@@ -752,7 +752,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `background` and `local` (Threads running a tool with no call in flight,
   a subagent's between turns included), and the Thread IDs behind them,
   sorted, at most 50 each: `model_threads`, `subagent_threads` and
-  `local_threads`. They come a few times a second at most. Both are live
+  `local_threads`, with `busy`, those Threads counted once each. They come a
+  few times a second at most. Both are live
   only, never saved; a connected instance shows its own. An older service
   without `model_calls` shows the allowance alone; one without the ID lists
   shows the counts in words.

@@ -109,17 +109,24 @@ func (m *Manager) modelCallsLocked() ModelCalls {
 		if p == nil {
 			continue
 		}
+		busy := false
 		if p.Calls > p.Subagents {
 			c.Threads++
 			c.ModelThreads = append(c.ModelThreads, s.id)
+			busy = true
 		}
 		if p.Subagents > 0 {
 			c.Subagents += p.Subagents
 			c.SubagentThreads = append(c.SubagentThreads, s.id)
+			busy = true
 		}
 		if p.Kind == PhaseLocal {
 			c.Local++
 			c.LocalThreads = append(c.LocalThreads, s.id)
+			busy = true
+		}
+		if busy {
+			c.Busy++
 		}
 	}
 	for _, ids := range []*[]string{&c.ModelThreads, &c.SubagentThreads, &c.LocalThreads} {

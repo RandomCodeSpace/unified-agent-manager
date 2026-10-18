@@ -329,7 +329,7 @@ function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: (
   const rows: Busy[] = sessions.filter((s) => model.has(s.id) || subagents.has(s.id) || local.has(s.id))
     .map((s) => ({ id: s.id, name: taskName(s) || 'New thread', model: model.has(s.id), subagents: subagents.has(s.id), local: local.has(s.id) }));
   // Threads counted but not listed: past the service's cap, or not in this browser's list.
-  const more = Math.max(0, calls.threads + calls.local - rows.filter((r) => r.model || r.local).length);
+  const more = Math.max(0, (calls.busy ?? 0) - rows.length);
   const idle = callsInFlight(calls) === 0 && calls.local === 0;
   return (
     <PanelSection label="Now" meta={idle ? undefined : modelCallsLines(calls)[0]} className="shrink-0">

@@ -89,7 +89,7 @@ func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":0,"background":0,"local":0,"model_threads":[],"subagent_threads":[],"local_threads":[]}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":0,"background":0,"local":0,"busy":0,"model_threads":[],"subagent_threads":[],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	next := func() ModelCalls {
@@ -157,7 +157,7 @@ func TestModelCallsFrameFollowsASnapshotTakenMeanwhile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":1,"subagents":0,"background":0,"local":0,"model_threads":["`+sum.ID+`"],"subagent_threads":[],"local_threads":[]}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":1,"subagents":0,"background":0,"local":0,"busy":1,"model_threads":["`+sum.ID+`"],"subagent_threads":[],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	conv.Emit(phaseEvent(nil))
@@ -272,7 +272,7 @@ func TestModelCallsDropAClosedThreadsSubagent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":1,"background":0,"local":0,"model_threads":[],"subagent_threads":["`+sum.ID+`"],"local_threads":[]}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":1,"background":0,"local":0,"busy":1,"model_threads":[],"subagent_threads":["`+sum.ID+`"],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	if _, err := m.Close(sum.ID); err != nil {

@@ -171,18 +171,18 @@ export function install(): { received: Received[] } {
   // them; one Background AI call runs. `?aiidle` shows a service with nothing in flight.
   const aiIdle = new URLSearchParams(window.location.search).has('aiidle');
   const modelCalls = (): ModelCalls => aiIdle
-    ? { threads: 0, subagents: 0, background: 0, local: 0, model_threads: [], subagent_threads: [], local_threads: [] }
+    ? { threads: 0, subagents: 0, background: 0, local: 0, busy: 0, model_threads: [], subagent_threads: [], local_threads: [] }
     : st.tasks.reduce<Required<ModelCalls>>((c, t) => {
       const p = t.turn_activity?.phase;
       if (!p) return c;
       const calls = p.calls ?? 0, subagents = p.subagents ?? 0;
       return {
-        ...c, threads: c.threads + (calls > subagents ? 1 : 0), subagents: c.subagents + subagents, local: c.local + (p.kind === 'local' ? 1 : 0),
+        ...c, threads: c.threads + (calls > subagents ? 1 : 0), subagents: c.subagents + subagents, local: c.local + (p.kind === 'local' ? 1 : 0), busy: c.busy + (calls || p.kind === 'local' ? 1 : 0),
         model_threads: calls > subagents ? [...c.model_threads, t.id] : c.model_threads,
         subagent_threads: subagents ? [...c.subagent_threads, t.id] : c.subagent_threads,
         local_threads: p.kind === 'local' ? [...c.local_threads, t.id] : c.local_threads,
       };
-    }, { threads: 0, subagents: 0, background: 1, local: 0, model_threads: [], subagent_threads: [], local_threads: [] });
+    }, { threads: 0, subagents: 0, background: 1, local: 0, busy: 0, model_threads: [], subagent_threads: [], local_threads: [] });
   /**
    * One history page the way the service pages: the `held` newest items come from memory; older
    * ones from Copilot's record, as pages marked `archive` whose cursors survive a restart. Neither

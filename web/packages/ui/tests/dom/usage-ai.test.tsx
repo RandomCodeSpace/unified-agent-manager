@@ -19,8 +19,8 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 const QUOTA: Quota = { provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 };
-const IDLE: ModelCalls = { threads: 0, subagents: 0, background: 0, local: 0, model_threads: [], subagent_threads: [], local_threads: [] };
-const BUSY: ModelCalls = { threads: 2, subagents: 1, background: 0, local: 1, model_threads: ['b', 'a'], subagent_threads: ['a'], local_threads: ['c'] };
+const IDLE: ModelCalls = { threads: 0, subagents: 0, background: 0, local: 0, busy: 0, model_threads: [], subagent_threads: [], local_threads: [] };
+const BUSY: ModelCalls = { threads: 2, subagents: 1, background: 0, local: 1, busy: 3, model_threads: ['b', 'a'], subagent_threads: ['a'], local_threads: ['c'] };
 const SESSIONS = [
   { id: 'a', name: 'Fix the login page', title: '' },
   { id: 'b', name: '', title: 'Survey the docs' },
@@ -123,7 +123,7 @@ describe('the Usage and AI button', () => {
 
   test('Threads past the service’s list are counted, not dropped', async () => {
     const user = userEvent.setup();
-    const { button } = setup({ calls: { ...IDLE, threads: 3, model_threads: ['a'] } });
+    const { button } = setup({ calls: { ...IDLE, threads: 2, subagents: 1, busy: 3, model_threads: ['a'] } });
     await user.click(button());
     const now = within(await screen.findByRole('region', { name: 'Now' }));
     expect(now.getAllByRole('button')).toHaveLength(1);
