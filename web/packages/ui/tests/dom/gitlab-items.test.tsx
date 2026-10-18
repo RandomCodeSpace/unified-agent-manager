@@ -75,6 +75,31 @@ test('a reply that ended a turn which touched GitLab carries its items in its ou
   expect(open).toHaveBeenCalledExactlyOnceWith([{ kind: 'mr', id: 2 }, { kind: 'pipeline', id: 91 }, { kind: 'job', id: 7 }, { kind: 'issue', id: 14 }], { kind: 'job', id: 7 });
 });
 
+test('a reply names merge requests and pipelines as links with GitLab\'s mark; a bare address reads "MR !2"; code and other projects stay as written', async () => {
+  const open = vi.fn();
+  const items: Item[] = [
+    { id: 'owner', kind: 'user', text: 'status?', time: at },
+    { id: 'reply', kind: 'assistant', text: `Opened MR !2; the run is pipeline #91. Bare: ${P}/merge_requests/2 and ${P}/pipelines/91. Code \`!3\` stays. Other project: https://gitlab.example.com/else/repo/-/merge_requests/5`, time: at },
+  ];
+  const user = userEvent.setup();
+  render(<ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context(open)}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const reply = screen.getByText(/^Opened/).closest('p')!;
+  const links = [...reply.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'), a.hasAttribute('data-gitlab-link'), !!a.querySelector('svg')]);
+  expect(links).toEqual([
+    ['MR !2', `${P}/merge_requests/2`, true, true],
+    ['pipeline #91', `${P}/pipelines/91`, true, true],
+    ['MR !2', `${P}/merge_requests/2`, true, true],
+    ['Pipeline #91', `${P}/pipelines/91`, true, true],
+    ['https://gitlab.example.com/else/repo/-/merge_requests/5', 'https://gitlab.example.com/else/repo/-/merge_requests/5', false, false],
+  ]);
+  expect(within(reply).getByText('!3').tagName).toBe('CODE');
+  // A plain press opens the item in the GitLab panel, not a new tab.
+  await user.click(within(reply).getAllByRole('link', { name: 'MR !2' })[0]);
+  expect(open).toHaveBeenCalledExactlyOnceWith([{ kind: 'mr', id: 2 }], { kind: 'mr', id: 2 });
+});
+
 test('the panel steps between the turn items; another MR reads without writes, the Thread own MR keeps them', async () => {
   mockItems();
   const reviews = vi.spyOn(api, 'gitlabReview').mockResolvedValue(review);
@@ -125,7 +150,7 @@ test('a job opens its pipeline with the job selected and its log tail; a work it
   expect(screen.getByRole('link', { name: /Elsewhere/ }).getAttribute('href')).toBe('https://gitlab.example.com/other/repo/-/issues/9');
 });
 
-test('discussion notes render as full Markdown in the list; uploads link to GitLab and never load', async () => {
+test('discussion notes render as full Markdown in the list; uploads load from GitLab', async () => {
   mockItems();
   const body = [
     'Two things:',
@@ -153,8 +178,10 @@ test('discussion notes render as full Markdown in the list; uploads link to GitL
   expect([...note.querySelectorAll('pre')].map((pre) => pre.textContent)).toEqual(['return http.StatusServiceUnavailable\n', 'w.WriteHeader(503)\n']);
   expect(within(note).getByText('Suggested change')).toBeTruthy();
   expect(within(note).getByRole('link', { name: 'the docs' }).getAttribute('href')).toBe('https://docs.example.com/health');
-  expect(note.querySelector('img')).toBeNull();
-  expect(within(note).getByRole('link', { name: /shot/ }).getAttribute('href')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
+  // An upload loads from GitLab in place (https, no referrer) and links to it.
+  const shot = within(note).getByRole('img', { name: 'shot' });
+  expect(shot.getAttribute('src')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
+  expect(shot.closest('a')?.getAttribute('href')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
   expect(within(screen.getAllByLabelText('Discussions').at(-1)!).getByRole('article')).toBe(note);
   expect(note.closest('button')).toBeNull();
 });

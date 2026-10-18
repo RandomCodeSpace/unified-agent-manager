@@ -13,6 +13,8 @@ import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../li
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile, type FileFormat } from '../lib/preview';
 import { hintPath } from '../lib/fileReferences';
+import { gitLabWords, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
+import { GitLabItemsContext, plainClick } from './GitLabStrip';
 import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
@@ -398,9 +400,24 @@ export function InlineName({
   );
 }
 
-const remarkPlugins = [remarkGfm];
+interface MdNode { type: string; value?: string; children?: MdNode[] }
+
+/** HTML comments are notes to the writer, never shown: a comment block or inline comment is dropped; other raw HTML stays as text. */
+function remarkDropComments() {
+  const strip = (node: MdNode) => {
+    if (!node.children) return;
+    node.children = node.children.flatMap((child) => {
+      if (child.type !== 'html' || !child.value?.includes('<!--')) { strip(child); return [child]; }
+      const value = child.value.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+      return value.trim() ? [{ ...child, value }] : [];
+    });
+  };
+  return (tree: MdNode) => strip(tree);
+}
+
+const remarkPlugins = [remarkGfm, remarkDropComments];
 /** For the owner's own text: a single newline is a line break, as typed with Shift+Enter. */
-const remarkBreakPlugins = [remarkGfm, remarkBreaks];
+const remarkBreakPlugins = [remarkGfm, remarkBreaks, remarkDropComments];
 
 /**
  * A code block (DESIGN.md `code-block`): the `code-bg` well with its inset ring, 10px radius,
@@ -655,7 +672,18 @@ function LocalImage({ sessionId, path, alt }: Readonly<{ sessionId: string; path
   );
 }
 
-/** A markdown image: by path from the Task's directory; `data:` inline; a web address stays a link, as the page loads nothing cross-origin. */
+/** A web image (`img-src https:`): loaded from its host with no referrer, and a link to it; one that fails to load is the link card. */
+function RemoteImage({ src, alt }: Readonly<{ src: string; alt: string }>) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <ImageNote alt={alt} detail={src} href={src} />;
+  return (
+    <a href={src} rel="noopener noreferrer" target="_blank" className="inline-block max-w-full">
+      <img src={src} alt={alt} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={() => setFailed(true)} className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm" />
+    </a>
+  );
+}
+
+/** A markdown image: by path from the Task's directory; `data:` inline; an https address loads from its host; anything else is a link card. */
 function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
   const preview = usePreview();
   const tempRoots = useContext(TempRootContext);
@@ -670,6 +698,7 @@ function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
   if (temporary) return <TempFileAction file={temporary}>{text && <span>{text}</span>}</TempFileAction>;
   if (path) return sessionId && file ? <LocalImage sessionId={sessionId} path={file.path} alt={text} /> : <ImageNote alt={text} detail={path} />;
   if (src && /^(data|blob):/i.test(src)) return <img src={src} alt={text} loading="lazy" decoding="async" className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm" />;
+  if (src && /^https:/i.test(src)) return <RemoteImage key={src} src={src} alt={text} />;
   return <ImageNote alt={text} detail={src ?? ''} href={src && /^https?:/i.test(src) ? src : undefined} />;
 }
 
@@ -677,6 +706,31 @@ function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
 function linkTarget(api: ReturnType<typeof useApi>, href: string | undefined, file: ReturnType<typeof taskFile>, sessionId: string | undefined, exists: boolean): string | undefined {
   if (localPath(href)) return api.supports('files-v1') && sessionId && file && exists ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined;
   return typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
+}
+
+/** GitLab's mark (Tabler `brand-gitlab`, MIT), drawn on Lucide's grid and stroke. */
+function GitLabMark({ className }: Readonly<{ className?: string }>) {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className={cn('inline size-3.5 shrink-0 align-[-2px]', className)}><path d="M21 14l-9 7l-9 -7l3 -11l3 7h6l3 -7l3 11" /></svg>;
+}
+
+/**
+ * A link to an item of the Thread's GitLab project: GitLab's mark, then the reply's own words, or
+ * "MR !72" for a bare address. A plain click opens it in the GitLab side panel; a modified one, GitLab.
+ */
+function GitLabLink({ href, words }: Readonly<{ href: string; words: string }>) {
+  const gitlab = useContext(GitLabItemsContext);
+  const ref = gitlab ? parseGitLabUrl(href, gitlab.origin) : null;
+  const label = !words || /^https?:\/\//i.test(words) ? (ref ? gitLabWords(ref) : words) : words;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" data-gitlab-link="" title={href} onClick={(e) => {
+      if (!gitlab || !ref || !plainClick(e)) return;
+      e.preventDefault();
+      gitlab.open([ref], ref);
+    }}>
+      <GitLabMark className="mr-1" />
+      {label}
+    </a>
+  );
 }
 
 /** Local available files preview on an ordinary click; modified clicks and web links stay native. */
@@ -688,12 +742,14 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   const workdir = useContext(WorkdirContext);
   const base = useContext(MdBaseContext);
   const { streaming } = useContext(MdContext);
+  const gitlab = useContext(GitLabItemsContext);
   const named = !streaming ? taskFile(href, workdir, base) : null;
   const { eligible, exists, file: resolved } = useFileReference(named?.path);
   // A bare name opens the one file it means.
   const file = named && resolved ? { ...named, path: resolved } : named;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
+  if (href && gitlab && parseGitLabUrl(href, gitlab.origin)) return <GitLabLink href={href} words={nodeText(node).trim()} />;
   const target = linkTarget(api, href, file, sessionId, exists);
   let link: ReactNode;
   if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
@@ -859,9 +915,15 @@ export function PlainText({ text, className }: Readonly<{ text: string; classNam
 
 const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
+  // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
+  const origin = useContext(GitLabItemsContext)?.origin;
+  const plugins = useMemo(() => {
+    const base = breaks ? remarkBreakPlugins : remarkPlugins;
+    return origin ? [...base, remarkGitLabRefs(origin)] : base;
+  }, [breaks, origin]);
   return (
     <MdContext.Provider value={source}>
-      <ReactMarkdown remarkPlugins={breaks ? remarkBreakPlugins : remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>
+      <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>
         {text}
       </ReactMarkdown>
     </MdContext.Provider>

@@ -100,7 +100,7 @@ func TestFramePolicyWithoutAScriptAllowsNone(t *testing.T) {
 // byte, and stays unframeable: the relaxation never leaks to a look-alike
 // path, an asset, the SPA fallback, the API or a refusal.
 func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
-	const want = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	const want = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	if contentSecurity != want {
 		t.Fatalf("service policy changed:\n got %q\nwant %q", contentSecurity, want)
 	}
