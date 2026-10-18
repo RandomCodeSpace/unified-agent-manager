@@ -13,7 +13,7 @@
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Tabs } from '@base-ui/react/tabs';
-import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, ListChecks, Minus, Network, Pause, RotateCw, X, type LucideProps } from 'lucide-react';
+import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, ListChecks, Minus, Pause, RotateCw, Workflow, X, type LucideProps } from 'lucide-react';
 import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
 import { cn } from '../lib/cn';
@@ -102,10 +102,11 @@ const Sep = () => <span className="shrink-0 text-faint">·</span>;
 type Tab = 'todo' | 'subagents';
 
 /**
- * The strip as one button. Its name is one sentence (sr-only), the words on screen are hidden from
- * assistive tech, and a polite live region beside it speaks only what `useCue` lets through.
- * Pressing it opens the reader on its Todo tab (on its Subagents tab when pressed on the subagent
- * blocks, or with no list), else shows the end of the conversation, where the work is. `hidden`
+ * The strip as two buttons on one row: the line, and the subagents at its end. Each one's name is a
+ * sentence (sr-only), the words on screen are hidden from assistive tech, and a polite live region
+ * beside them speaks only what `useCue` lets through. The line opens the reader on its Todo tab, or
+ * without a list shows the end of the conversation, where the work is; the subagents open it on
+ * their tab. Each lights and lifts alone, so the subagents never light the line. `hidden`
  * gives its place to another strip. `error`: why the last jump to a subagent did not land, said in
  * the Subagents tab.
  */
@@ -133,17 +134,16 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   const view = list ? session.turn_activity?.todos : undefined;
   const tabs: Tab[] = [...(view ? ['todo' as const] : []), ...(subagents ? ['subagents' as const] : [])];
   const readerId = useId();
-  const [button, setButton] = useState<HTMLButtonElement | null>(null);
-  // Phone or not is chosen as it opens, so a resize does not remount it.
-  const [reader, setReader] = useState<{ open: boolean; phone: boolean; tab: Tab } | null>(null);
+  // Phone or not is chosen as it opens, so a resize does not remount it; the reader hangs from the button that opened it.
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean; tab: Tab; anchor: HTMLElement } | null>(null);
   // Where a pick in the Subagents tab goes once the reader has closed.
   const picked = useRef<IndexPick | null>(null);
   // With nothing left to show (the turn ended, the conversation closed), the reader goes too.
   if (reader && !tabs.length) setReader(null);
   const tab = reader && tabs.includes(reader.tab) ? reader.tab : tabs[0];
-  const show = (on: Tab) => {
+  const show = (on: Tab, anchor: HTMLElement) => {
     picked.current = null;
-    setReader({ open: true, phone: window.matchMedia(PHONE).matches, tab: on });
+    setReader({ open: true, phone: window.matchMedia(PHONE).matches, tab: on, anchor });
   };
   const close = () => setReader((r) => r && { ...r, open: false });
   const closed = () => {
@@ -159,62 +159,70 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
     close();
   };
   const plan = shownLine?.kind === 'working' && shownLine.plan;
-  const action = tabs.length === 2 ? 'Show the list and the subagents' : tabs[0] === 'todo' ? 'Show the list' : tabs[0] === 'subagents' ? 'Show the subagents' : 'Jump to bottom';
+  const listed = tabs.includes('todo');
+  const strip = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
   return (
     <>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {spoken ? cue : ''}
       </div>
       {(shownLine || subagents) && (
-        <button
-          ref={setButton}
-          type="button"
-          onClick={tabs.length ? (e) => show((e.target as Element).closest('[data-strip-subagents]') && subagents ? 'subagents' : tabs[0]) : onJump}
-          aria-haspopup={tabs.length ? 'dialog' : undefined}
-          aria-expanded={tabs.length ? !!reader?.open : undefined}
-          aria-controls={tabs.length && reader?.open ? readerId : undefined}
-          className="flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-sm bg-canvas px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover pointer-coarse:h-11"
-        >
-          {shownLine && (
-            <span key={shownLine.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
-              {shownLine.kind === 'working' ? <Working line={shownLine} since={since} /> : shownLine.kind === 'stopped' ? <Stopped line={shownLine} /> : <Paused text={shownLine.text} />}
-            </span>
+        // Two buttons on one row: the line (its todo list, or the jump to the end) and the subagents, each lit and lifted on its own.
+        <div className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
+          {shownLine ? (
+            <button
+              type="button"
+              onClick={(e) => (listed ? show('todo', e.currentTarget) : onJump())}
+              aria-haspopup={listed ? 'dialog' : undefined}
+              aria-expanded={listed ? reader?.open === true && reader.tab === 'todo' : undefined}
+              aria-controls={listed && reader?.open && reader.tab === 'todo' ? readerId : undefined}
+              className={cn(strip, 'min-w-0 flex-1 gap-2.5')}
+            >
+              <span key={shownLine.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
+                {shownLine.kind === 'working' ? <Working line={shownLine} since={since} /> : shownLine.kind === 'stopped' ? <Stopped line={shownLine} /> : <Paused text={shownLine.text} />}
+              </span>
+              <span className="sr-only">
+                {shownLine.kind === 'working' ? (
+                  <>
+                    {slotWords(shownLine, !!since)}
+                    <ClockWords since={since} />
+                    {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
+                    {shownLine.retry && retrySentence(shownLine.retry)}
+                    {shownLine.background && '. Compacting in background'}
+                    {'. '}
+                  </>
+                ) : shownLine.kind === 'stopped' ? `${shownLine.long.replaceAll(' · ', ', ')}. ` : `${shownLine.text}. `}
+                {listed ? 'Show the list' : 'Jump to bottom'}
+              </span>
+            </button>
+          ) : (
+            <span className="flex-1" />
           )}
-          <span className="flex-1" />
           {subagents && (
-            <span id="subagents-link" data-strip-subagents="" aria-hidden="true" className="flex shrink-0 items-center gap-2">
-              <Network className="size-3.5 shrink-0 text-muted" />
-              <Blocks items={subagentBlocks(subagents)} />
-            </span>
+            <button
+              id="subagents-link"
+              type="button"
+              onClick={(e) => show('subagents', e.currentTarget)}
+              aria-haspopup="dialog"
+              aria-expanded={reader?.open === true && reader.tab === 'subagents'}
+              aria-controls={reader?.open && reader.tab === 'subagents' ? readerId : undefined}
+              className={cn(strip, 'shrink-0 gap-2')}
+            >
+              <Workflow aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
+              <Blocks aria-hidden="true" items={subagentBlocks(subagents)} />
+              <span className="sr-only">{`${subagentSentence(subagents, index?.before)}. Show the subagents`}</span>
+            </button>
           )}
-          <span className="sr-only">
-            {shownLine?.kind === 'working' ? (
-              <>
-                {slotWords(shownLine, !!since)}
-                <ClockWords since={since} />
-                {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
-                {shownLine.retry && retrySentence(shownLine.retry)}
-                {shownLine.background && '. Compacting in background'}
-                {'. '}
-              </>
-            ) : shownLine?.kind === 'stopped' ? (
-              `${shownLine.long.replaceAll(' · ', ', ')}. `
-            ) : shownLine ? (
-              `${shownLine.text}. `
-            ) : null}
-            {subagents && `${subagentSentence(subagents, index?.before)}. `}
-            {action}
-          </span>
-        </button>
+        </div>
       )}
       {reader && tab && (
-        <StripReader id={readerId} open={reader.open} phone={reader.phone} anchor={button} tabs={tabs} tab={tab} onTab={(t) => setReader((r) => r && { ...r, tab: t })} todoLabel={plan ? 'Plan' : 'Todo'} todo={view && list ? { view, blocks: todoBlocks(list) } : undefined} subagents={session.subagents} error={error} onPick={pick} picked={picked} onClose={close} onClosed={closed} />
+        <StripReader id={readerId} open={reader.open} phone={reader.phone} anchor={reader.anchor} tabs={tabs} tab={tab} onTab={(t) => setReader((r) => r && { ...r, tab: t })} todoLabel={plan ? 'Plan' : 'Todo'} todo={view && list ? { view, blocks: todoBlocks(list) } : undefined} subagents={session.subagents} error={error} onPick={pick} picked={picked} onClose={close} onClosed={closed} />
       )}
     </>
   );
 }
 
-const TAB_ICON: Record<Tab, typeof ListChecks> = { todo: ListChecks, subagents: Network };
+const TAB_ICON: Record<Tab, typeof ListChecks> = { todo: ListChecks, subagents: Workflow };
 
 /**
  * The strip's reader (DESIGN.md Status line, reader): an anchored reader above the strip (the strip

@@ -559,7 +559,7 @@ function FileLink({ path, url, label: words }: Readonly<{ path: string; url: str
   const line = /#L(\d+)$/.exec(url)?.[1];
   const image = /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer" title={line ? `${label.path}:${line}` : label.path} aria-label={`Open ${label.path}${line ? ` at line ${line}` : ''}`} className={cn(chipVariants({ fill: 'well', tone: 'accent' }), 'max-w-full min-w-0 align-middle hover:bg-sunken')} onClick={event => {
+    <a href={url} target="_blank" rel="noopener noreferrer" title={line ? `${label.path}:${line}` : label.path} aria-label={`Open ${label.path}${line ? ` at line ${line}` : ''}`} className={cn(chipVariants({ fill: 'well' }), 'max-w-full min-w-0 align-middle text-file-link hover:bg-sunken')} onClick={event => {
       if (preview && previewClick(event)) {
         event.preventDefault();
         preview({ url, name: label.name, description: label.path, path: label.path, frameable: true, image }, event.currentTarget);

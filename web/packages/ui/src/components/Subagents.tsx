@@ -5,7 +5,7 @@ import { isSubagentCall, subagentSummary, duration, toolLabel, windowInteraction
 import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Details';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { ArrowUp, Check, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Network, Square, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Square, Workflow, X } from 'lucide-react';
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -459,7 +459,7 @@ function usage(s: Subagent): string {
 }
 
 /**
- * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Network` glyph
+ * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Workflow` glyph
  * past five calls), then "3 subagents · 1.2M tokens · 2 done · 1 failed", and "2 of 3 loaded" while
  * some of the reply's calls have no subagent here yet. It opens the reply's list under the line.
  */
@@ -487,7 +487,7 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
           })}
         </span>
       ) : (
-        <Network aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
+        <Workflow aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
       )}
       <span className="min-w-0 truncate tabular-nums">
         <Counts c={c} lead={partial ? <>{lead} · <span className="text-muted">{partial}</span></> : lead} />
@@ -880,12 +880,12 @@ function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonl
               <>
                 {rootCall ? (
                   <button type="button" className={cn(crumb, 'shrink-0')} title="Show where it was spawned in the conversation" onClick={() => actions.locate(rootCall)}>
-                    <Network aria-hidden="true" className="size-3.5" />
+                    <Workflow aria-hidden="true" className="size-3.5" />
                     Main agent
                   </button>
                 ) : (
                   <span className={cn(crumb, 'shrink-0 hover:bg-transparent hover:text-muted')}>
-                    <Network aria-hidden="true" className="size-3.5" />
+                    <Workflow aria-hidden="true" className="size-3.5" />
                     Main agent
                   </span>
                 )}
@@ -1230,7 +1230,7 @@ export function LiveSubagents() {
       {status}
       <section aria-label="Subagents at work" className="animate-rise flex flex-col gap-1">
         <header className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-caption tabular-nums">
-          <Network aria-hidden="true" className="size-4 shrink-0 text-muted" />
+          <Workflow aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <span>
             <span className="font-semibold text-ink">{lead}</span>
             {c.running < c.total && (
