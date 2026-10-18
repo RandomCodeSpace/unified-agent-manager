@@ -830,6 +830,26 @@ export function callProduct(item: Item): 'chart' | 'images' | null {
 }
 
 /** The distinct paths the turn's completed edit, write, create and apply_patch calls named, in order, but the scratch plan. */
+/**
+ * The line counts of a turn's edits from its edit calls' own recorded patches, for its Changed
+ * chip when no capture of the turn's changes was kept; null unless every completed edit call
+ * (the scratch plan's aside) recorded counts for each file it touched.
+ */
+export function editCounts(entries: Entry[], scratch?: (path: string) => boolean): { additions: number; deletions: number } | null {
+  let additions = 0, deletions = 0, any = false;
+  for (const { item } of entries) {
+    const t = item?.tool;
+    if (item?.kind !== 'tool' || t?.status !== 'completed' || !CHANGE_TOOLS.includes(t.name.toLowerCase())) continue;
+    const paths = changePaths(t);
+    if (paths.length && paths.every((path) => scratch?.(path))) continue;
+    const edits = t.file_edits ?? [];
+    if (!edits.length || t.file_edits_truncated || edits.some((e) => e.diff_status !== 'available')) return null;
+    for (const e of edits) { additions += e.additions ?? 0; deletions += e.deletions ?? 0; }
+    any = true;
+  }
+  return any ? { additions, deletions } : null;
+}
+
 export function changedFiles(entries: Entry[], scratch?: (path: string) => boolean): string[] {
   const out: string[] = [];
   for (const { item } of entries) {

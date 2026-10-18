@@ -6,7 +6,7 @@ import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, isWork, localToolMs, promoted, stepResult, summarizeTurn, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, editCounts, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, isWork, localToolMs, promoted, stepResult, summarizeTurn, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
@@ -190,7 +190,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // without one (still working, or ended without a reply) keeps its edits in a bar of their own.
     const lastReply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
     const replyEnd = lastReply && ctx.replyEnd?.get(lastReply.id);
-    const edits = changedLine && changed.length > 0 ? turnChangeFor(lastReply ?? group[0].item, changed, last && liveCard, onOpenChanges) : undefined;
+    const edits = changedLine && changed.length > 0 ? turnChangeFor(lastReply ?? group[0].item, changed, last && liveCard, onOpenChanges, editCounts(group, scratch)) : undefined;
     if (replyEnd && edits) turnChanges.set(lastReply.id, edits);
     const first = (group[0].item ?? group[0].interaction).id;
     const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
@@ -514,15 +514,15 @@ function StepTook({ time, took }: Readonly<{ time: string; took: string | null }
   );
 }
 
-/** A turn's edits for its Changed chip: the files its edit calls named, whether it is the Thread's latest turn, and the way to the Changes sheet. */
-interface TurnChange { files: string[]; latest: boolean; onOpen?: (turn: { files: string[]; latest: boolean }) => void }
+/** A turn's edits for its Changed chip: the files its edit calls named, their line counts when every call recorded them, whether it is the Thread's latest turn, and the way to the Changes sheet. */
+interface TurnChange { files: string[]; counts: { additions: number; deletions: number } | null; latest: boolean; onOpen?: (turn: { files: string[]; latest: boolean }) => void }
 
 /** An unchanged turn's edits keep their identity, so its memoised reply holds while other rows stream. */
 const turnChangeOf = new WeakMap<Item, TurnChange>();
-function turnChangeFor(owner: Item | undefined, files: string[], latest: boolean, onOpen?: TurnChange['onOpen']): TurnChange {
+function turnChangeFor(owner: Item | undefined, files: string[], latest: boolean, onOpen: TurnChange['onOpen'], counts: TurnChange['counts']): TurnChange {
   const held = owner && turnChangeOf.get(owner);
-  if (held && held.latest === latest && held.onOpen === onOpen && held.files.join('\n') === files.join('\n')) return held;
-  const change = { files, latest, onOpen };
+  if (held && held.latest === latest && held.onOpen === onOpen && held.files.join('\n') === files.join('\n') && held.counts?.additions === counts?.additions && held.counts?.deletions === counts?.deletions) return held;
+  const change = { files, counts, latest, onOpen };
   if (owner) turnChangeOf.set(owner, change);
   return change;
 }
@@ -554,10 +554,10 @@ function ChangedChip({ files, additions, deletions, unavailable = false, expande
 
 /** The edits of a turn that has no reply ending it yet (it runs, or it ended without one): the outcome bar's Changed chip alone. */
 function EditsBar({ edits }: Readonly<{ edits: TurnChange }>) {
-  const { files, latest, onOpen } = edits;
+  const { files, counts, latest, onOpen } = edits;
   return (
     <div data-foot="" className={cn('flex flex-wrap items-center', OUTCOME)}>
-      <ChangedChip files={files.length} onClick={onOpen && (() => onOpen({ files, latest }))} />
+      <ChangedChip files={files.length} additions={counts?.additions} deletions={counts?.deletions} onClick={onOpen && (() => onOpen({ files, latest }))} />
     </div>
   );
 }
@@ -724,10 +724,10 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
       </Button>
     </Tip>
   );
-  // The captured counts open the turn's changes; without them, the files its calls named open Changes.
+  // The captured counts open the turn's changes; without them, the files its calls named (with their calls' own line counts when all recorded them) open Changes.
   const changeChip = changes?.status === 'available'
     ? <ChangedChip files={changes.files ?? 0} additions={changes.additions ?? 0} deletions={changes.deletions ?? 0} expanded={!!changesReader?.open} onClick={showChanges} />
-    : edits ? <ChangedChip files={edits.files.length} onClick={openEdits} />
+    : edits ? <ChangedChip files={edits.files.length} additions={edits.counts?.additions} deletions={edits.counts?.deletions} onClick={openEdits} />
     : changes ? <ChangedChip files={0} unavailable expanded={!!changesReader?.open} onClick={showChanges} /> : null;
 
   return (

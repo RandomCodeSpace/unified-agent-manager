@@ -646,6 +646,25 @@ describe('turn card', () => {
     expect(open).toHaveBeenCalledWith({ files: ['/w/internal/secret-a.go', '/w/internal/secret-b.go'], latest: true });
   });
 
+  test("without a capture the chip takes its line counts from the edit calls' own patches, when every one recorded them", () => {
+    const patched = (item: Item, additions: number, deletions: number): Item => ({ ...item, tool: { ...item.tool!, edit_event_id: `ev-${item.id}`, file_edits: [{ path: item.tool!.path!.slice(3), kind: 'modified', additions, deletions, diff_status: 'available' }] } });
+    const draw = (list: Item[]) => <Transcript sessionId="s" items={list} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} />;
+    const view = render(draw([items[0], patched(items[1], 12, 3), patched(items[2], 40, 0), items[3]]));
+    const chip = within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files +52 −3' });
+    expect(within(chip).getByText('+52').className).toContain('text-success');
+    expect(within(chip).getByText('−3').className).toContain('text-error');
+    // One call without recorded counts: the files alone, no guessed lines.
+    view.rerender(draw([items[0], patched(items[1], 12, 3), items[2], items[3]]));
+    expect(within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+  });
+
+  test('a todo block with nothing in it is left out', () => {
+    const view = render(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[{ ...ended, todo: { done: 0, total: 2, pending: 2, open: 2 } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    const todo = view.getByRole('button', { name: /^Todo at the end of this turn/ });
+    expect(within(todo).queryByTitle('0 done')).toBeNull();
+    expect(within(todo).getByTitle('2 to do')).toBeTruthy();
+  });
+
   test("a turn with no reply ending it yet keeps its edits in a bar of their own; a reply's bar without an outcome is copy alone", () => {
     const view = render(<Transcript sessionId="s" items={items.slice(0, 3)} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" onOpenChanges={vi.fn()} liveCard />);
     const bars = view.container.querySelectorAll('[data-foot]:not(.group\\/copy)');

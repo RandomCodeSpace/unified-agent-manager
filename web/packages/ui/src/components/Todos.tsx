@@ -269,13 +269,13 @@ function Reader({ id, open, phone, anchor, side, label, title = 'Todo', parts, o
 }
 
 /**
- * A turn's todo counts as blocks: ✓ done, ◉ in progress, ⊘ blocked, ○ to do, then counts kept
- * before uam split in progress from to do ("2 open"). `stopped`: nothing works on the list any
+ * A turn's todo counts as blocks: ✓ done, ◉ in progress, ⊘ blocked, ○ to do, each only when not
+ * zero, then counts kept before uam split in progress from to do ("2 open"). `stopped`: nothing works on the list any
  * more (the turn ended), so in progress keeps its glyph without the accent.
  */
 export function todoBlocks(tally: TodoTally, stopped: boolean): Block[] {
   const stage = (status: TodoStatus, n: number): Block => ({ key: status, tone: status === 'in_progress' ? (stopped ? 'none' : 'accent') : status === 'blocked' ? 'warning' : status === 'done' ? 'success' : 'none', Icon: GLYPH[status], label: n, title: `${n} ${todoWord(status).toLowerCase()}` });
-  return [stage('done', tally.done), ...tally.stages.map(({ status, n }) => stage(status, n)), ...(tally.open > 0 ? [{ key: 'open', tone: 'none' as const, label: `${tally.open} open`, title: `${tally.open} open` }] : [])];
+  return [...(tally.done > 0 ? [stage('done', tally.done)] : []), ...tally.stages.map(({ status, n }) => stage(status, n)), ...(tally.open > 0 ? [{ key: 'open', tone: 'none' as const, label: `${tally.open} open`, title: `${tally.open} open` }] : [])];
 }
 
 /**

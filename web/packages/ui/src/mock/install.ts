@@ -764,6 +764,14 @@ export function install(): { received: Received[] } {
       token: { scopes: ['api', 'read_repository', 'write_repository'], expires_at: '2027-01-31' },
       ...(url.searchParams.get('project_id') ? { project: { path: 'platform/customer-portal', readable: true, access_level: 40 } } : {}),
     });
+    // A turn's kept change capture: its files from its edit calls' recorded patches.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/turns\/([^/]+)\/changes$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      const timing = t?.turn_timings?.find((x) => x.id === decodeURIComponent(r![2]));
+      if (!t || !timing?.changes || !timing.ended_at) return fail(404, 'no changes were kept for that turn');
+      const files = t.items.flatMap((i) => i.tool?.file_edits ?? []).map(({ path, kind, additions, deletions }) => ({ path, kind, additions, deletions }));
+      return json(200, { timing_id: timing.id, ended_at: timing.ended_at, counts: timing.changes, files });
+    }
     // t20 touched a merge request and an issue in a signed-in GitLab project: its reply's outcome bar shows them.
     if (path === '/api/sessions/t20/gitlab' && method === 'GET') return json(200, { supported: true, auto_investigate: false, can_investigate: false, origin: { host: 'gitlab.example.com', path: 'group/repo' } });
     if (path === '/api/sessions/t20/gitlab/items' && method === 'GET') {

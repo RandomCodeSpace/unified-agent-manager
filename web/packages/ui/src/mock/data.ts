@@ -1109,13 +1109,14 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'completed',
       created_at: ago(70),
       updated_at: ago(42),
-      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(70), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200 }],
+      // The turn's native change capture, as the service keeps it when the turn ends.
+      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(70), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200, changes: { status: 'available', event_id: 'native-f1', files: 2, additions: 52, deletions: 3 } }],
       items: [
         { id: 'f1', kind: 'user', time: ago(70), text: 'Focus events stop after a re-attach. Fix it, add a regression test, and document the replay order in docs/terminal.md.' },
         { id: 'f2', kind: 'reasoning', time: ago(69), ended_at: ago(68), text: '`Redraw` replays the private modes but not `?1004`. Add the replay after them and a test that re-attaches.' },
         tool('fq', 65, { name: 'ask_user', title: 'Ask user', status: 'completed', input: JSON.stringify({ question: 'Where should the replay order be documented?', choices: ['docs/terminal.md', 'A comment in redraw.go'] }), output: 'User selected: docs/terminal.md' }),
-        { ...tool('f3', 60, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw.go`, output: '+\tif err := v.replayFocusEvents(w); err != nil {' }), ended_at: ago(60) },
-        { ...tool('f4', 55, { name: 'edit', title: 'Edit internal/vterm/redraw_test.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw_test.go`, output: '+func TestRedrawReplaysFocusEvents(t *testing.T) {' }), ended_at: ago(55) },
+        { ...tool('f3', 60, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw.go`, output: '+\tif err := v.replayFocusEvents(w); err != nil {', edit_event_id: 'edit-f3', file_edits: [{ path: 'internal/vterm/redraw.go', kind: 'modified', additions: 12, deletions: 3, diff_status: 'available' }] }), ended_at: ago(60) },
+        { ...tool('f4', 55, { name: 'edit', title: 'Edit internal/vterm/redraw_test.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw_test.go`, output: '+func TestRedrawReplaysFocusEvents(t *testing.T) {', edit_event_id: 'edit-f4', file_edits: [{ path: 'internal/vterm/redraw_test.go', kind: 'modified', additions: 40, deletions: 0, diff_status: 'available' }] }), ended_at: ago(55) },
         {
           ...tool('f5', 50, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./internal/vterm/... -run Redraw' }), output: '=== RUN   TestRedrawReplaysModes\n--- PASS: TestRedrawReplaysModes (0.00s)\n=== RUN   TestRedrawReplaysFocusEvents\n--- PASS: TestRedrawReplaysFocusEvents (0.01s)\nok  \tgithub.com/example/uam/internal/vterm\t1.204s\n<shellId: 0 completed with exit code 0>' }),
           ended_at: new Date(Date.parse(ago(50)) + 1400).toISOString(),
