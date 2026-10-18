@@ -291,9 +291,12 @@ test('GitLab HTML is sanitized and regular Markdown still escapes raw HTML', () 
   ].join('\n')} />);
   expect(container.querySelector('details summary')?.textContent).toBe('Safe summary');
   expect(container.querySelector('sup')?.textContent).toBe('Safe superscript');
-  expect(container.querySelector('script, iframe, style, img, [onclick], [ontoggle], [onerror], [style], [id="location"], [href^="javascript:"]')).toBeNull();
+  expect(container.querySelector('script, iframe, style, [onclick], [ontoggle], [onerror], [style], [id="location"], [href^="javascript:"]')).toBeNull();
+  // An https image loads, with no referrer and none of its handlers.
+  expect(container.querySelector('img')?.getAttribute('referrerpolicy')).toBe('no-referrer');
   unmount();
-  const plain = render(<Markdown text="Text <sup>2</sup> <!-- visible source -->" />);
+  const plain = render(<Markdown text="Text <sup>2</sup> <!-- a hidden note -->" />);
   expect(plain.container.querySelector('sup')).toBeNull();
-  expect(plain.container.textContent).toContain('<sup>2</sup> <!-- visible source -->');
+  expect(plain.container.textContent).toContain('<sup>2</sup>');
+  expect(plain.container.textContent).not.toContain('hidden note');
 });

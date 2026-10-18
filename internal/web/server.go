@@ -39,7 +39,7 @@ const (
 	heartbeatInterval = 15 * time.Second
 	streamWriteWait   = 15 * time.Second
 	maxLoggedValue    = 512
-	contentSecurity   = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	contentSecurity   = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	// frameDocument is the only response with another policy: the document
 	// Mermaid renders in (ADR 0004, "Diagrams in a sandboxed frame"). The page
 	// embeds it with sandbox="allow-scripts" and no allow-same-origin, so its

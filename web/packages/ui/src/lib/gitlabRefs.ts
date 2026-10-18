@@ -254,3 +254,46 @@ export function markdownSummary(text: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/** A GitLab item's address in the Thread's project (an epic in its parent group). */
+export function gitLabUrl(r: GitLabRef, origin: GitLabOrigin): string {
+  if (r.kind === 'epic') return `https://${origin.host}/groups/${r.group ?? parentGroup(origin.path)}/-/epics/${r.id}`;
+  const path = { mr: 'merge_requests', issue: 'issues', pipeline: 'pipelines', job: 'jobs' }[r.kind];
+  return `https://${origin.host}/${origin.path}/-/${path}/${r.id}`;
+}
+
+/** How a reply names the item when it gave only its address: "MR !72", "Pipeline #2283401". */
+export function gitLabWords(r: GitLabRef): string {
+  return `${{ mr: 'MR', issue: 'Issue', epic: 'Epic', pipeline: 'Pipeline', job: 'Job' }[r.kind]} ${refText(r)}`;
+}
+
+// "MR !72", "merge request !72", a bare "!72", "pipeline #2283401" or "pipeline 2283401" in prose.
+const TEXT_REF = /\b(?:MR|merge request) ?!(\d+)\b|(?<![\w!&#/])!(\d+)\b|\bpipeline #?(\d+)\b/gi;
+
+interface MdNode { type: string; value?: string; url?: string; children?: MdNode[] }
+
+/**
+ * A remark plugin: merge requests and pipelines a reply names in its text link to the Thread's
+ * GitLab project. Text inside links and code stays as written.
+ */
+export function remarkGitLabRefs(origin: GitLabOrigin) {
+  const visit = (node: MdNode) => {
+    if (!node.children || node.type === 'link' || node.type === 'linkReference') return;
+    node.children = node.children.flatMap((child): MdNode[] => {
+      if (child.type !== 'text' || !child.value) { visit(child); return [child]; }
+      const out: MdNode[] = [];
+      let at = 0;
+      for (const m of child.value.matchAll(TEXT_REF)) {
+        const id = Number(m[1] ?? m[2] ?? m[3]);
+        if (!Number.isSafeInteger(id) || id <= 0) continue;
+        const ref: GitLabRef = { kind: m[3] ? 'pipeline' : 'mr', id };
+        out.push({ type: 'text', value: child.value.slice(at, m.index) }, { type: 'link', url: gitLabUrl(ref, origin), children: [{ type: 'text', value: m[0] }] });
+        at = m.index + m[0].length;
+      }
+      if (!out.length) return [child];
+      out.push({ type: 'text', value: child.value.slice(at) });
+      return out.filter((n) => n.type !== 'text' || n.value);
+    });
+  };
+  return () => (tree: MdNode) => visit(tree);
+}

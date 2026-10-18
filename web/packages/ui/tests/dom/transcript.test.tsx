@@ -323,6 +323,24 @@ describe('messages', () => {
     expect(p?.textContent).toBe('first line\nsecond line');
   });
 
+  test('HTML comments are never shown; other raw HTML stays as text', () => {
+    const view = render(<Markdown text={'<!-- a note to the writer -->\n\nText <!-- inline --> after.\n\n<b>raw</b>'} />);
+    expect(view.container.textContent).not.toContain('<!--');
+    expect(view.container.textContent).not.toContain('a note to the writer');
+    expect(view.container.textContent).toContain('Text  after.');
+    expect(view.container.textContent).toContain('<b>raw</b>');
+  });
+
+  test('an https image loads in place with no referrer and links to itself; an http one stays a link card', () => {
+    const view = render(<Markdown text={'![chart](https://example.com/a.png)\n\n![old](http://example.com/b.png)'} />);
+    const img = view.getByRole('img', { name: 'chart' });
+    expect(img.getAttribute('src')).toBe('https://example.com/a.png');
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(img.closest('a')?.getAttribute('href')).toBe('https://example.com/a.png');
+    expect(view.queryByRole('img', { name: 'old' })).toBeNull();
+    expect(view.getByRole('link', { name: /old/ }).getAttribute('href')).toBe('http://example.com/b.png');
+  });
+
   test('links open outside, and images in the project open in the viewer', async () => {
     const { user } = await openTask('t1');
     const link = log().getByRole('link', { name: 'original report' });
