@@ -1092,7 +1092,7 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
       window.removeEventListener('resize', place);
     };
   }, [row]);
-  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:size-full', className)} />;
+  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:m-0 [&>*]:size-full', className)} />;
 }
 
 /**
