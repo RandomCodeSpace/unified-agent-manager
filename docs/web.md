@@ -2700,9 +2700,12 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   ending. Until
   then, a subagent's follow-up and an autopilot turn waiting on an
   attached shell may also stay running.
-- **Copilot session diffs.** Copilot does not report per-conversation file
-  changes, so UAM attributes files to a Thread from its edit tool calls (see
-  Changes); files written by shell commands show only under All changes.
+- **Copilot session diffs.** A Thread's own files come from Copilot's
+  session diff, which includes files written by shell commands, read while
+  the conversation is open, plus its edit tool calls. After a uam restart a
+  closed Thread knows only its edit tool calls until its conversation opens
+  again, so a file it wrote through a shell command does not stop Settle or
+  Archive meanwhile.
 - **Opening a web conversation elsewhere at the same time.** Do not
   continue a web session's conversation in Copilot's own terminal UI while
   the web interface has it open.
