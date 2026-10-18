@@ -568,21 +568,22 @@ func (in handoffNotes) markdown(files taskListing, filesErr error, split *TimeSp
 	case len(files.all.Files) == 0:
 		b.WriteString("- **Files changed:** none against `HEAD`.\n")
 	default:
-		mine := map[string]bool{}
-		for _, f := range files.task {
-			mine[f.Path] = true
+		// Only the files this Thread's edit tools touched; the rest of the
+		// folder (shell commands, other Threads, the owner) as a count.
+		if len(files.task) == 0 {
+			b.WriteString("- **Files changed by this Thread:** none of its edits differ from `HEAD`.\n")
+		} else {
+			fmt.Fprintf(&b, "- **Files changed by this Thread** against `HEAD`: %d\n", len(files.task))
 		}
-		fmt.Fprintf(&b, "- **Files changed** against `HEAD` (git status of the Thread's folder; * edited by this Thread): %d\n", len(files.all.Files))
-		for i, f := range files.all.Files {
+		for i, f := range files.task {
 			if i == maxHandoffFiles {
-				fmt.Fprintf(&b, "  - and %d more\n", len(files.all.Files)-maxHandoffFiles)
+				fmt.Fprintf(&b, "  - and %d more\n", len(files.task)-maxHandoffFiles)
 				break
 			}
-			star := ""
-			if mine[f.Path] {
-				star = " *"
-			}
-			fmt.Fprintf(&b, "  - `%s` %s +%d −%d%s\n", mdCode(f.Path), f.Status, f.Additions, f.Deletions, star)
+			fmt.Fprintf(&b, "  - `%s` %s +%d −%d\n", mdCode(f.Path), f.Status, f.Additions, f.Deletions)
+		}
+		if others := len(files.all.Files) - len(files.task); others > 0 {
+			fmt.Fprintf(&b, "- **Other changes in the folder:** %d %s from `HEAD` that this Thread's edit tools did not touch (shell commands or others may have).\n", others, plural(others, "file differs", "files differ"))
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

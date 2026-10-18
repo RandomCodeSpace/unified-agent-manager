@@ -832,8 +832,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or uam's follow-up turn) is the handoff; a subagent's denied call does not
   count. uam adds its own facts, computed without a model: AI credits
   spent and the quota used, the time split, the last intent, the todo list,
-  the turn's failed tool calls and the files changed in the Thread's folder
-  (git status against `HEAD`, those this Thread edited marked). Without a
+  the turn's failed tool calls, the files this Thread's edit tools changed
+  (git status against `HEAD`) and how many other files in its folder differ
+  from `HEAD`. Without a
   handoff reply (Stop, the third call, a failed turn, a send uam could not
   make, an uncertain send followed by no turn within 2 minutes, closing the
   conversation, or a restart during the wrap-up) the facts alone are the
