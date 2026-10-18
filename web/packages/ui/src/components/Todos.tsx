@@ -1,9 +1,8 @@
-// The todo reader (DESIGN.md Todo reader): the list the agents keep, opened from the status line,
-// and the list as a turn left it, opened from its reply's foot (`TurnTodo`). On a wide screen it
-// is an anchored reader: a modal popover beside what opened it, that lifted above the dim, a
-// compact head with the count and meter, eyebrow sections and a keycap foot. A phone gets the
-// subagents' sheet from the bottom. It only shows the list: the owner changes it by asking in the
-// chat.
+// The todo list the agents keep, read-only: the status strip reader's Todo tab (`TodoTab`, see
+// StatusLine), and the list as a turn left it, opened from its reply's foot (`TurnTodo`). The
+// reply's reader is an anchored reader: a modal popover beside what opened it, that lifted above
+// the dim, a compact head with the count and meter, eyebrow sections and a keycap foot. A phone
+// gets the subagents' sheet from the bottom. The owner changes the list by asking in the chat.
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
@@ -12,7 +11,7 @@ import { Fragment, useContext, useEffect, useId, useRef, useState, type ReactNod
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Subagent, type Todo, type TodoCounts, type TodoStatus, type TodoView, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoSections, todoTally, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
+import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoTally, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
@@ -84,28 +83,34 @@ export function TodoStages({ tally, sep, stopped = false }: Readonly<{ tally: To
 }
 
 /** The subagent that first wrote a row: its identity dot, as on its row, and its name. */
-function AgentTag({ id, name }: Readonly<{ id: string; name?: string }>) {
+function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean }>) {
   const tone = useSubagentReplies()?.tones.get(id);
   return (
     <span className="flex h-5 max-w-36 shrink-0 items-center gap-1 text-caption text-muted">
       <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', tone ? IDENTITY_DOT[tone] : 'bg-faint')} />
       <span className="sr-only">, by </span>
-      <span className="truncate">{name || 'subagent'}</span>
+      <span className={quiet ? 'sr-only' : 'truncate'}>{name || 'subagent'}</span>
     </span>
   );
 }
 
-function TodoRow({ todo, name }: Readonly<{ todo: Todo; name?: string }>) {
+const sameWords = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** One row: its stage's glyph, its title ("now" after the row the work is at), the blocked reason under it and the subagent that first wrote it. */
+function TodoRow({ todo, name, now = false, quietName = false }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean }>) {
   return (
     <li className="flex min-h-7 items-start gap-2 py-1 pointer-coarse:min-h-9">
       <span className="flex h-5 w-4 shrink-0 items-center justify-center">
         <TodoMark status={todo.status} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className={cn('text-ui break-words', todo.status === 'done' ? 'text-muted' : todo.status === 'in_progress' ? 'font-medium text-ink' : 'text-body')}>{todo.title}</span>
+        <span className={cn('text-ui break-words', todo.status === 'done' ? 'text-muted' : todo.status === 'in_progress' ? 'font-medium text-ink' : 'text-body')}>
+          {todo.title}
+          {now && <span className="ml-1.5 text-caption font-normal text-accent">now</span>}
+        </span>
         {todo.status === 'blocked' && todo.note && <span className="text-caption break-words text-warning">{todo.note}</span>}
       </span>
-      {todo.agent_id && <AgentTag id={todo.agent_id} name={name} />}
+      {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} />}
       <span className="sr-only">, {todoWord(todo.status)}</span>
     </li>
   );
@@ -172,29 +177,25 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
 const dim = cn(backdropClass, 'duration-160');
 
 /**
- * The live list beside `anchor`, the status line: In progress, Blocked, To do and Done;
- * `view.touched` unset says the running turn has not changed it yet.
+ * The status strip reader's Todo tab: the live list in plan order, the row the work is at marked
+ * "now", a blocked row's reason under it and the subagent that wrote a row as its identity dot
+ * (and its name when the title does not already say it). No count repeats the strip's blocks; the
+ * phone's sheet, which covers the strip, repeats them on top (`blocks`).
  */
-export function TodoReader({ view, subagents, label = 'Todo', ...shell }: Readonly<{
-  id: string;
-  open: boolean;
-  phone: boolean;
-  anchor: HTMLElement | null;
-  view: TodoView;
-  subagents: readonly Subagent[];
-  label?: 'Todo' | 'Plan';
-  onClose: () => void;
-  onClosed: () => void;
-}>) {
+export function TodoTab({ view, subagents, blocks }: Readonly<{ view: TodoView; subagents: readonly Subagent[]; blocks?: ReactNode }>) {
   const names = new Map(subagents.map((s) => [s.id, s.name]));
-  const tagged = view.todos.filter((t) => t.agent_id).length;
-  const facts = [
-    view.touched ? '' : 'Left by the last turn; this turn has not changed it yet',
-    tagged ? `${tagged} ${tagged === 1 ? 'row' : 'rows'} from subagents` : '',
-    view.omitted ? `${view.omitted} more not shown` : '',
-  ].filter(Boolean);
-  const parts: ReaderParts = { todos: view.todos, counts: view.counts, facts, sections: todoSections(view), foot: 'To change it, ask in the chat', name: (t) => names.get(t.agent_id!) };
-  return <Reader {...shell} side="top" label={label} title={label} parts={parts} />;
+  const facts = [view.touched ? '' : 'Left by the last turn; this turn has not changed it yet', view.omitted ? `${view.omitted} more not shown` : ''].filter(Boolean);
+  return (
+    <>
+      {blocks}
+      {facts.length > 0 && <p className="text-caption text-muted">{facts.join(' · ')}</p>}
+      <ul>
+        {view.todos.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} now={todo.id === view.now && todo.status === 'in_progress'} name={todo.agent_id ? names.get(todo.agent_id) : undefined} quietName />
+        ))}
+      </ul>
+    </>
+  );
 }
 
 /**

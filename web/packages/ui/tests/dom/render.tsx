@@ -42,6 +42,15 @@ export const composer = () => document.getElementById('composer-text') as HTMLTe
 /** The transcript's log region. */
 export const log = () => within(screen.getByRole('log'));
 
+/** Opens the status strip's reader on its Subagents tab (the subagent index) and returns the reader. */
+export async function openSubagentIndex(user: User) {
+  const strip = await screen.findByRole('button', { name: /Subagents: \d+/ });
+  await user.click(strip.querySelector<HTMLElement>('[data-strip-subagents]')!);
+  const reader = within(await screen.findByRole('dialog', { name: /ubagents$/ }));
+  await waitFor(() => expect(reader.getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true'));
+  return reader;
+}
+
 /** Opens a menu from its trigger and returns the menu. */
 export async function openMenu(user: User, trigger: string | RegExp) {
   const button = await screen.findByRole('button', { name: trigger });

@@ -6,7 +6,7 @@ import type { SessionDetail } from '../../src/api';
 
 test('while the conversation compacts, the status line and the state chip say so', () => {
   const session = { id: 't', state: 'working', compacting: true, items: [], interactions: [], subagents: [] } as unknown as SessionDetail;
-  const { container } = render(<StatusLine line={statusLine(session, true, true, [])} session={session} hidden={false} onJump={() => {}} />);
+  const { container } = render(<StatusLine line={statusLine(session, true, true)} session={session} hidden={false} onJump={() => {}} />);
   expect(container.textContent).toContain('Compacting the conversation…');
   expect(screen.getByRole('button', { name: 'Compacting the conversation. Jump to bottom' })).toBeTruthy();
   render(<StateMark state="working" label compacting text="Compacting…" />);
@@ -29,8 +29,8 @@ test('a Task compacting mid-turn says so at the transcript foot as well as above
 
 test('automatic compaction beside the turn is a quiet note on a working line, not a Compacting state', () => {
   const session = { id: 't', state: 'working', compacting_background: true, turn_activity: { intent: 'Reading the files', todos: { known: false } }, items: [], interactions: [], subagents: [] } as unknown as SessionDetail;
-  const { container } = render(<StatusLine line={statusLine(session, true, false, [])} session={session} hidden={false} onJump={() => {}} />);
-  expect(container.textContent).toContain('Reading the files…');
+  const { container } = render(<StatusLine line={statusLine(session, true, false)} session={session} hidden={false} onJump={() => {}} />);
+  expect(container.textContent).toContain('Reading the files');
   expect(container.textContent).toContain('Compacting in background');
   expect(container.textContent).not.toContain('Compacting the conversation');
   expect(screen.getByRole('button', { name: 'Reading the files. Compacting in background. Jump to bottom' })).toBeTruthy();
