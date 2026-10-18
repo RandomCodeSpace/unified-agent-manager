@@ -39,7 +39,7 @@ function useSecondTick(on: boolean): number {
 const FACES: Record<Phase['kind'], { word: string; full: string; Icon: LucideIcon; tone: BlockTone }> = {
   model: { word: 'Model', full: 'Model', Icon: Cpu, tone: 'accent' },
   local: { word: 'Local', full: 'Local · no model', Icon: Terminal, tone: 'success' },
-  waiting: { word: 'You', full: 'Waiting on you', Icon: Hand, tone: 'warning' },
+  waiting: { word: 'You', full: 'Waiting on you', Icon: Hand, tone: 'attention' },
 };
 
 /** Whose work it is when not the turn's main agent's: a subagent's between turns, or compaction. */

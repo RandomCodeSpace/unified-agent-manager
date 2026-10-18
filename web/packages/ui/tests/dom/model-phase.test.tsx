@@ -58,7 +58,7 @@ describe('the phase under the composer', () => {
     const waiting = block({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]')!;
     expect(spoken(waiting)).toBe('approve bashWaiting on you, 1:02:05');
     expect(shown(waiting)).toBe('You 1:02:05');
-    expect(waiting.querySelector(CELL)!.className).toContain('bg-warning-wash');
+    expect(waiting.querySelector(CELL)!.className).toContain('bg-attention-wash');
     expect(block(undefined).childElementCount).toBe(0);
   });
 

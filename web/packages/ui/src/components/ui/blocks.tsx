@@ -8,7 +8,7 @@ import { cn } from '../../lib/cn';
  * outcome (Todo, GitLab state, a step's result) all speak this one language, so a count reads
  * the same wherever it appears. The glyph keeps a cell readable without its colour.
  */
-export type BlockTone = 'success' | 'accent' | 'warning' | 'error' | 'none';
+export type BlockTone = 'success' | 'accent' | 'warning' | 'error' | 'attention' | 'none';
 
 export interface Block {
   key: string;
@@ -24,6 +24,7 @@ const TONES: Record<BlockTone, string> = {
   accent: 'bg-accent-wash text-accent',
   warning: 'bg-warning-wash text-warning',
   error: 'bg-error-wash text-error',
+  attention: 'bg-attention-wash text-attention',
   none: 'bg-tint-well text-muted shadow-[inset_0_0_0_1px_var(--color-tint-hover)]',
 };
 
