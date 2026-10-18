@@ -26,3 +26,16 @@ test('a Task compacting mid-turn says so at the transcript foot as well as above
   expect(header.textContent).toContain('Compacting…');
   expect(header.textContent).not.toContain('Working');
 });
+
+test('automatic compaction beside the turn is a quiet note on a working line, not a Compacting state', () => {
+  const session = { id: 't', state: 'working', compacting_background: true, turn_activity: { intent: 'Reading the files', todos: { known: false } }, items: [], interactions: [], subagents: [] } as unknown as SessionDetail;
+  const { container } = render(<StatusLine line={statusLine(session, true, false, [])} session={session} hidden={false} onJump={() => {}} />);
+  expect(container.textContent).toContain('Reading the files…');
+  expect(container.textContent).toContain('Compacting in background');
+  expect(container.textContent).not.toContain('Compacting the conversation');
+  expect(screen.getByRole('button', { name: 'Reading the files. Compacting in background. Jump to bottom' })).toBeTruthy();
+  // Words only, in the line's muted caption: no ring, no violet.
+  const note = screen.getByText('Compacting in background');
+  expect(note.closest('.text-badge-violet, .text-body')).toBeNull();
+  expect(container.querySelector('.animate-spin, .bg-badge-violet')).toBeNull();
+});

@@ -253,6 +253,17 @@ func TestTaskCompactingFollowsProviderAndConversation(t *testing.T) {
 	if summaryOf(t, m, sum.ID).Compacting {
 		t.Fatal("finished compaction still reported")
 	}
+	// One beside the running turn: the Task works, not compacts.
+	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction, CompactingBackground: true})
+	got := summaryOf(t, m, sum.ID)
+	data, _ := json.Marshal(got)
+	if got.Compacting || !got.CompactingBackground || got.State != sum.State || !strings.Contains(string(data), `"compacting_background":true`) || strings.Contains(string(data), `"compacting":`) {
+		t.Fatalf("compacting in the background = %s", data)
+	}
+	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction})
+	if summaryOf(t, m, sum.ID).CompactingBackground {
+		t.Fatal("finished background compaction still reported")
+	}
 	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)

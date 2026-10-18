@@ -165,6 +165,67 @@ func TestWebContextAndCompactionEvents(t *testing.T) {
 	}
 }
 
+// Automatic compaction lets the turn go on and completes only with it: the
+// main agent's first progress during it marks it as in the background, not
+// holding the conversation, until it completes or the turn ends. A
+// compaction with no main-agent progress (/compact) holds it throughout.
+func TestWebCompactionInTheBackground(t *testing.T) {
+	h := openWeb(t)
+	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "hi"})
+	h.fs.onEvent(phaseEv("s1", "", 100, &rpc.AssistantTurnStartData{TurnID: "0"}))
+	compaction := func() []string {
+		var out []string
+		for _, e := range h.sink.all() {
+			if e.Kind == agentapi.EventCompaction {
+				switch {
+				case e.Compacting:
+					out = append(out, "holds")
+				case e.CompactingBackground:
+					out = append(out, "background")
+				default:
+					out = append(out, "ended")
+				}
+			}
+		}
+		return out
+	}
+	expect := func(what string, want ...string) {
+		t.Helper()
+		if got := compaction(); !slices.Equal(got, want) {
+			t.Fatalf("%s: compaction events = %v, want %v", what, got, want)
+		}
+	}
+	threshold, manual := rpc.CompactionTriggerThreshold, rpc.CompactionTriggerManual
+	h.fs.onEvent(phaseEv("k1", "", 101, &rpc.SessionCompactionStartData{Trigger: &threshold}))
+	// A subagent's progress, or a tool ending, is not the main agent going on.
+	h.fs.onEvent(phaseEv("sm", "child", 102, &rpc.AssistantMessageData{MessageID: "sub", Content: "sub"}))
+	h.fs.onEvent(phaseEv("tc", "", 102, &rpc.ToolExecutionCompleteData{ToolCallID: "c0", Success: true}))
+	expect("before progress", "holds")
+	h.fs.onEvent(phaseEv("m1", "", 103, &rpc.AssistantMessageData{MessageID: "m1", Content: "Reading the files."}))
+	h.fs.onEvent(phaseEv("t1", "", 104, &rpc.ToolExecutionStartData{ToolCallID: "c1", ToolName: "view"}))
+	h.fs.onEvent(phaseEv("s2", "", 105, &rpc.AssistantTurnStartData{TurnID: "1"}))
+	expect("after progress", "holds", "background")
+	h.fs.onEvent(phaseEv("k2", "", 106, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &threshold}))
+	expect("after completion", "holds", "background", "ended")
+
+	// One with no progress until it completes holds the conversation.
+	h.fs.onEvent(phaseEv("k3", "", 107, &rpc.SessionCompactionStartData{Trigger: &threshold}))
+	h.fs.onEvent(phaseEv("k4", "", 108, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &threshold}))
+	h.fs.onEvent(phaseEv("t2", "", 109, &rpc.ToolExecutionStartData{ToolCallID: "c2", ToolName: "view"}))
+	expect("blocking in the turn", "holds", "background", "ended", "holds", "ended")
+
+	// The turn's end ends one in the background whose end never came.
+	h.fs.onEvent(phaseEv("k5", "", 110, &rpc.SessionCompactionStartData{Trigger: &threshold}))
+	h.fs.onEvent(phaseEv("s3", "", 111, &rpc.AssistantTurnStartData{TurnID: "2"}))
+	endTurn(t, h, 112)
+	expect("at the turn's end", "holds", "background", "ended", "holds", "ended", "holds", "background", "ended")
+
+	// /compact between turns holds it until it completes.
+	h.fs.onEvent(phaseEv("k6", "", 120, &rpc.SessionCompactionStartData{Trigger: &manual}))
+	h.fs.onEvent(phaseEv("k7", "", 125, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &manual}))
+	expect("manual", "holds", "background", "ended", "holds", "ended", "holds", "background", "ended", "holds", "ended")
+}
+
 func TestWebSubagentModelEffortEventsAndHistory(t *testing.T) {
 	h := openWeb(t)
 	events := []copilot.SessionEvent{

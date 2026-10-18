@@ -246,19 +246,25 @@ func (f *splitFold) add(e *splitEvent) {
 		f.compacting = at
 	case "session.compaction_complete":
 		// A compaction that called no model (nothing to compact) adds
-		// nothing; one that did spans its duration up to here, else its
-		// start.
-		from := f.compacting
+		// nothing; one that did spans its duration from its start, which
+		// automatic compaction reports long before its end (it runs beside
+		// the turn and completes with it), else up to here; without a
+		// duration, from its start to here.
+		from, to := f.compacting, at
 		f.compacting = 0
 		if d.CompactionTokensUsed == nil && d.StatusCode == nil {
 			break
 		}
 		f.compactions++
 		if u := d.CompactionTokensUsed; u != nil && u.Duration != nil && *u.Duration >= 0 {
-			from = at - int64(*u.Duration)
+			if from > 0 {
+				to = min(from+int64(*u.Duration), at)
+			} else {
+				from = at - int64(*u.Duration)
+			}
 		}
 		if from > 0 {
-			f.model = append(f.model, span{from, at})
+			f.model = append(f.model, span{from, to})
 		}
 	case "tool.execution_start":
 		if !subagentTools[d.ToolName] {

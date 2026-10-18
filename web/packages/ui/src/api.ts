@@ -883,6 +883,8 @@ export interface SessionSummary {
   outcome?: string;
   /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
   compacting?: boolean;
+  /** Set while the provider's automatic compaction runs beside the turn, which goes on meanwhile: the Task works, not compacts; absent otherwise. */
+  compacting_background?: boolean;
   /** The open conversation's compaction threshold in percent: Settings' value when it opened; absent while none is open. */
   compact_threshold?: number;
   /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command or an MCP server; absent otherwise, also when the provider gave no reason. */

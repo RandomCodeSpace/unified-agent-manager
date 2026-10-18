@@ -45,8 +45,10 @@ type phaseTool struct {
 // usage report, its first tool call, its turn's end, an abort, its
 // assistant.idle or an error; a retry keeps it. A subagent's abort also ends
 // its tools. Compaction is a call of the main agent from its start to its
-// end, failed or not, or to the main agent's abort, error or idle; its start
-// names no model, so it takes the Thread's. A task call is not a running
+// end, failed or not, or to the main agent's abort, error or idle, or to the
+// main agent's first progress, which shows it runs in the background
+// (observeCompactionLocked); its start names no model, so it takes the
+// Thread's. A task call is not a running
 // tool: its subagent reports its own calls and tools.
 func (c *conversation) observePhaseLocked(ev copilot.SessionEvent, agentID string) {
 	p := &c.phase
