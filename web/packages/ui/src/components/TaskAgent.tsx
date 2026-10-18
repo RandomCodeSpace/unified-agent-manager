@@ -1,6 +1,6 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
-import { Check, Sparkles } from 'lucide-react';
+import { Check, Cpu } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ConfigurationDefinition, type LoadedSkill, type SessionSummary } from '../api';
@@ -81,7 +81,7 @@ export function LoadedSkills({ skills }: Readonly<{ skills: readonly LoadedSkill
     <ul aria-label="Skills loaded" className="-mx-2 flex flex-col">
       {skills.map((s) => (
         <li key={s.name} className="flex min-h-8 items-start gap-2 rounded-sm px-2 py-1.5">
-          <Sparkles aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-faint" />
+          <Cpu aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-faint" />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="font-mono text-code-sm text-ink [overflow-wrap:anywhere]">{s.name}</span>
             {s.description && <span className="line-clamp-2 text-caption text-muted [overflow-wrap:anywhere]" title={s.description}>{s.description}</span>}

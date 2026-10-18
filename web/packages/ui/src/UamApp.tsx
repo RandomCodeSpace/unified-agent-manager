@@ -1,5 +1,6 @@
 import { useLayoutEffect } from 'react';
 import { CSPProvider } from '@base-ui/react/csp-provider';
+import { LucideProvider } from 'lucide-react';
 import App from './Federation';
 import { applyMotion, loadMotion } from './lib/motion';
 import { startTheme } from './lib/theme';
@@ -20,8 +21,11 @@ export function UamApp() {
 
   return (
     // The service's CSP allows styles from self; Base UI must not add a style element.
+    // Every lucide icon draws at a 1.5 stroke; an explicit strokeWidth still wins.
     <CSPProvider disableStyleElements>
-      <App />
+      <LucideProvider strokeWidth={1.5}>
+        <App />
+      </LucideProvider>
     </CSPProvider>
   );
 }

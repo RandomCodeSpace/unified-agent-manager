@@ -136,50 +136,50 @@ function Screen({ projectId, taskId, onStatus, onNotice }: Readonly<{ projectId:
  * colours at 5:1 or more on `canvas`, taken from the signal and badge tokens where one fits.
  */
 const LIGHT: ITheme = {
-  background: '#fcfcfd', // canvas
-  foreground: '#25262b', // ink, as is index.css's scrollbar slider
-  cursor: '#25262b',
-  cursorAccent: '#fcfcfd',
-  selectionBackground: '#cfdaf3', // selection
-  black: '#25262b', // ink
-  red: '#b3261e', // error
-  green: '#196a41', // success
-  yellow: '#7a5500', // warning
-  blue: '#2a55bd', // accent
+  background: '#fafafa', // canvas
+  foreground: '#111111', // ink, as is index.css's scrollbar slider
+  cursor: '#111111',
+  cursorAccent: '#fafafa',
+  selectionBackground: '#d9d9d9', // selection
+  black: '#111111', // ink
+  red: '#c4262d', // error
+  green: '#137739', // success
+  yellow: '#8f5d00', // warning
+  blue: '#2a55bd',
   magenta: '#8e3a9a',
-  cyan: '#0e7089', // badge-cyan
-  white: '#494b53', // body
-  brightBlack: '#686b77', // muted
-  brightRed: '#b3352a', // badge-red
-  brightGreen: '#287541', // badge-green
-  brightYellow: '#876000', // badge-amber
-  brightBlue: '#3260c4', // badge-blue
-  brightMagenta: '#b0347c', // badge-pink
-  brightCyan: '#13756b', // badge-teal
-  brightWhite: '#25262b', // ink
+  cyan: '#0d6f88', // badge-cyan
+  white: '#3b3b3b', // body
+  brightBlack: '#626262', // muted
+  brightRed: '#b42d2d', // badge-red
+  brightGreen: '#22783f', // badge-green
+  brightYellow: '#866100', // badge-amber
+  brightBlue: '#3a5ec4', // badge-blue
+  brightMagenta: '#ad3479', // badge-pink
+  brightCyan: '#11766b', // badge-teal
+  brightWhite: '#111111', // ink
 };
 const DARK: ITheme = {
   background: '#000000', // canvas
-  foreground: '#ededed', // ink
-  cursor: '#ededed',
+  foreground: '#f5f5f5', // ink
+  cursor: '#f5f5f5',
   cursorAccent: '#000000',
-  selectionBackground: '#213a6b', // selection
-  black: '#969696', // muted: a true black would vanish on the canvas
-  red: '#ff7a70', // error
-  green: '#4fd18b', // success
-  yellow: '#e6b84a', // warning
-  blue: '#7aa5ff', // accent
+  selectionBackground: '#333333', // selection
+  black: '#9a9a9a', // muted: a true black would vanish on the canvas
+  red: '#f87171', // error
+  green: '#4ade80', // success
+  yellow: '#facc15', // warning
+  blue: '#7aa5ff',
   magenta: '#c792ea',
   cyan: '#5cc8e6', // badge-cyan
-  white: '#c2c2c2', // body
-  brightBlack: '#969696', // muted
+  white: '#c8c8c8', // body
+  brightBlack: '#9a9a9a', // muted
   brightRed: '#f2867c', // badge-red
   brightGreen: '#6fcf8f', // badge-green
   brightYellow: '#e3be5a', // badge-amber
   brightBlue: '#86a6ff', // badge-blue
   brightMagenta: '#f08cc4', // badge-pink
   brightCyan: '#4fd1bf', // badge-teal
-  brightWhite: '#ededed', // ink
+  brightWhite: '#f5f5f5', // ink
 };
 const THEMES: Record<Scheme, ITheme> = { light: LIGHT, dark: DARK };
 /** index.css `--font-mono`. */

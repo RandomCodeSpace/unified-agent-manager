@@ -1,5 +1,5 @@
-/* Tailwind v4 theme built from DESIGN.md. Two schemes on one token set: Light, the cool near-white
-   theme (reference direction, 2026-09-24), and Dark, the same monochrome ladder on pure black
+/* Tailwind v4 theme built from DESIGN.md. Two schemes on one token set: Light, the neutral near-white
+   Mono theme (owner's pick, 2026-10-18), and Dark, the same monochrome ladder on pure black
    (`:root[data-theme='dark']` below, lib/theme.ts). Every colour, size, radius and shadow in the
    app is one of these tokens; the light values are here, the dark ones override them. */
 
@@ -18,60 +18,60 @@
 @theme {
   /* Surfaces and text: only the DESIGN.md ladder exists; Tailwind's palette is removed. */
   --color-*: initial;
-  --color-rail: #f7f8fa;
-  --color-canvas: #fcfcfd;
-  --color-surface: #f7f8fa;
+  --color-rail: #f5f5f5;
+  --color-canvas: #fafafa;
+  --color-surface: #f2f2f2;
   --color-raised: #ffffff;
-  --color-sunken: #f0f1f4;
-  --color-bubble: #f1f2f5;
-  --color-ink: #25262b;
-  --color-body: #494b53;
-  --color-muted: #686b77;
+  --color-sunken: #ededed;
+  --color-bubble: #efefef;
+  --color-ink: #111111;
+  --color-body: #3b3b3b;
+  --color-muted: #626262;
   /* Non-text only (glyphs, chevrons, rules): 3:1 on every surface, never under words. Text that read as faint is `muted`. */
-  --color-faint: #858995;
-  --color-hairline: #e6e7ec;
-  --color-hairline-strong: #c9ccd5;
-  --color-primary: #25262b;
+  --color-faint: #838383;
+  --color-hairline: #e5e5e5;
+  --color-hairline-strong: #c7c7c7;
+  --color-primary: #111111;
   --color-on-primary: #ffffff;
-  --color-accent: #2a55bd;
+  --color-accent: #111111;
   --color-on-accent: #ffffff;
-  --color-accent-wash: #dbe3f5;
-  --color-focus: #2a55bd;
-  --color-selection: #cfdaf3;
-  --color-attention: #9a400a;
-  --color-attention-wash: #f4e1cf;
-  --color-success: #196a41;
-  --color-success-wash: #d8e8dd;
-  --color-warning: #7a5500;
-  --color-warning-wash: #efe3c3;
-  --color-error: #b3261e;
-  --color-error-wash: #f4d9d5;
-  --color-info: #2a55bd;
-  --color-info-wash: #dbe3f5;
-  --color-code-bg: #f3f4f7;
-  --color-diff-add-bg: #d3e6da;
+  --color-accent-wash: #e8e8e8;
+  --color-focus: #111111;
+  --color-selection: #d9d9d9;
+  --color-attention: #ad3a0b;
+  --color-attention-wash: #fbe5d6;
+  --color-success: #137739;
+  --color-success-wash: #dcfce7;
+  --color-warning: #8f5d00;
+  --color-warning-wash: #fbefc6;
+  --color-error: #c4262d;
+  --color-error-wash: #fde0e0;
+  --color-info: #111111;
+  --color-info-wash: #ececec;
+  --color-code-bg: #f2f2f2;
+  --color-diff-add-bg: #dcfce7;
   --color-diff-add-text: #14532d;
-  --color-diff-del-bg: #efd6d2;
+  --color-diff-del-bg: #fde0e0;
   --color-diff-del-text: #7f1d1d;
-  --color-backdrop: rgba(28, 27, 24, 0.35);
-  --color-scrim: rgba(16, 17, 20, 0.8);
-  /* The three tint steps between the surfaces: a hover on raised/canvas (1.16:1 on raised, muted text stays 4.57:1),
-     the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
-  --color-tint-hover: #eceef2;
-  --color-tint-selected: #e9edf8;
-  --color-tint-well: #f4f5f8;
+  --color-backdrop: rgba(17, 17, 17, 0.35);
+  --color-scrim: rgba(10, 10, 10, 0.8);
+  /* The three tint steps between the surfaces: a hover on raised/canvas (1.18:1 on raised, muted text stays 5.16:1),
+     the selected row on the rail (muted text 4.89:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
+  --color-tint-hover: #ececec;
+  --color-tint-selected: #e6e6e6;
+  --color-tint-well: #f3f3f3;
 
   /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, every pair at least 4.5:1. */
-  --color-badge-red: #b3352a;
-  --color-badge-orange: #a84c12;
-  --color-badge-amber: #876000;
-  --color-badge-lime: #56740f;
-  --color-badge-green: #287541;
-  --color-badge-teal: #13756b;
-  --color-badge-cyan: #0e7089;
-  --color-badge-blue: #3260c4;
-  --color-badge-violet: #6c4fc6;
-  --color-badge-pink: #b0347c;
+  --color-badge-red: #b42d2d;
+  --color-badge-orange: #ad4f0f;
+  --color-badge-amber: #866100;
+  --color-badge-lime: #4d7312;
+  --color-badge-green: #22783f;
+  --color-badge-teal: #11766b;
+  --color-badge-cyan: #0d6f88;
+  --color-badge-blue: #3a5ec4;
+  --color-badge-violet: #6b4fc2;
+  --color-badge-pink: #ad3479;
 
   --font-sans: 'Figtree Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -121,7 +121,7 @@
   --radius-lg: 14px;
   --radius-full: 9999px;
 
-  /* Elevation (DESIGN.md Elevation & Depth): surfaces float on cool ink shadows instead of drawn borders.
+  /* Elevation (DESIGN.md Elevation & Depth): surfaces float on ink shadows instead of drawn borders.
      Every level is two layers at most: a near-invisible 1px ring (0 blur, the crisp edge) and one soft
      shadow. `well` is the inset ring of a sunken surface; `focus` lifts a focused field (it turns `raised` and rises, no coloured edge); `focus-float` the composer's deeper neutral shadow.
      The values are the `--elevation-*` properties in the base layer, one set per scheme: Tailwind copies a
@@ -202,56 +202,56 @@
     color-scheme: light;
     /* View transitions (React <ViewTransition>): the page itself never snapshots (see the view transition rules below). */
     view-transition-name: none;
-    --elevation-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
-    --elevation-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
-    --elevation-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
-    --elevation-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
-    --elevation-focus: 0 0 0 1px rgba(20, 28, 45, 0.08), 0 2px 8px rgba(20, 28, 45, 0.1);
-    --elevation-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
+    --elevation-raised: 0 0 0 1px rgba(17, 17, 17, 0.05), 0 2px 6px rgba(17, 17, 17, 0.07);
+    --elevation-float: 0 0 0 1px rgba(17, 17, 17, 0.06), 0 6px 20px rgba(17, 17, 17, 0.1);
+    --elevation-modal: 0 0 0 1px rgba(17, 17, 17, 0.06), 0 20px 48px rgba(17, 17, 17, 0.18);
+    --elevation-well: inset 0 0 0 1px rgba(17, 17, 17, 0.05);
+    --elevation-focus: 0 0 0 1px rgba(17, 17, 17, 0.08), 0 2px 8px rgba(17, 17, 17, 0.1);
+    --elevation-focus-float: 0 0 0 1px rgba(17, 17, 17, 0.1), 0 10px 28px rgba(17, 17, 17, 0.14);
   }
   /* Dark (DESIGN.md Colors): pure black canvas and rail, near-black raised controls, the ink ladder
-     inverted, the one blue accent, no added colour. Every text pair keeps its light value's AA
+     inverted, the accent the ink itself, no added colour. Every text pair keeps its light value's AA
      contrast. Shadows do not show on black, so each level's edge is a white 1px ring. */
   :root[data-theme='dark'] {
     color-scheme: dark;
     --color-rail: #000000;
     --color-canvas: #000000;
-    --color-surface: #1a1a1a;
-    --color-raised: #121212;
-    --color-sunken: #0a0a0a;
-    --color-bubble: #171717;
-    --color-ink: #ededed;
-    --color-body: #c2c2c2;
-    --color-muted: #969696;
-    --color-faint: #6f6f6f;
+    --color-surface: #171717;
+    --color-raised: #101010;
+    --color-sunken: #080808;
+    --color-bubble: #151515;
+    --color-ink: #f5f5f5;
+    --color-body: #c8c8c8;
+    --color-muted: #9a9a9a;
+    --color-faint: #6e6e6e;
     --color-hairline: #1f1f1f;
     --color-hairline-strong: #3a3a3a;
-    --color-primary: #ededed;
+    --color-primary: #f5f5f5;
     --color-on-primary: #000000;
-    --color-accent: #7aa5ff;
+    --color-accent: #f5f5f5;
     --color-on-accent: #000000;
-    --color-accent-wash: #14264a;
-    --color-focus: #7aa5ff;
-    --color-selection: #213a6b;
-    --color-attention: #ff9d5c;
+    --color-accent-wash: #262626;
+    --color-focus: #f5f5f5;
+    --color-selection: #333333;
+    --color-attention: #fb923c;
     --color-attention-wash: #2e1a0c;
-    --color-success: #4fd18b;
+    --color-success: #4ade80;
     --color-success-wash: #0b2818;
-    --color-warning: #e6b84a;
+    --color-warning: #facc15;
     --color-warning-wash: #2b2209;
-    --color-error: #ff7a70;
+    --color-error: #f87171;
     --color-error-wash: #331210;
-    --color-info: #7aa5ff;
-    --color-info-wash: #14264a;
-    --color-code-bg: #0a0a0a;
-    --color-diff-add-bg: #0d2a1a;
+    --color-info: #f5f5f5;
+    --color-info-wash: #262626;
+    --color-code-bg: #080808;
+    --color-diff-add-bg: #0b2818;
     --color-diff-add-text: #9be6bb;
-    --color-diff-del-bg: #36130f;
+    --color-diff-del-bg: #331210;
     --color-diff-del-text: #ffb3ab;
     --color-backdrop: rgba(0, 0, 0, 0.6);
     --color-scrim: rgba(0, 0, 0, 0.85);
     --color-tint-hover: #1a1a1a;
-    --color-tint-selected: #111a2c;
+    --color-tint-selected: #1f1f1f;
     --color-tint-well: #0e0e0e;
     /* Badge fills under `on-primary` (black here), each at least 4.5:1. */
     --color-badge-red: #f2867c;
