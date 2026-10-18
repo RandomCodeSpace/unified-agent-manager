@@ -89,9 +89,11 @@ test('unavailable native facts never display guessed zero or fetch historical ro
   const f = fixture();
   f.rerender(f.view(true, 'one', true, [{ ...timing, changes: { status: 'busy' } }]));
   expect(screen.queryByRole('button', { name: /0 files/ })).toBeNull();
-  const unavailable = screen.getByRole('button', { name: 'Changed: changes unavailable' });
-  expect(unavailable.textContent).toBe('Changes unavailable');
-  await user.click(unavailable);
+  // No chip and no "unavailable" noise in the card; the reason stays one step away in the turn's menu.
+  expect(screen.queryByRole('button', { name: /^Changed/ })).toBeNull();
+  expect(document.body.textContent).not.toContain('Changes unavailable');
+  await user.click(screen.getByRole('button', { name: 'Turn actions' }));
+  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: "This turn's changes" }));
   const dialog = await screen.findByRole('dialog');
   expect(dialog.textContent).toContain('still busy');
   expect(f.read).not.toHaveBeenCalled();

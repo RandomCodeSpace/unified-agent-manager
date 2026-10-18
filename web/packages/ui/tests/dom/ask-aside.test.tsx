@@ -33,7 +33,9 @@ async function dismiss(user: User, name = TASK) {
 
 /** The asides chips in reply and message feet, with the transcript item each foot belongs to. */
 function chips() {
-  return screen.queryAllByRole('button', { name: /in this turn/ }).map((chip) => ({ chip, item: (chip.closest('[data-history-anchor]') ?? chip.closest('.group\\/copy')?.querySelector('[data-history-anchor]'))?.getAttribute('data-history-anchor') }));
+  // A message's foot names its message; a turn card's chip, the turn's last reply.
+  const reply = (chip: Element) => [...(chip.closest('[data-reply]')?.querySelectorAll('[data-history-anchor]:not([data-history-anchor^="turn-head-"])') ?? [])].at(-1);
+  return screen.queryAllByRole('button', { name: /in this turn/ }).map((chip) => ({ chip, item: (chip.closest('[data-history-anchor]') ?? chip.closest('.group\\/copy')?.querySelector('[data-history-anchor]') ?? reply(chip))?.getAttribute('data-history-anchor') }));
 }
 
 describe('/btw', () => {
@@ -89,7 +91,7 @@ describe('/btw', () => {
     const items = [{ id: 'u1', kind: 'user' as const, text: 'run the suite', time: at }, { id: 'a1', kind: 'assistant' as const, text: 'Running it.', time: at }];
     const view = render(<Transcript sessionId="live" provider="copilot" workdir="/w" items={items} interactions={[]} subagents={[]} live working />);
     await waitFor(() => expect(chips().map((c) => [c.item, c.chip.textContent])).toEqual([['u1', 'btw1']]));
-    // Once the turn ends, its reply's foot takes the chip.
+    // Once the turn ends, its card takes the chip.
     view.rerender(<Transcript sessionId="live" provider="copilot" workdir="/w" items={items} interactions={[]} subagents={[]} live={false} working={false} />);
     await waitFor(() => expect(chips().map((c) => c.item)).toEqual(['a1']));
   });

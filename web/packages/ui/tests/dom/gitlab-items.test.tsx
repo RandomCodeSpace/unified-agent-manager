@@ -64,8 +64,8 @@ test('a reply that ended a turn which touched GitLab carries its items in its ou
   // What a screen reader hears: the item, then its state blocks' words.
   const heard = (el: Element) => { const copy = el.cloneNode(true) as Element; copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove()); return copy.textContent; };
   await waitFor(() => expect(within(strip).getAllByRole('link').map(heard)).toEqual(['!2draftpipeline running', 'Pipeline #91failed', 'lintfailed', '#14open']));
-  // Chips in the reply's outcome bar, with no "GitLab" label; the open MR's pipeline is a block of its own.
-  expect(strip.closest('[data-foot]')).toBeTruthy();
+  // Chips in the turn card's outcome row, with no "GitLab" label; the open MR's pipeline is a block of its own.
+  expect(strip.closest('[data-outcome]')).toBeTruthy();
   expect(strip.textContent).not.toContain('GitLab');
   expect(within(strip).getByTitle('pipeline running').className).toContain('bg-accent-wash');
   expect(read).toHaveBeenCalledExactlyOnceWith('thread', ['mr:2', 'pipeline:91', 'job:7', 'issue:14']);

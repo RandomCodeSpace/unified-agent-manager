@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
 import { ApiError, api, type Item, type TurnTiming, type TurnTodos } from '../../src/api';
 import { Markdown } from '../../src/components/common';
@@ -13,8 +13,12 @@ import { composer, log, openMenu, openSubagentIndex, openTask } from './render';
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 /** The head of the turn `el` is in: its card's first row. */
 const headOf = (el: Element) => el.closest('[data-reply]')!.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
-/** The outcome bar under the reply `el` is in, if it has one. */
-const barOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':scope > [data-foot]') ?? null;
+/** The card of the turn `el` is in: its head row, then its outcome row. */
+const cardOf = (el: Element) => headOf(el).parentElement as HTMLElement;
+/** The ended turn's outcome in its card (copy, the turn's menu, its chips), if the card has one. */
+const outcomeOf = (el: Element) => (within(cardOf(el)).queryByRole('button', { name: 'Copy message' }) ? cardOf(el) : null);
+/** A foot of the reply block `el` is in, if it has one: replies have none, the turn card copies them. */
+const footOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':scope > [data-foot]') ?? null;
 
 describe('messages', () => {
   test('skill invocation notices stay visible and ordered in turns', () => {
@@ -67,7 +71,7 @@ describe('messages', () => {
     expect(view.queryByText('Loading the full message…')).toBeNull();
   });
 
-  test("a turn's last reply gets receipts: one quiet line when its claims hold, a stamp per claim when one does not", () => {
+  test("a turn's last reply shows receipts only for claims its record proves wrong", () => {
     const timing: TurnTiming = { id: 't', user_item_id: 'u', started_at: '2026-10-09T00:00:00Z', ended_at: '2026-10-09T00:00:09Z', state: 'completed' };
     const base: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Fix it and test it' },
@@ -76,11 +80,17 @@ describe('messages', () => {
     const green: Item = { id: 'b', kind: 'tool', time: '2026-10-09T00:00:02Z', tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./internal/web' }), exit_code: 0, output: 'ok' } };
     const reply = (text: string): Item => ({ id: 'a', kind: 'assistant', time: '2026-10-09T00:00:08Z', text });
     const view = render(<Transcript sessionId="s" items={[...base, green, reply('Changed `charts.go` and ran `go test ./internal/web`; all tests pass.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
-    expect(view.getByText('Its 3 claims match the record')).toBeTruthy();
+    // Every claim holds: nothing.
+    expect(view.queryByText(/match the record/)).toBeNull();
     expect(view.queryByRole('list', { name: 'Receipts' })).toBeNull();
+    // No test ran this turn: an earlier turn's result restated is not a contradiction, so still nothing.
     view.rerender(<Transcript sessionId="s" items={[...base, reply('Changed `charts.go`; all tests pass.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
+    expect(view.queryByRole('list', { name: 'Receipts' })).toBeNull();
+    // The test run failed: that claim alone is stamped.
+    const red: Item = { ...green, tool: { ...green.tool!, status: 'failed', exit_code: 1, output: 'FAIL' } };
+    view.rerender(<Transcript sessionId="s" items={[...base, red, reply('Changed `charts.go`; all tests pass.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
     const stamps = within(view.getByRole('list', { name: 'Receipts' })).getAllByRole('listitem').map((li) => li.textContent);
-    expect(stamps).toEqual(['charts.gochanged', 'all tests passno test command ran this turn']);
+    expect(stamps).toEqual(['all tests passlast test run exit 1']);
     // A reply that makes no claim gets nothing.
     view.rerender(<Transcript sessionId="s" items={[...base, reply('Done.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
     expect(view.queryByRole('list', { name: 'Receipts' })).toBeNull();
@@ -133,7 +143,7 @@ describe('messages', () => {
     expect(within(bubble).getByRole('time').parentElement!.textContent).not.toContain('tokens');
   });
 
-  test('only the last reply of an ended turn has an outcome bar; the head says when the turn ended and its tokens, or that it works with its tokens so far', () => {
+  test("an ended turn's card holds its outcome and copy, no reply has a foot; the head says when the turn ended and its tokens, or that it works with its tokens so far", () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
       { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
@@ -149,22 +159,22 @@ describe('messages', () => {
     ];
     const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
     const head = (text: string) => headOf(view.getByText(text)).textContent;
-    // The ended turn: its head says when it ended and its count; one bar, under its last reply.
-    expect(barOf(view.getByText('Looking.'))).toBeNull();
-    expect(barOf(view.getByText('Found it.'))).toBeTruthy();
+    // The ended turn: its head says when it ended and its count, and copies its last reply; no reply has a foot.
+    expect(footOf(view.getByText('Looking.'))).toBeNull();
+    expect(footOf(view.getByText('Found it.'))).toBeNull();
+    expect(outcomeOf(view.getByText('Found it.'))).toBeTruthy();
     expect(head('Found it.')).toContain(new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
     expect(head('Found it.')).toContain('Took 6s (model 4s)');
     expect(head('Found it.')).toContain('940 tokens · 235 tok/s');
-    // The working turn: no bar under either reply; its head works on with the tokens counted so far, live.
-    expect(barOf(view.getByText('On it.'))).toBeNull();
-    expect(barOf(view.getByText('Patching.'))).toBeNull();
+    // The working turn: no outcome yet; its head works on with the tokens counted so far, live.
+    expect(outcomeOf(view.getByText('Patching.'))).toBeNull();
     expect(head('Patching.')).toMatch(/^Working/);
     expect(head('Patching.')).toContain('610 tokens · 203 tok/s');
     expect(within(headOf(view.getByText('Patching.'))).queryByRole('button', { name: /tokens/ })).toBeNull();
-    // Once it ends, the bar lands under its last reply and the head has the whole turn's count.
+    // Once it ends, its card takes the outcome and the head has the whole turn's count.
     view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
-    expect(barOf(view.getByText('On it.'))).toBeNull();
-    expect(barOf(view.getByText('Patching.'))).toBeTruthy();
+    expect(footOf(view.getByText('Patching.'))).toBeNull();
+    expect(outcomeOf(view.getByText('Patching.'))).toBeTruthy();
     expect(head('Patching.')).toContain('1.2K tokens · 242 tok/s');
   });
 
@@ -188,7 +198,7 @@ describe('messages', () => {
     expect(replyEnds(items, [{ ...timings[0], output_tokens: 1000 }, timings[1]], true)?.get('a1')).not.toBe(before?.get('a1'));
   });
 
-  test("a turn that changed the todo list shows it as blocks in its reply's outcome bar and opens the list as the turn left it", async () => {
+  test("a turn that changed the todo list shows it as blocks in its card and opens the list as the turn left it", async () => {
     const user = userEvent.setup();
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
@@ -226,9 +236,9 @@ describe('messages', () => {
     // The turn has ended, so nothing is in progress any more: that block keeps its glyph without the accent.
     expect(block('1 in progress').className).not.toContain('accent');
     expect(block('1 in progress').querySelector('svg')).toBeTruthy();
-    // In the outcome bar, in the flow and always in view.
-    const bar = button.closest('[data-foot]')!;
-    expect(bar.className).not.toMatch(/absolute|opacity-0/);
+    // In the turn card's outcome row, in the flow and always in view.
+    const row = button.closest('[data-outcome]')!;
+    expect(row.className).not.toMatch(/absolute|opacity-0/);
 
     await user.click(button);
     const reader = await screen.findByRole('dialog', { name: 'Todo at the end of this turn' });
@@ -473,14 +483,14 @@ describe('activity', () => {
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
   });
 
-  test('a stopped turn keeps its end and its outcome bar while the next turn starts', () => {
+  test('a stopped turn keeps its end and its outcome while the next turn starts', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
     const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
     const view = render(draw([stopped], false));
-    const ends = () => [view.container.textContent?.includes('Took 5s'), !!barOf(view.getByText('Counting.')) && headOf(view.getByText('Counting.')).textContent?.includes('940 tokens')];
+    const ends = () => [view.container.textContent?.includes('Took 5s'), !!outcomeOf(view.getByText('Counting.')) && headOf(view.getByText('Counting.')).textContent?.includes('940 tokens')];
     expect(ends()).toEqual([true, true]);
     // The Task works before the next turn's timing comes, then before its message lands: the stopped turn stays as it ended.
     view.rerender(draw([stopped], true));
@@ -626,27 +636,37 @@ describe('turn card', () => {
   ];
   const ended: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(9), state: 'completed', output_tokens: 940, generation_ms: 4000, paused_ms: 1000 };
 
-  test("the reply's outcome bar holds one Changed total chip, never a file's name, in the flow with copy and the turn's actions", () => {
+  test("the turn's card holds one Changed total chip, never a file's name, with copy and the turn's actions; its counts leave the files to the chip", () => {
     const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ ...ended, changes: { status: 'available', event_id: 'ev', files: 2, additions: 52, deletions: 3 } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} onOpenAllChanges={vi.fn()} />);
-    const bar = barOf(view.getByText('Fixed both.')) as HTMLElement;
+    const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
     // In the flow, always in view and wrapping: never over the next message or past the edge.
-    expect(bar.className).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
-    expect(bar.className).toContain('mt-3');
+    const row = bar.querySelector('[data-outcome]') as HTMLElement;
+    expect(row.className).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
+    expect(row.className).toContain('flex-wrap');
     expect(within(bar).getAllByRole('button', { name: /^Changed/ }).map((b) => b.getAttribute('aria-label'))).toEqual(['Changed 2 files +52 −3']);
+    // The counts were only "2 files changed": they stay, the one way to the steps.
+    expect(within(headOf(view.getByText('Fixed both.'))).getByRole('button', { name: /activity of this turn/ }).textContent).toContain('2 files changed');
     expect(within(bar).getByRole('button', { name: 'Copy message' })).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Turn actions' })).toBeTruthy();
-    // No file's name anywhere in the bar, not even in a tooltip; no separate changed-files line or GitLab label.
+    // No file's name anywhere in the card's head, not even in a tooltip; no separate changed-files line or GitLab label.
     expect(bar.textContent).not.toContain('secret');
     expect([...bar.querySelectorAll('[title]')].map((el) => el.getAttribute('title')).join(' ')).not.toContain('secret');
     expect(view.queryByRole('button', { name: 'View changes' })).toBeNull();
-    expect(view.container.textContent).not.toMatch(/Changed 2 files|GitLab/);
+    expect(view.container.textContent).not.toMatch(/Changed 2 files|GitLab|Changes unavailable/);
+  });
+
+  test("a turn whose changes were not captured, or changed nothing, shows no chip and no stripe under its reply", () => {
+    const view = render(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[{ ...ended, changes: { status: 'unavailable', event_id: 'ev' } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenAllChanges={vi.fn()} />);
+    expect(view.container.textContent).not.toMatch(/Changes unavailable|Changed/);
+    expect(cardOf(view.getByText('Fixed both.')).querySelector('[data-outcome]')!.childElementCount).toBe(0);
+    expect(footOf(view.getByText('Fixed both.'))).toBeNull();
   });
 
   test("without captured counts the chip counts the files the turn's calls named and opens Changes on them", async () => {
     const user = userEvent.setup();
     const open = vi.fn();
     const view = render(<Transcript sessionId="s" items={items} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={open} liveCard />);
-    const chip = within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' });
+    const chip = within(outcomeOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' });
     expect(chip.textContent).toBe('2 files');
     await user.click(chip);
     expect(open).toHaveBeenCalledWith({ files: ['/w/internal/secret-a.go', '/w/internal/secret-b.go'], latest: true });
@@ -656,12 +676,12 @@ describe('turn card', () => {
     const patched = (item: Item, additions: number, deletions: number): Item => ({ ...item, tool: { ...item.tool!, edit_event_id: `ev-${item.id}`, file_edits: [{ path: item.tool!.path!.slice(3), kind: 'modified', additions, deletions, diff_status: 'available' }] } });
     const draw = (list: Item[]) => <Transcript sessionId="s" items={list} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} />;
     const view = render(draw([items[0], patched(items[1], 12, 3), patched(items[2], 40, 0), items[3]]));
-    const chip = within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files +52 −3' });
+    const chip = within(outcomeOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files +52 −3' });
     expect(within(chip).getByText('+52').className).toContain('text-success');
     expect(within(chip).getByText('−3').className).toContain('text-error');
     // One call without recorded counts: the files alone, no guessed lines.
     view.rerender(draw([items[0], patched(items[1], 12, 3), items[2], items[3]]));
-    expect(within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+    expect(within(outcomeOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
   });
 
   test('a todo block with nothing in it is left out', () => {
@@ -671,14 +691,14 @@ describe('turn card', () => {
     expect(within(todo).getByTitle('2 to do')).toBeTruthy();
   });
 
-  test("a turn with no reply ending it yet keeps its edits in a bar of their own; a reply's bar without an outcome is copy alone", () => {
+  test("a turn with no reply ending it yet has its edits' chip in its card; an ended turn without an outcome has copy alone", () => {
     const view = render(<Transcript sessionId="s" items={items.slice(0, 3)} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" onOpenChanges={vi.fn()} liveCard />);
-    const bars = view.container.querySelectorAll('[data-foot]:not(.group\\/copy)');
-    expect(bars).toHaveLength(1);
-    expect(within(bars[0] as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+    const card = view.container.querySelector('[data-history-anchor^="turn-head-"]')!.parentElement as HTMLElement;
+    expect(within(card).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: 'Copy message' })).toBeNull();
     view.rerender(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
-    const bar = barOf(view.getByText('Fixed both.')) as HTMLElement;
-    expect(within(bar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Copy message']);
+    const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
+    expect(within(headOf(view.getByText('Fixed both.'))).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter(Boolean)).toEqual(['Copy message']);
     expect(bar.querySelector('[data-outcome]')!.childElementCount).toBe(0);
   });
 
@@ -702,6 +722,29 @@ describe('turn card', () => {
     expect(head.textContent).not.toContain('go test');
     // One ring: the running step's, at the foot.
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+  });
+
+  test("a running turn's clock, on its card alone, leaves out approval and question waits, also after a remount", () => {
+    vi.useFakeTimers();
+    onTestFinished(() => vi.useRealTimers());
+    const start = Date.parse(at(0));
+    vi.setSystemTime(start + 5000);
+    const working: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' };
+    const draw = (timing: TurnTiming) => <Transcript sessionId="s" items={[items[0]]} turnTimings={[timing]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" footVerb={false} liveCard />;
+    const view = render(draw(working));
+    const clock = () => view.container.textContent!.match(/Working\s*(\S+)/)?.[1];
+    act(() => vi.advanceTimersByTime(0));
+    expect(clock()).toBe('5s');
+    view.rerender(draw({ ...working, paused_at: new Date(start + 5000).toISOString() }));
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(clock()).toBe('5s');
+    view.rerender(draw({ ...working, paused_ms: 60_000 }));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(clock()).toBe('6s');
+    view.unmount();
+    const again = render(draw({ ...working, paused_ms: 60_000 }));
+    act(() => vi.advanceTimersByTime(0));
+    expect(again.container.textContent).toContain('Working 6s');
   });
 
   test('open steps end in a bar placing each within the turn and its duration', async () => {

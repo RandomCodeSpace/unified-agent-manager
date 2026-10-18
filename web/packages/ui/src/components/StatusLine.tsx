@@ -15,12 +15,12 @@ import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Tabs } from '@base-ui/react/tabs';
 import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, ListChecks, Minus, Network, Pause, RotateCw, X, type LucideProps } from 'lucide-react';
 import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView, type TurnTiming } from '../api';
+import { LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
 import { todoLine, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
-import { elapsedSince, turnElapsed } from '../lib/transcript';
+import { elapsedSince } from '../lib/transcript';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow, SubagentIndexBody, useSubagentIndex, type IndexPick } from './Subagents';
 import { PHONE, TodoTab } from './Todos';
@@ -118,11 +118,17 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   error?: string;
   onJump: () => void;
 }>) {
-  const shownLine = hidden ? null : line;
+  // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) would only
+  // repeat the turn card's head, "Working 18s": the strip says nothing then. Subagents that outlived the
+  // turn (`since`) are another matter: the head says "Took …", so the strip counts their time.
+  const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background;
+  const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
   const subagents = hidden || !index?.subagents.length ? undefined : index.subagents;
   const timing = session.turn_timings?.at(-1);
-  const cue = useCue(shownLine, timing?.id ?? '');
+  // The live region still says a turn started when the strip draws nothing for it.
+  const spoken = hidden ? null : line;
+  const cue = useCue(spoken, timing?.id ?? '');
   const list = shownLine?.kind === 'working' ? shownLine.todo : undefined;
   const view = list ? session.turn_activity?.todos : undefined;
   const tabs: Tab[] = [...(view ? ['todo' as const] : []), ...(subagents ? ['subagents' as const] : [])];
@@ -157,7 +163,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   return (
     <>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {shownLine ? cue : ''}
+        {spoken ? cue : ''}
       </div>
       {(shownLine || subagents) && (
         <button
@@ -171,7 +177,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
         >
           {shownLine && (
             <span key={shownLine.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
-              {shownLine.kind === 'working' ? <Working line={shownLine} since={since} timing={timing} /> : shownLine.kind === 'stopped' ? <Stopped line={shownLine} /> : <Paused text={shownLine.text} />}
+              {shownLine.kind === 'working' ? <Working line={shownLine} since={since} /> : shownLine.kind === 'stopped' ? <Stopped line={shownLine} /> : <Paused text={shownLine.text} />}
             </span>
           )}
           <span className="flex-1" />
@@ -184,8 +190,8 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
           <span className="sr-only">
             {shownLine?.kind === 'working' ? (
               <>
-                {slotWords(shownLine)}
-                <ClockWords since={since} timing={timing} />
+                {slotWords(shownLine, !!since)}
+                <ClockWords since={since} />
                 {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
                 {shownLine.retry && retrySentence(shownLine.retry)}
                 {shownLine.background && '. Compacting in background'}
@@ -360,18 +366,18 @@ function retrySentence(retry: Retry): string {
 /**
  * The working line: the todo list's stage blocks (dimmed while it is the last turn's), then one
  * slot: "Compacting the conversation", "From the last turn", "Now:" and the row the work is at, or
- * what the agent says it is doing ("Working" when it says nothing); then the clock, a retry and
- * compaction in the background.
+ * what the agent says it is doing (nothing when it says nothing); then a retry and compaction in
+ * the background. How long the turn has worked is the turn card's head's, never repeated here.
  */
 /** The working line's one slot in words, as the strip's name starts. */
-function slotWords(line: Extract<Line, { kind: 'working' }>): string {
+function slotWords(line: Extract<Line, { kind: 'working' }>, outlived: boolean): string {
   const now = line.todo?.kind === 'list' ? line.todo.now : undefined;
   if (line.compacting) return line.lead;
   if (line.todo?.kind !== 'carried' && now) return `Now: ${now}`;
-  return line.lead || 'Working';
+  return line.lead || (outlived ? 'Working' : '');
 }
 
-function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind: 'working' }>; since?: string; timing?: TurnTiming }>) {
+function Working({ line, since }: Readonly<{ line: Extract<Line, { kind: 'working' }>; since?: string }>) {
   const retry = line.retry && retryWords(line.retry);
   const todo = line.todo;
   const now = todo?.kind === 'list' ? todo.now : undefined;
@@ -392,10 +398,10 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
         <span className="min-w-0 truncate text-ui text-body">
           <span className="text-muted">Now:</span> {now}
         </span>
-      ) : (
+      ) : line.lead || since ? (
         <span className="min-w-0 truncate text-ui text-body">{line.lead || 'Working'}</span>
-      )}
-      <Clock since={since} timing={timing} />
+      ) : null}
+      {since && <Clock since={since} />}
       {retry && (
         <>
           <Sep />
@@ -454,35 +460,31 @@ export function SubagentRetry({ retry, indent }: Readonly<{ retry: Retry; /** Wh
   );
 }
 
-/**
- * The turn's foreground time, waits for approvals and answers excluded; `since` times work that
- * outlived the turn. Ticks each second while it counts.
- */
-function useElapsed(since: string | undefined, timing: TurnTiming | undefined): string | null {
+/** Time since `since`, the work that outlived the turn; ticks each second while it counts. */
+function useElapsed(since: string | undefined): string | null {
   const [now, setNow] = useState(() => Date.now());
-  const ticking = !!since || !timing?.paused_at;
-  const [wasTicking, setWasTicking] = useState(ticking);
-  if (ticking !== wasTicking) {
-    setWasTicking(ticking);
-    if (ticking) setNow(() => Date.now());
-  }
   useEffect(() => {
-    if (!ticking) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [ticking]);
-  return since ? elapsedSince(since, now) : timing?.state === 'working' ? turnElapsed(timing, now) : null;
+    if (!since) return;
+    const tick = () => setNow(Date.now());
+    const first = window.setTimeout(tick, 0);
+    const timer = window.setInterval(tick, 1000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [since]);
+  return since ? elapsedSince(since, now) : null;
 }
 
 /** The clock's digits: only they re-render each second. Under an hour they are at most three characters wide, and the slot holds them all, so the line keeps its width. */
-function Clock({ since, timing }: Readonly<{ since?: string; timing?: TurnTiming }>) {
-  const elapsed = useElapsed(since, timing);
+function Clock({ since }: Readonly<{ since: string }>) {
+  const elapsed = useElapsed(since);
   return elapsed && <span className="min-w-[3ch] shrink-0 text-right tabular-nums text-muted">{elapsed}</span>;
 }
 
 /** The clock as the button's name says it, by the minute. */
-function ClockWords({ since, timing }: Readonly<{ since?: string; timing?: TurnTiming }>) {
-  const elapsed = useElapsed(since, timing);
+function ClockWords({ since }: Readonly<{ since?: string }>) {
+  const elapsed = useElapsed(since);
   return elapsed && `, ${elapsedWords(elapsed)}`;
 }
 
