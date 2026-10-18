@@ -11,7 +11,7 @@ import { Fragment, useContext, useEffect, useId, useRef, useState, type ReactNod
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Subagent, type Todo, type TodoCounts, type TodoStatus, type TodoView, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoTally, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
+import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
@@ -269,21 +269,11 @@ function Reader({ id, open, phone, anchor, side, label, title = 'Todo', parts, o
 }
 
 /**
- * A turn's todo counts as blocks: ✓ done, ◉ in progress, ⊘ blocked, ○ to do, each only when not
- * zero, then counts kept before uam split in progress from to do ("2 open"). `stopped`: nothing works on the list any
- * more (the turn ended), so in progress keeps its glyph without the accent.
- */
-export function todoBlocks(tally: TodoTally, stopped: boolean): Block[] {
-  const stage = (status: TodoStatus, n: number): Block => ({ key: status, tone: status === 'in_progress' ? (stopped ? 'none' : 'accent') : status === 'blocked' ? 'warning' : status === 'done' ? 'success' : 'none', Icon: GLYPH[status], label: n, title: `${n} ${todoWord(status).toLowerCase()}` });
-  return [...(tally.done > 0 ? [stage('done', tally.done)] : []), ...tally.stages.map(({ status, n }) => stage(status, n)), ...(tally.open > 0 ? [{ key: 'open', tone: 'none' as const, label: `${tally.open} open`, title: `${tally.open} open` }] : [])];
-}
-
-/**
  * A reply's outcome bar, for a turn that changed the todo list: "Todo" and its blocks (the
  * button's name says them in words). It opens the list as the turn left it, which uam kept when
  * the turn ended; a list read stays in a small memory cache.
  */
-export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
+export function TurnTodo({ timing, blocks }: Readonly<{ timing: TurnTiming; /** Its counts as the strip draws them (`todoBlocks`). */ blocks: Block[] }>) {
   const api = useApi();
   const sessionId = useContext(SessionContext);
   const id = useId();
@@ -294,7 +284,6 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
   useEffect(() => () => reading.current?.abort(), []);
   const counts = timing.todo;
   if (!sessionId || !counts?.total) return null;
-  const tally = todoTally(counts);
   const show = () => {
     setReader({ open: true, phone: window.matchMedia(PHONE).matches });
     reading.current?.abort();
@@ -337,7 +326,7 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
         className="relative flex h-6 items-center rounded-sm transition-opacity duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:opacity-80 pointer-coarse:after:-inset-y-2.5"
         onClick={show}
       >
-        <Blocks items={todoBlocks(tally, timing.state !== 'working')} />
+        <Blocks items={blocks} />
       </button>
       {reader && (
         <Reader id={id} open={reader.open} phone={reader.phone} anchor={button} side="bottom" label="Todo at the end of this turn" parts={parts} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />

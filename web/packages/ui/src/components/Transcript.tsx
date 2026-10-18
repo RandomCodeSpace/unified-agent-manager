@@ -1,7 +1,8 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
 import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
+import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
+import { todoTally } from '../lib/todos';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -20,11 +21,12 @@ import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext,
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
 import { PlanNotice } from './Plan';
 import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
-import { Blocks } from './ui/blocks';
+import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -527,6 +529,11 @@ function turnChangeFor(owner: Item | undefined, files: string[], latest: boolean
   return change;
 }
 
+/** A turn's todo counts as the strip's blocks; once the turn ended nothing works on the list, so in progress keeps its glyph without the accent. */
+function turnTodoBlocks(counts: TodoCounts, stopped: boolean): Block[] {
+  return todoBlocks(todoTally(counts)).map((block) => (stopped && block.key === 'in_progress' ? { ...block, tone: 'none' } : block));
+}
+
 /** The outcome bar's card, once it holds an outcome (DESIGN.md outcome bar). */
 const OUTCOME = 'rounded-md bg-surface px-3 py-2 shadow-raised';
 
@@ -755,7 +762,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
         <div data-foot="" className="mt-3 flex min-w-0 items-start gap-2 has-[[data-outcome]>*]:rounded-md has-[[data-outcome]>*]:bg-surface has-[[data-outcome]>*]:px-3 has-[[data-outcome]>*]:py-2 has-[[data-outcome]>*]:shadow-raised">
           <div data-outcome="" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 empty:hidden">
             {changeChip}
-            {timing && <TurnTodo timing={timing} />}
+            {timing?.todo?.total ? <TurnTodo timing={timing} blocks={turnTodoBlocks(timing.todo, timing.state !== 'working')} /> : null}
             {gitlab && <TurnStrip items={gitlab} />}
             {asides && <AsideChip task={task} turn={asideTurn!} sep={false} />}
           </div>
