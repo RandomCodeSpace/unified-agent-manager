@@ -1034,13 +1034,16 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
 /**
  * A finished step's result at the end of its row (DESIGN.md steps), from what the call recorded:
  * its test counts ("✓ 12 passed", "✗ 14 passed · 1 failed"), its exit code ("✓ exit 0", "✗ exit 2")
- * or that it failed, each a block; its edits' line counts as coloured numbers ("+12 −3"). The block's
+ * or that it failed, each a block; its edits' line counts as coloured numbers ("+12 −3") when it has
+ * no file rows under it to carry them. The block's
  * words carry it all, never the colour alone; a phone keeps a test run's failures alone.
  */
 function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
   const result = stepResult(tool);
   if (!result) return null;
   if (result.kind === 'diff') {
+    // A step with file rows of its own leaves the counts to them: one count per file, never twice.
+    if (tool?.edit_event_id) return null;
     return (
       <span className="shrink-0 font-sans text-caption tabular-nums">
         <span className="text-success">+{result.additions}</span> <span className="text-error">−{result.deletions}</span>

@@ -570,9 +570,15 @@ describe('activity', () => {
     expect(lost.getByTitle('failed').className).toContain('bg-error-wash');
     lost.unmount();
     const edit: Item = { id: 'e1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'edit', status: 'completed', edit_event_id: 'ev', input: JSON.stringify({ path: 'a.go' }), file_edits: [{ path: 'a.go', kind: 'modified', additions: 12, deletions: 3, diff_status: 'available' }] } };
+    // Its file rows carry the counts, so the step row shows none: one count per file.
     const edited = render(<ToolRow item={edit} live={false} />);
-    expect(within(edited.getByRole('button', { name: /^edit/ })).getByText('+12').parentElement!.textContent).toBe('+12 −3');
+    expect(within(edited.getByRole('button', { name: /^edit/ })).queryByText('+12')).toBeNull();
+    expect(edited.getAllByText('+12')).toHaveLength(1);
     edited.unmount();
+    // Counts without file rows stand on the step row.
+    const bare = render(<ToolRow item={{ ...edit, tool: { ...edit.tool!, edit_event_id: undefined } }} live={false} />);
+    expect(within(bare.getByRole('button', { name: /^edit/ })).getByText('+12').parentElement!.textContent).toBe('+12 −3');
+    bare.unmount();
   });
 
   test('a visual that throws while drawing leaves its fallback, not a broken transcript', () => {
