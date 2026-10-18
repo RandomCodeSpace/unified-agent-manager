@@ -764,6 +764,15 @@ export function install(): { received: Received[] } {
       token: { scopes: ['api', 'read_repository', 'write_repository'], expires_at: '2027-01-31' },
       ...(url.searchParams.get('project_id') ? { project: { path: 'platform/customer-portal', readable: true, access_level: 40 } } : {}),
     });
+    // t20 touched a merge request and an issue in a signed-in GitLab project: its reply's outcome bar shows them.
+    if (path === '/api/sessions/t20/gitlab' && method === 'GET') return json(200, { supported: true, auto_investigate: false, can_investigate: false, origin: { host: 'gitlab.example.com', path: 'group/repo' } });
+    if (path === '/api/sessions/t20/gitlab/items' && method === 'GET') {
+      const known: Record<string, object> = {
+        'mr:42': { kind: 'mr', title: 'Replay focus events on re-attach', state: 'opened', pipeline_id: 91, pipeline_state: 'success', web_url: 'https://gitlab.example.com/group/repo/-/merge_requests/42' },
+        'issue:17': { kind: 'issue', title: 'Focus lost after re-attach', state: 'closed', web_url: 'https://gitlab.example.com/group/repo/-/issues/17' },
+      };
+      return json(200, { items: url.searchParams.getAll('ref').map((ref) => ({ ref, ...(known[ref] ?? { kind: '', error: 'unavailable' }) })) });
+    }
     if (/^\/api\/sessions\/[^/]+\/gitlab(?:\/refresh)?$/.test(path) && (method === 'GET' || method === 'POST')) return json(200, { supported: false, auto_investigate: !!st.settings.gitlab_auto_investigate, can_investigate: false });
     const accounted = account.route(method, path, body);
     if (accounted) return accounted;

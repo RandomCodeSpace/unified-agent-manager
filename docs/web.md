@@ -770,17 +770,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   without `model_calls` shows the allowance alone; one without the ID lists
   shows the counts in words.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
-  left it. Its last reply's foot reads "Todo 4/7 · 1 in progress · 1 blocked
-  · 1 to do" and stays on screen (the turn has ended, so "in progress" is
-  words alone there, without the stage's glyph or colour); clicking it opens
+  left it. Its last reply's outcome bar shows "Todo" and a block per stage
+  (✓ 4 done, ◉ 1 in progress, ⊘ 1 blocked, ○ 1 to do; the turn has ended,
+  so "in progress" keeps its glyph without the accent); clicking it opens
   that list by the same
   sections as the live one: the rows the turn changed and the rows still
   open, at most 50. The end of a turn waits up to a second for Copilot's last
   change to the list to be read. The counts are saved with the turn's timing
   (`turn_timings[].todo`, as above), the rows in `turn-todos.jsonl` beside the
   Thread's attachments, which is deleted with the Thread. Counts saved before uam
-  split `in_progress` from `pending` carry `open` alone, and the foot then
-  reads "1 open".
+  split `in_progress` from `pending` carry `open` alone, and the bar then
+  shows "1 open".
   `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
   settled or archived Thread, or 404 when none were kept.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
@@ -2037,7 +2037,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   WebGL turned off the panel says so instead.
 - **No Git**: when the project directory is not in a Git repository, or git
   is not installed on the server, the Thread header shows a warning in place of
-  Changes and Files, and turns leave out their "Changed n files" line. Once
+  Changes and Files, and turns leave out the Changed chip that counts the
+  files their edit calls named. Once
   a turn has finish evidence, the Changes button comes back beside the
   warning to show it. Click the warning for the reason. It clears once the
   directory becomes a repository, the next time the Project is re-read.
@@ -2265,11 +2266,11 @@ aliases, computed command heads and other wrappers are not interpreted.
 ## GitLab from the conversation
 
 In a Thread whose folder has a GitLab `origin` and whose host `glab` is
-signed in to, each reply that ends a turn which touched GitLab items ends
-in a **GitLab** strip: one entry per item, in the order the turn touched
-them, each with its state word (`!2 draft · pipeline running`,
-`Pipeline #91 failed`, `#14 open`); a merge request also shows its head
-pipeline's state. Links in the reply itself stay plain links. An item counts when
+signed in to, each reply that ends a turn which touched GitLab items carries
+them in its outcome bar: one chip per item, in the order the turn touched
+them, each with its state as blocks (`!2` draft, pipeline; `Pipeline #91`
+failed; `#14` open); an open merge request also shows its head pipeline's
+state as a block. Links in the reply itself stay plain links. An item counts when
 the turn named it on the Thread's own project:
 
 - a GitLab link to a merge request, issue, work item, pipeline or job of the
@@ -2283,7 +2284,7 @@ the turn named it on the Thread's own project:
 - the pipeline of the Thread's own commit, on the turn whose `git commit` or
   `git push` made it.
 
-A strip lists at most 20 items. Pressing an entry opens the GitLab side panel
+A bar lists at most 20 items. Pressing a chip opens the GitLab side panel
 on that item, with the turn's other items above it to step between; a
 modified click opens it in GitLab instead, and every view has **Open in
 GitLab**. The views:
@@ -2310,7 +2311,7 @@ GitLab `suggestion` block shows as a code block labelled **Suggested
 change**. Project uploads (`/uploads/…`) become links to them in GitLab and
 are never loaded inline. `!iid`, `#iid`, `&iid` and `@user` stay text.
 
-Item states stay live while they are on screen: a strip in view, or the
+Item states stay live while they are on screen: an outcome bar in view, or the
 item open in the panel (and the panel's switcher). While the browser tab is
 visible, a running or pending pipeline or job is read again every 20
 seconds, an open merge request (draft included) or open work item every
@@ -2322,7 +2323,7 @@ job's log) again each time its item is read again. The server keeps each
 item's state for 15 seconds, shared by every browser and connected instance,
 so viewers do not multiply `glab` calls. While GitLab rate limits reads the
 server reads nothing until its `Retry-After` passes and answers with the last
-known states marked stale; the strip keeps them and says **stale**, never
+known states marked stale; the bar keeps them and says **stale**, never
 blank. Nothing here writes to GitLab except the existing discussion
 controls. The routes are `GET /api/sessions/{id}/gitlab/items?ref=…`,
 `GET /api/sessions/{id}/gitlab/work-items?ref=…` and

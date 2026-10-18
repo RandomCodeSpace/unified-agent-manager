@@ -282,7 +282,7 @@ export function TaskAsideReader({ asides, at, onClose, onClosed, finalFocus }: R
  * The foot chip of a turn with asides (`btw 2`): those asked while it ran or after it ended, the ring
  * while one of them waits. A press lists them in the reader under the lifted chip.
  */
-export function AsideChip({ task, turn }: Readonly<{ task: string; turn: string }>) {
+export function AsideChip({ task, turn, sep = true }: Readonly<{ task: string; turn: string; /** The ` · ` before it, where it follows other words in a foot. */ sep?: boolean }>) {
   const { kept, local } = useTaskAsides(task);
   const [at, setAt] = useState<AsideReaderAt | null>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -294,7 +294,7 @@ export function AsideChip({ task, turn }: Readonly<{ task: string; turn: string 
   return (
     <>
       {/* A phone's foot is already full: there the chip is its glyph and count, so Turn actions stay in view. */}
-      <span aria-hidden="true" className="max-sm:hidden"> · </span>
+      {sep && <span aria-hidden="true" className="max-sm:hidden"> · </span>}
       <button ref={button} type="button" data-aside-chip="" aria-haspopup="dialog" aria-expanded={!!at?.open} aria-label={`${count(n)} in this turn${waiting ? ', one waiting for its answer' : ''}`} className="flex h-6 items-center gap-1 rounded-sm bg-raised px-1.5 text-stamp max-sm:px-1 text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink aria-expanded:text-ink" onClick={(e) => setAt({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget, lift: e.currentTarget })}>
         {waiting ? <Hourglass aria-hidden="true" className="size-3 text-accent" /> : <MessageCircleQuestion aria-hidden="true" className="size-3" />}
         <span className="font-medium max-sm:hidden">btw</span>

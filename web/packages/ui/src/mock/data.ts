@@ -440,6 +440,8 @@ export function seed(): MockState {
       ],
       created_at: ago(9),
       updated_at: ago(1),
+      // The running turn's usage so far: the head counts its tokens and speed live.
+      turn_timings: [{ id: 'tt-r1', user_item_id: 'i1', started_at: ago(9), state: 'working', input_tokens: 61_200, output_tokens: 4_100, generation_ms: 79_000 }],
       items: [
         {
           id: 'i1',
@@ -1119,7 +1121,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           ended_at: new Date(Date.parse(ago(50)) + 1400).toISOString(),
         },
         { ...tool('f6', 46, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go vet ./internal/vterm/... 2>&1 | tail -5' }), output: '\n<shellId: 1 completed with exit code 0>' }), ended_at: ago(46) },
-        { id: 'f7', kind: 'assistant', time: ago(42), text: 'Fixed: `Redraw` now replays focus events after the private-mode replay, so a re-attached client gets them again.\n\n- `TestRedrawReplaysFocusEvents` covers it, and the vterm tests pass.\n- go vet is clean.\n- docs/terminal.md describes the new replay order.' },
+        { ...tool('f8', 44, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'git push origin fix/replay-focus' }), output: 'remote: View merge request for fix/replay-focus:\nremote:   https://gitlab.example.com/group/repo/-/merge_requests/42\n   1111111..2222222  fix/replay-focus -> fix/replay-focus\n<shellId: 2 completed with exit code 0>' }), ended_at: ago(43.8) },
+        { ...tool('f9', 43, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'glab issue close 17' }), output: 'Closed issue #17\n<shellId: 3 completed with exit code 0>' }), ended_at: ago(42.9) },
+        { id: 'f7', kind: 'assistant', time: ago(42.05), text: 'Fixed: `Redraw` now replays focus events after the private-mode replay, so a re-attached client gets them again.\n\n- `TestRedrawReplaysFocusEvents` covers it, and the vterm tests pass.\n- go vet is clean.\n- docs/terminal.md describes the new replay order.' },
       ],
     }),
   ];

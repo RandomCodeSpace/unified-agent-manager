@@ -61,6 +61,7 @@ const modules = {
   './TurnWaybill': { TurnWaybill: () => null },
   './VisualBoundary': { VisualBoundary: ({ children }) => children },
   './Plan': { PlanNotice: () => null },
+  './ui/blocks': { Blocks: ({ items }) => React.createElement('span', null, items.map((block) => block.title).join(' ')) },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },

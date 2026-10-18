@@ -26,10 +26,10 @@ function fixture(read = vi.fn().mockResolvedValue(record)) {
   return { read, all, view, ...render(view()) };
 }
 
-test('native turn facts load only when its foot opens and remain historical across later turns', async () => {
+test('native turn facts load only when its Changed chip opens and remain historical across later turns', async () => {
   const user = userEvent.setup();
   const f = fixture();
-  const foot = screen.getByRole('button', { name: '1 file +2 −1' });
+  const foot = screen.getByRole('button', { name: 'Changed 1 file +2 −1' });
   expect(f.read).not.toHaveBeenCalled();
   const later: TurnTiming = { ...timing, id: 'later', user_item_id: 'next', changes: { status: 'available', event_id: 'native-next', files: 1, additions: 7, deletions: 5 } };
   f.rerender(f.view(true, 'one', true, [timing, later], [...items, { id: 'next', kind: 'user', text: 'again', time: at }, { id: 'last', kind: 'assistant', text: 'Later reply.', time: at }]));
@@ -74,7 +74,7 @@ test('one reply menu carries the turn changes and Branch from here', async () =>
   expect(branch).toHaveBeenCalledWith('owner', triggers[0]);
 });
 
-test('a turn that changed no file shows no changes in its foot or its menu', async () => {
+test('a turn that changed no file shows no changes in its outcome bar or its menu', async () => {
   const user = userEvent.setup();
   render(<ApiContext.Provider value={{ ...api, turnChanges: vi.fn() }}><SessionContext.Provider value="task"><DetailVisibility open>
     <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[{ ...timing, changes: { status: 'available', files: 0, additions: 0, deletions: 0 } }]} onOpenAllChanges={vi.fn()} />
@@ -89,9 +89,8 @@ test('unavailable native facts never display guessed zero or fetch historical ro
   const f = fixture();
   f.rerender(f.view(true, 'one', true, [{ ...timing, changes: { status: 'busy' } }]));
   expect(screen.queryByRole('button', { name: /0 files/ })).toBeNull();
-  // Changes do not hold the foot in view: it fades in on hover like any other.
-  const unavailable = screen.getByRole('button', { name: 'Changes unavailable' });
-  expect(unavailable.parentElement!.classList.contains('opacity-100')).toBe(false);
+  const unavailable = screen.getByRole('button', { name: 'Changed: changes unavailable' });
+  expect(unavailable.textContent).toBe('Changes unavailable');
   await user.click(unavailable);
   const dialog = await screen.findByRole('dialog');
   expect(dialog.textContent).toContain('still busy');
@@ -102,7 +101,7 @@ test.each(['inactive', 'generation', 'fold', 'unmount'])('a %s reader drops its 
   let resolve!: (rows: TurnChanges) => void;
   const read = vi.fn<(task: string, timing: string, signal?: AbortSignal) => Promise<TurnChanges>>(() => new Promise<TurnChanges>(r => { resolve = r; }));
   const f = fixture(read);
-  await userEvent.setup().click(screen.getByRole('button', { name: '1 file +2 −1' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Changed 1 file +2 −1' }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   const signal = read.mock.calls[0][2]!;
   if (kind === 'unmount') f.unmount();
@@ -115,7 +114,7 @@ test.each(['inactive', 'generation', 'fold', 'unmount'])('a %s reader drops its 
 
 test('wrong immutable timing identity is rejected and legacy replies stay unchanged', async () => {
   const f = fixture(vi.fn().mockResolvedValue({ ...record, timing_id: 'wrong' }));
-  await userEvent.setup().click(screen.getByRole('button', { name: '1 file +2 −1' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Changed 1 file +2 −1' }));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The Thread changed. Close this reader and open it again.');
   f.rerender(f.view(true, 'two', true, [{ ...timing, changes: undefined }]));
   expect(screen.queryByRole('button', { name: /Changes unavailable|1 file/ })).toBeNull();

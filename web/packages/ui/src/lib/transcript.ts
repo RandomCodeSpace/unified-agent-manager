@@ -716,6 +716,38 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
 }
 
 /** The time `spans` cover together: thoughts recorded in parallel (several summaries of one model call) count once. */
+/**
+ * The turn head's "local" figure: how long the turn's own tool calls ran, overlapping calls
+ * counted once, less `pausedMs`, the time the turn waited on the user (a call that asks for
+ * approval runs while it waits). A subagent's `task` call is not local work, its time is the
+ * subagent's own, and a question call is waiting on the user. Calls without a recorded end add nothing.
+ */
+export function localToolMs(entries: readonly Entry[], pausedMs = 0): number {
+  const spans: [number, number][] = [];
+  for (const { item } of entries) {
+    if (item?.kind !== 'tool' || !item.ended_at || isSubagentCall(item) || toolKind(item.tool?.name ?? '') === 'question') continue;
+    spans.push([Date.parse(item.time), Date.parse(item.ended_at)]);
+  }
+  return Math.max(0, spanMs(spans) - pausedMs);
+}
+
+/** What a finished step produced, as its row's result: test counts, line counts of its edits, its exit code, or that it failed. */
+export type StepResult =
+  | { kind: 'tests'; passed: number; failed: number }
+  | { kind: 'diff'; additions: number; deletions: number }
+  | { kind: 'exit'; code: number }
+  | { kind: 'failed' };
+
+/** A step's result from what the call recorded, never inferred from its output text; null when it recorded nothing to show. */
+export function stepResult(tool: ToolCall | undefined): StepResult | null {
+  if (!tool || (tool.status !== 'completed' && tool.status !== 'failed')) return null;
+  if (tool.tests && tool.tests.passed + tool.tests.failed > 0) return { kind: 'tests', passed: tool.tests.passed, failed: tool.tests.failed };
+  const known = tool.status === 'completed' ? (tool.file_edits ?? []).filter((edit) => edit.diff_status === 'available') : [];
+  if (known.length) return { kind: 'diff', additions: known.reduce((n, e) => n + (e.additions ?? 0), 0), deletions: known.reduce((n, e) => n + (e.deletions ?? 0), 0) };
+  if (tool.status === 'failed') return tool.exit_code ? { kind: 'exit', code: tool.exit_code } : { kind: 'failed' };
+  return tool.exit_code === 0 ? { kind: 'exit', code: 0 } : null;
+}
+
 function spanMs(spans: [number, number][]): number {
   let total = 0, end = -Infinity;
   for (const [from, to] of spans.filter(([a, b]) => b > a).sort((a, b) => a[0] - b[0])) {

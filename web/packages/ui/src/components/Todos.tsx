@@ -15,6 +15,7 @@ import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSectio
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
+import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
@@ -268,10 +269,19 @@ function Reader({ id, open, phone, anchor, side, label, title = 'Todo', parts, o
 }
 
 /**
- * A reply's foot after its tokens, for a turn that changed the todo list: "Todo 5/7 · 1 in
- * progress · 1 blocked · 1 to do" (a phone drops "Todo" and the stages' words into the button's
- * name). It opens the list as the turn left it, which uam kept when the turn ended; a list read
- * stays in a small memory cache.
+ * A turn's todo counts as blocks: ✓ done, ◉ in progress, ⊘ blocked, ○ to do, then counts kept
+ * before uam split in progress from to do ("2 open"). `stopped`: nothing works on the list any
+ * more (the turn ended), so in progress keeps its glyph without the accent.
+ */
+export function todoBlocks(tally: TodoTally, stopped: boolean): Block[] {
+  const stage = (status: TodoStatus, n: number): Block => ({ key: status, tone: status === 'in_progress' ? (stopped ? 'none' : 'accent') : status === 'blocked' ? 'warning' : status === 'done' ? 'success' : 'none', Icon: GLYPH[status], label: n, title: `${n} ${todoWord(status).toLowerCase()}` });
+  return [stage('done', tally.done), ...tally.stages.map(({ status, n }) => stage(status, n)), ...(tally.open > 0 ? [{ key: 'open', tone: 'none' as const, label: `${tally.open} open`, title: `${tally.open} open` }] : [])];
+}
+
+/**
+ * A reply's outcome bar, for a turn that changed the todo list: "Todo" and its blocks (the
+ * button's name says them in words). It opens the list as the turn left it, which uam kept when
+ * the turn ended; a list read stays in a small memory cache.
  */
 export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
   const api = useApi();
@@ -315,8 +325,8 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
     name: (t) => agents.get(t.id),
   };
   return (
-    <>
-      <span aria-hidden="true"> · </span>
+    <span className="flex items-center gap-2">
+      <span aria-hidden="true" className="text-eyebrow uppercase text-muted">Todo</span>
       <button
         ref={setButton}
         type="button"
@@ -324,19 +334,14 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
         aria-expanded={!!reader?.open}
         aria-controls={reader?.open ? id : undefined}
         aria-label={turnTodoName(counts)}
-        className="relative flex h-6 items-center gap-1 rounded-sm px-1 text-stamp whitespace-nowrap tabular-nums text-muted transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5"
+        className="relative flex h-6 items-center rounded-sm transition-opacity duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:opacity-80 pointer-coarse:after:-inset-y-2.5"
         onClick={show}
       >
-        <ListChecks aria-hidden="true" className="size-3 shrink-0" />
-        <span>
-          <span className="max-sm:sr-only">Todo </span>
-          {tally.done}/{tally.total}
-        </span>
-        <TodoStages tally={tally} sep={<span className="max-sm:hidden">·</span>} stopped={timing.state !== 'working'} />
+        <Blocks items={todoBlocks(tally, timing.state !== 'working')} />
       </button>
       {reader && (
         <Reader id={id} open={reader.open} phone={reader.phone} anchor={button} side="bottom" label="Todo at the end of this turn" parts={parts} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />
       )}
-    </>
+    </span>
   );
 }
