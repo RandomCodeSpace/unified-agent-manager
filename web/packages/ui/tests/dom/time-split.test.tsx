@@ -64,11 +64,22 @@ test('the composer summary shows the shares, both times once idle, the whole sen
   const read = vi.spyOn(api, 'taskTimeSplit').mockResolvedValue(split);
   const view = render(summary({ ...session, state: 'working' }));
   const button = await screen.findByRole('button', { name: /^Time in this Thread/ });
-  expect(button.textContent).toBe('38% model · 62% local');
+  // Two blocks, model then local: their shares while the Thread works, each named in words.
+  const cells = () => [...button.querySelectorAll('[title]')].map((c) => [c.getAttribute('title'), c.querySelector(':scope > span[aria-hidden]')!.textContent, c.querySelector('svg')!.getAttribute('class')!.match(/lucide-(cpu|terminal)\b/)![1]]);
+  expect(cells()).toEqual([['38% model', '38%', 'cpu'], ['62% local', '62%', 'terminal']]);
   expect(button.getAttribute('aria-label')).toBe('Time in this Thread: 4m 12s in the model (47 calls, compaction included) and 6m 51s running local tools and scripts (112 runs). 2m 58s waiting on you is not counted.');
   view.rerender(summary({ ...session, state: 'idle' }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-  expect(button.textContent).toBe('38% model · 62% local· 4m 12s / 6m 51s');
+  // Once idle, the times take their place, labelled by glyph and name: no bare "4m 12s / 6m 51s".
+  expect(cells()).toEqual([['4m 12s model', '4m 12s', 'cpu'], ['6m 51s local', '6m 51s', 'terminal']]);
+  expect(button.textContent).not.toContain('/');
+});
+
+test('without recorded model time the summary is the local block alone', async () => {
+  vi.spyOn(api, 'taskTimeSplit').mockResolvedValue({ ...split, model_ms: null });
+  render(summary({ ...session, state: 'working' }));
+  const button = await screen.findByRole('button', { name: /^Time in this Thread/ });
+  expect([...button.querySelectorAll('[title]')].map((c) => c.getAttribute('title'))).toEqual(['6m 51s local']);
 });
 
 test('a connected instance without the split shows neither the section nor the summary, and is never asked', async () => {

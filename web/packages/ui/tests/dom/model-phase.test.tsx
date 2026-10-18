@@ -5,7 +5,7 @@
 import { act, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Phase, SnapshotData } from '../../src/api';
-import { PhasePill, phaseClock } from '../../src/components/ModelPhase';
+import { PhaseBlock, phaseClock } from '../../src/components/ModelPhase';
 import { initialState, reducer } from '../../src/state';
 import { openTask } from './render';
 
@@ -14,65 +14,89 @@ afterEach(() => vi.useRealTimers());
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
 
-function pill(phase: Phase | undefined) {
-  return render(<PhasePill phase={phase} provider="copilot" />).container;
+function block(phase: Phase | undefined) {
+  return render(<PhaseBlock phase={phase} />).container;
 }
 
 /** What assistive technology reads of el: its text without what is hidden from it. */
 function spoken(el: Element | null | undefined): string {
   if (!el) return '';
   const copy = el.cloneNode(true) as Element;
-  copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+  copy.querySelectorAll('[aria-hidden="true"], [aria-hidden=""]').forEach((n) => n.remove());
   return copy.textContent ?? '';
 }
 
+/** What the block shows: its glyph's word, whose work it is and the clock. */
+const shown = (el: Element | null | undefined) => el?.querySelector(CELL)?.querySelector(':scope > span[aria-hidden]')?.textContent ?? '';
+/** The block's cell (the detail carries a title too). */
+const CELL = '[title]:not([data-phase-detail])';
+
 describe('the phase under the composer', () => {
-  test('a local tool says so in words, with the tool, its argument and a clock that ticks each second', async () => {
+  test('a local tool is one block with a clock that ticks each second, its tool and argument beside it', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    const box = pill({ kind: 'local', since: ago(42), tool: 'bash', detail: 'go test ./internal/vterm/...' });
-    const shown = box.querySelector('[data-phase="local"]')!;
-    expect(spoken(shown)).toBe('Local · no modelbash go test ./internal/vterm/...0:42');
+    const box = block({ kind: 'local', since: ago(42), tool: 'bash', detail: 'go test ./internal/vterm/...' });
+    const phase = box.querySelector('[data-phase="local"]')!;
+    expect(spoken(phase)).toBe('bash go test ./internal/vterm/...Local · no model, 0:42');
+    expect(shown(phase)).toBe('Local 0:42');
     await act(async () => { vi.advanceTimersByTime(1000); });
-    expect(shown.textContent).toContain('0:43');
+    expect(shown(phase)).toBe('Local 0:43');
+    expect(phase.querySelector('svg')!.getAttribute('class')).toContain('lucide-terminal');
     // Nothing spins: the Working glyph and the running step keep the only rings.
     expect(box.querySelector('.animate-spin, .animate-pulse')).toBeNull();
   });
 
-  test('a model call names the model; waiting on you says what is asked; none shows nothing', () => {
+  test('a model call is the Cpu block without the model’s name; waiting on you says what is asked; none shows nothing', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    expect(spoken(pill({ kind: 'model', since: ago(65), model: 'gpt-6-luna', calls: 2, subagents: 1 }).querySelector('[data-phase="model"]'))).toBe('Modelgpt-6-luna1:05');
-    expect(spoken(pill({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]'))).toBe('Waiting on youapprove bash1:02:05');
-    expect(pill(undefined).childElementCount).toBe(0);
+    const model = block({ kind: 'model', since: ago(65), model: 'gpt-6-luna', calls: 2, subagents: 1 }).querySelector('[data-phase="model"]')!;
+    expect(spoken(model)).toBe('Model, 1:05');
+    expect(model.textContent).not.toContain('gpt-6-luna');
+    expect(model.querySelector('[data-phase-detail]')).toBeNull();
+    expect(model.querySelector('svg')!.getAttribute('class')).toContain('lucide-cpu');
+    expect(model.querySelector(CELL)!.className).toContain('bg-accent-wash');
+    const waiting = block({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]')!;
+    expect(spoken(waiting)).toBe('approve bashWaiting on you, 1:02:05');
+    expect(shown(waiting)).toBe('You 1:02:05');
+    expect(waiting.querySelector(CELL)!.className).toContain('bg-warning-wash');
+    expect(block(undefined).childElementCount).toBe(0);
   });
 
-  test('a phone shows the glyph, a short word and the clock: the words and the detail give way', () => {
-    for (const [kind, short, label] of [['model', 'Model', 'Model'], ['local', 'Local', 'Local · no model'], ['waiting', 'You', 'Waiting on you']] as const) {
-      const shown = pill({ kind, since: ago(5), detail: 'approve bash', tool: 'bash', model: 'gpt-6-luna' }).querySelector(`[data-phase="${kind}"]`)!;
-      const word = [...shown.querySelectorAll('span')].find((s) => s.textContent === short && s.getAttribute('aria-hidden') === 'true')!;
-      expect(word.className).toContain('sm:hidden');
-      expect([...shown.querySelectorAll('span')].find((s) => s.textContent === label && !s.getAttribute('aria-hidden'))!.className).toContain('max-sm:sr-only');
-      const detail = [...shown.children].find((c) => c.className.includes('truncate'));
-      expect(detail?.className).toContain('max-sm:hidden');
-    }
+  test('the detail is an item of the row that truncates first; a phone hides it and whose work it is', () => {
+    const phase = block({ kind: 'model', by: 'subagent', since: ago(5), detail: 'List the exported symbols of web/src/lib that nothing calls.' }).querySelector('[data-phase]')!;
+    // The wrapper takes no box, so the detail and the block shrink against the branch in the footer's own row.
+    expect(phase.className.split(' ')).toContain('contents');
+    const detail = phase.querySelector('[data-phase-detail]')!;
+    expect(detail.className.split(' ')).toEqual(expect.arrayContaining(['min-w-0', 'shrink-1000', 'truncate', 'max-sm:hidden']));
+    expect(detail.getAttribute('title')).toBe('List the exported symbols of web/src/lib that nothing calls.');
+    // The block never shrinks.
+    expect(phase.querySelector(CELL)!.parentElement!.className).toContain('shrink-0');
+    const by = [...phase.querySelectorAll('span')].find((s) => s.textContent === ' · subagent')!;
+    expect(by.className).toContain('max-sm:hidden');
   });
 
-  test('the hairline after the pill shows only while the time split follows it', () => {
-    const shown = pill({ kind: 'model', since: ago(5) }).querySelector('[data-phase]')!;
-    const rule = shown.querySelector('[data-phase-rule]')!;
+  test('the hairline after the block shows only while the time split follows it', () => {
+    const phase = block({ kind: 'model', since: ago(5) }).querySelector('[data-phase]')!;
+    const rule = phase.querySelector('[data-phase-rule]')!;
     expect(rule.className.split(' ')).toContain('hidden');
-    expect(shown.className).toContain('[&:has(+*)_[data-phase-rule]]:block');
-    // A phone shows the pill alone: no hairline, and the open Thread's strip hides the split after it.
+    expect(phase.className).toContain('[&:has(+*)_[data-phase-rule]]:block');
+    // A phone shows the block alone: no hairline, and the open Thread's row hides the split after it.
     expect(rule.className).toContain('max-sm:hidden!');
   });
 
-  test('the time split follows the pill in the strip under the composer, and gives way to it on a phone', async () => {
+  test('the row under the composer: Files, the branch, the detail, the block, then the time split, which gives way on a phone', async () => {
     await openTask('t1');
     await waitFor(() => expect(document.querySelector('[data-phase="local"]')).not.toBeNull());
     const group = document.querySelector('[data-phase="local"]')!.parentElement!;
-    expect(group.className).toContain('max-sm:[&>[data-phase]+*]:hidden');
+    expect(group.className).toContain('max-sm:[&>[data-phase]~*]:hidden');
     await waitFor(() => expect(group.lastElementChild?.getAttribute('aria-label')).toMatch(/^Time in this Thread/));
+    const foot = document.querySelector('[data-composer-foot]')!;
+    expect(foot.textContent).not.toContain('Current branch');
+    // In order: Files, the place, then the right-hand group; the place never takes the free space itself.
+    expect(foot.children[0].textContent).toBe('Files');
+    const place = foot.querySelector('[data-place]')!;
+    expect(place.className.split(' ')).not.toContain('flex-1');
+    expect(place.className.split(' ')).toContain('min-w-0');
   });
 
   test('the clock reads minutes and seconds, hours past the hour', () => {
@@ -81,42 +105,41 @@ describe('the phase under the composer', () => {
 
   test('the open Thread shows its own phase: local on t1, the model on t8', async () => {
     await openTask('t1');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="local"]'))).toContain('Local · no modelbash go test ./internal/vterm/... -run Redraw -count=1'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="local"]'))).toContain('bash go test ./internal/vterm/... -run Redraw -count=1Local · no model'));
     expect(document.querySelector('[data-phase="model"]')).toBeNull();
   });
 
-  test('t8 waits on the model', async () => {
+  test('t8 waits on the model, and the block leaves its name to the Model picker', async () => {
     await openTask('t8');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('ModelClaude Haiku 4.5'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toMatch(/^Model, \d+:\d\d$/));
   });
 
   test('between turns a subagent still running says so, with what it does', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    const model = pill({ kind: 'model', by: 'subagent', since: ago(12), model: 'gpt-6-luna', detail: 'Survey the docs', calls: 1, subagents: 1 });
-    expect(spoken(model.querySelector('[data-phase="model"]'))).toBe('Model · subagentSurvey the docs0:12');
-    // Without a description it names the model.
-    expect(spoken(pill({ kind: 'model', by: 'subagent', since: ago(3), model: 'gpt-6-luna', calls: 1, subagents: 1 }).querySelector('[data-phase]'))).toBe('Model · subagentgpt-6-luna0:03');
-    expect(spoken(pill({ kind: 'local', by: 'subagent', since: ago(4), tool: 'bash', detail: 'go test ./...' }).querySelector('[data-phase="local"]'))).toBe('Local · subagentbash go test ./...0:04');
-    // The phone keeps its short word; nothing spins.
-    expect([...model.querySelectorAll('[aria-hidden="true"]')].map((n) => n.textContent)).toContain('Model');
+    const model = block({ kind: 'model', by: 'subagent', since: ago(12), model: 'gpt-6-luna', detail: 'Survey the docs', calls: 1, subagents: 1 });
+    expect(spoken(model.querySelector('[data-phase="model"]'))).toBe('Survey the docsModel · subagent, 0:12');
+    expect(shown(model.querySelector('[data-phase="model"]'))).toBe('Model · subagent 0:12');
+    // Without a description it shows no detail: the model's name is the Model picker's.
+    expect(spoken(block({ kind: 'model', by: 'subagent', since: ago(3), model: 'gpt-6-luna', calls: 1, subagents: 1 }).querySelector('[data-phase]'))).toBe('Model · subagent, 0:03');
+    expect(spoken(block({ kind: 'local', by: 'subagent', since: ago(4), tool: 'bash', detail: 'go test ./...' }).querySelector('[data-phase="local"]'))).toBe('bash go test ./...Local · subagent, 0:04');
     expect(model.querySelector('.animate-spin, .animate-pulse')).toBeNull();
   });
 
-  test('compaction is the Thread’s own model call: it says compacting, with the model', () => {
+  test('compaction is the Thread’s own model call: it says compacting', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    expect(spoken(pill({ kind: 'model', by: 'compaction', since: ago(20), model: 'gpt-6-luna', calls: 1 }).querySelector('[data-phase="model"]'))).toBe('Model · compactinggpt-6-luna0:20');
+    expect(spoken(block({ kind: 'model', by: 'compaction', since: ago(20), model: 'gpt-6-luna', calls: 1 }).querySelector('[data-phase="model"]'))).toBe('Model · compacting, 0:20');
   });
 
   test('t22 shows its audits running after the turn', async () => {
     await openTask('t22');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · subagentList the exported symbols of web/src/lib that nothing calls.'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('List the exported symbols of web/src/lib that nothing calls.Model · subagent'));
   });
 
   test('t7 shows its compaction', async () => {
     await openTask('t7');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · compactingClaude Haiku 4.5'));
+    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · compacting'));
   });
 });
 

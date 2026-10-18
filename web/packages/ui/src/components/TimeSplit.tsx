@@ -1,8 +1,10 @@
+import { Cpu, Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, LIVE, type SessionSummary, type TimeSplit } from '../api';
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
+import { Blocks, type Block } from './ui/blocks';
 import { PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 
@@ -74,8 +76,9 @@ function SplitBar({ split, waiting, className }: Readonly<{ split: TimeSplit; wa
 }
 
 /**
- * The split at the end of the row under the composer: a 56px bar and "38% model · 62% local", with both times once the
- * Thread is idle. A phase shown before it sits at its left. Absent until something is recorded.
+ * The split at the end of the row under the composer, as two blocks: `Cpu` model and `Terminal` local, their shares
+ * while the Thread works and their times once it is idle (only local's time where model time is not recorded). A
+ * phase shown before it sits at its left. The whole sentence is its tip and its name. Absent until something is recorded.
  */
 export function TimeSplitSummary({ session }: Readonly<{ session: SessionSummary }>) {
   const { split } = useTimeSplit(session);
@@ -84,14 +87,14 @@ export function TimeSplitSummary({ session }: Readonly<{ session: SessionSummary
   if (!pct && split.local_runs === 0) return null;
   const idle = !LIVE.includes(session.state);
   const tip = sentence(split);
+  const items: Block[] = pct ? [
+    { key: 'model', tone: 'accent', Icon: Cpu, label: idle ? time(split.model_ms ?? 0) : `${pct.model}%`, title: idle ? `${time(split.model_ms ?? 0)} model` : `${pct.model}% model` },
+    { key: 'local', tone: 'success', Icon: Terminal, label: idle ? time(split.local_ms) : `${pct.local}%`, title: idle ? `${time(split.local_ms)} local` : `${pct.local}% local` },
+  ] : [{ key: 'local', tone: 'success', Icon: Terminal, label: time(split.local_ms), title: `${time(split.local_ms)} local` }];
   return (
     <Tip openOnClick label={tip}>
-      <button type="button" aria-label={`Time in this Thread: ${tip}`} className="ml-auto flex h-7 min-w-0 shrink-0 cursor-default items-center gap-2 rounded-sm px-2 text-caption tabular-nums">
-        {pct ? <>
-          <SplitBar split={split} waiting={false} className="h-1 w-14 shrink-0" />
-          <span className="truncate"><span className="text-accent">{pct.model}% model</span><span aria-hidden="true" className="text-faint"> · </span><span className="text-success">{pct.local}% local</span></span>
-          {idle && <span className="shrink-0 text-muted">· {time(split.model_ms ?? 0)} / {time(split.local_ms)}</span>}
-        </> : <span className="truncate text-muted">{time(split.local_ms)} local</span>}
+      <button type="button" aria-label={`Time in this Thread: ${tip}`} className="flex h-7 shrink-0 cursor-default items-center rounded-sm">
+        <Blocks items={items} />
       </button>
     </Tip>
   );

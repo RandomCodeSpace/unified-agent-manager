@@ -5,7 +5,8 @@ import { useApi } from '../ApiContext';
 import { describeError, LIVE, readOnly, type BranchList, type Project, type SessionSummary, type ThreadPlace } from '../api';
 import { cn } from '../lib/cn';
 import { timeAgo } from './common';
-import { itemClass, labelClass, Menu, popupClass, separatorClass } from './ui/menu';
+import { itemClass, labelClass, popupClass, separatorClass } from './ui/menu';
+import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
 /** What a service that runs new Threads in a new branch or worktree advertises to connected instances. */
@@ -157,9 +158,9 @@ function BranchButton({ refFn, open, onClick, children, name }: Readonly<{ refFn
 }
 
 /**
- * A draft Thread's place under the composer (mock D): the place dropdown (Current branch | New worktree), then the
- * branch dropdown. In Current branch it switches the Project folder (New branch from the folder's branch, or an existing
- * branch, `branch-switch-v1`); in New worktree it picks the worktree's source branch. Nothing is made before the first
+ * A draft Thread's place under the composer: the segmented Project folder | New worktree, then the branch dropdown. In
+ * the Project folder it switches the folder's branch (New branch from the folder's branch, or an existing branch,
+ * `branch-switch-v1`); in New worktree it picks the worktree's source branch. Nothing is made before the first
  * message, which carries the choice; the worktree's own name shows only once it exists.
  */
 export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: Project; place: ThreadPlace; onPlace: (place: ThreadPlace) => void }>) {
@@ -181,20 +182,13 @@ export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: 
   };
   const name = value === 'new' ? 'New branch' : value.name;
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1 text-caption">
-      <Menu.Root modal={false}>
-        <Menu.Trigger render={<button type="button" aria-label={`Where this Thread runs: ${worktree ? 'New worktree' : 'Current branch'}`} className={CHIP} />}>
-          {worktree ? <FolderGit2 aria-hidden="true" className="text-muted" /> : <Folder aria-hidden="true" className="text-muted" />}
-          <span className="truncate font-medium text-ink">{worktree ? 'New worktree' : 'Current branch'}</span>
-          <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-        </Menu.Trigger>
-        <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
-          <Menu.RadioGroup value={worktree ? 'worktree' : 'current'} onValueChange={(v) => { if ((v === 'worktree') !== worktree) onPlace({ mode: v === 'worktree' ? 'worktree' : 'current' }); }}>
-            <Menu.RadioItem value="current"><span className="flex items-center gap-2"><Folder aria-hidden="true" />Current branch</span></Menu.RadioItem>
-            <Menu.RadioItem value="worktree"><span className="flex items-center gap-2"><FolderGit2 aria-hidden="true" />New worktree</span></Menu.RadioItem>
-          </Menu.RadioGroup>
-        </Menu.Content>
-      </Menu.Root>
+    <div data-place="" className="flex min-w-0 items-center gap-1 text-caption">
+      <Segmented aria-label="Where this Thread runs" value={worktree ? 'worktree' : 'current'} className="ml-1"
+        onValueChange={(v) => { if ((v === 'worktree') !== worktree) onPlace({ mode: v === 'worktree' ? 'worktree' : 'current' }); }}
+        items={[
+          { value: 'current', label: <span className="flex items-center gap-1.5"><Folder aria-hidden="true" className="size-3.5 shrink-0" />Project folder</span> },
+          { value: 'worktree', label: <span className="flex items-center gap-1.5"><FolderGit2 aria-hidden="true" className="size-3.5 shrink-0" />New worktree</span> },
+        ]} />
       <BranchButton refFn={setAnchor} open={open} onClick={() => setOpen((o) => !o)} name={name}>
         {value === 'new' ? <GitBranchPlus aria-hidden="true" className="text-muted" /> : <GitBranch aria-hidden="true" className="text-muted" />}
         <span className="truncate font-medium text-ink">{name}</span>
@@ -206,10 +200,11 @@ export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: 
 }
 
 /**
- * A Thread's place under the composer once it exists. In its own worktree: one read-only run, `Worktree · ⑂ branch ·
- * folder`, the path in a tooltip. In the Project folder: `Current branch` and the branch dropdown, which switches the
- * folder at once under the same rule as a draft (the Thread itself must have finished too); read-only text when the
- * Thread is settled or archived, or the service cannot switch. A draft on a service without places shows its branch.
+ * A Thread's place under the composer once it exists. In its own worktree: one read-only run, `Worktree branch`, the
+ * path in a tooltip (its folder is named for the branch, so the row leaves it out). In the Project folder: the branch
+ * dropdown alone, which switches the folder at once under the same rule as a draft (the Thread itself must have
+ * finished too); read-only text when the Thread is settled or archived, or the service cannot switch. A draft on a
+ * service without places shows its branch. It shrinks only once the phase's detail beside it has given way (Task).
  */
 export function PlaceFoot({ session, project }: Readonly<{ session: SessionSummary; project: Project | undefined }>) {
   const api = useApi();
@@ -221,26 +216,21 @@ export function PlaceFoot({ session, project }: Readonly<{ session: SessionSumma
   const branch = worktree?.branch ?? session.branch ?? project?.branch;
   if (!branch || !project || project.no_git) return null;
   if (worktree) {
-    const folder = worktree.path.slice(worktree.path.lastIndexOf('/') + 1);
     return (
-      <div className="flex min-w-0 flex-1 items-center">
+      <div data-place="" className="flex min-w-0 items-center">
         {/* Read-only: it only shows the path, on hover, focus or a press. */}
         <Tip openOnClick label={<span className="break-all">{worktree.path}</span>}>
-          <button type="button" aria-label={`Worktree, branch ${branch}, folder ${folder}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
+          <button type="button" aria-label={`Worktree, branch ${branch}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
             <FolderGit2 aria-hidden="true" className="text-muted" />
-            <span className="shrink-0">Worktree</span>
-            <span aria-hidden="true" className="text-faint">·</span>
-            <GitBranch aria-hidden="true" className="text-muted" />
+            <span className="shrink-0 text-muted">Worktree</span>
             <span className="min-w-0 truncate font-medium text-ink">{branch}</span>
-            <span aria-hidden="true" className="text-faint">·</span>
-            <span className="min-w-0 truncate text-muted">{folder}</span>
           </button>
         </Tip>
       </div>
     );
   }
   const branchText = <span className={TEXT}><GitBranch aria-hidden="true" className="text-muted" /><span className="truncate font-medium text-ink">{branch}</span></span>;
-  if (!session.id) return <div className="flex min-w-0 flex-1 items-center">{branchText}</div>;
+  if (!session.id) return <div data-place="" className="flex min-w-0 items-center">{branchText}</div>;
   const switchable = api.supports(SWITCH_CAPABILITY) && !readOnly(session);
   const pick = async (p: Pick) => {
     if (p.kind === 'existing' && !p.branch.remote && p.branch.name === branch) { setOpen(false); return; }
@@ -256,8 +246,7 @@ export function PlaceFoot({ session, project }: Readonly<{ session: SessionSumma
     }
   };
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1">
-      <span className={cn(TEXT, 'shrink-0')}><Folder aria-hidden="true" className="text-muted" />Current branch</span>
+    <div data-place="" className="flex min-w-0 items-center">
       {switchable ? <>
         <BranchButton refFn={setAnchor} open={open} onClick={() => { setError(''); setOpen((o) => !o); }} name={branch}>
           <GitBranch aria-hidden="true" className="text-muted" />
