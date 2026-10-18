@@ -1,4 +1,4 @@
-import { Sparkle, Terminal } from 'lucide-react';
+import { Cpu, Terminal } from 'lucide-react';
 import { lazy, Suspense, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ModelCalls } from '../api';
 import { cn } from '../lib/cn';
@@ -48,15 +48,15 @@ function Meter({ remaining, tone, className }: Readonly<{ remaining: number; ton
 export const callsInFlight = (calls: ModelCalls) => calls.threads + calls.subagents + calls.background;
 
 /**
- * The button's AI part: the sparkle and the model calls in flight in the accent, or "idle" by a faint sparkle while
- * none is (the rail, short of room, shows the sparkle alone); then, while any Thread runs a tool locally, the
+ * The button's AI part: the chip and the model calls in flight in the accent, or "idle" by a faint chip while
+ * none is (the rail, short of room, shows the chip alone); then, while any Thread runs a tool locally, the
  * terminal glyph and how many.
  */
 function CallsFace({ calls, rail = false }: Readonly<{ calls: ModelCalls; rail?: boolean }>) {
   const count = callsInFlight(calls);
   return <>
     <span className="flex items-center gap-1">
-      <Sparkle aria-hidden="true" className={count ? 'text-accent' : 'text-faint'} />
+      <Cpu aria-hidden="true" className={count ? 'text-accent' : 'text-faint'} />
       {count > 0 && <span className="font-medium text-accent tabular-nums">{count}</span>}
       {count === 0 && !rail && <span className="text-muted">idle</span>}
     </span>

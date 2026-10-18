@@ -43,11 +43,11 @@ function setup({ calls = IDLE as ModelCalls | null, quotas = [QUOTA], variant = 
 }
 
 describe('the Usage and AI button', () => {
-  test('idle: the share left, a hairline, a faint sparkle and "idle"; flat until hovered', () => {
+  test('idle: the share left, a hairline, a faint chip and "idle"; flat until hovered', () => {
     const { button, said } = setup();
     expect(button().textContent).toBe('96% leftidle');
     expect(button().getAttribute('data-model-calls')).toBe('0');
-    expect(button().querySelector('.lucide-sparkle')!.getAttribute('class')).toContain('text-faint');
+    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-faint');
     expect(said()).toMatch(/^AI credits: 96% left\. .*No model calls now$/);
     // No surface or shadow at rest; the Settings gear's tint on hover and while open.
     const classes = button().className.split(' ');
@@ -62,7 +62,7 @@ describe('the Usage and AI button', () => {
     const { button, said } = setup({ calls: BUSY });
     expect(button().textContent).toBe('96% left31');
     expect(button().getAttribute('data-model-calls')).toBe('3');
-    expect(button().querySelector('.lucide-sparkle')!.getAttribute('class')).toContain('text-accent');
+    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-accent');
     expect(button().querySelector('.lucide-terminal')!.getAttribute('class')).toContain('text-success');
     expect(said()).toMatch(/Model working now\. 2 Threads · 1 subagent · Background AI idle\. Local: 1 Thread running a tool$/);
   });
@@ -81,15 +81,15 @@ describe('the Usage and AI button', () => {
     const { button, said } = setup({ calls: null });
     expect(button().textContent).toBe('96% left');
     expect(button().hasAttribute('data-model-calls')).toBe(false);
-    expect(button().querySelector('.lucide-sparkle')).toBeNull();
+    expect(button().querySelector('.lucide-cpu')).toBeNull();
     expect(said()).not.toMatch(/model/i);
   });
 
   test('the rail stacks the share over its meter, then the work in flight', () => {
     const { button, rerender } = setup({ variant: 'rail' });
-    // Idle, the rail has room for the faint sparkle alone; the description says "No model calls now".
+    // Idle, the rail has room for the faint chip alone; the description says "No model calls now".
     expect(button().textContent).toBe('96%');
-    expect(button().querySelector('.lucide-sparkle')!.getAttribute('class')).toContain('text-faint');
+    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-faint');
     expect(button().className).toContain('flex-col');
     rerender(BUSY);
     expect(button().textContent).toBe('96%31');

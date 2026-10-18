@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Check, Info, Sparkle, Terminal, TriangleAlert, X } from 'lucide-react';
+import { Check, Cpu, Info, Terminal, TriangleAlert, X } from 'lucide-react';
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { describeError, taskName, type ApiClient, type ConnectedStatus, type ModelCalls, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { useFederation, type Machine } from '../FederationContext';
@@ -338,7 +338,7 @@ function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: (
       {!idle && named && (
         <ul className="-mx-2 flex flex-col">
           {rows.map((b) => {
-            const Icon = b.local ? Terminal : Sparkle;
+            const Icon = b.local ? Terminal : Cpu;
             return (
               <li key={b.id}>
                 <button type="button" className="flex h-8 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-ui transition-colors hover:bg-tint-hover focus-visible:-outline-offset-2 pointer-coarse:h-11" onClick={() => { onClose(); openTask(b.id); }}>
@@ -352,7 +352,7 @@ function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: (
           {more > 0 && <li className="flex h-8 items-center px-2 text-caption text-muted">{more} more {more === 1 ? 'thread' : 'threads'}</li>}
           {calls.background > 0 && (
             <li className="flex h-8 items-center gap-2 px-2 text-ui text-body">
-              <Sparkle aria-hidden="true" className="size-3.5 shrink-0 text-accent" />
+              <Cpu aria-hidden="true" className="size-3.5 shrink-0 text-accent" />
               <span className="flex-1">Background AI</span>
               <span className="text-caption text-accent tabular-nums">{calls.background} {calls.background === 1 ? 'call' : 'calls'}</span>
             </li>
