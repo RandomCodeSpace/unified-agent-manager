@@ -97,8 +97,10 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
   chip** that opens a preview, once uam finds a regular file of that path
   inside the Thread's directory. The chip shows your link text when it says
   more than the path, otherwise the file's name.
-- Write paths relative to the Thread's directory (`internal/web/server.go`,
-  never a bare `server.go` for a nested file), or absolute. Inline code
+- Write paths relative to the Thread's directory (`internal/web/server.go`),
+  or absolute. A bare `server.go` for a nested file links only when exactly
+  one file of that name is in the Thread's record or directory; with two it
+  stays code, so prefer the path. Inline code
   counts when it holds a `/` or ends in an extension (`package.json`);
   globs, flags, `~/` paths and directories stay code. Cite a line as
   `internal/web/server.go:120` (or `:120:5`); the preview opens marked

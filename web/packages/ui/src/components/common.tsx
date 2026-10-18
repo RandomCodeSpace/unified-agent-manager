@@ -688,8 +688,10 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   const workdir = useContext(WorkdirContext);
   const base = useContext(MdBaseContext);
   const { streaming } = useContext(MdContext);
-  const file = !streaming ? taskFile(href, workdir, base) : null;
-  const { eligible, exists } = useFileReference(file?.path);
+  const named = !streaming ? taskFile(href, workdir, base) : null;
+  const { eligible, exists, file: resolved } = useFileReference(named?.path);
+  // A bare name opens the one file it means.
+  const file = named && resolved ? { ...named, path: resolved } : named;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
   const target = linkTarget(api, href, file, sessionId, exists);
@@ -702,7 +704,7 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
     }
   }}>{children}</a>;
   else link = children;
-  return localPath(href) ? <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>{link}</span> : <>{link}</>;
+  return localPath(href) ? <span key={named?.path} data-file-reference={eligible ? named?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
 /**
@@ -720,15 +722,17 @@ function InlineCode({ text, className }: Readonly<{ text: string; className?: st
   const hintedPath = sessionId && !streaming && !text.includes('/') ? hintPath(text, workdir ?? '') : undefined;
   let file: ReturnType<typeof codeFile> = null;
   if (sessionId && !streaming) file = codeFile(text, workdir) ?? (hintedPath ? { path: hintedPath, hash: '' } : null);
-  const url = api.supports('files-v1') && sessionId && file ? api.viewFileUrl(sessionId, file.path) : undefined;
-  const { eligible, exists } = useFileReference(file?.path, text);
+  const { eligible, exists, file: resolved } = useFileReference(file?.path, text);
+  // A bare name opens the one file it means.
+  const target = resolved ?? file?.path;
+  const url = api.supports('files-v1') && sessionId && target ? api.viewFileUrl(sessionId, target) : undefined;
   const temporary = !streaming && sessionId && preview && text.startsWith('/') ? tempFile(text.split('/').map(encodeURIComponent).join('/'), workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary} />;
   const code = <code className={className}>{text}</code>;
   if (!file) return code;
   return (
     <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>
-      {exists && url && file ? <FileLink path={file.path} url={url + file.hash} /> : code}
+      {exists && url && file && target ? <FileLink path={target} url={url + file.hash} /> : code}
     </span>
   );
 }

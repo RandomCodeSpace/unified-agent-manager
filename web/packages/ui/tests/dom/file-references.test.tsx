@@ -86,6 +86,19 @@ test('a path with a cited line links to the file and marks the line in the previ
   await waitFor(() => expect(document.querySelector('li.font-medium')?.textContent).toBe('3'));
 });
 
+test('a bare name opens the one file the server says it means', async () => {
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/files/resolve')) return Response.json({ files: [{ path: 'gen.py', exists: false, kind: 'file', target: 'tools/gen.py' }, { path: 'dup.txt', exists: false, kind: 'unavailable' }] });
+    return new Response(init?.method === 'HEAD' ? null : 'print(1)\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': '9' } });
+  });
+  render(<Conversation entries={[{ ...items[1], text: 'Ran `gen.py:1` and `dup.txt`.' }]} />);
+  const link = await screen.findByRole('link', { name: 'Open tools/gen.py at line 1' });
+  expect(link.getAttribute('href')).toMatch(/\/files\/view\/tools\/gen\.py#L1$/);
+  expect(link.textContent).toBe('gen.py:1');
+  expect(screen.getByText('dup.txt').tagName).toBe('CODE');
+});
+
 test('a link keeps its own words on the chip', async () => {
   render(<Conversation entries={[items[0], { ...items[1], text: `See [the review](${path}).` }]} />);
   const link = await screen.findByRole('link', { name: `Open ${path}` });
