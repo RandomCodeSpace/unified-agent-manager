@@ -5,7 +5,7 @@ import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
-import { filteredProject, groupTasks, needsYouNow, pendingWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
+import { filteredProject, groupTasks, needsYouNow, pendingWork, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import { pendingWords } from '../lib/worktrees';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
@@ -341,7 +341,9 @@ const taskBranch = (s: SessionSummary, project?: Project) => s.worktree?.branch 
 /** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Thread's branch, the Task's changes and its folder's unsaved git work. */
 function rowTip(s: SessionSummary, project: Project, status: string, diff?: DiffStat) {
   const pending = readOnly(s) ? null : pendingWork(s);
-  // The 7-day settle skips a Thread with unsaved work: the tip says why it is still here.
+  // The 7-day settle skips a Thread with unsaved work: the tip says why it is still here. The summary shows that work
+  // only for a Thread in its own worktree; in a shared folder the folder's counts are not the Thread's.
+  const stopsSettle = readOnly(s) ? null : putAwayWork(s);
   const quietDays = Math.floor((Date.now() - Date.parse(s.updated_at)) / 86_400_000);
   return (
     <>
@@ -352,7 +354,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
         {taskBranch(s, project) && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{taskBranch(s, project)}</span>}
         {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
         {pending && <span className="block">{pendingWords(pending)}</span>}
-        {pending && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
+        {stopsSettle && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
       </span>
     </>
   );

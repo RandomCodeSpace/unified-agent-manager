@@ -1703,7 +1703,7 @@ export function onUnauthorized(fn: () => void): void {
   unauthorized = fn;
 }
 
-/** A settle or archive refused because the Thread's folder has unsaved git work: its counts and first changed files; null for any other failure. */
+/** A settle or archive refused over unsaved git work (the Thread's own changes, or all its own worktree's work): its counts and first changed files; null for any other failure. */
 export function unsavedRefusal(e: unknown): { pending: GitPending; paths: string[] } | null {
   if (!isStatus(e, 409) || e.body.code !== 'unsaved_work') return null;
   const p = e.body.git_pending as Partial<GitPending> | undefined;
@@ -2284,7 +2284,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
     taskAgents: (projectId: string, provider: string) =>
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
-    /** `force`: settle or archive even though the Thread's folder has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
+    /** `force`: settle or archive even though the Thread has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
     stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`, body),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),

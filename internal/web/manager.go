@@ -565,7 +565,10 @@ type webSession struct {
 	nativeChanges bool
 	// An on-demand native read started before later activity cannot restore
 	// the now-unknown total after that activity invalidates it.
-	nativeDiffRevision     uint64
+	nativeDiffRevision uint64
+	// nativePaths are the files the latest native read listed: with edits,
+	// the Thread's own files the Settle guard checks (git_pending.go).
+	nativePaths            []string
 	diffRunning, diffDirty bool
 	// idleToolEdits counts tool results that landed while no turn ran: a
 	// turn's native capture still in flight reads again after them

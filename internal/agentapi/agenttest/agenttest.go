@@ -556,6 +556,7 @@ type Conversation struct {
 	titles        []string
 	diff          []agentapi.FileDiff
 	diffErr       error
+	diffs         int
 	sends         []string
 	prompts       []agentapi.Prompt
 	runs          []CommandRun
@@ -756,6 +757,13 @@ func (c *Conversation) SetDiff(files []agentapi.FileDiff, err error) {
 	c.diff, c.diffErr = files, err
 }
 
+// DiffCalls reports how many times Diff was called.
+func (c *Conversation) DiffCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.diffs
+}
+
 func (c *Conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	c.mu.Lock()
 	if c.closed {
@@ -880,6 +888,7 @@ func (c *Conversation) Respond(ctx context.Context, id string, answer agentapi.A
 func (c *Conversation) Diff(context.Context) ([]agentapi.FileDiff, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.diffs++
 	if !c.provider.caps.SessionDiff {
 		return nil, agentapi.ErrUnsupported
 	}

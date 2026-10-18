@@ -13,31 +13,50 @@ function expectAnchoredTo(dialog: HTMLElement, id: string) {
   expect(row.isConnected).toBe(true);
 }
 
-// In the mock, unified-agent-manager (p1) has 4 files not committed and 1 commit not pushed; notes-site (p3) is clean.
+// In the mock, unified-agent-manager (p1) has 4 files not committed and 1 commit not pushed, and its Thread t15 runs in
+// its own worktree with 2 not committed and 3 not pushed; notes-site (p3) is clean. The mock refuses on those counts.
 describe('settling or archiving with unsaved git work', () => {
   const files = data.seed().changes.p1.map((c) => c.path);
 
-  test('the row says Settle…, asks at once beside the row with the counts and the first files, and Settle anyway settles', async () => {
+  test('a Thread in its own worktree: the row says Settle…, asks at once beside the row with the counts, and Settle anyway settles', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const stage = vi.spyOn(api, 'stage');
+    const settle = side.getByRole('button', { name: 'Settle Remove unused exports across packages' });
+    expect(settle.textContent).toBe('Settle…');
+    await user.click(settle);
+    const dialog = await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' });
+    // The worktree's work is all the Thread's own: it asks without a request the service would refuse, beside the row.
+    expect(stage).not.toHaveBeenCalled();
+    expectAnchoredTo(dialog, 't15');
+    const guard = within(dialog);
+    expect(guard.getByText(/Settling moves this Thread out of Active; this work is not saved anywhere else/)).toBeTruthy();
+    expect(guard.getByText('2 not committed')).toBeTruthy();
+    expect(guard.getByText('3 not pushed')).toBeTruthy();
+    await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
+    await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Remove unused exports across packages' })).toBeNull());
+    expect(stage.mock.calls).toEqual([['t15', 'settle', { force: true }]]);
+  });
+
+  test('a Thread in a shared folder: the folder\'s counts do not decide, the service\'s refusal opens the confirmation with its files', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     const stage = vi.spyOn(api, 'stage');
     const settle = side.getByRole('button', { name: 'Settle Doctor: add terminal line' });
-    expect(settle.textContent).toBe('Settle…');
+    // The row still shows the folder's counts, but they are not this Thread's changes.
+    expect(settle.textContent).toBe('Settle');
     await user.click(settle);
     const dialog = await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' });
-    // Known unsaved work asks without a request the service would refuse, beside the row, not centred.
-    expect(stage).not.toHaveBeenCalled();
+    expect(stage.mock.calls).toEqual([['t3', 'settle']]);
     expectAnchoredTo(dialog, 't3');
     const guard = within(dialog);
-    expect(guard.getByText(/Settling moves this Thread out of Active; this work is not saved anywhere else/)).toBeTruthy();
     expect(guard.getByText('4 not committed')).toBeTruthy();
-    expect(guard.getByText('1 not pushed')).toBeTruthy();
-    await waitFor(() => expect(within(guard.getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]));
+    expect(within(guard.getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]);
     // Nothing moved yet.
     expect(document.querySelector('ul[aria-label="Unsettled threads"] [data-task-row="t3"] [data-settle]')).not.toBeNull();
     await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
     await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
-    expect(stage.mock.calls).toEqual([['t3', 'settle', { force: true }]]);
+    expect(stage.mock.calls).toEqual([['t3', 'settle'], ['t3', 'settle', { force: true }]]);
   });
 
   test('work the summary did not know yet: the refusal opens the confirmation beside the row, and Escape keeps the Thread active', async () => {
@@ -74,7 +93,7 @@ describe('settling or archiving with unsaved git work', () => {
   });
 
   test('Archive from the Thread menu asks the same way, and Open Changes shows All changes', async () => {
-    const { user } = renderApp('#task=t3');
+    const { user } = renderApp('#task=t15');
     await screen.findByRole('region', { name: 'Conversation' });
     await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
     const menu = within(await screen.findByRole('menu'));

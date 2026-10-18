@@ -1794,14 +1794,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive.
 
-  Settle and Archive ask first when the Thread's repository has unsaved git
-  work (changed tracked files not committed, or commits on no remote; see
-  the sidebar's counts). The row's hover button and the menu item then read
-  "Settle…". The service reads the work again and refuses with 409
-  `unsaved_work`, its counts (`git_pending`) and the first three changed
-  files (`refs`), unless the request body is `{"force": true}`. When the
-  Thread's counts already show unsaved work, the confirmation opens at once
-  without that request; otherwise a refusal opens it. Either way it hangs
+  Settle and Archive ask first when the Thread has unsaved git work of its
+  own. In a folder Threads share, that is the files the Thread changed that
+  still differ from `HEAD`, new untracked files included: the files
+  Copilot's record of the conversation lists, where it keeps one (the
+  **This thread** scope, shell writes included), and those its edit tools
+  touched. Other files changed in that folder, by other Threads or by you,
+  do not count, and neither do commits on no remote, which belong to no
+  one Thread. A Thread in its own worktree owns all the work there: any
+  changed tracked file or commit on no remote counts, as the sidebar's
+  counts show. The service reads the work at the request and refuses with
+  409 `unsaved_work`, its counts (`git_pending`: the Thread's own files as
+  `uncommitted`, and, in its own worktree, `unpushed`) and the first three
+  of those files (`refs`), unless the request body is `{"force": true}`. A
+  closed conversation is not reopened for it: the files of the last read
+  of Copilot's record since the service started stand in, else only the
+  edit-tool files. For a Thread in its own worktree whose counts already
+  show unsaved work, the row's hover button and the menu item read
+  "Settle…" and the confirmation opens at once without that request; for
+  any other Thread the request goes first and a refusal opens the
+  confirmation (after Archive's own dialog). Either way it hangs
   under the sidebar row or the control that asked, read as it was
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes on All changes), Cancel and
@@ -1811,10 +1823,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   A Thread with no activity for 7 days settles itself. The check runs every
   hour and skips any Thread that Settle would refuse, that has an unanswered
   request, an unreconciled rewind or an unseen failure, that a page has
-  open, or whose repository has unsaved git work, read again before each
-  check; that row's tip says "Quiet N days; stays active until this work is
-  saved". This settle doesn't count as activity, so the Thread keeps its last
-  activity time. Its record says `settled_by: "auto"`; Reopen clears that and
+  open, or that has unsaved git work of its own by Settle's rule, read
+  again before each check; for a Thread in its own worktree, that row's tip
+  says "Quiet N days; stays active until this work is saved". This settle
+  doesn't count as activity, so the Thread keeps its last activity time. Its record says `settled_by: "auto"`; Reopen clears that and
   starts the 7 days again. Threads the removed done-check settle moved keep
   `settled_by: "reviewed"`.
 
@@ -1879,7 +1891,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   **This thread** (the default) is Copilot's record of the files this
   conversation changed, over its whole life, so a file stays listed after
   it is committed; while the conversation is closed, a Git-based list of
-  the files its agent edited, compared with `HEAD`, stands in. **All
+  the files its agent edited, compared with `HEAD`, stands in. The
+  Thread's total (the summary's `diff`, the row tip's `+N −M`) is that
+  record's count: while the conversation is open, UAM reads it again a
+  second after the last of a burst of edits and when a turn ends, so it is
+  filled in without opening Changes; a closed conversation is not reopened
+  for it. **All
   changes** is every uncommitted change in the working tree, from any
   Thread or source: what is left to commit. Other Threads have three
   scopes, each with its file count: **This thread** (the default) lists the
@@ -2056,6 +2073,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   counts no unpushed commits. It belongs to the repository holding the
   Thread's directory, so every Thread there shows the same counts; the tip
   and screen readers say it in words ("4 not committed · 3 not pushed").
+  It is the folder's indicator: in a shared folder, Settle and Archive
+  check only the Thread's own changes (see **Settle, archive, and
+  delete**).
   The service reads it once per repository along with the Projects'
   branches (when a turn ends, after Commit, Pull and Set up git, and when a
   page loads), and after Push; the summary carries it as
@@ -2680,9 +2700,12 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   ending. Until
   then, a subagent's follow-up and an autopilot turn waiting on an
   attached shell may also stay running.
-- **Copilot session diffs.** Copilot does not report per-conversation file
-  changes, so UAM attributes files to a Thread from its edit tool calls (see
-  Changes); files written by shell commands show only under All changes.
+- **Copilot session diffs.** A Thread's own files come from Copilot's
+  session diff, which includes files written by shell commands, read while
+  the conversation is open, plus its edit tool calls. After a uam restart a
+  closed Thread knows only its edit tool calls until its conversation opens
+  again, so a file it wrote through a shell command does not stop Settle or
+  Archive meanwhile.
 - **Opening a web conversation elsewhere at the same time.** Do not
   continue a web session's conversation in Copilot's own terminal UI while
   the web interface has it open.

@@ -158,9 +158,7 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 		out.Scope = ScopeTask
 		return nil, out, nil
 	}
-	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
-	defer cancel()
-	files, err := conv.Diff(diffCtx)
+	files, err := m.readNativeDiff(ctx, s, conv, gen, revision)
 	if errors.Is(err, agentapi.ErrUnsupported) {
 		out.Reason = "the provider does not record file changes for this conversation"
 		if err != agentapi.ErrUnsupported {
@@ -176,21 +174,38 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 		return nil, out, newError(http.StatusBadGateway, "could not read the provider's changes: %s", shortError(err))
 	}
 	out.Supported = true
-	limited := len(files) > maxChangedFiles
-	if limited {
+	if len(files) > maxChangedFiles {
 		files = files[:maxChangedFiles]
 		out.Reason = fmt.Sprintf("showing the first %d changed files", maxChangedFiles)
 	}
+	return files, out, nil
+}
+
+// readNativeDiff reads conv's native session diff with each file's line
+// counts. While s still has conv, gen and revision, the read becomes its
+// total and its native paths: native Tasks never publish the HEAD-based
+// fallback as their total. The caller holds no lock.
+func (m *Manager) readNativeDiff(ctx context.Context, s *webSession, conv agentapi.Conversation, gen, revision uint64) ([]agentapi.FileDiff, error) {
+	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	files, err := conv.Diff(diffCtx)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(files))
 	for i := range files {
 		if files[i].Patch != "" && !files[i].CountsUnknown {
 			files[i].Additions, files[i].Deletions = countPatch(files[i].Patch)
 		}
+		paths = append(paths, files[i].Path)
+		if files[i].OldPath != "" {
+			paths = append(paths, files[i].OldPath)
+		}
 	}
-	// Native Tasks must not publish the HEAD-based fallback as their total.
 	m.mu.Lock()
 	if s.nativeChanges && !s.removed && s.conv == conv && s.gen == gen && s.nativeDiffRevision == revision {
 		var total *DiffStat
-		if len(files) > 0 && !limited {
+		if len(files) > 0 && len(files) <= maxChangedFiles {
 			total = &DiffStat{Files: len(files)}
 			for _, file := range files {
 				if file.CountsUnknown {
@@ -201,10 +216,11 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 				total.Deletions += file.Deletions
 			}
 		}
+		s.nativePaths = paths
 		m.setDiffLocked(s, total)
 	}
 	m.mu.Unlock()
-	return files, out, nil
+	return files, nil
 }
 
 // statusEntry is a changed path: its index (x) and work tree (y) status

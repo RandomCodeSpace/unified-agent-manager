@@ -3,11 +3,16 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 )
 
 // pendingOf is the Task's unsaved git work as its summary serves it.
@@ -87,13 +92,59 @@ func TestCountTrackedChanges(t *testing.T) {
 	}
 }
 
-// Settle and Archive refuse a Thread whose repository has unsaved work
-// unless forced, naming the counts and the first changed files; a clean
-// Thread settles as before.
-func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
+// unsavedRefusal is checkUnsaved's refusal of the Thread id, nil when it
+// would settle.
+func unsavedRefusal(t *testing.T, m *Manager, id string) *Error {
+	t.Helper()
+	err := m.checkUnsaved(t.Context(), id)
+	if err == nil {
+		return nil
+	}
+	var refused *Error
+	if !errors.As(err, &refused) || refused.Code != codeUnsavedWork || refused.Pending == nil {
+		t.Fatalf("checkUnsaved = %v", err)
+	}
+	slices.Sort(refused.Refs)
+	return refused
+}
+
+// sharedFolderWithOthersWork is gitRepoFixture with a remote and a commit
+// on no remote: tracked.txt changed, sub/new file.txt new and one commit
+// not pushed, none of it any Thread's.
+func sharedFolderWithOthersWork(t *testing.T) string {
+	t.Helper()
 	gitIdentity(t)
 	repo := gitRepoFixture(t)
+	gitIn(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "remote.git"))
+	return repo
+}
+
+// Settle and Archive refuse a Thread with unsaved work of its own unless
+// forced, naming the counts and its first changed files. In a folder
+// Threads share, the others' changes and commits on no remote do not stop
+// a Thread with none of its own.
+func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
 	g := newGitTask(t, repo)
+	conv := g.prov.Last()
+	// The Thread changed a tracked file and made a new one with its edit tools.
+	conv.EmitItem(toolEdit("e1", "edit", filepath.Join(repo, "tracked.txt"), agentapi.ToolCompleted, time.Now()))
+	writeRepoFile(t, repo, "notes.txt", "new\n")
+	conv.EmitItem(toolEdit("e2", "create", "notes.txt", agentapi.ToolCompleted, time.Now()))
+
+	other, err := g.m.Create(CreateRequest{Provider: g.prov.Name(), ProjectID: summaryOf(t, g.m, g.id).ProjectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := g.ts.do(http.MethodPost, "/api/sessions/"+other.ID+"/settle", "", withCookie(g.ts)); w.Code != http.StatusOK {
+		t.Fatalf("settle beside others' work = %d %s", w.Code, w.Body)
+	}
+	// The folder's indicator still counts everything there.
+	g.m.refreshGitPending(t.Context(), repo)
+	if p := pendingOf(t, g.m, g.id); p.Uncommitted != 1 || p.Unpushed != 1 {
+		t.Fatalf("folder git_pending = %+v", p)
+	}
+
 	for _, action := range []string{"settle", "archive"} {
 		w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/"+action, "", withCookie(g.ts))
 		var refused struct {
@@ -105,8 +156,9 @@ func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &refused); err != nil || w.Code != http.StatusConflict {
 			t.Fatalf("%s = %d %s", action, w.Code, w.Body)
 		}
-		if refused.Code != codeUnsavedWork || refused.Pending != (GitPending{Uncommitted: 1}) || !slices.Equal(refused.Refs, []string{"tracked.txt"}) ||
-			!strings.Contains(refused.Error, "1 not committed") {
+		slices.Sort(refused.Refs)
+		if refused.Code != codeUnsavedWork || refused.Pending != (GitPending{Uncommitted: 2}) || !slices.Equal(refused.Refs, []string{"notes.txt", "tracked.txt"}) ||
+			!strings.Contains(refused.Error, "own changes (2 not committed)") {
 			t.Fatalf("%s refused = %+v", action, refused)
 		}
 		if got := summaryOf(t, g.m, g.id); got.Stage != StageActive {
@@ -120,29 +172,98 @@ func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
 	if w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/archive", `{"force":true}`, withCookie(g.ts)); w.Code != http.StatusOK {
 		t.Fatalf("forced archive = %d %s", w.Code, w.Body)
 	}
+}
 
-	gitIn(t, repo, "commit", "-q", "-am", "fix: tracked")
-	clean, err := g.m.Create(CreateRequest{Provider: g.prov.Name(), ProjectID: summaryOf(t, g.m, g.id).ProjectID})
+// A native Thread's own files include those only its native session diff
+// lists, such as one a shell command wrote; after the conversation closes
+// the last read stands, without resuming it.
+func TestSettleGuardReadsTheNativeSessionDiff(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, repo)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := g.ts.do(http.MethodPost, "/api/sessions/"+clean.ID+"/settle", "", withCookie(g.ts)); w.Code != http.StatusOK {
-		t.Fatalf("clean settle = %d %s", w.Code, w.Body)
+	if refused := unsavedRefusal(t, m, sum.ID); refused != nil {
+		t.Fatalf("refused with no work of its own: %+v", refused)
+	}
+	writeRepoFile(t, repo, "shell.txt", "printf\n")
+	prov.Last().SetDiff([]agentapi.FileDiff{{Path: "shell.txt", Status: "added", Patch: "--- /dev/null\n+++ b/shell.txt\n@@ -0,0 +1 @@\n+printf\n"}}, nil)
+	refused := unsavedRefusal(t, m, sum.ID)
+	if refused == nil || *refused.Pending != (GitPending{Uncommitted: 1}) || !slices.Equal(refused.Refs, []string{"shell.txt"}) {
+		t.Fatalf("native-only file refusal = %+v", refused)
+	}
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	opens := len(prov.Opens())
+	if refused := unsavedRefusal(t, m, sum.ID); refused == nil || !slices.Equal(refused.Refs, []string{"shell.txt"}) {
+		t.Fatalf("closed Thread refusal = %+v", refused)
+	}
+	if len(prov.Opens()) != opens {
+		t.Fatal("the guard resumed a closed conversation")
+	}
+	gitIn(t, repo, "add", "shell.txt")
+	gitIn(t, repo, "commit", "-q", "-m", "feat: shell")
+	if refused := unsavedRefusal(t, m, sum.ID); refused != nil {
+		t.Fatalf("refused once its work was committed: %+v", refused)
 	}
 }
 
-// The 7-day sweep leaves a quiet Thread with unsaved work active and
-// settles it once the work is saved.
+// A Thread in its own worktree owns all the work there: any changed tracked
+// file and any commit on no remote stops Settle, and the quiet-Task sweep.
+func TestSettleGuardInOwnWorktreeCountsTheWholeWorktree(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := worktreeThread(t, ts, repo, "feature")
+	wt := sum.Worktree.Path
+	writeRepoFile(t, wt, "README.md", "# changed by hand\n")
+	refused := unsavedRefusal(t, ts.m, sum.ID)
+	if refused == nil || *refused.Pending != (GitPending{Uncommitted: 1}) || !slices.Equal(refused.Refs, []string{"README.md"}) ||
+		!strings.Contains(refused.Message, "worktree") {
+		t.Fatalf("worktree refusal = %+v", refused)
+	}
+	gitIn(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "remote.git"))
+	gitIn(t, wt, "commit", "-q", "-am", "docs: readme")
+	if refused := unsavedRefusal(t, ts.m, sum.ID); refused == nil || refused.Pending.Uncommitted != 0 || refused.Pending.Unpushed == 0 {
+		t.Fatalf("unpushed worktree refusal = %+v", refused)
+	}
+	setNow(ts.m, time.Now().Add(autoSettleAfter+time.Hour))
+	ts.m.autoSettle()
+	if got := summaryOf(t, ts.m, sum.ID); got.Stage != StageActive {
+		t.Fatalf("settled a worktree with unpushed work: %+v", got)
+	}
+	// Without a remote there is nowhere to push: the worktree is clean.
+	gitIn(t, repo, "remote", "remove", "origin")
+	ts.m.autoSettle()
+	if got := summaryOf(t, ts.m, sum.ID); got.Stage != StageSettled {
+		t.Fatalf("clean quiet worktree Thread = %+v", got)
+	}
+}
+
+// The 7-day sweep uses Settle's rule: a quiet Thread with its own unsaved
+// files stays active, until they are saved, while one beside others' work
+// settles.
 func TestAutoSettleSparesUnsavedWork(t *testing.T) {
-	gitIdentity(t)
-	repo := gitRepoFixture(t)
+	repo := sharedFolderWithOthersWork(t)
 	g := newGitTask(t, repo)
-	setNow(g.m, summaryOf(t, g.m, g.id).UpdatedAt.Add(autoSettleAfter))
+	writeRepoFile(t, repo, "notes.txt", "new\n")
+	g.prov.Last().EmitItem(toolEdit("e1", "create", "notes.txt", agentapi.ToolCompleted, time.Now()))
+	other, err := g.m.Create(CreateRequest{Provider: g.prov.Name(), ProjectID: summaryOf(t, g.m, g.id).ProjectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setNow(g.m, time.Now().Add(autoSettleAfter+time.Hour))
 	g.m.autoSettle()
 	if got := summaryOf(t, g.m, g.id); got.Stage != StageActive {
 		t.Fatalf("settled with unsaved work: %+v", got)
 	}
-	gitIn(t, repo, "commit", "-q", "-am", "fix: tracked")
+	if got := summaryOf(t, g.m, other.ID); got.Stage != StageSettled || got.SettledBy != settledByAuto {
+		t.Fatalf("quiet Thread beside others' work = %+v", got)
+	}
+	gitIn(t, repo, "add", "notes.txt")
+	gitIn(t, repo, "commit", "-q", "-m", "docs: notes")
 	g.m.autoSettle()
 	if got := summaryOf(t, g.m, g.id); got.Stage != StageSettled || got.SettledBy != settledByAuto {
 		t.Fatalf("clean quiet Thread = %+v", got)

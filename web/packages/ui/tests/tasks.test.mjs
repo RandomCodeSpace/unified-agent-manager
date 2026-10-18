@@ -266,3 +266,11 @@ test('unsaved git work at zero is no marker', async () => {
   assert.equal(pendingWork(s('a', 'p1', '1')), null);
   assert.deepEqual(pendingWork(s('a', 'p1', '1', { git_pending: { uncommitted: 1, unpushed: 0 } })), { uncommitted: 1, unpushed: 0 });
 });
+
+test('only a Thread in its own worktree has its folder\'s work stop Settle', async () => {
+  const { putAwayWork } = await import('../src/lib/tasks.ts');
+  const pending = { git_pending: { uncommitted: 2, unpushed: 1 } };
+  assert.equal(putAwayWork(s('a', 'p1', '1', pending)), null);
+  assert.deepEqual(putAwayWork(s('a', 'p1', '1', { ...pending, worktree: { path: '/wt', branch: 'uam/x' } })), pending.git_pending);
+  assert.equal(putAwayWork(s('a', 'p1', '1', { worktree: { path: '/wt', branch: 'uam/x' } })), null);
+});
