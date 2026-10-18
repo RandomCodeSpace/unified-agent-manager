@@ -8,7 +8,7 @@ import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
-import { composer, log, openMenu, openTask } from './render';
+import { composer, log, openMenu, openSubagentIndex, openTask } from './render';
 
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 
@@ -648,10 +648,9 @@ describe('history', () => {
     expect(await log().findByText('Turn 126: check pkg126 for unused exports.')).toBeTruthy();
   });
 
-  test('a subagent picked from the header index is found in its reply, its list opened, its transcript open', async () => {
+  test('a subagent picked from the strip\'s index is found in its reply, its list opened, its transcript open', async () => {
     const { user } = await openTask('t15');
-    await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
-    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
     await waitFor(() => expect(document.getElementById('item-h-audit')?.classList.contains('animate-flash')).toBe(true));
     // The open transcript is modal, so what is behind it is hidden from the accessibility tree.

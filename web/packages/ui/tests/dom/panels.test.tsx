@@ -4,7 +4,7 @@ import { api } from '../../src/api';
 import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
 import { VERBS } from '../../src/lib/verbs';
-import { log, openMenu, openTask, renderApp } from './render';
+import { log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
 
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
@@ -134,22 +134,56 @@ describe('changes', () => {
 describe('subagents', () => {
   const panel = async () => within(await screen.findByRole('dialog', { name: 'Subagent transcript' }));
 
-  // The header's index: subagents by the message that started their reply, filters, and a pick that lands on the row.
-  test('the header index groups subagents by their message; a pick lands on its row and opens its transcript', async () => {
+  // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that lands on the row.
+  test('the strip\'s subagent index groups subagents by their message; a pick lands on its row and opens its transcript', async () => {
     const { user } = await openTask('t8');
-    await user.click(screen.getByRole('button', { name: /^Subagents, 5, \d running/ }));
-    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    // The header has no Subagents button any more: the strip counts them.
+    expect(document.querySelector('header')!.textContent).not.toContain('Subagents');
+    const index = await openSubagentIndex(user);
     const group = within(index.getByRole('region', { name: /^“Audit templates\/post\.html for accessibility problems/ }));
     expect(group.getByRole('button', { name: /^Jump to the subagents of/ })).toBeTruthy();
     expect(index.queryByText(/Turn \d/)).toBeNull();
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
     expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
     await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagents' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /ubagents$/ })).toBeNull());
     // It lands on its row and its transcript opens beside it, focus inside.
     const open = await panel();
     expect(await open.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
     await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).toBeTruthy());
+  });
+
+  test('the strip ends with the subagents as blocks and opens one reader with Todo and Subagents tabs; ← and → switch them', async () => {
+    const { user } = await openTask('t8');
+    const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done\. Show the list and the subagents$/ });
+    const subagents = strip.querySelector<HTMLElement>('[data-strip-subagents]')!;
+    // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
+    expect([...subagents.querySelectorAll('[title]')].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')])).toEqual([
+      ['1 failed', 'error', true],
+      ['3 running', 'accent', true],
+      ['1 done', 'success', true],
+    ]);
+    // Pressed on its words, it opens on Todo.
+    await user.click(screen.getByText('Now:'));
+    const reader = await screen.findByRole('dialog', { name: 'Todo and subagents' });
+    const tab = (name: string) => within(reader).getByRole('tab', { name });
+    await waitFor(() => expect(document.activeElement).toBe(tab('Todo')));
+    expect(within(reader).getByText('switch')).toBeTruthy();
+    // → from anywhere but a text field switches tabs.
+    within(reader).getByRole('button', { name: 'Close' }).focus();
+    await user.keyboard('{ArrowRight}');
+    await waitFor(() => expect(tab('Subagents').getAttribute('aria-selected')).toBe('true'));
+    const search = await within(reader).findByRole('searchbox', { name: 'Search subagents' });
+    // In the search box the arrows move the caret.
+    search.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(tab('Subagents').getAttribute('aria-selected')).toBe('true');
+    tab('Subagents').focus();
+    await user.keyboard('{ArrowLeft}');
+    await waitFor(() => expect(tab('Todo').getAttribute('aria-selected')).toBe('true'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(strip);
   });
 
   test('a reply\'s chip waits while the live set shows all its subagents', async () => {
@@ -266,8 +300,7 @@ describe('subagents', () => {
     });
     try {
       const { user } = await openTask('t15');
-      await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
-      const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+      const index = await openSubagentIndex(user);
       await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
       const open = await panel();
       expect(await open.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
@@ -278,10 +311,9 @@ describe('subagents', () => {
     }
   });
 
-  test('older subagents load from the record on request and open by the header; where they were spawned is gone, and it says so', async () => {
+  test('older subagents load from the record on request and open by the strip; where they were spawned is gone, and it says so', async () => {
     const { user } = await openTask('t15');
-    await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
-    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: 'Show older subagents' }));
     // Their calls are not in the history held here: they wait under "Earlier in the conversation".
     const earlier = within(await index.findByRole('region', { name: 'Earlier in the conversation' }));
@@ -358,14 +390,15 @@ describe('subagents', () => {
 describe('one working ring per place', () => {
   const rings = (root: ParentNode) => [...root.querySelectorAll('.animate-spin')];
 
-  test('while subagents run, only the state glyph turns: their rows, the Subagents button and the Changes dot are still', async () => {
+  test('while subagents run, only the state glyph turns: their rows, the strip\'s subagent blocks and the Changes dot are still', async () => {
     await openTask('t8');
     const pane = document.querySelector('main')!;
     const header = pane.querySelector('header')!;
-    // The header: the state chip turns; the Subagents button says how many run, still.
+    // The header: the state chip turns; the strip says how many run in a still block.
     expect(rings(header).map((ring) => ring.parentElement?.parentElement?.textContent)).toEqual(['Working']);
-    const index = screen.getByRole('button', { name: /^Subagents, 5, 3 running/ });
-    expect(index.textContent).toContain('3 running');
+    const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
+    expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
+    expect(rings(strip)).toHaveLength(0);
     // The live set's running rows: a still `accent` dot, "running" in their names.
     const live = screen.getByRole('region', { name: 'Subagents at work' });
     expect(rings(live)).toHaveLength(0);

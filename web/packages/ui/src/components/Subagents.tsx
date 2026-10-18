@@ -5,7 +5,7 @@ import { isSubagentCall, subagentSummary, duration, toolLabel, windowInteraction
 import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Details';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Square, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Network, Square, X } from 'lucide-react';
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -24,7 +24,6 @@ import { Button } from './ui/button';
 import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
 import { popupClass } from './ui/menu';
-import { Popover } from './ui/popover';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 import { Key } from './InlinePicker';
@@ -266,7 +265,7 @@ export const useLiveSubagentIds = () => useScope((d) => d.liveIds);
 
 /**
  * The Task's subagents for everything that draws them (the reply chips and lists, the live set,
- * the header index): the session, the transcripts held, the one peek (DESIGN.md subagent peek),
+ * the strip's index): the session, the transcripts held, the one peek (DESIGN.md subagent peek),
  * the one open transcript, stop requests and their one confirmation, and `locate`.
  */
 export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onHold, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** While a peek or a transcript is open, its row (read when needed), which the conversation keeps in place; null once both are closed. */ onHold?: (row: (() => Element | null) | null) => void; children: ReactNode }>) {
@@ -460,7 +459,7 @@ function usage(s: Subagent): string {
 }
 
 /**
- * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Bot` glyph
+ * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Network` glyph
  * past five calls), then "3 subagents · 1.2M tokens · 2 done · 1 failed", and "2 of 3 loaded" while
  * some of the reply's calls have no subagent here yet. It opens the reply's list under the line.
  */
@@ -488,7 +487,7 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
           })}
         </span>
       ) : (
-        <Bot aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
+        <Network aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
       )}
       <span className="min-w-0 truncate tabular-nums">
         <Counts c={c} lead={partial ? <>{lead} · <span className="text-muted">{partial}</span></> : lead} />
@@ -881,12 +880,12 @@ function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonl
               <>
                 {rootCall ? (
                   <button type="button" className={cn(crumb, 'shrink-0')} title="Show where it was spawned in the conversation" onClick={() => actions.locate(rootCall)}>
-                    <Bot aria-hidden="true" className="size-3.5" />
+                    <Network aria-hidden="true" className="size-3.5" />
                     Main agent
                   </button>
                 ) : (
                   <span className={cn(crumb, 'shrink-0 hover:bg-transparent hover:text-muted')}>
-                    <Bot aria-hidden="true" className="size-3.5" />
+                    <Network aria-hidden="true" className="size-3.5" />
                     Main agent
                   </span>
                 )}
@@ -1231,7 +1230,7 @@ export function LiveSubagents() {
       {status}
       <section aria-label="Subagents at work" className="animate-rise flex flex-col gap-1">
         <header className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-caption tabular-nums">
-          <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
+          <Network aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <span>
             <span className="font-semibold text-ink">{lead}</span>
             {c.running < c.total && (
@@ -1255,66 +1254,31 @@ const FILTERS: { key: IndexFilter; label: string; tone: string }[] = [
   { key: 'failed', label: 'Failed', tone: 'text-error' },
   { key: 'done', label: 'Done', tone: 'text-body' },
 ];
-/** Rows the header index renders before "Show 100 more". */
+/** Rows the index renders before "Show 100 more". */
 const INDEX_ROWS = 100;
 
 /**
- * The Task header's subagents (DESIGN.md subagent index): the count, and while any run an `accent`
- * glyph and, with the labels, "· 2 running" (still: the ring is the Task state's), and a popover
- * to find any of them: search, status filters, the subagents grouped by the message that started
- * their reply (newest first, each with Jump), the ones not placed in the conversation and the
- * older ones from the record. Picking a placed one scrolls to its row and
- * opens its transcript; picking one not placed opens its transcript by the header.
+ * The Thread's subagents for the status strip (DESIGN.md subagent index): the list, whether older
+ * ones wait in the record, and the scope's actions; undefined outside a Thread.
  */
-export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /** Why the last jump did not land, said where the reader is. */ error?: string }>) {
-  const actions = useActions();
+export function useSubagentIndex() {
   const subagents = useScope((d) => d.subagents);
   const before = useScope((d) => d.subagentsBefore);
-  const [open, setOpen] = useState(false);
-  // Where to go once the popover has closed; a pick keeps focus off the trigger (`finalFocus`), what it opens takes it.
-  const picked = useRef<{ call: string; expand: boolean } | { agent: string } | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  if (!subagents || !actions) return null;
-  const running = subagents.filter((s) => s.status === 'running').length;
-  const label = `Subagents, ${subagents.length}${before ? ' or more' : ''}${running ? `, ${running} running` : ''}`;
-  const pick = (to: NonNullable<typeof picked.current>) => {
-    picked.current = to;
-    setOpen(false);
-  };
-  return (
-    <Popover.Root
-      open={open}
-      onOpenChange={(o) => {
-        if (o) picked.current = null;
-        setOpen(o);
-      }}
-      onOpenChangeComplete={(o) => {
-        const to = picked.current;
-        if (o || !to) return;
-        if ('agent' in to) actions.open(to.agent, document.getElementById('subagents-link'));
-        else actions.locate(to.call, to.expand);
-      }}
-    >
-      <Tip label="Subagents">
-        <Popover.Trigger render={<Button id="subagents-link" size="md" aria-label={label} className="px-2 text-muted" />}>
-          <Bot className={running > 0 ? 'text-accent' : undefined} />
-          {labels && <span>Subagents</span>}
-          <span className="tabular-nums text-ink">
-            {subagents.length}
-            {before && '+'}
-          </span>
-          {labels && running > 0 && <span className="tabular-nums text-accent">· {running} running</span>}
-          <ChevronDown className="text-muted" />
-        </Popover.Trigger>
-      </Tip>
-      <Popover.Content side="bottom" align="end" sideOffset={4} initialFocus={input} finalFocus={() => !picked.current} aria-label="Subagents" className="w-[440px] max-w-(--available-width) gap-1.5 p-1.5">
-        <IndexBody input={input} error={error} onPick={pick} />
-      </Popover.Content>
-    </Popover.Root>
-  );
+  const actions = useActions();
+  return subagents && actions ? { subagents, before, actions } : undefined;
 }
 
-function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInputElement | null>; error?: string; onPick: (to: { call: string; expand: boolean } | { agent: string }) => void }>) {
+/** Where a pick in the index goes once its reader has closed: a placed subagent's call, or one not placed, by id. */
+export type IndexPick = { call: string; expand: boolean } | { agent: string };
+
+/**
+ * The subagent index's body, the strip reader's Subagents tab: search, status filters, the
+ * subagents grouped by the message that started their reply (newest first, each with Jump), the
+ * ones not placed in the conversation and the older ones from the record. `onPick` closes the
+ * reader; picking a placed one then scrolls to its row and opens its transcript, one not placed
+ * opens its transcript by the strip.
+ */
+export function SubagentIndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInputElement | null>; error?: string; onPick: (to: IndexPick) => void }>) {
   const taskId = useScope((d) => d.task.id);
   const subagents = useScope((d) => d.subagents);
   const before = useScope((d) => d.subagentsBefore);
@@ -1413,7 +1377,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                         title={[s.name || 'Subagent', summary].filter(Boolean).join('\n')}
                         className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
                         style={{ paddingLeft: `${8 + depth * 18}px` }}
-                        // Not placed in the conversation (no call, or one past the history held): it opens by the header.
+                        // Not placed in the conversation (no call, or one past the history held): it opens by the strip.
                         onClick={() => onPick(g.key && s.parent_tool_call_id ? { call: s.parent_tool_call_id, expand: true } : { agent: s.id })}
                       >
                         {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}

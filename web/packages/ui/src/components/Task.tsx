@@ -25,7 +25,7 @@ import type { FileActions } from './GoToFile';
 import { keysTaken } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
-import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
+import { SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
@@ -132,7 +132,6 @@ interface HeaderProps {
   leading?: ReactNode;
   /** The Task, read for its summary alone: the comparator below holds the header through frames that change nothing else. */
   session: SessionSummary;
-  hasSubagents: boolean;
   project: Project | undefined;
   state: SessionState;
   compacting: boolean;
@@ -148,7 +147,6 @@ interface HeaderProps {
   terminal: boolean;
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
-  locateError: string;
   onMcp: (open: boolean) => void;
 }
 
@@ -189,7 +187,7 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -299,7 +297,6 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
           </Button>
         </Tip>
       )}
-      {hasSubagents && <SubagentIndex labels={labels} error={locateError} />}
       <Menu.Root modal={false}>
         <Menu.Trigger render={<Button size="icon-md" aria-label="Thread actions" className="text-muted" />}>
           <Ellipsis />
@@ -1041,7 +1038,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the status line stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
-  const line = statusLine(session, labelled, compacting, liveItems, session.history_index, connected);
+  const line = statusLine(session, labelled, compacting, connected);
+  // The strip stays while the Thread has subagents, which it counts at its right end.
+  const strip = !!line || session.subagents.length > 0;
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
@@ -1056,7 +1055,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <GitLabItemsContext.Provider value={gitlabItems}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -1148,9 +1147,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} onJump={scrollToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} error={locateError} onJump={scrollToBottom} />
             <Schedules snapshot={session.schedules} open={session.open} />
-            <Appear show={jump && !!line} className="shrink-0">
+            <Appear show={jump && strip} className="shrink-0">
               <Tip label="Jump to bottom">
                 <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
                   <ArrowDown />
@@ -1159,7 +1158,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </Appear>
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
-            <Appear show={jump && !line} className="shrink-0">
+            <Appear show={jump && !strip} className="shrink-0">
               <Button variant="secondary" size="sm" className="shadow-float" onClick={jumpToBottom}>
                 <ArrowDown />
                 Jump to bottom

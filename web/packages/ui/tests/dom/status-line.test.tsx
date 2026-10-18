@@ -2,9 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { StatusLine, statusLine } from '../../src/components/StatusLine';
-import type { Item, SessionDetail, Subagent, Todo, TodoView, TurnTiming } from '../../src/api';
+import type { SessionDetail, Subagent, Todo, TodoView, TurnTiming } from '../../src/api';
 import { shownState } from '../../src/lib/tasks';
-import { turnVerb } from '../../src/lib/verbs';
 
 afterEach(() => vi.useRealTimers());
 
@@ -13,8 +12,8 @@ const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: n
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
 const objective = { id: 1, objective: 'Notes', status: 'paused' as const, turn_count: 6, credits_used: 300, credit_limit: 300 };
 
-function draw(session: SessionDetail, { working = session.state === 'working', items = [] as Item[], since = undefined as string | undefined, onJump = () => {}, connected = true } = {}) {
-  return <StatusLine line={statusLine(session, working, !!session.compacting, items, undefined, connected)} session={session} since={since} hidden={false} onJump={onJump} />;
+function draw(session: SessionDetail, { working = session.state === 'working', since = undefined as string | undefined, onJump = () => {}, connected = true } = {}) {
+  return <StatusLine line={statusLine(session, working, !!session.compacting, connected)} session={session} since={since} hidden={false} onJump={onJump} />;
 }
 
 test('the clock excludes approval and question waits, including after remount', () => {
@@ -40,23 +39,22 @@ test('the clock excludes approval and question waits, including after remount', 
   expect(screen.getByText('7s')).toBeTruthy();
 });
 
-test('the line leads with the intent, else the turn\'s verb, with a still dot, and its one button reads the sentence once', () => {
+test('the line leads with the intent, else "Working", never a made-up verb, and its one button reads the sentence once', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const onJump = vi.fn();
-  const items = [{ id: 'u1', kind: 'user', time: timing.started_at }] as Item[];
-  const view = render(draw(task(), { items, onJump }));
-  expect(screen.getByText(`${turnVerb('u1')}…`)).toBeTruthy();
-  const button = screen.getByRole('button', { name: `${turnVerb('u1')}, 2 minutes. Jump to bottom` });
+  const view = render(draw(task(), { onJump }));
+  expect(screen.getByText('Working')).toBeTruthy();
+  const button = screen.getByRole('button', { name: 'Working, 2 minutes. Jump to bottom' });
   // Nothing on the line moves: no ring and no breathing dot.
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
   fireEvent.click(button);
   expect(onJump).toHaveBeenCalledTimes(1);
-  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } }), { items }));
-  expect(screen.getByText('Building the index page…')).toBeTruthy();
+  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } })));
+  expect(screen.getByText('Building the index page')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Building the index page, 2 minutes. Jump to bottom' })).toBeTruthy();
   // A retry of the main agent's call stands beside the clock.
-  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', retry: { count: 1, status: 429, reason: 'rate_limited', at: timing.started_at }, todos: { known: false } } }), { items }));
+  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', retry: { count: 1, status: 429, reason: 'rate_limited', at: timing.started_at }, todos: { known: false } } })));
   expect(screen.getByText('Retrying, attempt 2')).toBeTruthy();
   expect(screen.getByText('· HTTP 429 · rate limited')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Building the index page, 2 minutes. Retrying, attempt 2: HTTP 429, rate limited. Jump to bottom' })).toBeTruthy();
@@ -110,62 +108,43 @@ test('the live region speaks a turn start, a retry and a stop, at most one every
   expect(region()).toBe('Stopped: remote command');
 });
 
-test('the line stays while a subagent outlives the turn, with the verb', () => {
+test('the line stays while a subagent outlives the turn', () => {
   for (const state of ['idle', 'completed'] as const) {
-    const line = (subagents_running: number) => statusLine(task({ state, subagents_running, turn_timings: [{ ...timing, ended_at: new Date(start + 9000).toISOString(), state: 'completed' }] }), shownState({ state, subagents_running }) === 'working', false, []);
+    const line = (subagents_running: number) => statusLine(task({ state, subagents_running, turn_timings: [{ ...timing, ended_at: new Date(start + 9000).toISOString(), state: 'completed' }] }), shownState({ state, subagents_running }) === 'working', false);
     expect(line(0)).toBeNull();
-    expect(line(1)).toEqual({ kind: 'working', lead: turnVerb('u1'), compacting: false, retry: undefined });
+    expect(line(1)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined });
   }
 });
 
-test('a turn starting says nothing of the last one: no line until its timing comes, no verb until it links its message', () => {
+test('a turn starting says nothing of the last one: no line until its timing comes, then "Working" and the clock', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 20_000);
   const before = { id: 'before', user_item_id: 'u0', state: 'cancelled', started_at: new Date(start - 30_000).toISOString(), ended_at: new Date(start - 10_000).toISOString() } as TurnTiming;
-  const old = [{ id: 'u0', kind: 'user', time: before.started_at }] as Item[];
   const next = { ...timing, user_item_id: undefined, started_at: new Date(start + 19_800).toISOString() };
-  expect(turnVerb('u0')).not.toBe(turnVerb('u1'));
-  const view = render(draw(task({ state: 'cancelled', stop_reason: 'owner', turn_timings: [before] }), { items: old }));
+  const view = render(draw(task({ state: 'cancelled', stop_reason: 'owner', turn_timings: [before] })));
   expect(screen.getByRole('button', { name: 'Stopped. Jump to bottom' })).toBeTruthy();
-  // The Task works before the turn's timing comes: the last turn's verb is not this one's.
-  view.rerender(draw(task({ turn_timings: [before] }), { items: old }));
+  // The Thread works before the turn's timing comes: nothing of the last turn stands for this one.
+  view.rerender(draw(task({ turn_timings: [before] })));
   expect(screen.queryByRole('button')).toBeNull();
-  // Its timing came, its message not yet: "Working…" and the clock.
-  view.rerender(draw(task({ turn_timings: [before, next] }), { items: old }));
-  expect(screen.queryByText(`${turnVerb('u0')}…`)).toBeNull();
-  expect(screen.getByText('Working…')).toBeTruthy();
+  view.rerender(draw(task({ turn_timings: [before, next] })));
+  expect(screen.getByText('Working')).toBeTruthy();
   expect(screen.getByText('<1s')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
-  // The message landed and the timing links it: its own verb.
-  view.rerender(draw(task({ turn_timings: [before, { ...next, user_item_id: 'u1' }] }), { items: [...old, { id: 'u1', kind: 'user', time: next.started_at }] as Item[] }));
-  expect(screen.getByText(`${turnVerb('u1')}…`)).toBeTruthy();
-});
-
-test('a turn that came without a message (Copilot going on after a background shell) reads "Working…", still, as its name says', () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(start + 5000);
-  const before = { ...timing, id: 'before', state: 'completed', ended_at: timing.started_at } as TurnTiming;
-  const view = render(draw(task({ turn_timings: [before, { ...timing, user_item_id: undefined }] }), { items: [{ id: 'u1', kind: 'user', time: timing.started_at }] as Item[] }));
-  expect(screen.getByText('Working…')).toBeTruthy();
-  expect(screen.getByText('5s')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
 });
 
-test('a turn a restart or close cut off lends the next one no verb while it starts; a dropped stream keeps the running turn\'s', () => {
+test('a turn a restart or close cut off gives the next one no line while it starts; a dropped stream keeps the running turn\'s', () => {
   // The service marks such a turn unknown, without an end.
   const cut = { ...timing, user_item_id: 'u0', state: 'unknown' } as TurnTiming;
-  const old = [{ id: 'u0', kind: 'user', time: cut.started_at }] as Item[];
-  // You reopen the Task with a message: it starts, then works, before the new turn's timing comes.
+  // You reopen the Thread with a message: it starts, then works, before the new turn's timing comes.
   for (const state of ['starting', 'working'] as const) {
-    const view = render(draw(task({ state, turn_timings: [cut] }), { working: true, items: old }));
-    expect(screen.queryByText(`${turnVerb('u0')}…`)).toBeNull();
+    const view = render(draw(task({ state, turn_timings: [cut] }), { working: true }));
     expect(screen.queryByRole('button')).toBeNull();
     view.unmount();
   }
   // The page lost its stream and marked the running turn unknown itself: the turn may still run.
-  render(draw(task({ turn_timings: [cut] }), { items: old, connected: false }));
-  expect(screen.getByText(`${turnVerb('u0')}…`)).toBeTruthy();
+  render(draw(task({ turn_timings: [cut] }), { connected: false }));
+  expect(screen.getByText('Working')).toBeTruthy();
 });
 
 const rows = (extra: Partial<Todo>[] = []): Todo[] =>
@@ -192,69 +171,56 @@ const listOf = (todos: Todo[], extra: Partial<TodoView> = {}): TodoView => ({
 });
 const withTodos = (todos: TodoView, intent = 'Working on the site', extra: Partial<SessionDetail> = {}) => task({ turn_activity: { intent, todos }, subagents: [{ id: 'sub-1', name: 'Index page writer', status: 'running' } as Subagent], ...extra });
 
-test('native plan progress labels only the approved current touched list, and opens a Plan reader', async () => {
+test('native plan progress labels only the approved current touched list, and opens a Plan tab', async () => {
   const user = userEvent.setup();
   const current = (todos: TodoView) => withTodos(todos, 'Implementing the plan', { turn_activity: { plan: true, intent: 'Implementing the plan', todos } });
   const view = render(draw(current(listOf(rows(), { touched: false }))));
   expect(screen.queryByText('Plan')).toBeNull();
-  expect(screen.getByText('from the last turn')).toBeTruthy();
+  expect(screen.getByText('From the last turn')).toBeTruthy();
   view.rerender(draw(current(listOf(rows()))));
   const button = screen.getByRole('button', { name: /Plan 1 of 4 done/ });
-  expect(button.textContent).toContain('Plan 1/4');
   await user.click(button);
   const reader = within(await screen.findByRole('dialog', { name: 'Plan' }));
-  expect(reader.getByRole('heading', { name: 'Plan' })).toBeTruthy();
+  expect(reader.getByRole('tab', { name: 'Plan' })).toBeTruthy();
 });
 
-/** A stage's count on screen: its glyph, its number and its word (which a phone drops), in its colour. */
-const stage = (word: string) => {
-  const words = screen.getByText(word);
-  const count = words.parentElement!;
-  return { text: count.textContent, tone: count.className.match(/text-(accent|warning|muted|success)/)?.[1], glyph: !!count.querySelector('svg'), phoneDrops: words.className.includes('max-sm:hidden') };
-};
+/** The blocks on the strip, as their glyph-less words: "1 done", "2 in progress"… in order. */
+const blocks = (root: HTMLElement) => [...root.querySelectorAll('[title]')].map((b) => `${b.getAttribute('title')} ${b.className.match(/text-(accent|warning|muted|success|error)/)?.[1]} ${b.querySelector('svg') ? 'glyph' : 'no glyph'}`);
 
-test('the todo segment: done of total, meter, Now, every open stage counted in its colour behind its glyph; Now gives way to an intent that says it', () => {
+test('the todo list is stage blocks with their glyph and number, then Now; no meter, no counts in words, no made-up verb', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const view = render(draw(withTodos(listOf(rows()))));
-  const button = screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Now: Build the index page. Show the list' });
+  const button = screen.getByRole('button', { name: 'Now: Build the index page, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
-  expect(button.textContent).toContain('Todo 1/4');
-  expect(screen.getByText('Build the index page')).toBeTruthy();
-  // The in-progress count says how many more there are: no "+1" beside Now.
-  expect(screen.queryByText('+1')).toBeNull();
-  // Each stage is a glyph, a number and a word, never colour alone; a phone keeps the glyph and the number.
-  expect(stage('in progress')).toEqual({ text: '2 in progress', tone: 'accent', glyph: true, phoneDrops: true });
-  expect(stage('blocked')).toEqual({ text: '1 blocked', tone: 'warning', glyph: true, phoneDrops: true });
-  // A stage with no rows is left out.
-  expect(screen.queryByText('to do')).toBeNull();
-  // The meter: one segment per row.
-  expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
+  // ✓ done, ◉ in progress, ⊘ blocked: each its number behind its glyph in its tone; a stage with no rows is left out.
+  expect(blocks(button)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
+  expect([...button.querySelectorAll('[title]')].map((b) => b.textContent?.replace(b.getAttribute('title')!, ''))).toEqual(['1', '2', '1']);
+  expect(screen.getByText('Now:').parentElement!.textContent).toBe('Now: Build the index page');
+  // The intent is not on screen while a row is in progress, nor the counts in words, nor the meter.
+  expect(screen.queryByText(/Working on the site/)).toBeNull();
+  expect(screen.queryByText(/in progress$/, { ignore: '.sr-only' })).toBeNull();
+  expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(0);
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
-  // Copilot's intent is the row in progress: it leads, and "Now:" goes; the in-progress count says how many more there are, so no "+1" follows the lead.
-  view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
+  // A row to do adds its block.
+  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])))));
+  expect(blocks(screen.getByRole('button'))).toEqual(['1 done success glyph', '1 in progress accent glyph', '1 blocked warning glyph', '1 to do muted glyph']);
+  // No row in progress: the agent's words take Now's place.
+  view.rerender(draw(withTodos(listOf(rows([{}, { status: 'pending' }, { status: 'pending' }]), { now: undefined }))));
+  expect(screen.getByText('Working on the site')).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
-  expect(screen.queryByText('+1')).toBeNull();
-  expect(stage('in progress').text).toBe('2 in progress');
-  // The only row in progress: the count still says one is in progress.
-  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 in progress, 1 blocked, 1 to do. Show the list' })).toBeTruthy();
-  expect(screen.queryByText('+1')).toBeNull();
-  expect(stage('in progress').text).toBe('1 in progress');
-  expect(stage('to do')).toEqual({ text: '1 to do', tone: 'muted', glyph: true, phoneDrops: true });
-  // The last turn's list, not touched yet: the same counts, and the reader still opens.
+  // The last turn's list, not touched yet: the same blocks, dimmed, "From the last turn", and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
-  expect(screen.getByText('from the last turn')).toBeTruthy();
-  expect(stage('in progress').text).toBe('2 in progress');
+  expect(screen.getByText('From the last turn')).toBeTruthy();
+  expect(screen.getByText('From the last turn').previousElementSibling!.className).toContain('opacity-55');
   expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   // No list: the line jumps to the bottom as before.
   view.rerender(draw(withTodos({ known: false, touched: false, todos: [], counts: {} })));
   expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Jump to bottom' }).getAttribute('aria-haspopup')).toBeNull();
 });
 
-test('the reader opens on its heading beside the line, keeps focus inside, and Esc gives it back to the line', async () => {
+test('the reader opens on its Todo tab beside the line: rows in plan order, no repeated counts; Esc gives focus back', async () => {
   const user = userEvent.setup();
   render(draw(withTodos(listOf(rows()))));
   const line = screen.getByRole('button', { name: /Show the list$/ });
@@ -262,29 +228,38 @@ test('the reader opens on its heading beside the line, keeps focus inside, and E
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
   expect(line.getAttribute('aria-expanded')).toBe('true');
   expect(line.getAttribute('aria-controls')).toBe(reader.id);
-  await waitFor(() => expect(document.activeElement).toBe(within(reader).getByRole('heading', { name: 'Todo' })));
-  // Sections with their rows; states and the subagent in words.
-  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'Done']);
-  expect(within(reader).getByRole('region', { name: 'In progress' }).textContent).toBe('In progress2Build the index page, by Index page writer, In progressBuild the about page, In progress');
-  // Each eyebrow carries its stage's glyph, and its count in the stage's colour.
-  const eyebrow = within(reader).getByRole('heading', { name: 'Blocked' }).parentElement!;
-  expect(eyebrow.querySelector('svg.text-warning')).toBeTruthy();
-  expect(within(eyebrow).getByText('1').className).toContain('text-warning');
-  expect(within(reader).getByRole('region', { name: 'Blocked' }).textContent).toContain('No token on this machine');
+  const tab = within(reader).getByRole('tab', { name: 'Todo' });
+  await waitFor(() => expect(document.activeElement).toBe(tab));
+  // Without subagents (no Thread scope here), one tab and no "switch" hint.
+  expect(within(reader).getAllByRole('tab').length).toBe(1);
+  expect(within(reader).queryByText('switch')).toBeNull();
+  // Plan order, states and the subagent in words; the row the work is at says "now"; the blocked reason under its row.
+  const items = within(reader).getAllByRole('listitem').map((li) => li.textContent);
+  expect(items).toEqual([
+    'Plan the pages, Done',
+    'Build the index pagenow, by Index page writer, In progress',
+    'Build the about page, In progress',
+    'Sign in to the registryNo token on this machine, Blocked',
+  ]);
+  // No count repeats the strip's blocks: no sections, no "1 done of 4".
+  expect(within(reader).queryAllByRole('region').length).toBe(0);
+  expect(within(reader).queryByText(/done/)).toBeNull();
   expect(within(reader).getByText('Esc')).toBeTruthy();
-  expect(within(reader).getByText('To change it, ask in the chat')).toBeTruthy();
+  expect(within(reader).getByText('Read only')).toBeTruthy();
   // The page behind is out of reach: focus stays in the reader.
   for (let i = 0; i < 3; i++) {
     await user.tab();
     expect(reader.contains(document.activeElement)).toBe(true);
   }
+  // Focus may rest on the foot's "Read only" help, whose tip the first Esc closes.
   await user.keyboard('{Escape}');
+  if (screen.queryByRole('dialog')) await user.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(document.activeElement).toBe(line);
   expect(line.getAttribute('aria-expanded')).toBe('false');
 });
 
-test('a phone gets the list as a sheet with a close button and no key hints', async () => {
+test('a phone gets the tabs as a sheet that repeats the blocks, with a close button and no key hints', async () => {
   const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
   happy.setViewport({ width: 390, height: 844 });
   try {
@@ -299,8 +274,9 @@ test('a phone gets the list as a sheet with a close button and no key hints', as
       await user.tab();
       expect(sheet.contains(document.activeElement)).toBe(true);
     }
+    // The sheet covers the strip, so it repeats the blocks.
+    expect(blocks(sheet)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
     expect(within(sheet).queryByText('Esc')).toBeNull();
-    expect(within(sheet).getByText('To change it, ask in the chat')).toBeTruthy();
     await user.click(within(sheet).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   } finally {
