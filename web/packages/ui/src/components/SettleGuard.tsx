@@ -3,7 +3,7 @@ import type { GitPending } from '../api';
 import { Button } from './ui/button';
 import { AlertDialog } from './ui/dialog';
 
-/** A Settle or Archive the service refused over the Thread folder's unsaved git work (`unsaved_work`). */
+/** A Settle or Archive the service refused over unsaved git work (`unsaved_work`): the Thread's own changes, or all its own worktree's work. */
 export interface UnsavedTarget {
   kind: 'settle' | 'archive';
   /** Where the confirmation hangs: the sidebar row or the control that asked, read as it was activated (`rowAnchor`). */

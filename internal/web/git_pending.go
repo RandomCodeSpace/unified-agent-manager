@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -16,7 +17,9 @@ import (
 // Unsaved git work (docs/web.md): for each repository holding a Task's
 // directory, one cached read of how many tracked files have changes not
 // committed (untracked files left out) and how many commits are on no
-// remote. Tasks in one repository share it. It is read again with the
+// remote. Tasks in one repository share it: it is the folder's indicator;
+// Settle, Archive and the quiet-Task sweep check a Thread's own work
+// instead (putAwayWork). It is read again with the
 // Projects' branches: when a turn ends, after Commit, Pull and Init, when a
 // page loads past the branch TTL, and after Push.
 
@@ -238,32 +241,23 @@ func trackedChanges(status []byte, keep int) (int, []string) {
 // names.
 const maxUnsavedPaths = 3
 
-// codeUnsavedWork classifies a refusal to settle or archive a Task whose
-// repository has unsaved work.
+// codeUnsavedWork classifies a refusal to settle or archive a Task that has
+// unsaved work (putAwayWork).
 const codeUnsavedWork = "unsaved_work"
 
-// checkUnsaved refuses putting away the Task id while the repository
-// holding its directory has unsaved work, read now: the refusal carries the
-// counts and the first changed files. The cached count is read again too.
+// checkUnsaved refuses putting away the Task id while it has unsaved work
+// (putAwayWork), read now: the refusal carries the counts and the first
+// changed files. The folder's cached count is read again too.
 func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
-	dir := s.workdir
-	m.kickGitPendingLocked([]string{dir})
+	m.kickGitPendingLocked([]string{s.workdir})
 	m.mu.Unlock()
-	git, err := execpath.Resolve("git")
-	if err != nil {
-		return nil
-	}
-	top := repoTop(ctx, git, dir)
-	if top == "" {
-		return nil
-	}
-	p, paths := readGitPending(ctx, git, top, maxUnsavedPaths)
-	if p == nil || *p == (GitPending{}) {
+	p, paths, own := m.putAwayWork(ctx, s)
+	if p == nil {
 		return nil
 	}
 	var parts []string
@@ -273,6 +267,97 @@ func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
 	if p.Unpushed > 0 {
 		parts = append(parts, fmt.Sprintf("%d not pushed", p.Unpushed))
 	}
-	return &Error{Status: http.StatusConflict, Code: codeUnsavedWork, Pending: p, Refs: paths,
-		Message: "This Thread's folder has unsaved git work (" + strings.Join(parts, ", ") + ") that is not saved anywhere else."}
+	message := "This Thread's own changes (" + strings.Join(parts, ", ") + ") are not saved anywhere else."
+	if own {
+		message = "This Thread's worktree has unsaved git work (" + strings.Join(parts, ", ") + ") that is not saved anywhere else."
+	}
+	return &Error{Status: http.StatusConflict, Code: codeUnsavedWork, Pending: p, Refs: paths, Message: message}
+}
+
+// putAwayWork is the unsaved git work that keeps s from being settled or
+// archived without force, read now, with its first changed files; nil when
+// there is none or git cannot tell. own reports that s runs in its own
+// worktree: all the work there is its own, so the whole worktree counts,
+// changed tracked files and commits on no remote. In a folder Threads share
+// only s's own files count: those its native session diff lists, where the
+// provider keeps one, and those its edit tools touched, still changed
+// against HEAD, new untracked files included. Commits there are no one
+// Thread's and do not count.
+func (m *Manager) putAwayWork(ctx context.Context, s *webSession) (p *GitPending, paths []string, own bool) {
+	m.mu.Lock()
+	dir := s.workdir
+	own = s.place != nil && s.place.Worktree != ""
+	m.mu.Unlock()
+	if own {
+		git, err := execpath.Resolve("git")
+		if err != nil {
+			return nil, nil, own
+		}
+		top := repoTop(ctx, git, dir)
+		if top == "" {
+			return nil, nil, own
+		}
+		if p, paths = readGitPending(ctx, git, top, maxUnsavedPaths); p == nil || *p == (GitPending{}) {
+			return nil, nil, own
+		}
+		return p, paths, own
+	}
+	mine := m.threadPaths(ctx, s)
+	if len(mine) == 0 {
+		return nil, nil, own
+	}
+	repo, _, err := openRepo(ctx, dir)
+	if err != nil || repo == nil {
+		return nil, nil, own
+	}
+	entries, _, err := repo.status(ctx)
+	if err != nil {
+		return nil, nil, own
+	}
+	resolve := repoPaths(repo.top, dir)
+	set := make(map[string]bool, len(mine))
+	for _, path := range mine {
+		if rel, ok := resolve(path); ok {
+			set[rel] = true
+		}
+	}
+	n := 0
+	for _, e := range entries {
+		if set[e.path] || e.orig != "" && set[e.orig] {
+			n++
+			if len(paths) < maxUnsavedPaths {
+				paths = append(paths, clipRunes(displaytext.Sanitize(e.path), maxNameRunes))
+			}
+		}
+	}
+	if n == 0 {
+		return nil, nil, own
+	}
+	return &GitPending{Uncommitted: n}, paths, own
+}
+
+// threadPaths lists the files s changed, as given: those its edit tools
+// touched and, for a native Task, those its native session diff lists, read
+// now while the conversation is open, else as last read. A closed
+// conversation is not resumed for it.
+func (m *Manager) threadPaths(ctx context.Context, s *webSession) []string {
+	m.mu.Lock()
+	paths := slices.Collect(maps.Keys(s.edits))
+	native, conv, gen, revision := s.nativeChanges, s.conv, s.gen, s.nativeDiffRevision
+	m.mu.Unlock()
+	if native && conv != nil {
+		if files, err := m.readNativeDiff(ctx, s, conv, gen, revision); err == nil {
+			for _, f := range files {
+				paths = append(paths, f.Path)
+				if f.OldPath != "" {
+					paths = append(paths, f.OldPath)
+				}
+			}
+			return paths
+		}
+	}
+	m.mu.Lock()
+	paths = append(paths, s.nativePaths...)
+	m.mu.Unlock()
+	return paths
 }

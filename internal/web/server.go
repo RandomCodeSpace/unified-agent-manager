@@ -1315,8 +1315,8 @@ func (s *Server) handleStage(move func(*Manager, string) (SessionSummary, error)
 }
 
 // handlePutAway serves Settle and Archive: unless the body says
-// {"force": true}, a Task whose repository has unsaved git work is refused
-// with 409 unsaved_work, its counts and first changed files.
+// {"force": true}, a Task with unsaved git work of its own (putAwayWork) is
+// refused with 409 unsaved_work, its counts and first changed files.
 func (s *Server) handlePutAway(move func(*Manager, string) (SessionSummary, error)) http.HandlerFunc {
 	return s.stageHandler(move, true)
 }

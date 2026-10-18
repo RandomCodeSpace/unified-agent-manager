@@ -170,6 +170,14 @@ export function pendingWork(s: Pick<SessionSummary, 'git_pending'> | undefined):
   return p && (p.uncommitted > 0 || p.unpushed > 0) ? p : null;
 }
 
+/**
+ * The unsaved work the summary shows that stops Settle and Archive: a Thread in its own worktree owns all the work
+ * there. In a folder Threads share only the Thread's own changes stop them, which the service reads on the request.
+ */
+export function putAwayWork(s: Pick<SessionSummary, 'git_pending' | 'worktree'> | undefined): GitPending | null {
+  return s?.worktree ? pendingWork(s) : null;
+}
+
 /** Active Tasks, then the two shelves. */
 export function groupTasks(tasks: SessionSummary[]) {
   return {

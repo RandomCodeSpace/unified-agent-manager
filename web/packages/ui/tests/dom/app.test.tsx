@@ -337,8 +337,8 @@ describe('task lifecycle', () => {
   test('settle then reopen from the header menu', async () => {
     const { user } = renderApp('#task=t3');
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
-    // Its folder has unsaved git work: Settle asks first.
-    await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle…' }));
+    // Its folder's counts do not decide: Settle asks the service, whose refusal asks first.
+    await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle' }));
     await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
     expect(await screen.findByText('Settled.')).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Reopen' }));

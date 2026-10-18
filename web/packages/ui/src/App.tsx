@@ -18,7 +18,7 @@ import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, pendingWork, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, putAwayWork, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -1090,8 +1090,9 @@ export default function App() {
     }).catch(() => {});
   }, []);
   /**
-   * Settle or Archive Thread `id`. Unsaved work the summary knows (`known`) opens the confirmation at once, with no
-   * request; otherwise `request` runs, and a refusal over work the summary did not know yet opens it instead of failing.
+   * Settle or Archive Thread `id`. Unsaved work the summary knows will stop it (`known`, see `putAwayWork`) opens the
+   * confirmation at once, with no request; otherwise `request` runs, and a refusal over work the summary did not know
+   * (a shared folder's Thread's own changes) opens it instead of failing.
    * The anchor is read now, as the control is activated: the row stays on screen while its hover Settle leaves it.
    */
   const askUnsaved = useCallback(async <T,>(id: string, known: GitPending | null, request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, list: () => Promise<ChangesData>): Promise<T | void> => {
@@ -1107,7 +1108,7 @@ export default function App() {
       openUnsaved(target({ ...refused, anchor }));
     }
   }, [openUnsaved]);
-  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(id, pendingWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
+  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(id, putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
     kind,
     ...refused,
     force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the thread`),
@@ -1149,7 +1150,7 @@ export default function App() {
       // Known unsaved work goes straight to its confirmation; otherwise today's dialog, which may still meet a refusal.
       archive: (id) => {
         const s = latestSessions.current.find((x) => x.id === id);
-        if (s && pendingWork(s)) void putAway(id, 'archive').catch(() => {});
+        if (s && putAwayWork(s)) void putAway(id, 'archive').catch(() => {});
         else openTaskDialog({ kind: 'archive', id });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
@@ -1192,7 +1193,7 @@ export default function App() {
   /** Another machine's Settle or Archive: the same confirmation, its forced request run against that machine. */
   const remoteAway = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => askUnsaved(
     id,
-    pendingWork(m.state.sessions.find((s) => s.id === id)),
+    putAwayWork(m.state.sessions.find((s) => s.id === id)),
     () => m.client.stage(id, kind),
     (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the thread`) }),
     () => m.client.changes(id, 'workspace'),
@@ -1228,7 +1229,7 @@ export default function App() {
       }, 'unarchive the thread') : undefined,
       archive: (id) => {
         const s = machine()?.state.sessions.find((x) => x.id === id);
-        if (s && pendingWork(s)) run(id, (m) => remoteAway(m, id, 'archive'), 'archive the thread');
+        if (s && putAwayWork(s)) run(id, (m) => remoteAway(m, id, 'archive'), 'archive the thread');
         else openTaskDialog({ kind: 'archive', id, owner });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner }),

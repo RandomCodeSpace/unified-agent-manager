@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -219,12 +220,6 @@ func TestNativeChangesTotalInvalidatedByLaterActivity(t *testing.T) {
 			if got := cachedDiff(m, sum.ID); got != nil {
 				t.Fatalf("later activity retained stale native total: %+v", got)
 			}
-			m.mu.Lock()
-			running := m.sessions[sum.ID].diffRunning
-			m.mu.Unlock()
-			if running {
-				t.Fatal("native invalidation started a background Git recount")
-			}
 			conv.SetDiff([]agentapi.FileDiff{{Path: "native.txt", Patch: "--- a/native.txt\n+++ b/native.txt\n@@ -0,0 +1,2 @@\n+new\n+line\n"}}, nil)
 			if _, err := m.Changes(t.Context(), sum.ID, ScopeSession); err != nil {
 				t.Fatal(err)
@@ -284,5 +279,67 @@ func TestNativeChangesInFlightTotalDoesNotSurviveNewTurn(t *testing.T) {
 	}
 	if got := cachedDiff(m, sum.ID); got != nil {
 		t.Fatalf("older in-flight read restored invalidated native total: %+v", got)
+	}
+}
+
+// A native Task's total fills itself in: a burst of edits, or a turn that
+// wrote files without an edit tool, is read from the native session diff
+// once, diffDelay after the last of them. A read that fails publishes no
+// Git count, and a closed conversation is not resumed for it.
+func TestNativeChangesTotalRecountedAfterEdits(t *testing.T) {
+	old := diffDelay
+	diffDelay = 50 * time.Millisecond
+	t.Cleanup(func() { diffDelay = old })
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, gitRepoFixture(t))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	added := func(path string) agentapi.FileDiff {
+		return agentapi.FileDiff{Path: path, Status: "added", Patch: "--- /dev/null\n+++ b/" + path + "\n@@ -0,0 +1 @@\n+x\n"}
+	}
+	conv.SetDiff(nil, agentapi.ErrBusy)
+	conv.EmitItem(toolEdit("e0", "edit", "tracked.txt", agentapi.ToolCompleted, time.Now()))
+	waitUntil(t, "the busy read", func() bool { return conv.DiffCalls() == 1 })
+	time.Sleep(2 * diffDelay)
+	if got := cachedDiff(m, sum.ID); got != nil {
+		t.Fatalf("a failed native read published a total: %+v", got)
+	}
+
+	conv.SetDiff([]agentapi.FileDiff{added("a.txt"), added("b.txt"), added("c.txt")}, nil)
+	for i, path := range []string{"a.txt", "b.txt", "c.txt"} {
+		conv.EmitItem(toolEdit("e"+strconv.Itoa(i+1), "create", path, agentapi.ToolCompleted, time.Now()))
+	}
+	waitUntil(t, "the recounted total", func() bool {
+		got := cachedDiff(m, sum.ID)
+		return got != nil && *got == DiffStat{Files: 3, Additions: 3}
+	})
+	if calls := conv.DiffCalls(); calls != 2 {
+		t.Fatalf("a burst of 3 edits read the native diff %d times, want once", calls-1)
+	}
+	if got := summaryOf(t, m, sum.ID).Diff; got == nil || got.Files != 3 {
+		t.Fatalf("summary diff = %+v", got)
+	}
+
+	// A shell write shows only in the native diff; the turn's end reads it.
+	conv.SetDiff([]agentapi.FileDiff{added("a.txt"), added("b.txt"), added("c.txt"), added("shell.txt")}, nil)
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the total after a shell write", func() bool {
+		got := cachedDiff(m, sum.ID)
+		return got != nil && got.Files == 4
+	})
+
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	opens, calls := len(prov.Opens()), conv.DiffCalls()
+	m.mu.Lock()
+	m.kickDiffLocked(m.sessions[sum.ID])
+	m.mu.Unlock()
+	time.Sleep(3 * diffDelay)
+	if len(prov.Opens()) != opens || conv.DiffCalls() != calls {
+		t.Fatalf("a closed Task's recount resumed or read: opens %d -> %d, reads %d -> %d", opens, len(prov.Opens()), calls, conv.DiffCalls())
 	}
 }
