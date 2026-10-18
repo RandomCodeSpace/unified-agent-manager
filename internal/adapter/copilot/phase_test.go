@@ -355,16 +355,20 @@ func TestWebPhaseCompactionIsAMainAgentCall(t *testing.T) {
 	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "hi"})
 	h.fs.onEvent(phaseEv("s1", "", 100, &rpc.AssistantTurnStartData{TurnID: "0", Model: copilot.String("gpt-6-luna")}))
 	h.fs.onEvent(phaseEv("u1", "", 101, &rpc.AssistantUsageData{Model: "gpt-6-luna"}))
-	// In a turn: its start names no model, so the Thread's shows; it runs
-	// alongside the main agent's tools.
+	// In a turn: its start names no model, so the Thread's shows.
 	h.fs.onEvent(phaseEv("k1", "", 101, &rpc.SessionCompactionStartData{}))
-	h.fs.onEvent(phaseEv("t1", "", 102, &rpc.ToolExecutionStartData{ToolCallID: "c1", ToolName: "bash"}))
-	if p := lastPhase(t, h); p == nil || p.Calls != 1 || p.Subagents != 0 || !p.Compacting || p.Model != "gpt-6-luna" || !p.CallsSince.Equal(time.Unix(101, 0)) || p.Tool != "bash" {
+	if p := lastPhase(t, h); p == nil || p.Calls != 1 || p.Subagents != 0 || !p.Compacting || p.Model != "gpt-6-luna" || !p.CallsSince.Equal(time.Unix(101, 0)) {
 		t.Fatalf("compacting in the turn = %+v", p)
 	}
-	// The main agent's own call shows over it, both counted.
+	// The main agent going on shows it runs in the background: its call,
+	// whose end is not reported until the turn's, leaves the phase, which
+	// shows the main agent's own work.
+	h.fs.onEvent(phaseEv("t1", "", 102, &rpc.ToolExecutionStartData{ToolCallID: "c1", ToolName: "bash"}))
+	if p := lastPhase(t, h); p == nil || p.Calls != 0 || p.Compacting || p.Tool != "bash" {
+		t.Fatalf("compacting in the background = %+v", p)
+	}
 	h.fs.onEvent(phaseEv("s2", "", 103, &rpc.AssistantTurnStartData{TurnID: "1"}))
-	if p := lastPhase(t, h); p == nil || p.Calls != 2 || p.Compacting {
+	if p := lastPhase(t, h); p == nil || p.Calls != 1 || p.Compacting || !p.CallsSince.Equal(time.Unix(103, 0)) {
 		t.Fatalf("with the main agent's call = %+v", p)
 	}
 	h.fs.onEvent(phaseEv("u2", "", 104, &rpc.AssistantUsageData{Model: "gpt-6-luna"}))

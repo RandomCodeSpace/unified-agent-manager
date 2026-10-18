@@ -1,6 +1,7 @@
 // The status line (DESIGN.md Status line): one quiet caption line over the composer. While the
 // Task works it says what the agent says it is doing (`assistant.intent`, else the turn's verb)
-// and for how long, and a model call being retried; after a stop it says why, until the next
+// and for how long, a model call being retried, and automatic compaction running beside the
+// turn ("Compacting in background", words only); after a stop it says why, until the next
 // turn. With a todo list the agents keep, it adds how far it got, the row in progress and each
 // open stage's count, and opens the list (`TodoReader`). It sits in the dock's overlap, outside the
 // scroller, so coming and going never moves the composer or the transcript. It is still: the ring
@@ -20,7 +21,7 @@ import { PHONE, TodoMeter, TodoReader, TodoStages } from './Todos';
 
 /** What the line says. */
 export type Line =
-  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine; plan?: boolean }
+  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine; plan?: boolean; /** Automatic compaction runs beside the turn. */ background?: boolean }
   | { kind: 'stopped'; short: string; long: string; notYours: boolean }
   | { kind: 'paused'; text: string };
 
@@ -43,7 +44,7 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     const lead = activity?.intent || (key ? turnVerb(key) : '');
     const todo = todoLine(activity?.todos, turn?.started_at);
     // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
-    return { kind: 'working', lead, compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
+    return { kind: 'working', lead, compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), ...(session.compacting_background ? { background: true } : {}), todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
   }
   if (readOnly(session)) return null;
   if (session.state === 'cancelled' && session.stop_reason) {
@@ -107,6 +108,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
                 <ClockWords since={since} timing={timing} />
                 {shown.todo && (shown.plan ? todoSentence(shown.todo).replace('. Todo ', '. Plan ') : todoSentence(shown.todo))}
                 {shown.retry && retrySentence(shown.retry)}
+                {shown.background && '. Compacting in background'}
               </>
             ) : shown.kind === 'stopped' ? (
               shown.long.replaceAll(' · ', ', ')
@@ -145,6 +147,13 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
           <RotateCw className="size-3 shrink-0 text-muted" />
           <span className="shrink-0 text-body">{retry.lead}</span>
           {retry.parts.length > 0 && <span className="min-w-0 shrink-[2] truncate max-sm:hidden">· {retry.parts.join(' · ')}</span>}
+        </>
+      )}
+      {/* Words only: the turn goes on, so the line keeps saying what it does. */}
+      {line.background && (
+        <>
+          <Sep />
+          <span className="min-w-0 shrink-[3] truncate">Compacting in background</span>
         </>
       )}
     </>

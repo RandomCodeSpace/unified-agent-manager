@@ -2016,6 +2016,8 @@ type conversation struct {
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
+	// compaction is the main conversation's compaction in progress.
+	compaction compactionState
 	// turnAt is when the running turn started. sending counts prompts on
 	// their way to the CLI, which Stop treats as a running turn.
 	turnAt  time.Time
@@ -3529,6 +3531,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.noteModelWaitLocked(ev)
 	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
+	c.observeCompactionLocked(ev, agentID)
 	c.observePhaseLocked(ev, agentID)
 	if c.observeActivityLocked(ev, agentID) {
 		return
@@ -3675,12 +3678,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.SessionCompactionStartData:
 		// Manual (/compact) and automatic compaction both report here.
 		if agentID == "" {
+			c.compaction = compactionBlocking
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
 		}
 		return
 	case *rpc.SessionCompactionCompleteData:
 		// Its notice item follows.
 		if agentID == "" {
+			c.compaction = compactionNone
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
 		}
 	case *rpc.UserMessageData:
@@ -3820,6 +3825,52 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}
 }
 
+// compactionState is where the main conversation's compaction stands.
+type compactionState uint8
+
+const (
+	compactionNone compactionState = iota
+	// compactionBlocking runs from its start until the main agent goes on:
+	// /compact, and compaction a turn waits for, hold the conversation.
+	compactionBlocking
+	// compactionBackground is automatic compaction the turn goes on beside;
+	// the CLI reports its end only when the turn ends.
+	compactionBackground
+)
+
+// observeCompactionLocked marks the main conversation's compaction as
+// running in the background at the main agent's first progress during it:
+// a step starting, a message or a tool call, none of which a compaction that
+// holds the conversation lets through. The Thread then shows as working, not
+// compacting, and the compaction's model call leaves the phase, where it
+// would hide the turn's own work: when it ends is not reported until the
+// turn's end.
+func (c *conversation) observeCompactionLocked(ev copilot.SessionEvent, agentID string) {
+	if c.compaction != compactionBlocking || agentID != "" {
+		return
+	}
+	switch ev.Data.(type) {
+	case *rpc.AssistantTurnStartData, *rpc.AssistantMessageData, *rpc.ToolExecutionStartData:
+	default:
+		return
+	}
+	c.compaction = compactionBackground
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction, CompactingBackground: true})
+	if c.phase.endCall(compactionCall) {
+		c.emitPhaseLocked()
+	}
+}
+
+// endBackgroundCompactionLocked ends, with the main turn, a compaction in
+// the background: the CLI reports its end as the turn ends, and one never
+// reported must not mark the next turn.
+func (c *conversation) endBackgroundCompactionLocked() {
+	if c.compaction == compactionBackground {
+		c.compaction = compactionNone
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
+	}
+}
+
 // maxBackgroundCompaction is the highest point where compaction may start:
 // below the CLI's default 0.95, where a turn waits for compaction, which
 // stays as it is.
@@ -3900,6 +3951,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
+	c.endBackgroundCompactionLocked()
 	// Subagents still running go on between turns: their phase follows the
 	// turn's end (emitTurnEndLocked).
 	c.endTurnPhaseLocked()

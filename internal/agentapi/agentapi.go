@@ -1008,8 +1008,9 @@ const (
 	EventTokens    EventKind = "tokens"
 	EventExecution EventKind = "execution"
 	// EventCompaction reports that the provider started (Compacting) or
-	// finished compacting the main conversation; how it ended arrives as a
-	// notice item.
+	// finished compacting the main conversation, or that the compaction goes
+	// on in the background while the turn runs (CompactingBackground); how it
+	// ended arrives as a notice item.
 	EventCompaction EventKind = "compaction"
 	// EventActivity replaces the running turn's live activity with
 	// Event.Activity; it is never persisted.
@@ -1051,8 +1052,12 @@ type Event struct {
 	Detached bool
 	// Title is the untrusted provider title for EventTitle.
 	Title string
-	// Compacting is the payload of EventCompaction.
-	Compacting     bool
+	// Compacting and CompactingBackground are the payload of
+	// EventCompaction: a compaction that holds the conversation, or one the
+	// turn goes on beside; neither once it ended.
+	Compacting           bool
+	CompactingBackground bool
+
 	Activity       *Activity
 	Todos          *TodoList
 	ModelSelection *ModelSelection

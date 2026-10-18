@@ -172,13 +172,14 @@ func compactionDone(s float64, used string) string {
 }
 
 // Compaction calls a model that session.usage_record never records: its
-// duration up to its completion is model time, else its whole run.
+// duration from its start is model time, else up to its completion, else its
+// whole run.
 func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 	got := readSplit(t,
 		compactionStart(0),
-		toolStart(17, "", "c1", "bash"),
-		toolDone(19, "", "c1"), // inside the compaction's call
-		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
+		toolStart(1, "", "c1", "bash"),
+		toolDone(3, "", "c1"), // inside the compaction's call
+		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [0,4]
 	)
 	// A CLI that records no model calls has no model time: the compactions
 	// alone would understate it. Their time still is not local time.
@@ -189,9 +190,9 @@ func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 		splitLine(0, "session.start", "", `{}`),
 		modelCall(50, "", 1000), // [49,50]
 		compactionStart(0),
-		toolStart(1, "", "c1", "bash"),
-		toolDone(3, "", "c1"),
-		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [16,20]
+		toolStart(17, "", "c1", "bash"),
+		toolDone(19, "", "c1"),
+		compactionDone(20, `{"model":"gpt-6-luna","duration":4000,"inputTokens":9}`), // [0,4]
 		compactionStart(30),
 		compactionDone(36, `{"model":"gpt-6-luna"}`), // no duration: [30,36]
 		compactionStart(40),
@@ -203,7 +204,7 @@ func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 	// With the turns' own calls: overlapping time counts once.
 	got = readSplit(t,
 		modelCall(10, "", 10000), // [0,10]
-		compactionStart(5),
+		compactionStart(7),
 		compactionDone(12, `{"duration":5000}`), // [7,12]
 		modelCall(30, "a1", 2000),               // [28,30]
 	)
@@ -213,6 +214,36 @@ func TestTimeSplitCountsCompactionAsModelTime(t *testing.T) {
 	// Only nothing to compact: still no model time recorded.
 	if got = readSplit(t, compactionStart(0), compactionDone(1, "")); got.ModelMS != nil || got.ModelCalls != 0 {
 		t.Fatalf("nothing compacted: %+v", got)
+	}
+}
+
+// Automatic compaction runs beside the turn and completes only with it: its
+// call is placed at its start, not at the turn's end, and the turn's tools
+// after it are local time. Without its start, it ends at its completion; a
+// duration past the completion stops there.
+func TestTimeSplitPlacesBackgroundCompactionAtItsStart(t *testing.T) {
+	got := readSplit(t,
+		splitLine(0, "session.start", "", `{}`),
+		compactionStart(0),
+		modelCall(10, "", 2000), // [8,10], inside the compaction's call
+		toolStart(100, "", "c1", "view"),
+		toolDone(110, "", "c1"),  // the compaction ended long before
+		modelCall(268, "", 1000), // [267,268]
+		splitLine(268.788, "assistant.turn_end", "", `{"turnId":"0"}`),
+		compactionDone(269.102, `{"model":"gpt-6-luna","duration":16117}`), // [0,16.117]
+	)
+	if got.ModelMS == nil || *got.ModelMS != 17117 || got.ModelCalls != 3 || got.LocalMS != 10000 {
+		t.Fatalf("in the background: model=%v calls=%d local=%d", got.ModelMS, got.ModelCalls, got.LocalMS)
+	}
+	got = readSplit(t,
+		splitLine(0, "session.start", "", `{}`),
+		modelCall(1, "", 1000),                  // [0,1]
+		compactionDone(20, `{"duration":4000}`), // no start: [16,20]
+		compactionStart(30),
+		compactionDone(33, `{"duration":5000}`), // past its completion: [30,33]
+	)
+	if got.ModelMS == nil || *got.ModelMS != 8000 || got.ModelCalls != 3 {
+		t.Fatalf("without its start or past its end: model=%v calls=%d", got.ModelMS, got.ModelCalls)
 	}
 }
 

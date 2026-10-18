@@ -343,8 +343,10 @@ type webSession struct {
 	// from the first message or reply, which a model's title replaces; not
 	// persisted.
 	titleFallback bool
-	// compacting is set while the open conversation compacts; not persisted.
-	compacting bool
+	// compacting is set while the open conversation compacts, and
+	// compactingBackground while it compacts beside the running turn; not
+	// persisted.
+	compacting, compactingBackground bool
 	// asking is set while an aside question waits for its answer (aside.go);
 	// not persisted.
 	asking bool
@@ -1246,7 +1248,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, SettledBy: s.settledBy, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
-		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
+		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactingBackground: s.compactingBackground && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:       s.diff,
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
 		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
@@ -2598,7 +2600,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			}
 		}
 	case agentapi.EventCompaction:
-		s.compacting = ev.Compacting
+		s.compacting, s.compactingBackground = ev.Compacting, ev.CompactingBackground
 	case agentapi.EventActivity:
 		if ev.Activity != nil {
 			m.applyActivityLocked(s, *ev.Activity)
@@ -3222,7 +3224,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	req.Model, req.Effort, req.ContextSize = model, effort, contextSize
-	s.context, s.compacting = nil, false
+	s.context, s.compacting, s.compactingBackground = nil, false, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
 		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)

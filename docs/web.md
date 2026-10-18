@@ -652,7 +652,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Compacting the conversation failed: …" with Copilot's reason. Messages you
   send meanwhile follow the usual Send now / After this turn rules. The
   service reports it as `compacting: true` on the Thread summary, absent
-  otherwise; it is live only and never saved.
+  otherwise; it is live only and never saved. Copilot's automatic compaction
+  usually runs in the background: the turn goes on, and Copilot reports the
+  compaction's end only when the turn ends. From the main agent's first step,
+  message or tool call after `session.compaction_start` (none of which a
+  `/compact` or a compaction the turn waits for lets through), the Thread
+  shows as Working, not Compacting: the status line keeps saying what the
+  agent does and adds a quiet "· Compacting in background" (words only, no
+  ring), until the compaction completes or the turn ends. The summary then
+  carries `compacting_background: true` in place of `compacting`, also live
+  only.
 - **Status line**: while a Thread works, the line above the message box says
   what the agent says it is doing (Copilot derives it from its todo list),
   else a calm verb ("Working…" for a turn without a message), and for how
@@ -724,7 +733,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   a running tool, as its subagent reports its own. Compaction is a model
   call of the Thread's own, in a turn or between turns: from
   `session.compaction_start` to `session.compaction_complete`, failed or
-  not, or to the main agent's abort, error or idle; its start names no
+  not, or to the main agent's abort, error or idle, or to its first progress
+  in the background (above, Compacting), after which the phase shows the
+  turn's own work: when the compaction's call ends is not reported until the
+  turn's end; its start names no
   model, so the pill shows **Model · compacting** with the Thread's model.
   A subagent still running when the turn ends (one in the background, or a
   follow-up) keeps its calls and tools after it: between turns the pill
@@ -871,9 +883,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (each `session.usage_record` spans its `duration` up to its timestamp;
   `session.usage_record` never records compaction, so each
   `session.compaction_complete` that called a model spans its
-  `compactionTokensUsed.duration` up to its timestamp, or from its
-  `session.compaction_start` without one, and one with nothing to compact
-  adds nothing; `model_calls` counts both, and the tip says "compaction
+  `compactionTokensUsed.duration` from its `session.compaction_start`
+  (automatic compaction runs beside the turn and completes only with it, so
+  its call ran from its start; never past its completion), up to its
+  timestamp when no start was seen, or from its start to its timestamp
+  without a duration, and one with nothing to compact adds nothing; `model_calls` counts both, and the tip says "compaction
   included"); `model_ms` is null, and `model_calls` 0, for a CLI that
   records no `session.usage_record`, compactions or not, since their time
   alone would understate it ("Model time not recorded for this Thread's CLI

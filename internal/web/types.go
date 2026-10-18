@@ -366,6 +366,10 @@ type SessionSummary struct {
 	// Compacting is set while the open conversation is being compacted
 	// (the /compact command or the provider's automatic compaction).
 	Compacting bool `json:"compacting,omitempty"`
+	// CompactingBackground is set while the provider's automatic compaction
+	// runs beside the open conversation's turn, which goes on meanwhile: the
+	// Task is working, not compacting. Live only, never persisted.
+	CompactingBackground bool `json:"compacting_background,omitempty"`
 	// CompactThreshold is the share of the context, in percent, at which
 	// the open conversation starts compacting: Settings' value when it
 	// opened, which a later change reaches only when it reopens. Omitted
