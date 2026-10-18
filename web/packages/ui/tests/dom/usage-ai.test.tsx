@@ -113,8 +113,11 @@ describe('the Usage and AI button', () => {
     const user = userEvent.setup();
     const { button, rerender } = setup();
     await user.click(button());
-    const now = within(await screen.findByRole('region', { name: 'Now' }));
-    expect(now.getByText('Nothing running')).toBeTruthy();
+    const region = await screen.findByRole('region', { name: 'Now' });
+    const now = within(region);
+    // Beside the label, so idle Now is one row and the popover keeps the top five models without scrolling.
+    expect(region.children).toHaveLength(1);
+    expect(region.firstElementChild!.textContent).toBe('NowNothing running');
     rerender({ threads: 1, subagents: 0, background: 0, local: 1 });
     expect(now.queryByRole('button')).toBeNull();
     expect(now.getByText('1 Thread · Background AI idle')).toBeTruthy();
