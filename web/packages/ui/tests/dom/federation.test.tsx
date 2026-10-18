@@ -613,6 +613,8 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   const nav = await taskRows();
   const row = await nav.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   const shelf = () => Number(/(\d+)/.exec(nav.getByRole('button', { name: /^Settled/ }).textContent ?? '')?.[1] ?? 0);
+  // Each machine's list arrives on its own stream: count the shelf once every machine's rows are in.
+  for (const machine of ['Main Server', 'Workstation C']) await nav.findByRole('button', { name: /Doctor: add terminal line/, description: machine });
   const settled = shelf();
   expect(nav.queryByRole('button', { name: /^Archived/ })).toBeNull();
   const settle = row.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!;
