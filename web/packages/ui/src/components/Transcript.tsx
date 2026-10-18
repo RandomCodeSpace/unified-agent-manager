@@ -273,10 +273,10 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
   return out;
 }
 
-/** The turn card (DESIGN.md turn card): its head on top, its steps under the head while open. */
-const CARD = 'flex flex-col overflow-hidden rounded-md bg-raised shadow-raised';
+/** The turn line (DESIGN.md turn card): its head on top, its steps under the head while open; flat on the page, no panel. */
+const CARD = 'flex flex-col';
 /** The card's head row: the turn's facts, then its counts at the end; it wraps on a narrow screen. */
-const HEAD = 'flex min-h-9 flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-1.5 text-ui tabular-nums text-muted';
+const HEAD = 'flex min-h-9 flex-wrap items-center gap-x-2 gap-y-0.5 py-1.5 text-ui tabular-nums text-muted';
 
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
@@ -408,10 +408,10 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
         {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
         {outcome.actions && <span className={cn(counts.length + failures.length === 0 && 'ml-auto')}>{outcome.actions}</span>}
       </div>
-      <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-2 empty:hidden">{outcome.chips}</div>
+      <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>
       {outcome.reader}
       {listOpened && subagents.length > 0 && (
-        <Collapse open={listOpen} appear inner="px-3 pb-2">
+        <Collapse open={listOpen} appear inner="pb-2">
           <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} calls={calls} tones={tones} /></DetailVisibility>
         </Collapse>
       )}
@@ -489,7 +489,7 @@ function Timeline({ id, entries, ctx, timing }: Readonly<{ id: string; entries: 
     row(item.id, item.time, item.ended_at, tone, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
   }
   return (
-    <div id={id} className="flex flex-col gap-0.5 px-3 pt-1.5 pb-1">
+    <div id={id} className="flex flex-col gap-0.5 pt-1.5 pb-1">
       {rows}
     </div>
   );
