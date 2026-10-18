@@ -28,7 +28,7 @@
   --color-body: #3b3b3b;
   --color-muted: #626262;
   /* Non-text only (glyphs, chevrons, rules): 3:1 on every surface, never under words. Text that read as faint is `muted`. */
-  --color-faint: #8c8c8c;
+  --color-faint: #838383;
   --color-hairline: #e5e5e5;
   --color-hairline-strong: #c7c7c7;
   --color-primary: #111111;
@@ -40,7 +40,7 @@
   --color-selection: #d9d9d9;
   --color-attention: #ad3a0b;
   --color-attention-wash: #fbe5d6;
-  --color-success: #137a3a;
+  --color-success: #137739;
   --color-success-wash: #dcfce7;
   --color-warning: #8f5d00;
   --color-warning-wash: #fbefc6;

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDownToLine, ChevronDown, GitBranch, GitCommitHorizontal, RefreshCw, Sparkles, TriangleAlert, Upload } from 'lucide-react';
+import { ArrowDownToLine, ChevronDown, Cpu, GitBranch, GitCommitHorizontal, RefreshCw, TriangleAlert, Upload } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -242,12 +242,12 @@ export function CommitPanel({
             <label htmlFor={`${formId}-message`} className="text-ui font-medium text-ink">Commit message</label>
             {generated && (
               <span className="inline-flex items-center gap-1 rounded-full bg-info-wash px-2 py-0.5 text-meta text-info">
-                <Sparkles aria-hidden="true" className="size-3" />
+                <Cpu aria-hidden="true" className="size-3" />
                 {mineOnly ? 'Generated from this thread’s changes' : 'Generated from the chosen files'}
               </span>
             )}
             <Button size="sm" variant="subtle" className="ml-auto text-accent" disabled={running !== null || selected.length === 0} loading={running === 'draft'} onClick={generate}>
-              {draft.generated ? <RefreshCw /> : <Sparkles />}
+              {draft.generated ? <RefreshCw /> : <Cpu />}
               {draft.generated ? 'Regenerate' : 'Generate'}
             </Button>
           </div>

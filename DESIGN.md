@@ -13,7 +13,7 @@ colors:
   ink: "#111111"
   body: "#3b3b3b"
   muted: "#626262"
-  faint: "#8c8c8c"
+  faint: "#838383"
   hairline: "#e5e5e5"
   hairline-strong: "#c7c7c7"
   primary: "#111111"
@@ -25,7 +25,7 @@ colors:
   selection: "#d9d9d9"
   attention: "#ad3a0b"
   attention-wash: "#fbe5d6"
-  success: "#137a3a"
+  success: "#137739"
   success-wash: "#dcfce7"
   warning: "#8f5d00"
   warning-wash: "#fbefc6"
@@ -537,7 +537,7 @@ Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one
 ## Colors
 
 ### Theme
-Two schemes on one token set. **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, the ink as accent, colour only for state. **Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, the accent the inverted ink, no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`. Every token has both values; every dark text pair keeps AA and `faint` keeps 3:1 (`tests/theme.test.mjs` checks both). Semantic status colors retain their meaning in both. The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`). It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas. Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
+Two schemes on one token set. **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, the ink as accent, colour only for state. **Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, the accent the inverted ink, no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`. Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them). Semantic status colors retain their meaning in both. The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`). It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas. Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
 
 In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), used as `bg-raised`, `text-muted`, `border-hairline` and so on. Tailwind's own palette is removed (`--color-*: initial`), so nothing outside this table can be written by accident.
 
@@ -550,7 +550,7 @@ In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), u
 | `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs, Thread cards on the rail |
 | `sunken` | #ededed | Wells: code blocks, thinking body, inline code, meter track |
 | `bubble-user` | #efefef | User message bubble |
-| `tint-well` | #f3f3f3 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 3.03:1) |
+| `tint-well` | #f3f3f3 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 3.42:1) |
 | `code-bg` | #f2f2f2 | Neutral background for code |
 | `selection` | #d9d9d9 | `::selection` |
 | `backdrop` | rgba(17,17,17,.35) | Behind dialogs, the drawer and overlay panels |
@@ -562,7 +562,7 @@ In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), u
 | `ink` | #111111 | Titles, selected and needs-you rows, user bubble text, code, project names |
 | `body` | #3b3b3b | Assistant prose, default UI text, rows at rest |
 | `muted` | #626262 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
-| `faint` | #8c8c8c | Glyphs only: chevrons, idle and closed marks, diff line numbers, version (≥3:1 on `rail`, `canvas` and `raised`) |
+| `faint` | #838383 | Glyphs only: chevrons, idle and closed marks, diff line numbers, version (≥3:1) |
 
 ### Lines
 | Role | Value | Use |
@@ -579,7 +579,7 @@ No chrome draws a full-width or full-height line. Where a seam still needs a rul
 | `accent` / `on-accent` | #111111 / #ffffff | Links, focus ring, working dot and word, selected radio check, panel handle when active, caret |
 | `accent-wash` | #e8e8e8 | Locate flash in the transcript |
 | `attention` / `attention-wash` | #ad3a0b / #fbe5d6 | "Needs you": permission and question states, the Approval/Input row words, the chip on a pending card, the yolo mode icon |
-| `success` / `success-wash` | #137a3a / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
+| `success` / `success-wash` | #137739 / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
 | `warning` / `warning-wash` | #8f5d00 / #fbefc6 | Interrupted state, reconnecting banner, context meter at ≥90% |
 | `error` / `error-wash` | #c4262d / #fde0e0 | Failed state, Deny and Delete, error lines, offline banner, diff `−` counts |
 
@@ -608,7 +608,7 @@ Each Project has a badge: two uppercase characters the service chooses from the 
 Every tone clears AA for the text on it (≥4.5:1; the tightest is `orange` at 5.38) and the 3:1 non-text minimum against the sidebar and the canvas. A new tone must keep both.
 
 ### Contrast (WCAG 2.x, computed)
-Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is glyph-only and held at ≥3:1. The Mono values (2026-10-18) were checked for every text tone on `canvas`, `raised` and `surface` and on its wash; the tightest pairs elsewhere are `success` on `sunken` (4.63) and `warning` on `sunken` (4.80), and two fall short: `success` on `tint-selected` (4.34) and `faint` under 3:1 on `sunken`, `bubble` and the tints (2.7–2.9). Do not lighten them and do not darken the grounds. The badge tones have their own table above.
+Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is glyph-only and held at ≥3:1. The Mono values (2026-10-18, `success` and `faint` darkened a step to hold this) are checked in both schemes by `tests/theme.test.mjs`; the tightest pairs are `warning`, `success` and `error` on `tint-selected` (4.51, 4.52, 4.59) and `faint` on `tint-selected` (3.04). Do not lighten them and do not darken the grounds. The badge tones have their own table above.
 
 ## Typography
 

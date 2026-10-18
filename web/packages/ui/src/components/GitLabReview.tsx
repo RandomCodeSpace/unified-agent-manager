@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, FileCode2, MessageSquare, RefreshCw, Search, WandSparkles, Wrench } from 'lucide-react';
+import { ArrowLeft, Check, Cpu, FileCode2, MessageSquare, RefreshCw, Search, Wrench } from 'lucide-react';
 import { useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
@@ -291,7 +291,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
       {writable && <>
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={`gitlab-reply-${iid}`} className="text-caption text-muted">{discussion && !discussion.individual_note ? `Reply on MR !${iid}` : `Comment on MR !${iid}`}</label>
-        {discussion && <Button size="sm" variant="subtle" loading={busy === 'draft_reply'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('draft_reply')}><WandSparkles />Draft reply</Button>}
+        {discussion && <Button size="sm" variant="subtle" loading={busy === 'draft_reply'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('draft_reply')}><Cpu />Draft reply</Button>}
       </div>
       <textarea id={`gitlab-reply-${iid}`} rows={4} value={reply} maxLength={16000} onChange={(event) => updateReply(event.target.value)} placeholder={discussion && !discussion.individual_note ? 'Write a reply…' : 'Write a comment…'} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
       {candidate?.key === key && <details className="text-ui text-body"><summary className="cursor-pointer">Agent draft</summary><GitLabMarkdown text={candidate.text} className="my-2" /><Button size="sm" onClick={() => { updateReply(candidate.text); setCandidate(undefined); }}>Use draft</Button></details>}

@@ -143,7 +143,7 @@ const LIGHT: ITheme = {
   selectionBackground: '#d9d9d9', // selection
   black: '#111111', // ink
   red: '#c4262d', // error
-  green: '#137a3a', // success
+  green: '#137739', // success
   yellow: '#8f5d00', // warning
   blue: '#2a55bd',
   magenta: '#8e3a9a',
