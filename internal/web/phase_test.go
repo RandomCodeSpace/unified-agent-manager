@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":0,"background":0,"local":0}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":0,"background":0,"local":0,"model_threads":[],"subagent_threads":[],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	next := func() ModelCalls {
@@ -99,14 +100,14 @@ func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 	}
 
 	a, convA := createSession(t, m, prov)
-	_, convB := createSession(t, m, prov)
+	b, convB := createSession(t, m, prov)
 	convA.EmitTurn(agentapi.TurnWorking, "")
 	convB.EmitTurn(agentapi.TurnWorking, "")
 	// A burst coalesces into one frame.
 	convA.Emit(phaseEvent(&agentapi.Phase{Calls: 1, CallsSince: time.Unix(1, 0)}))
 	convA.Emit(phaseEvent(&agentapi.Phase{Calls: 2, Subagents: 1, CallsSince: time.Unix(1, 0)}))
 	convB.Emit(phaseEvent(&agentapi.Phase{Tool: "bash", ToolSince: time.Unix(2, 0)}))
-	if got := next(); got != (ModelCalls{Threads: 1, Subagents: 1, Local: 1}) {
+	if got := next(); !sameCalls(got, ModelCalls{Threads: 1, Subagents: 1, Local: 1, ModelThreads: []string{a.ID}, SubagentThreads: []string{a.ID}, LocalThreads: []string{b.ID}}) {
 		t.Fatalf("counts = %+v", got)
 	}
 
@@ -134,7 +135,7 @@ func TestModelCallsCountThreadsSubagentsLocalAndBackgroundAI(t *testing.T) {
 	// A Thread waiting on the owner keeps its subagent's call counted, not its own.
 	convA.EmitInteraction(agentapi.Interaction{ID: "q", Kind: agentapi.InteractionQuestion, Title: "Question", State: agentapi.InteractionPending, Time: time.Unix(3, 0), Questions: []agentapi.Question{{Text: "Which?", Custom: true}}})
 	convA.Emit(phaseEvent(&agentapi.Phase{Calls: 1, Subagents: 1, CallsSince: time.Unix(1, 0)}))
-	if got := next(); got != (ModelCalls{Subagents: 1, Local: 1}) {
+	if got := next(); !sameCalls(got, ModelCalls{Subagents: 1, Local: 1, SubagentThreads: []string{a.ID}, LocalThreads: []string{b.ID}}) {
 		t.Fatalf("while waiting = %+v", got)
 	}
 	if p := shownPhase(t, m, a.ID); p == nil || p.Kind != PhaseWaiting {
@@ -148,7 +149,7 @@ func TestModelCallsFrameFollowsASnapshotTakenMeanwhile(t *testing.T) {
 	defer func(d time.Duration) { modelCallsDelay = d }(modelCallsDelay)
 	modelCallsDelay = 100 * time.Millisecond
 	m, prov, _ := newTestManager(t)
-	_, conv := createSession(t, m, prov)
+	sum, conv := createSession(t, m, prov)
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.Emit(phaseEvent(&agentapi.Phase{Calls: 1, CallsSince: time.Unix(1, 0)}))
 	sub, snapshot, err := m.Subscribe("")
@@ -156,13 +157,13 @@ func TestModelCallsFrameFollowsASnapshotTakenMeanwhile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":1,"subagents":0,"background":0,"local":0}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":1,"subagents":0,"background":0,"local":0,"model_threads":["`+sum.ID+`"],"subagent_threads":[],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	conv.Emit(phaseEvent(nil))
 	var got ModelCalls
 	decodeField(t, frameOf(t, sub, "model_calls"), "model_calls", &got)
-	if got != (ModelCalls{}) {
+	if !sameCalls(got, ModelCalls{}) {
 		t.Fatalf("counts after the call = %+v", got)
 	}
 }
@@ -182,6 +183,12 @@ func TestUtilityCallThatPanicsIsNotCountedAfter(t *testing.T) {
 	if live != 0 {
 		t.Fatalf("Utility calls in flight after a panic = %d", live)
 	}
+}
+
+// sameCalls compares counts and Thread lists, an empty list as none.
+func sameCalls(a, b ModelCalls) bool {
+	return a.Threads == b.Threads && a.Subagents == b.Subagents && a.Background == b.Background && a.Local == b.Local &&
+		slices.Equal(a.ModelThreads, b.ModelThreads) && slices.Equal(a.SubagentThreads, b.SubagentThreads) && slices.Equal(a.LocalThreads, b.LocalThreads)
 }
 
 func modelCallsNow(m *Manager) ModelCalls {
@@ -209,14 +216,14 @@ func TestPhaseBetweenTurnsShowsSubagentsAndCompaction(t *testing.T) {
 	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != PhaseBySubagent || p.Detail != "Survey the docs" || p.Model != "ollama/deepseek-v4.1-flash" || !p.Since.Equal(at(2)) {
 		t.Fatalf("subagent call between turns = %+v", p)
 	}
-	if got := modelCallsNow(m); got != (ModelCalls{Subagents: 1}) {
+	if got := modelCallsNow(m); !sameCalls(got, ModelCalls{Subagents: 1, SubagentThreads: []string{sum.ID}}) {
 		t.Fatalf("counts with a subagent call between turns = %+v", got)
 	}
 	conv.Emit(phaseEvent(&agentapi.Phase{Tool: "bash", Detail: "go test ./...", ToolSince: at(3), ToolSubagent: true}))
 	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseLocal || p.By != PhaseBySubagent || p.Tool != "bash" || p.Detail != "go test ./..." {
 		t.Fatalf("subagent tool between turns = %+v", p)
 	}
-	if got := modelCallsNow(m); got != (ModelCalls{Local: 1}) {
+	if got := modelCallsNow(m); !sameCalls(got, ModelCalls{Local: 1, LocalThreads: []string{sum.ID}}) {
 		t.Fatalf("counts with a subagent tool between turns = %+v", got)
 	}
 
@@ -225,7 +232,7 @@ func TestPhaseBetweenTurnsShowsSubagentsAndCompaction(t *testing.T) {
 	if p := shownPhase(t, m, sum.ID); p == nil || p.Kind != PhaseModel || p.By != PhaseByCompaction || p.Model != "gpt-6-luna" || p.Detail != "" {
 		t.Fatalf("compaction between turns = %+v", p)
 	}
-	if got := modelCallsNow(m); got != (ModelCalls{Threads: 1}) {
+	if got := modelCallsNow(m); !sameCalls(got, ModelCalls{Threads: 1, ModelThreads: []string{sum.ID}}) {
 		t.Fatalf("counts while compacting = %+v", got)
 	}
 
@@ -247,7 +254,7 @@ func TestPhaseBetweenTurnsShowsSubagentsAndCompaction(t *testing.T) {
 	if p := shownPhase(t, m, sum.ID); p != nil {
 		t.Fatalf("after the exit = %+v", p)
 	}
-	if got := modelCallsNow(m); got != (ModelCalls{}) {
+	if got := modelCallsNow(m); !sameCalls(got, ModelCalls{}) {
 		t.Fatalf("counts after the exit = %+v", got)
 	}
 }
@@ -265,7 +272,7 @@ func TestModelCallsDropAClosedThreadsSubagent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Unsubscribe(sub)
-	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":1,"background":0,"local":0}` {
+	if f := parseFrame(t, snapshot); string(f.data["model_calls"]) != `{"threads":0,"subagents":1,"background":0,"local":0,"model_threads":[],"subagent_threads":["`+sum.ID+`"],"local_threads":[]}` {
 		t.Fatalf("snapshot model_calls = %s", f.data["model_calls"])
 	}
 	if _, err := m.Close(sum.ID); err != nil {
@@ -276,7 +283,25 @@ func TestModelCallsDropAClosedThreadsSubagent(t *testing.T) {
 	}
 	var got ModelCalls
 	decodeField(t, frameOf(t, sub, "model_calls"), "model_calls", &got)
-	if got != (ModelCalls{}) {
+	if !sameCalls(got, ModelCalls{}) {
 		t.Fatalf("counts after the close = %+v", got)
+	}
+}
+
+// Each list of Threads stops at maxModelCallThreads, sorted; the counts
+// stay whole.
+func TestModelCallsNameAtMostTheCapOfThreads(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	n := maxModelCallThreads + 3
+	for range n {
+		_, conv := createSession(t, m, prov)
+		conv.Emit(phaseEvent(&agentapi.Phase{Calls: 2, Subagents: 1, CallsSince: time.Unix(1, 0)}))
+	}
+	got := modelCallsNow(m)
+	if got.Threads != n || got.Subagents != n || len(got.ModelThreads) != maxModelCallThreads || len(got.SubagentThreads) != maxModelCallThreads || len(got.LocalThreads) != 0 {
+		t.Fatalf("counts = %d threads, %d subagents; lists %d, %d, %d", got.Threads, got.Subagents, len(got.ModelThreads), len(got.SubagentThreads), len(got.LocalThreads))
+	}
+	if !slices.IsSorted(got.ModelThreads) {
+		t.Fatalf("model Threads not sorted: %v", got.ModelThreads)
 	}
 }

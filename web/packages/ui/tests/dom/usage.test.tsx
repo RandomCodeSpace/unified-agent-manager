@@ -34,7 +34,7 @@ describe('Usage popover', () => {
     await user.keyboard('{Enter}{Enter}');
     expect(await screen.findByRole('region', { name: 'Allowance' })).toBeTruthy();
     const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Threads' }));
-    expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
+    expect(nav.getByRole('button', { name: 'Usage and AI', exact: true }).getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('composer-usage')).toBeNull();
   });
 
@@ -43,9 +43,9 @@ describe('Usage popover', () => {
     vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-10-14T12:00:00Z') });
     const { user } = renderApp('#task=t20');
     const nav = await sidebar();
-    const button = nav.getByRole('button', { name: 'Usage', exact: true });
-    // The footer chip: a meter and the share left; the tip and description carry the allowance, pace and reset.
-    await waitFor(() => expect(button.textContent).toBe('96% left'));
+    const button = nav.getByRole('button', { name: 'Usage and AI', exact: true });
+    // The foot's button: a meter and the share left, then the work in flight; the tip and description carry the allowance, pace and reset.
+    await waitFor(() => expect(button.textContent).toMatch(/^96% left/));
     expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('AI credits: 96% left');
     expect(document.getElementById('composer-usage')).toBeNull();
     expect(button.querySelector<HTMLElement>('[style]')?.style.transform).toBe('scaleX(0.96)');
@@ -133,7 +133,7 @@ describe('Usage popover', () => {
     const { user } = renderApp();
     const nav = await sidebar();
     expect(nav.getByRole('button', { name: 'Settings' })).toBeTruthy();
-    const button = nav.getByRole('button', { name: 'Usage' });
+    const button = nav.getByRole('button', { name: 'Usage and AI' });
     const read = vi.spyOn(api, 'tokenUsage');
     expect(read).not.toHaveBeenCalled();
     expect(api.tokenPrices).not.toHaveBeenCalled();
@@ -172,9 +172,9 @@ describe('Usage popover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
     await user.click(nav.getByRole('button', { name: /^Hide sidebar/ }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
-    // The rail has room for the ring alone: the share left, without its sign.
-    expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96%');
-    await user.click(rail.getByRole('button', { name: 'Usage' }));
+    // The rail stacks the share left, without its sign, over the work in flight.
+    expect(rail.getByRole('button', { name: 'Usage and AI' }).textContent).toMatch(/^96%/);
+    await user.click(rail.getByRole('button', { name: 'Usage and AI' }));
     await screen.findByRole('dialog', { name: 'Usage' });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
@@ -183,7 +183,7 @@ describe('Usage popover', () => {
   test('without connected instances shows this instance’s tokens with no machine filter', async () => {
     const { user } = renderApp();
     const nav = await sidebar();
-    await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
+    await user.click(nav.getByRole('button', { name: 'Usage and AI', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByRole('button', { name: 'Overview' });
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
@@ -212,7 +212,7 @@ describe('Usage popover', () => {
     const { user } = renderApp(settingsOpen ? '#settings' : '');
     const nav = await sidebar();
     if (settingsOpen) await user.click(screen.getByRole('button', { name: 'Composer', exact: true }));
-    await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
+    await user.click(nav.getByRole('button', { name: 'Usage and AI', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     const notice = await popover.findByText(/1 model unpriced/);
     expect(notice.closest('.sr-only')).toBeNull();

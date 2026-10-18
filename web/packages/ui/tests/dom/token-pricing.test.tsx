@@ -43,7 +43,7 @@ describe('model token prices', () => {
     await section.findByText('All models have prices. Select Show all models to edit them.');
     expect(section.queryByRole('combobox', { name: 'Model', exact: true })).toBeNull();
     expect(section.queryByRole('button', { name: 'Save token prices' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Usage', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Usage and AI', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByText('$0.08');
     expect(popover.queryByText(/^Prices missing for/)).toBeNull();

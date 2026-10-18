@@ -1,12 +1,13 @@
-// When the LLM is engaged and when work runs locally: the open Thread's phase under the composer, and the sidebar's
-// AI chip counting the model calls in flight across the service. Mock: t1 runs a tool locally, t8 waits on the model
-// with one subagent, t6 waits on you, t7 compacts, and t22's audits run on after its turn ended.
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+// When the LLM is engaged and when work runs locally: the open Thread's phase under the composer, and the counts of
+// model calls in flight across the service (the sidebar's Usage and AI button shows them: usage-ai.test.tsx). Mock: t1
+// runs a tool locally, t8 waits on the model with one subagent, t6 waits on you, t7 compacts, and t22's audits run on
+// after its turn ended.
+import { act, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { ModelCalls, Phase, SnapshotData } from '../../src/api';
-import { ModelCallsChip, ModelCallsContext, PhasePill, phaseClock } from '../../src/components/ModelPhase';
+import type { Phase, SnapshotData } from '../../src/api';
+import { PhasePill, phaseClock } from '../../src/components/ModelPhase';
 import { initialState, reducer } from '../../src/state';
-import { openTask, renderApp, sidebar } from './render';
+import { openTask } from './render';
 
 afterEach(() => vi.useRealTimers());
 
@@ -119,34 +120,7 @@ describe('the phase under the composer', () => {
   });
 });
 
-describe('the AI chip', () => {
-  function chip(calls: ModelCalls | null) {
-    render(<ModelCallsContext.Provider value={calls}><ModelCallsChip /></ModelCallsContext.Provider>);
-    return screen.queryByRole('button', { name: /^AI\./ });
-  }
-
-  test('counts the model calls in flight, says for what, and what runs locally', () => {
-    const button = chip({ threads: 2, subagents: 1, background: 0, local: 1 })!;
-    expect(button.getAttribute('aria-label')).toBe('AI. Model working now. 2 Threads · 1 subagent · Background AI idle. Local: 1 Thread running a tool');
-    expect(button.textContent).toBe('AI3');
-    expect(button.querySelector('svg')!.getAttribute('class')).toContain('text-accent');
-  });
-
-  test('is muted with no count while no model call runs', () => {
-    const button = chip({ threads: 0, subagents: 0, background: 0, local: 0 })!;
-    expect(button.getAttribute('aria-label')).toBe('AI. No model calls now');
-    expect(button.textContent).toBe('AI');
-    expect(button.querySelector('svg')!.getAttribute('class')).toContain('text-faint');
-  });
-
-  test('is absent for a service that does not count', () => {
-    expect(chip(null)).toBeNull();
-  });
-
-  test('counts Background AI calls too', () => {
-    expect(chip({ threads: 0, subagents: 0, background: 2, local: 0 })!.getAttribute('aria-label')).toBe('AI. Model working now. Background AI: 2 calls');
-  });
-
+describe('the model calls in flight', () => {
   test('follows the snapshot and the model_calls frames', () => {
     const snap = { seq: 1, projects: [], sessions: [], session: null, model_calls: { threads: 1, subagents: 0, background: 0, local: 0 } } as unknown as SnapshotData;
     let state = reducer(initialState, { type: 'snapshot', data: snap });
@@ -155,15 +129,5 @@ describe('the AI chip', () => {
     expect(state.modelCalls).toEqual({ threads: 0, subagents: 0, background: 1, local: 2 });
     // An older service's snapshot carries none.
     expect(reducer(state, { type: 'snapshot', data: { ...snap, seq: 3, model_calls: undefined } }).modelCalls).toBeNull();
-  });
-
-  test('sits after Usage in the sidebar foot, from the service snapshot', async () => {
-    renderApp();
-    await sidebar();
-    const foot = within(screen.getByRole('navigation', { name: 'Threads' }).querySelector('footer')!);
-    const button = await foot.findByRole('button', { name: /^AI\./ });
-    // t8's main agent and t7's compaction, t8's subagent and t22's three audits after its turn; t1 runs locally.
-    expect(button.getAttribute('aria-label')).toBe('AI. Model working now. 2 Threads · 4 subagents · Background AI idle. Local: 1 Thread running a tool');
-    expect(foot.getByRole('button', { name: 'Usage' }).compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

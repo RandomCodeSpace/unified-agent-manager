@@ -16,7 +16,6 @@ import { Collapse } from './ui/collapse';
 import { ContextMenu, useLazyContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './UsageButton';
-import { ModelCallsChip } from './ModelPhase';
 import { restartNotice } from './UamService';
 import { BUILD_VERSION, shortVersion } from '../lib/update';
 import { InstanceSwitcher } from './InstanceSwitcher';
@@ -232,7 +231,6 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         <SettingsButton actions={actions} side="right" />
         <UsageButton side="right" onAddPrices={() => actions.onSettings('token-prices')} />
-        <ModelCallsChip variant="rail" side="right" />
         <ConnectionMark connection={connection} side="right" />
       </div>
     </nav>
@@ -885,13 +883,12 @@ export const Sidebar = memo(function Sidebar({
           {CONNECTION_TEXT[connection]}
         </output>
       )}
-      {/* The foot, one row: Settings as an icon with a tip, the account allowance as a small chip, then the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
+      {/* The foot, one row: Settings as an icon with a tip, then one flat button for the account allowance and the AI work in flight, then the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
       <footer className="flex shrink-0 flex-col gap-1 px-2 pb-2">
         <div className="fade-rule mx-1 mb-1" aria-hidden="true" />
         <div className="flex min-w-0 items-center gap-1">
           <SettingsButton actions={actions} />
           <UsageButton variant="chip" side="top" className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
-          <ModelCallsChip className="ml-1" />
           <span className="flex-1" />
           {version && <VersionMeta version={version} />}
           {connection === 'connected' && <output className="sr-only">{CONNECTION_TEXT.connected}</output>}
