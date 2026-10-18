@@ -3,7 +3,7 @@ import { localPath, taskFile } from './markdown.ts';
 /** Both the response prefix and its decoded UTF-8 text stay within this budget. */
 export const PREVIEW_BYTES = 64 * 1024;
 
-export type PreviewKind = 'image' | 'html' | 'pdf' | 'text' | 'binary';
+export type PreviewKind = 'image' | 'html' | 'pdf' | 'audio' | 'video' | 'text' | 'binary';
 export interface PreviewMetadata { mime: string; size?: number; kind: PreviewKind }
 export interface TextPreview { text: string; truncated: boolean }
 
@@ -90,6 +90,8 @@ export class PreviewOwner {
 function previewKind(mime: string): PreviewKind {
   if (mime === 'text/html') return 'html';
   if (mime === 'application/pdf') return 'pdf';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
   if (/^image\/(png|jpeg|gif|webp|svg\+xml|avif|bmp|x-icon)$/.test(mime)) return 'image';
   if (mime.startsWith('text/') || /^(application\/(json|xml|javascript)|[^/]+\/[^;]+\+(json|xml))$/.test(mime)) return 'text';
   return 'binary';

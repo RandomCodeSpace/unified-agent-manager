@@ -29,6 +29,9 @@ const element = tag => ({ children }) => React.createElement(tag, null, children
 const modules = {
   './Details': { DetailVisibility: shell, useDetailVisibility: () => true, BodyNotice: () => null, useBodyCopy: () => ({}), useDisclosure: key => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); }, useItemBody: item => ({ item }) },
   '../api': { modelName: (_meta, _provider, model) => model },
+  '../ApiContext': { useApi: () => ({ supports: () => true, viewFileUrl: (id, path) => `/api/sessions/${id}/files/view/${path}` }) },
+  '../lib/fileReferences': { localHints: () => [] },
+  '../lib/previewContext': { usePreview: () => null },
   '../lib/chart': chart,
   './Chart': { ChartCard: () => null },
   './GitLabReviewRequest': { GitLabReviewRequest: () => null, gitLabReviewRequest: () => null },
@@ -54,7 +57,7 @@ const modules = {
   '../lib/verbs': { turnVerb: () => 'Working' },
   './AskAside': { AsideChip: () => null, useTurnHasAsides: () => false },
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
-  './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, Dot: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }), clockTime: (at) => new Date(at).toISOString().slice(11, 19), dateTime: (at) => new Date(at).toISOString() },
+  './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), PlainText: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, Dot: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }), clockTime: (at) => new Date(at).toISOString().slice(11, 19), dateTime: (at) => new Date(at).toISOString() },
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
   './LiveOutput': { LiveOutput: () => null },
   './Todos': { TurnTodo: () => null },

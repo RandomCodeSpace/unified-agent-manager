@@ -143,3 +143,13 @@ test('GitLab pipelines keep the owning instance and exact commit in every operat
     assert.deepEqual(JSON.parse(requests[2].init.body), { commit_sha: 'exact-sha', pipeline_id: 1842 });
   } finally { globalThis.fetch = original; }
 });
+
+test('a route an older connected instance predates reads as a missing feature, not a failure', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ error: 'this route is not available to connected instances' }, { status: 403 });
+  try {
+    const old = createApiClient(connection());
+    await assert.rejects(old.taskTimeSplit("task"), error => error.status === 412 && errorCode(error) === 'feature_unavailable' && /does not support this yet/.test(error.message));
+    await assert.rejects(api.taskTimeSplit("task"), error => error.status === 403);
+  } finally { globalThis.fetch = original; }
+});

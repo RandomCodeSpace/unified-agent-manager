@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -103,7 +105,7 @@ func (s *Server) connectionTransport(target connectionTarget) (http.RoundTripper
 	transport := &http.Transport{
 		Proxy: nil, ForceAttemptHTTP2: false, TLSClientConfig: config,
 		TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 150 * time.Second,
-		MaxIdleConns: 8, IdleConnTimeout: 30 * time.Second,
+		MaxIdleConns: 8, MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second,
 	}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
@@ -135,4 +137,48 @@ func (s *Server) connectionTransport(target connectionTarget) (http.RoundTripper
 		return nil, errors.New("could not connect to the registered instance")
 	}
 	return transport, nil
+}
+
+// proxyTransports keeps one transport per connection for proxied browser
+// requests, so a Thread's file reads, previews and images reuse warm
+// connections to the instance instead of a TCP and TLS handshake each.
+type proxyTransports struct {
+	mu   sync.Mutex
+	byID map[string]proxyTransport
+}
+
+type proxyTransport struct {
+	key       string
+	transport http.RoundTripper
+}
+
+// proxyTransport is connectionTransport, reused while the connection's
+// address, generation and destination policy stay the same.
+func (s *Server) proxyTransport(target connectionTarget) (http.RoundTripper, error) {
+	key := strings.Join([]string{target.BaseURL, strconv.FormatUint(target.Generation, 10), strconv.FormatBool(target.AllowPrivate), strings.Join(target.AllowedAddresses, ",")}, "\x00")
+	s.transports.mu.Lock()
+	defer s.transports.mu.Unlock()
+	cached, ok := s.transports.byID[target.ID]
+	if ok && cached.key == key {
+		return cached.transport, nil
+	}
+	if ok {
+		closeIdle(cached.transport)
+	}
+	transport, err := s.connectionTransport(target)
+	if err != nil {
+		delete(s.transports.byID, target.ID)
+		return nil, err
+	}
+	if s.transports.byID == nil {
+		s.transports.byID = map[string]proxyTransport{}
+	}
+	s.transports.byID[target.ID] = proxyTransport{key: key, transport: transport}
+	return transport, nil
+}
+
+func closeIdle(transport http.RoundTripper) {
+	if idle, ok := transport.(interface{ CloseIdleConnections() }); ok {
+		idle.CloseIdleConnections()
+	}
 }

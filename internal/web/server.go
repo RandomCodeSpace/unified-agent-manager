@@ -56,6 +56,11 @@ const (
 	// opaque, so it holds no cookie, cannot read this service's responses and
 	// cannot reach the opener or navigate the top level.
 	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; frame-ancestors 'self'"
+	// mediaSecurity replaces viewSecurity for PDFs, audio and video: browsers
+	// refuse to run their built-in PDF and media viewers in a sandboxed
+	// document, and these types run no page script when served as their own
+	// type under nosniff.
+	mediaSecurity = "frame-ancestors 'self'"
 	// fileKeyRoute is the view route under a file key (fileKey), the one
 	// route that checks its own credential instead of the cookie.
 	fileKeyRoute = "GET /api/sessions/{id}/files/key/{key}/{path...}"
@@ -102,6 +107,7 @@ type Server struct {
 	federationMux *http.ServeMux
 	// connectionTLS is a test seam for fixture certificate authorities.
 	connectionTLS *tls.Config
+	transports    proxyTransports
 	m             *Manager
 	token         string
 	headerLog     bool
@@ -1163,7 +1169,7 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	h.Set(headerContentType, f.MIME)
 	h.Set(headerCacheControl, "private, no-cache")
 	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, f.Info.Size(), f.Info.ModTime().UnixNano()))
-	h.Set(headerContentSecurity, viewSecurity)
+	h.Set(headerContentSecurity, viewPolicy(f.MIME))
 	h.Set(headerFrameOptions, "SAMEORIGIN")
 	disposition := "inline"
 	if f.MIME == "application/octet-stream" || r.URL.Query().Get("download") == "1" {
@@ -1613,4 +1619,12 @@ func (s *Server) precompressed(w http.ResponseWriter, r *http.Request, name stri
 		return f
 	}
 	return nil
+}
+
+// viewPolicy is the content security policy for a Task file served as mime.
+func viewPolicy(mime string) string {
+	if mime == "application/pdf" || strings.HasPrefix(mime, "video/") || strings.HasPrefix(mime, "audio/") {
+		return mediaSecurity
+	}
+	return viewSecurity
 }

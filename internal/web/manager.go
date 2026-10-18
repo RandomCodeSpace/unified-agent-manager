@@ -363,13 +363,15 @@ type webSession struct {
 	// mode is safe, yolo or assisted: a yolo Task's permission requests are
 	// allowed once without asking; an assisted Task's are when the
 	// provider's assisted review by assistedApprovalModel approves them.
-	mode      store.Mode
-	workdir   string
-	convID    string
-	createdAt time.Time
-	updatedAt time.Time
-	base      string
-	detail    string
+	mode    store.Mode
+	workdir string
+	// realWorkdir is workdir with symbolic links resolved, or "" when the same.
+	realWorkdir string
+	convID      string
+	createdAt   time.Time
+	updatedAt   time.Time
+	base        string
+	detail      string
 	// place is the branch or worktree the Thread started in, nil on the
 	// Project's current branch; branch is the branch checked out in workdir,
 	// as last read (refreshBranches), not persisted.
@@ -628,8 +630,12 @@ type persistKey struct {
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
+	real, err := filepath.EvalSymlinks(workdir)
+	if err != nil || real == filepath.Clean(workdir) {
+		real = ""
+	}
 	return &webSession{
-		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
+		id: id, provider: provider, name: name, workdir: workdir, realWorkdir: real, convID: convID,
 		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe, activeTiming: -1,
 		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
 	}
@@ -1247,7 +1253,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	out := SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
-		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
+		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, RealWorkdir: s.realWorkdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, SettledBy: s.settledBy, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,

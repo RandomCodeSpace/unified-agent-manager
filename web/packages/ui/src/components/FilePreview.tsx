@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Download, ExternalLink, X } from 'lucide-react';
+import { Download, ExternalLink, RotateCw, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { describeError, subscribeAuthLoss } from '../api';
 import { popupOpen } from '../App';
@@ -7,7 +7,9 @@ import { formatSize } from '../lib/attachments';
 import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type TextPreview } from '../lib/preview';
 import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
-import { CodeBlock, Note, Spinner } from './common';
+import { FileMedia, Note, Spinner } from './common';
+import { CodeView } from './GoToFile';
+import { useFileVersion } from './FileReferences';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
@@ -17,6 +19,9 @@ interface Selection {
   target: PreviewTarget;
   file?: PreviewMetadata & Partial<TextPreview>;
   error?: string;
+  /** Counts reloads, so a framed page loads again too. */
+  revision?: number;
+  reloading?: boolean;
 }
 
 /** The selected task owns one request and body; replacing or disposing it aborts both. */
@@ -70,12 +75,31 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
       if (owner.requests.owns(controller)) setSelection({ ...next, error: describeError(error) });
     });
   }, [active, owner, onOpen, api, sessionId]);
-  return { open, close, selection: active && selection?.owner === owner ? selection : null };
+  // Reads the file again in place: what is shown stays until the new read answers.
+  const reload = useCallback(() => {
+    const current = selection;
+    if (!current || current.owner !== owner || !current.target.url || current.target.image || current.target.temporary || current.target.tempPath !== undefined) return;
+    const controller = owner.requests.start();
+    const revision = (current.revision ?? 0) + 1;
+    setSelection({ ...current, reloading: true });
+    api.filePreview(current.target.url, controller.signal).then(
+      file => { if (owner.requests.owns(controller)) setSelection({ ...current, file, error: undefined, revision, reloading: false }); },
+      error => { if (owner.requests.owns(controller)) setSelection({ ...current, error: describeError(error), revision, reloading: false }); },
+    );
+  }, [selection, owner, api]);
+  return { open, close, reload, selection: active && selection?.owner === owner ? selection : null };
 }
 
-export function FilePreview({ selection, sessionId, workdir, inline, onClose }: Readonly<{ selection: Selection; sessionId: string; workdir: string; inline: boolean; onClose: () => void }>) {
+export function FilePreview({ selection, sessionId, workdir, inline, onClose, onReload }: Readonly<{ selection: Selection; sessionId: string; workdir: string; inline: boolean; onClose: () => void; onReload?: () => void }>) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const { target, file, error } = selection;
+  // The agent changed the open file: read it again.
+  const version = useFileVersion(target.path);
+  const opened = useRef({ target, version });
+  useEffect(() => {
+    if (opened.current.target !== target) opened.current = { target, version };
+    else if (opened.current.version !== version) { opened.current.version = version; onReload?.(); }
+  }, [target, version, onReload]);
   useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
   useEffect(() => {
     if (!inline || target.image || file?.kind === 'image') return;
@@ -88,7 +112,9 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose }: 
   const image = target.image || file?.kind === 'image';
   const temporary = target.temporary || target.tempPath !== undefined;
   const limitation = "This file's contents can change. Temporary-file access expires after five minutes or when this preview closes, including in a new tab. Sibling assets are unavailable.";
+  const reloadable = onReload && !temporary && !image && file;
   const actions = target.url && target.original !== false && <>
+    {reloadable && <Button size="sm" variant="secondary" disabled={selection.reloading} onClick={onReload}><RotateCw />Reload</Button>}
     <a href={target.url} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'secondary', size: 'sm' })}><ExternalLink />{image ? 'Open original' : 'Open in new tab'}</a>
     <a href={downloadUrl(target.url)} download={target.name} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Download />Download</a>
   </>;
@@ -103,28 +129,27 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose }: 
   if (error) body = <Note tone="error">{error}</Note>;
   else if (!file) body = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</output>;
   else if (file.kind === 'text') {
-    const source = file.text ? <CodeBlock
-      language="text"
-      text={file.text}
-      className="my-0 flex min-h-64 flex-1 flex-col"
-      body={<pre translate="no" className="flex-1 overflow-x-hidden overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
-    >
-      {null}
-    </CodeBlock> : <Note>This file is empty.</Note>;
+    // The same code view as Go to file: line numbers, highlighting, and the cited line marked.
+    const line = Number(/#L(\d+)$/.exec(target.url ?? '')?.[1]) || undefined;
+    const source = file.text
+      ? <div className="min-h-64 flex-1 overflow-x-auto rounded-sm bg-canvas"><CodeView path={target.path ?? target.name} text={file.text} line={line} /></div>
+      : <Note>This file is empty.</Note>;
     body = <>
-      {file.truncated && <Note>Showing a text preview of at most 64 KiB. Open or download the full file to read the rest.</Note>}
+      {file.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
       {file.text && !temporary && isMarkdown(target.path) ? <MarkdownFile sessionId={sessionId} workdir={workdir} path={target.path!} text={file.text}>{source}</MarkdownFile> : source}
     </>;
   } else if (file.kind === 'html' && target.frameable) {
     body = <iframe
-      key={target.url}
+      key={`${target.url}#${selection.revision ?? 0}`}
       src={target.url}
       title={`Preview ${target.name}`}
       sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
       referrerPolicy="no-referrer"
       className="min-h-64 w-full flex-1 rounded-sm bg-raised"
     />;
-  } else body = <Note>Open this file in a new tab or download it.</Note>;
+  } else if (target.url && (file.kind === 'pdf' || file.kind === 'audio' || file.kind === 'video')) {
+    body = <FileMedia key={`${target.url}#${selection.revision ?? 0}`} kind={file.kind} url={target.url} name={target.name} />;
+  } else body = <Note>Not shown here. Open it in a new tab or download it.</Note>;
   return (
     <SidePanel id="file-preview" inline={inline} open onClose={onClose} onClosed={() => {}} label={`Preview ${target.name}`}>
       <PanelHeader>

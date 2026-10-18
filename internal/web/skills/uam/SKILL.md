@@ -95,16 +95,18 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
 
 - A Markdown link to a file, or a path in inline code, becomes a **file
   chip** that opens a preview, once uam finds a regular file of that path
-  inside the Thread's directory. The chip shows the file's name, not your
-  link text.
+  inside the Thread's directory. The chip shows your link text when it says
+  more than the path, otherwise the file's name.
 - Write paths relative to the Thread's directory (`internal/web/server.go`,
   never a bare `server.go` for a nested file), or absolute. Inline code
   counts when it holds a `/` or ends in an extension (`package.json`);
-  globs, flags, `~/` paths and directories stay code.
+  globs, flags, `~/` paths and directories stay code. Cite a line as
+  `internal/web/server.go:120` (or `:120:5`); the preview opens marked
+  there.
 - A file you created under the system temp directory (`/tmp/report.html`,
   up to 20 MiB) gets an **Open temp file** button instead. Any other path
   outside the Thread's directory stays plain text.
-- The preview shows images, PDFs, audio and video. An HTML page runs in a
+- The preview shows images, and plays PDFs, audio and video in place. An HTML page runs in a
   sandboxed frame and loads its relative CSS, scripts and images from the
   Thread's directory. Other text shows its first 64 KiB.
 - `uam_show_file` checks one file and records it for the owner: `path`

@@ -49,6 +49,18 @@ export function splitBlocks(text: string): string[] {
 
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
+/**
+ * `ref` without a trailing `:line` or `:line:column` (as compilers and agents cite a place in a
+ * file: `src/a.go:12`), with the line as a `#L<line>` fragment. Only a file-like remainder (a
+ * "/" or a `.ext` ending) loses it, so `tel:123` stays an address; a ref with its own `?` or
+ * `#` keeps everything.
+ */
+function splitLine(ref: string): { ref: string; hash: string } {
+  const m = /[?#]/.test(ref) ? null : /:(\d+)(?::\d+)?$/.exec(ref);
+  const rest = m ? ref.slice(0, m.index) : ref;
+  return m && (rest.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(rest)) ? { ref: rest, hash: `#L${m[1]}` } : { ref, hash: '' };
+}
+
 /** A path percent-decoded, as markdown encodes it; a stray `%` is part of the name. */
 function decodePath(p: string): string {
   try {
@@ -74,27 +86,38 @@ export function localPath(ref: string | undefined): string | null {
       return null;
     }
   }
-  if (SCHEME.test(ref)) return null;
+  if (SCHEME.test(splitLine(ref).ref)) return null;
   return decodePath(ref);
+}
+
+const realWorkdirs = new Map<string, string>();
+
+/** Records the Task folder `workdir`'s real path, so `taskFile` maps absolute paths written through it too. */
+export function registerRealWorkdir(workdir: string, real: string | undefined) {
+  if (real && real !== workdir) realWorkdirs.set(workdir.replace(/(?<!\/)\/+$/, ''), real.replace(/(?<!\/)\/+$/, ''));
 }
 
 /**
  * The file a markdown link names, as a "/"-separated path relative to the Task's folder
- * `workdir` with the link's `#fragment`, or null when it is a web address or lies outside
+ * `workdir` with the link's `#fragment` (a `:line` suffix becomes `#L<line>`), or null when it is a web address or lies outside
  * the folder. A relative path is relative to `base`, a folder of the Task's folder ("" is
  * the folder itself, as for a reply; a Markdown file's own folder when one renders); a path
  * is percent-decoded, as markdown encodes it, and its `?query` dropped.
  */
 export function taskFile(ref: string | undefined, workdir: string | undefined, base = ''): { path: string; hash: string } | null {
-  let p = localPath(ref);
-  if (!p || !ref) return null;
-  const hash = /#.*/s.exec(ref)?.[0] ?? '';
+  if (!ref || !localPath(ref)) return null;
+  const line = splitLine(ref);
+  ref = line.ref;
+  let p = localPath(ref)!;
+  const hash = /#.*/s.exec(ref)?.[0] ?? line.hash;
   // Cut before decoding, so an escaped `%23` stays in the name.
   if (!/^file:/i.test(ref)) p = decodePath(ref.replace(/[?#].*/s, ''));
   if (p.startsWith('/')) {
     const dir = workdir?.replace(/(?<!\/)\/+$/, '');
-    if (!dir || !p.startsWith(`${dir}/`)) return null;
-    p = p.slice(dir.length + 1);
+    const real = dir && realWorkdirs.get(dir);
+    const root = [dir, real].find(root => root && p.startsWith(`${root}/`));
+    if (!root) return null;
+    p = p.slice(root.length + 1);
   } else if (base && p) p = `${base}/${p}`;
   const parts: string[] = [];
   for (const part of p.split('/')) {
@@ -110,9 +133,11 @@ export function taskFile(ref: string | undefined, workdir: string | undefined, b
  * Whether an inline code span's text may name a file: no whitespace, no scheme, at most
  * 300 characters, and a "/" or a `.ext` ending (1–10 letters or digits). Calls (`foo()`),
  * globs (`*.ts`), flags (`--force`), versions (`v1.2.3`), home paths (`~/x`) and
- * directories (`out/`) are not; `package.json` is. The Task's folder decides the rest.
+ * directories (`out/`) are not; `package.json` and `src/a.go:12` are. The Task's folder decides
+ * the rest.
  */
 export function looksLikePath(text: string): boolean {
+  text = splitLine(text).ref;
   if (!text || text.length > 300 || /[\s()[\]{}*?<>|"'`$\\]/.test(text) || SCHEME.test(text)) return false;
   if (/^[-~]/.test(text) || text.endsWith('/') || /^v?\d+(\.\d+)+$/i.test(text)) return false;
   return text.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(text);
@@ -121,8 +146,13 @@ export function looksLikePath(text: string): boolean {
 /**
  * The file of the Task folder `workdir` an inline code span names, as `taskFile` maps a
  * link, or null when the text does not look like a path. Code is literal: a `%` is part of
- * the name, never an escape.
+ * the name, never an escape, and so is a `#` unless what precedes it ends in an extension
+ * (`docs/README.md#install`), as in `a#b.txt`.
  */
 export function codeFile(text: string, workdir: string | undefined): { path: string; hash: string } | null {
-  return looksLikePath(text) ? taskFile(text.replaceAll('%', '%25'), workdir) : null;
+  if (!looksLikePath(text)) return null;
+  let ref = text.replaceAll('%', '%25');
+  const at = ref.indexOf('#');
+  if (at >= 0 && !/\.[A-Za-z0-9]{1,10}$/.test(ref.slice(0, at))) ref = ref.replaceAll('#', '%23');
+  return taskFile(ref, workdir);
 }

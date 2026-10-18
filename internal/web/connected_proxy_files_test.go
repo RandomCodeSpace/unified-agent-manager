@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
@@ -293,6 +295,35 @@ func TestConnectedFilesRedirectStaysOnHome(t *testing.T) {
 		server.redirectConnectedView(response, request, local, target)
 		if response.Code != http.StatusBadRequest || response.Header().Get("Location") != "" {
 			t.Fatalf("unsafe redirect path accepted: %q", path)
+		}
+	}
+}
+
+func TestConnectedGrantExpiryToleratesClockSkew(t *testing.T) {
+	s := &Server{token: strings.Repeat("t", 32)}
+	target := targetFixture()
+	r := httptest.NewRequest("POST", "/api/connected/"+target.ID+"/api/sessions/task-1/file-grants", nil)
+	local := httptest.NewRequest("POST", "/api/sessions/task-1/file-grants", nil)
+	for name, expires := range map[string]time.Time{
+		"ahead":  time.Now().Add(grantTTL + time.Minute),
+		"behind": time.Now().Add(-time.Minute),
+		"normal": time.Now().Add(grantTTL - time.Minute),
+	} {
+		data, _ := json.Marshal(fileGrant{ID: "grant-1", Name: "a.html", MIME: "text/html", ExpiresAt: expires})
+		response := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(data)))}
+		if err := s.rewriteConnectedGrant(response, r, local, target); err != nil {
+			t.Fatalf("%s: grant refused: %v", name, err)
+		}
+		var grant fileGrant
+		body, _ := io.ReadAll(response.Body)
+		if err := json.Unmarshal(body, &grant); err != nil {
+			t.Fatal(err)
+		}
+		if !grant.ExpiresAt.After(time.Now()) || grant.ExpiresAt.After(time.Now().Add(grantTTL)) {
+			t.Fatalf("%s: expiry %v outside this clock's grant lifetime", name, grant.ExpiresAt)
+		}
+		if name == "normal" && !grant.ExpiresAt.Equal(expires.Truncate(time.Second)) && grant.ExpiresAt.Sub(expires).Abs() > time.Second {
+			t.Fatalf("normal expiry changed: %v != %v", grant.ExpiresAt, expires)
 		}
 	}
 }

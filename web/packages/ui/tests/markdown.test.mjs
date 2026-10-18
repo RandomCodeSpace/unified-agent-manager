@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../src/lib/markdown.ts';
+import { codeFile, localPath, looksLikePath, registerRealWorkdir, splitBlocks, taskFile } from '../src/lib/markdown.ts';
 
 const html = (text) => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text));
 
@@ -81,6 +81,10 @@ test('a link names a file of the Task folder by its path relative to it', () => 
   assert.deepEqual(file('/home/dev/proj/out/r.html', '/home/dev/proj/'), { path: 'out/r.html', hash: '' });
   assert.deepEqual(file('file:///home/dev/proj/out/a%20b.html#top'), { path: 'out/a b.html', hash: '#top' });
   assert.deepEqual(file('Makefile'), { path: 'Makefile', hash: '' });
+  assert.deepEqual(file('src/a.go:12'), { path: 'src/a.go', hash: '#L12' });
+  assert.deepEqual(file('a.go:12:5'), { path: 'a.go', hash: '#L12' });
+  assert.deepEqual(file('/home/dev/proj/a.go:7'), { path: 'a.go', hash: '#L7' });
+  assert.equal(file('tel:123'), null);
   for (const outside of ['/home/dev/project2/x.html', '/home/dev/proj', '/etc/passwd', '../x.html', 'out/../../x', '.', '#top', 'file:///etc/passwd', 'https://example.com/r.html', 'mailto:a@b', undefined]) {
     assert.equal(file(outside), null, String(outside));
   }
@@ -99,10 +103,10 @@ test('a link in a rendered Markdown file resolves from that file\'s folder', () 
 });
 
 test('inline code looks like a path when it has a slash or a file extension, and is no call, glob, flag or version', () => {
-  for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a'.repeat(295) + '.html']) {
+  for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a.ts:42', 'src/a.go:12:5', 'a'.repeat(295) + '.html']) {
     assert.equal(looksLikePath(path), true, path);
   }
-  for (const other of ['useState', 'Makefile', 'foo()', 'a.b.c()', '--flag', '-v', '*.ts', 'src/**/*.ts', 'v1.2.3', '1.2', '~/notes.md', '~', 'out/', 'https://example.com/a.html', 'file:///home/dev/proj/a.html', 'mailto:a@b.co', 'a.ts:42', 'npm run build', 'a b.md', 'x.', '.x-y', 'Map<string>', '$HOME/a.md', '{a,b}.md', 'a[0].b', 'a'.repeat(296) + '.html', '']) {
+  for (const other of ['useState', 'Makefile', 'foo()', 'a.b.c()', '--flag', '-v', '*.ts', 'src/**/*.ts', 'v1.2.3', '1.2', '~/notes.md', '~', 'out/', 'https://example.com/a.html', 'file:///home/dev/proj/a.html', 'mailto:a@b.co', 'npm run build', 'a b.md', 'x.', '.x-y', 'Map<string>', '$HOME/a.md', '{a,b}.md', 'a[0].b', 'a'.repeat(296) + '.html', '']) {
     assert.equal(looksLikePath(other), false, other);
   }
 });
@@ -115,8 +119,21 @@ test('inline code names a file of the Task folder only when it is inside it', ()
   assert.deepEqual(codeFile('docs/README.md#install', dir), { path: 'docs/README.md', hash: '#install' });
   assert.deepEqual(codeFile('a%20b.md', dir), { path: 'a%20b.md', hash: '' });
   assert.deepEqual(codeFile('100%.txt', dir), { path: '100%.txt', hash: '' });
+  assert.deepEqual(codeFile('a#b.txt', dir), { path: 'a#b.txt', hash: '' });
+  assert.deepEqual(codeFile('src/a#b.txt', dir), { path: 'src/a#b.txt', hash: '' });
+  assert.deepEqual(codeFile('src/main.go:3', dir), { path: 'src/main.go', hash: '#L3' });
+  assert.deepEqual(codeFile('main.go:3:1', dir), { path: 'main.go', hash: '#L3' });
   for (const outside of ['/etc/passwd', '/home/dev/project2/a.html', '../x.html', 'out/../../x.md', '~/a.md', 'useState', 'foo()']) {
     assert.equal(codeFile(outside, dir), null, outside);
   }
   assert.equal(codeFile('/home/dev/proj/a.html', undefined), null);
+});
+
+test('an absolute path through the Task folder\'s real path names the same file', () => {
+  assert.equal(taskFile('/real/proj/src/a.ts', '/home/dev/linked'), null);
+  registerRealWorkdir('/home/dev/linked', '/real/proj');
+  assert.deepEqual(taskFile('/real/proj/src/a.ts', '/home/dev/linked'), { path: 'src/a.ts', hash: '' });
+  assert.deepEqual(codeFile('/real/proj/src/a.ts:4', '/home/dev/linked'), { path: 'src/a.ts', hash: '#L4' });
+  assert.deepEqual(taskFile('/home/dev/linked/src/a.ts', '/home/dev/linked'), { path: 'src/a.ts', hash: '' });
+  assert.equal(taskFile('/real/other/a.ts', '/home/dev/linked'), null);
 });

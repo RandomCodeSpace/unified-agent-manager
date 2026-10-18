@@ -965,18 +965,34 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   An image at a web address stays a link, as the page loads nothing from
   other origins.
 - **File previews**: resolved file references appear as tags with a format
-  icon and the filename. Unknown formats use a default file icon; hover for
-  the full path, which is also part of the accessible link name. Click a tag
-  to open one preview beside the conversation, or in a dialog on a narrow
-  screen. Images and diagrams open
-  larger. Text files show at most the first 64 KiB as plain text, with a notice
-  when more content is available. Use **Open in new tab** or **Download** for
-  the full file; PDFs and unsupported types offer those actions too. HTML
-  reports stay interactive inside an isolated frame. The **Close preview**
-  button remains available; Escape closes the preview when focus is in the
-  app, but does not cross into the app from a focused HTML frame. Closing
-  returns focus to the opening control. Opening another preview or switching
-  Threads discards the old preview and cancels its pending read.
+  icon and the filename, or a link's own words when they say more than its
+  path. A reference in a link or in inline code counts when it has a "/" or
+  a file extension (`package.json`); a bare name without one (`Makefile`)
+  counts once a tool in the Thread read or wrote it. A cited line
+  (`src/a.go:12`, `src/a.go:12:5` or a link's `#L12`) shows after the name.
+  References link the same way in subagent results, the plan, questions,
+  handoff facts, command output and a GitLab review note's `path:line`, and
+  in a whole message too long to show as Markdown. A file tool's row offers
+  **Open** for the files it read or wrote in its menu. An absolute path
+  written through the Thread folder's real location (symbolic links
+  resolved) names the same file. A tag stays a tag while uam checks again
+  that the file still exists, and a failed check is retried after a short
+  delay; an older connected instance that lacks a route says it does not
+  support it. Unknown formats use a default file icon; hover for the full
+  path, which is also part of the accessible link name. Click a tag to open
+  one preview beside the conversation, or in a dialog on a narrow screen.
+  Images and diagrams open larger. Text files show at most the first 64 KiB
+  with line numbers and highlighting, as Go to file does, with the cited
+  line marked, and a notice when more content is available. PDFs, audio and
+  video play in place with the browser's own viewer. The preview reloads in
+  place when a tool in the Thread edits the open file; **Reload** reads it
+  again after other changes. Use **Open in new tab** or **Download** for the
+  full file. HTML reports stay interactive inside an isolated frame. The
+  **Close preview** button remains available; Escape closes the preview when
+  focus is in the app, but does not cross into the app from a focused HTML
+  frame. Closing returns focus to the opening control. Opening another
+  preview or switching Threads discards the old preview and cancels its
+  pending read.
 - **Declared files**: `uam_show_file` records a file reference and optional
   title. Its tool call folds into the turn's activity in both layouts;
   the conversation's inline file link opens the preview without a separate

@@ -825,6 +825,8 @@ export interface SessionSummary {
   /** Set while a title is being made or waits for the first reply; absent from older servers. */
   title_pending?: boolean;
   workdir: string;
+  /** `workdir` with symbolic links resolved, when that differs. */
+  real_workdir?: string;
   /** The branch checked out in the Thread's working folder; absent on a detached head and from older servers (the Project's branch stands in). */
   branch?: string;
   /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
@@ -2049,6 +2051,13 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     if (family && !owner.capabilities.includes(family)) throw new ApiError(412, `This instance does not support ${family.replace('-v1', '').replaceAll('-', ' ')}.`, { code: 'feature_unavailable' });
   }
   function report(error: ApiError): ApiError { onError?.(error); return error; }
+  /** An older instance refuses a route it predates: that is a missing feature there, not a failure. */
+  function failure(status: number, message: string, body: Record<string, unknown>): ApiError {
+    if (owner && status === 403 && message === 'this route is not available to connected instances') {
+      return new ApiError(412, 'This instance does not support this yet. Update uam there to use it.', { code: 'feature_unavailable' });
+    }
+    return new ApiError(status, message, body);
+  }
   function homeCall<T>(method: Method, path: string, body?: unknown): Promise<T> {
     return owner ? homeTransport<T>(method, path, body) : call<T>(method, path, body);
   }
@@ -2073,7 +2082,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     if (res.status === 401 && path !== '/api/login') notifyUnauthorized();
     if (!res.ok) {
       const parsed = await errorBody(res);
-      throw report(new ApiError(res.status, parsed.message, parsed.body));
+      throw report(failure(res.status, parsed.message, parsed.body));
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
@@ -2092,7 +2101,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     if (res.status === 401) notifyUnauthorized();
     if (!res.ok) {
       const parsed = await errorBody(res);
-      throw report(new ApiError(res.status, parsed.message, parsed.body));
+      throw report(failure(res.status, parsed.message, parsed.body));
     }
     const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'download';
     return { blob: await res.blob(), name };
@@ -2102,14 +2111,27 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
   /** `source` reads an HTML page's text too. */
   async function filePreview(path: string, signal: AbortSignal, knownMetadata?: PreviewMetadata, source = false): Promise<PreviewMetadata & Partial<TextPreview>> {
     return foregroundRead(async () => {
-      const request = async (method: 'HEAD' | 'GET') => {
-        admit(path);
-      const response = await fetch(url(path), { method, credentials: 'same-origin', signal, headers: method === 'GET' ? { Range: `bytes=0-${PREVIEW_BYTES - 1}` } : undefined });
+      const request = async (method: 'HEAD' | 'GET'): Promise<Response> => {
+        let response: Response;
+        try {
+          admit(path);
+          response = await fetch(url(path), { method, credentials: 'same-origin', signal, headers: method === 'GET' ? { Range: `bytes=0-${PREVIEW_BYTES - 1}` } : undefined });
+        } catch (error) {
+          if (signal.aborted) throw error;
+          if (error instanceof ApiError) throw report(error);
+          throw report(new ApiError(0, 'Could not reach the server'));
+        }
         signal.throwIfAborted();
         if (response.status === 401) notifyUnauthorized();
+        // A failed HEAD has no body to explain it: ask again with GET for the server's message
+        // and code. A file that turned readable in between is opened afresh.
+        if (!response.ok && method === 'HEAD' && response.status !== 401) {
+          await (await request('GET')).body?.cancel();
+          throw report(new ApiError(409, 'The file changed while opening. Close and open the preview again.'));
+        }
         if (!response.ok && !(method === 'GET' && response.status === 416)) {
           const parsed = await errorBody(response);
-          throw report(new ApiError(response.status, response.status === 404 ? 'This file is no longer available.' : parsed.message, parsed.body));
+          throw report(response.status === 404 ? new ApiError(404, 'This file is no longer available.', parsed.body) : failure(response.status, parsed.message, parsed.body));
         }
         return response;
       };

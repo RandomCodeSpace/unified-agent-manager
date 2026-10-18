@@ -1,19 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FileCache, FileReferences, FILE_CACHE_BYTES, fitsFileBatch, hintPath } from '../src/lib/fileReferences.ts';
+import { FileCache, FileReferences, FILE_CACHE_BYTES, fitsFileBatch, hintPath, taskFileCache } from '../src/lib/fileReferences.ts';
 
 const tool = (name, file_paths, status = 'completed') => ({ id: 'tool', kind: 'tool', time: '', tool: { name, file_paths, status } });
 
-test('only exact local hints authorize bare inline names; paths remain literal', () => {
+test('file-like inline names are looked up; extensionless bare names need an exact local hint; paths remain literal', () => {
   const owner = new FileReferences('/repo', async paths => answer(paths));
-  assert.equal(owner.eligible('package.json', 'package.json'), false);
-  owner.setItems('main', [tool('view', ['.gitignore'])]);
-  assert.equal(owner.eligible('.gitignore', '.gitignore'), true);
-  owner.setItems('main', [tool('create', ['/repo/package.json'])]);
-  assert.equal(owner.eligible('package.json', 'package.json'), true);
+  for (const name of ['package.json', '.gitignore', 'main.go:3']) assert.equal(owner.eligible(name, name.replace(/:\d+$/, '')), true, name);
+  assert.equal(owner.eligible('Makefile', 'Makefile'), false);
+  owner.setItems('main', [tool('view', ['Makefile'])]);
+  assert.equal(owner.eligible('Makefile', 'Makefile'), true);
+  owner.setItems('main', [tool('create', ['/repo/Makefile'])]);
+  assert.equal(owner.eligible('Makefile', 'Makefile'), true);
   for (const name of ['github-mcp-server-get_file_contents', 'glob', 'grep', 'rg', 'read', 'write']) {
-    owner.setItems('main', [tool(name, ['package.json'])]);
-    assert.equal(owner.eligible('package.json', 'package.json'), false);
+    owner.setItems('main', [tool(name, ['Makefile'])]);
+    assert.equal(owner.eligible('Makefile', 'Makefile'), false);
   }
   assert.equal(owner.eligible('./package.json', 'package.json'), true);
   assert.equal(hintPath('/repo/./文%23#?.txt', '/repo'), '文%23#?.txt');
@@ -51,7 +52,10 @@ test('positive/negative TTLs and both LRU caps are enforced', () => {
   assert.equal(cache.get('no', 4999), false);
   assert.equal(cache.get('no', 5000), undefined);
   assert.equal(cache.get('yes', 29999), true);
-  assert.equal(cache.get('yes', 30000), undefined);
+  assert.equal(cache.fresh('yes', 29999), true);
+  // An expired positive answer stays shown until a fresh answer replaces it.
+  assert.equal(cache.get('yes', 30000), true);
+  assert.equal(cache.fresh('yes', 30000), false);
   for (let i = 0; i < 256; i++) cache.set(`p${i}`, true, 0);
   cache.get('p0', 1); cache.set('next', true, 1);
   assert.equal(cache.size, 256); assert.equal(cache.get('p1', 1), undefined); assert.equal(cache.get('p0', 1), true);
@@ -110,15 +114,17 @@ for (const exists of [true, false]) test(`an expired ${exists ? 'available' : 'm
   owner.observe(root); owner.start();
   await tick(); await tick();
   assert.equal(owner.cache.get('src/0.ts'), exists);
-  // A later React snapshot reads the same path after its positive or negative TTL.
-  assert.equal(owner.cache.get('src/0.ts', Date.now() + (exists ? 30_001 : 5_001)), undefined);
+  // A later React snapshot reads the same path after its positive or negative TTL: a link
+  // stays a link while it is rechecked; a missing answer reads as unknown.
+  assert.equal(owner.cache.get('src/0.ts', Date.now() + (exists ? 30_001 : 5_001)), exists ? true : undefined);
+  if (exists) owner.cache.set('src/0.ts', true, Date.now() - 30_001);
   owner.demand();
   await tick(); await tick();
   assert.equal(calls, 2);
   assert.equal(owner.cache.get('src/0.ts'), true);
 });
 
-test('errors remain unknown and wait for new demand; disposal rejects a late response', async t => {
+test('errors remain unknown and retry with backoff or on new demand; disposal rejects a late response', async t => {
   const root = dom(t, 1); let calls = 0, finish, signal;
   const owner = new FileReferences('/repo', async (paths, controllerSignal) => {
     calls++; signal = controllerSignal;
@@ -130,10 +136,34 @@ test('errors remain unknown and wait for new demand; disposal rejects a late res
   await tick(); await tick();
   assert.equal(calls, 1); assert.equal(owner.cache.get('src/0.ts'), undefined);
   owner.scrolled(); await tick(); await tick();
-  assert.equal(calls, 1, 'scrolling with the same visible candidate must not retry errors');
+  assert.equal(calls, 1, 'scrolling with the same visible candidate must not retry errors at once');
   owner.focus(); await tick(); assert.equal(calls, 2);
   owner.stop(); assert.equal(signal.aborted, true);
   finish(); await tick(); assert.equal(owner.cache.size, 0);
+});
+
+test('a failed lookup retries its visible candidates after a delay', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const root = dom(t, 1); let calls = 0;
+  const owner = new FileReferences('/repo', async paths => { calls++; if (calls === 1) throw new Error('remote unavailable'); return answer(paths); });
+  t.after(() => owner.stop());
+  owner.observe(root); owner.start();
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(0); await Promise.resolve(); }
+  assert.equal(calls, 1);
+  t.mock.timers.tick(2_000);
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(0); await Promise.resolve(); }
+  assert.equal(calls, 2);
+  assert.equal(owner.cache.get('src/0.ts'), true);
+});
+
+test('answers outlive one lookup lifetime of the same client and Task folder', () => {
+  const client = {};
+  const cache = taskFileCache(client, 'task', '/repo');
+  const first = new FileReferences('/repo', async paths => answer(paths), cache);
+  first.cache.set('a.ts', true); first.stop();
+  assert.equal(new FileReferences('/repo', async paths => answer(paths), taskFileCache(client, 'task', '/repo')).cache.get('a.ts'), true);
+  assert.equal(taskFileCache(client, 'other', '/repo').get('a.ts'), undefined);
+  assert.equal(taskFileCache({}, 'task', '/repo').get('a.ts'), undefined);
 });
 
 test('completed local edits invalidate hints, including delete, without asserting missing', async t => {
@@ -143,7 +173,8 @@ test('completed local edits invalidate hints, including delete, without assertin
   owner.cache.set('old.ts', true); owner.cache.set('new.ts', false);
   owner.setItems('main', [tool('apply_patch', ['old.ts', 'new.ts'])]);
   assert.equal(owner.cache.get('old.ts'), undefined); assert.equal(owner.cache.get('new.ts'), undefined);
-  owner.setItems('agent', [tool('view', ['package.json'])]);
-  assert.equal(owner.eligible('package.json', 'package.json'), true);
-  owner.removeItems('agent'); assert.equal(owner.eligible('package.json', 'package.json'), false);
+  owner.setItems('agent', [tool('view', ['Makefile'])]);
+  assert.equal(owner.eligible('Makefile', 'Makefile'), true);
+  // Closing a subagent's panel keeps its hints, so links that rely on them stay links.
+  owner.removeItems('agent'); assert.equal(owner.eligible('Makefile', 'Makefile'), true);
 });
