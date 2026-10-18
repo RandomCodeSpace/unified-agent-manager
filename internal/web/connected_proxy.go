@@ -164,13 +164,10 @@ func (s *Server) connectedTerminalOrigin(r *http.Request) bool {
 }
 
 func (s *Server) proxyConnected(w http.ResponseWriter, r, local *http.Request, target connectionTarget, lifetime context.Context, pattern string) {
-	transport, err := s.connectionTransport(target)
+	transport, err := s.proxyTransport(target)
 	if err != nil {
 		writeFailure(w, err)
 		return
-	}
-	if idle, ok := transport.(interface{ CloseIdleConnections() }); ok {
-		defer idle.CloseIdleConnections()
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	stop := context.AfterFunc(lifetime, cancel)
@@ -326,12 +323,17 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 		}
 	}
 	headers.Set("Cache-Control", "no-store")
+	if pattern == "GET /api/sessions/{id}/files/view/{path...}" || pattern == "GET /api/sessions/{id}/files/raw" {
+		// As the local routes: the browser keeps the file and revalidates it by ETag.
+		headers.Set("Cache-Control", "private, no-cache")
+	}
 	headers.Set("X-Content-Type-Options", "nosniff")
 	headers.Set("Referrer-Policy", "no-referrer")
 	headers.Set("Content-Security-Policy", contentSecurity)
 	headers.Set("X-Frame-Options", "DENY")
 	if connectedResourcePattern(pattern) {
-		headers.Set("Content-Security-Policy", viewSecurity)
+		mediaType, _, _ := mime.ParseMediaType(response.Header.Get(headerContentType))
+		headers.Set("Content-Security-Policy", viewPolicy(mediaType))
 		headers.Set("X-Frame-Options", "SAMEORIGIN")
 	}
 	response.Header = headers

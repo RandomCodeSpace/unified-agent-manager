@@ -6,7 +6,7 @@ import { useApi } from '../ApiContext';
 import { ApiError, LIVE, describeError, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
 import { cn } from '../lib/cn';
 import { gitLabMarkdown } from '../lib/gitlabRefs';
-import { dateTime, Markdown, Note, Skeleton } from './common';
+import { dateTime, FileRef, Markdown, Note, Skeleton } from './common';
 import { GitLabItemsContext } from './GitLabStrip';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -267,7 +267,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
             </button>
             {entry.notes.filter((note) => !note.system).map((note) => <article key={note.id} className="flex min-w-0 flex-col gap-2 px-2">
               <div className="flex flex-wrap items-baseline gap-x-2"><span className="text-ui font-medium text-ink">{note.author.name || note.author.username}</span><time dateTime={note.created_at} className="text-meta text-muted">{dateTime(note.created_at)}</time></div>
-              {note.position && <div className="flex items-start gap-1.5 text-caption text-muted"><FileCode2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><code className="min-w-0 break-all font-mono">{note.position.new_path || note.position.old_path}:{note.position.new_line ?? note.position.old_line}</code>{note.position.head_sha !== (review.merge_request.head_sha || sha) && <Chip fill="outline">Earlier commit</Chip>}</div>}
+              {note.position && <div className="flex items-start gap-1.5 text-caption text-muted"><FileCode2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><FileRef className="min-w-0 break-all font-mono" text={[note.position.new_path || note.position.old_path, note.position.new_line ?? note.position.old_line].filter(part => part !== undefined).join(':')} />{note.position.head_sha !== (review.merge_request.head_sha || sha) && <Chip fill="outline">Earlier commit</Chip>}</div>}
               <GitLabMarkdown text={note.body} />
             </article>)}
           </div>;

@@ -252,10 +252,13 @@ type Meta struct {
 
 // SessionSummary is one web session (a Task) as listed.
 type SessionSummary struct {
-	ID             string    `json:"id"`
-	Provider       string    `json:"provider"`
-	Name           string    `json:"name"`
-	Workdir        string    `json:"workdir"`
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+	Workdir  string `json:"workdir"`
+	// RealWorkdir is Workdir with symbolic links resolved, when that differs,
+	// so a path an agent writes through either spelling names the same file.
+	RealWorkdir    string    `json:"real_workdir,omitempty"`
 	ConversationID string    `json:"conversation_id"`
 	State          string    `json:"state"`
 	StateDetail    string    `json:"state_detail"`

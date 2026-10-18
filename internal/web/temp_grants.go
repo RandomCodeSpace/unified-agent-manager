@@ -433,7 +433,7 @@ func (s *Server) handleGrantFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", f.MIME)
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", viewSecurity)
+	w.Header().Set("Content-Security-Policy", viewPolicy(f.MIME))
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	disposition := "inline"
 	if r.URL.Query().Get("download") == "1" || f.MIME == "application/octet-stream" {

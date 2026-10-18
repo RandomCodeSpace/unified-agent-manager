@@ -9,7 +9,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
-import { codeFile, localPath, splitBlocks, taskFile } from '../lib/markdown';
+import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile, type FileFormat } from '../lib/preview';
 import { hintPath } from '../lib/fileReferences';
@@ -547,22 +547,52 @@ function TempFileAction({ file, children }: Readonly<{ file: { path: string; has
 
 const FILE_ICONS = { image: FileImage, pdf: FileType, code: FileCode, data: FileBraces, archive: FileArchive, audio: FileMusic, video: FileVideoCamera, sheet: FileSpreadsheet, text: FileText, file: File } satisfies Record<FileFormat, typeof File>;
 
-/** A compact resolved file label. The path remains the link's identity and accessible name. */
-function FileLink({ path, url }: Readonly<{ path: string; url: string }>) {
+/**
+ * A compact resolved file label. The path remains the link's identity and accessible name; a
+ * cited line (`#L12`) shows after the name, and a Markdown link's own words (`label`) replace
+ * the name. An image the view route serves opens larger at once.
+ */
+function FileLink({ path, url, label: words }: Readonly<{ path: string; url: string; label?: string }>) {
   const preview = usePreview();
   const label = fileLabel(path);
   const Icon = FILE_ICONS[label.format];
+  const line = /#L(\d+)$/.exec(url)?.[1];
+  const image = /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer" title={label.path} aria-label={`Open ${label.path}`} className={cn(chipVariants({ fill: 'well', tone: 'accent' }), 'max-w-full min-w-0 align-middle hover:bg-sunken')} onClick={event => {
+    <a href={url} target="_blank" rel="noopener noreferrer" title={line ? `${label.path}:${line}` : label.path} aria-label={`Open ${label.path}${line ? ` at line ${line}` : ''}`} className={cn(chipVariants({ fill: 'well', tone: 'accent' }), 'max-w-full min-w-0 align-middle hover:bg-sunken')} onClick={event => {
       if (preview && previewClick(event)) {
         event.preventDefault();
-        preview({ url, name: label.name, description: label.path, path: label.path, frameable: true }, event.currentTarget);
+        preview({ url, name: label.name, description: label.path, path: label.path, frameable: true, image }, event.currentTarget);
       }
     }}>
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 truncate">{label.name}</span>
+      <span className="min-w-0 truncate">{words ?? <>{label.name}{line && <span className="text-muted">:{line}</span>}</>}</span>
     </a>
   );
+}
+
+/** A PDF, audio or video file shown in place, with the browser's own viewer or player; null for any other kind. */
+export function FileMedia({ kind, url, name }: Readonly<{ kind: string; url: string; name: string }>) {
+  if (kind === 'pdf') return <iframe src={url} title={`Preview ${name}`} referrerPolicy="no-referrer" className="min-h-96 w-full flex-1 rounded-sm bg-raised" />;
+  // A file the agent made carries no caption track to offer.
+  // eslint-disable-next-line jsx-a11y/media-has-caption
+  if (kind === 'video') return <video src={url} controls preload="metadata" className="max-h-[70vh] w-full rounded-sm bg-sunken" aria-label={name} />;
+  // eslint-disable-next-line jsx-a11y/media-has-caption
+  if (kind === 'audio') return <audio src={url} controls preload="metadata" className="w-full" aria-label={name} />;
+  return null;
+}
+
+/** The plain text of a hast element, as a link's words. */
+function nodeText(node: ExtraProps['node']): string {
+  return node?.children.map(child => child.type === 'text' ? child.value : child.type === 'element' ? nodeText(child) : '').join('') ?? '';
+}
+
+/** A link's words when they say more than its path does: not the path, its name, or the target as written. */
+function linkWords(node: ExtraProps['node'], href: string | undefined, path: string): string | undefined {
+  const words = nodeText(node).trim();
+  const name = path.split('/').pop() ?? path;
+  if (!words || [href, path, name, decodeURI(href ?? '')].includes(words) || words.replace(/:\d+(?::\d+)?$/, '').endsWith(path) || words.replace(/:\d+(?::\d+)?$/, '') === name) return undefined;
+  return words;
 }
 
 function containsImage(node: ExtraProps['node']): boolean {
@@ -578,11 +608,12 @@ function LocalImage({ sessionId, path, alt }: Readonly<{ sessionId: string; path
   const api = useApi();
   const preview = usePreview();
   const url = api.rawFileUrl(sessionId, path);
-  const [failed, setFailed] = useState(false);
+  // Keyed to the URL: a new file or connection generation gets a fresh attempt.
+  const [failedUrl, setFailed] = useState<string | null>(null);
   const [size, setSize] = useState(() => imageSizes.get(url));
   const [open, setOpen] = useState(false);
   if (!api.supports('files-v1')) return <ImageNote alt={alt} detail="Images are unavailable on this instance." />;
-  if (failed) return <ImageNote alt={alt} detail={path} />;
+  if (failedUrl === url) return <ImageNote alt={alt} detail={path} />;
   const name = path.split('/').pop() || path;
   return (
     <>
@@ -596,7 +627,7 @@ function LocalImage({ sessionId, path, alt }: Readonly<{ sessionId: string; path
           loading="lazy"
           decoding="async"
           className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm bg-sunken object-contain"
-          onError={() => setFailed(true)}
+          onError={() => setFailed(url)}
           onLoad={(e) => {
             const { naturalWidth: width, naturalHeight: height } = e.currentTarget;
             if (width && height && !size) {
@@ -663,7 +694,7 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
   const target = linkTarget(api, href, file, sessionId, exists);
   let link: ReactNode;
-  if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} />;
+  if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
   else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
     if (preview && file && localPath(href) && previewClick(event)) {
       event.preventDefault();
@@ -790,6 +821,36 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
       ))}
     </div>
   );
+}
+
+/** A path outside Markdown (a review note's `path:line`) that links as inline code would once the file is known to exist. */
+export function FileRef({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const fileDemand = useFileDemand(text);
+  return <span ref={fileDemand} className="min-w-0"><InlineCode text={text} className={className} /></span>;
+}
+
+const FILE_MENTION = /`([^`\n]{1,300})`|\[([^\]\n]{1,300})\]\(([^)\s]{1,2048})\)/g;
+
+/**
+ * Text too large to parse as Markdown (a whole message of megabytes), shown as written: only
+ * its inline code and links that name files become file links, as they would in Markdown.
+ */
+export function PlainText({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const fileDemand = useFileDemand(text);
+  const parts = useMemo(() => {
+    const out: ReactNode[] = [];
+    let at = 0;
+    for (const m of text.matchAll(FILE_MENTION)) {
+      const file = m[1] !== undefined ? looksLikePath(m[1]) : !!localPath(m[3]);
+      if (!file) continue;
+      out.push(text.slice(at, m.index));
+      out.push(m[1] !== undefined ? <InlineCode key={m.index} text={m[1]} /> : <MdLink key={m.index} href={m[3]}>{m[2]}</MdLink>);
+      at = m.index + m[0].length;
+    }
+    out.push(text.slice(at));
+    return out;
+  }, [text]);
+  return <p ref={fileDemand} className={cn('break-words whitespace-pre-wrap', className)}>{parts}</p>;
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {

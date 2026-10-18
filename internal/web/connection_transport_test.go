@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -105,5 +106,59 @@ func TestConnectionPairDoesNotFollowRedirect(t *testing.T) {
 	}
 	if redirected.Load() != 0 {
 		t.Fatal("pairing forwarded master token to redirect")
+	}
+}
+
+func TestProxyTransportReusesConnectionsUntilThePolicyChanges(t *testing.T) {
+	var conns atomic.Int32
+	host := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	host.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	host.StartTLS()
+	defer host.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(host.Certificate())
+	s := &Server{connectionTLS: &tls.Config{RootCAs: roots}}
+	target := targetFixture()
+	target.BaseURL = host.URL
+	target.AllowPrivate = true
+	allowed, err := connectionAddresses(context.Background(), target.BaseURL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.AllowedAddresses = allowed
+	get := func(target connectionTarget) http.RoundTripper {
+		t.Helper()
+		transport, err := s.proxyTransport(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, _ := http.NewRequest("GET", host.URL, nil)
+		response, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		return transport
+	}
+	first := get(target)
+	for range 4 {
+		if get(target) != first {
+			t.Fatal("same connection policy built a new transport")
+		}
+	}
+	if got := conns.Load(); got != 1 {
+		t.Fatalf("five requests opened %d connections, want 1", got)
+	}
+	target.Generation++
+	if get(target) == first {
+		t.Fatal("a new connection generation reused the old transport")
+	}
+	defer closeIdle(s.transports.byID[target.ID].transport)
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("a new generation opened %d connections in total, want 2", got)
 	}
 }

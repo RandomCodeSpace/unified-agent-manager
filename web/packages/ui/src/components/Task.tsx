@@ -12,7 +12,7 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, type Tone } from './common';
+import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext, type Tone } from './common';
 import { byCodeUnit } from '../lib/order';
 import { cn } from '../lib/cn';
 import { mainCall, parentMap } from '../lib/subagents';
@@ -42,6 +42,7 @@ import { CUT } from './Details';
 import { Schedules } from './Schedules';
 import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
+import { registerRealWorkdir } from '../lib/markdown';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
@@ -389,6 +390,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [locateError]);
   const scroller = useRef<HTMLElement>(null);
   const previewOpened = useCallback(() => { setFilePath(null); setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
+  // Paths written through the folder's real path (symbolic links resolved) name the same files.
+  registerRealWorkdir(session.workdir, session.real_workdir);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
   useLayoutEffect(() => { if (sheetOpen || filesOpen || gitlabOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, filesOpen, gitlabOpen, chartsOpen, output, closePreview]);
@@ -1049,6 +1052,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
+    {/* The Thread's file context for every surface, not just the transcript: subagent results, the plan, questions, handoff facts and command output link files too. */}
+    <SessionContext.Provider value={session.id}>
+    <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
@@ -1202,12 +1208,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
-      {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
+      {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onReload={preview.reload} />}
     </div>
     </GitLabItemsContext.Provider>
     </SubagentScope>
     </TempRootContext.Provider>
     </PreviewContext.Provider>
+    </WorkdirContext.Provider>
+    </SessionContext.Provider>
     </FileReferencesProvider>
   );
 }

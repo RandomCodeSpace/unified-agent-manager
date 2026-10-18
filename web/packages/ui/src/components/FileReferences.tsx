@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
-import { createContext, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { subscribeAuthLoss, type Item } from '../api';
-import { FileReferences } from '../lib/fileReferences';
+import { FileReferences, taskFileCache } from '../lib/fileReferences';
 import { useDetailVisibility } from './Details';
 
 const Files = createContext<FileReferences | null>(null);
@@ -11,11 +11,11 @@ export function FileReferencesProvider({ sessionId, workdir, generation, active,
   const api = useApi();
   // A new lifecycle clears lookup state without remounting the transcript or composer.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const owner = useMemo(() => new FileReferences(workdir, (paths, signal) => api.resolveFiles(sessionId, paths, signal)), [sessionId, workdir, generation, active]);
+  const owner = useMemo(() => new FileReferences(workdir, (paths, signal) => api.resolveFiles(sessionId, paths, signal), taskFileCache(api, sessionId, workdir)), [sessionId, workdir, generation, active]);
   useLayoutEffect(() => {
     if (!active) return;
     owner.start();
-    const unsubscribe = subscribeAuthLoss(() => owner.stop());
+    const unsubscribe = subscribeAuthLoss(() => { owner.stop(); owner.cache.clear(); });
     window.addEventListener('focus', owner.focus);
     window.addEventListener('scroll', owner.scrolled, true);
     return () => {
@@ -58,10 +58,17 @@ export function useFileReference(path: string | undefined, inlineText?: string) 
   return { eligible: state !== 0, exists: state === 2 };
 }
 
+/** A count that grows each time a completed tool in this Thread changes `path`: an open view of it reloads on change. */
+export function useFileVersion(path: string | null | undefined): number {
+  const owner = useContext(Files);
+  const subscribe = useCallback((listener: () => void) => owner?.subscribeChanges(listener) ?? (() => {}), [owner]);
+  return useSyncExternalStore(subscribe, () => (owner && path ? owner.changeCount(path) : 0));
+}
+
 export function useFileDemand(text: string) {
   const owner = useContext(Files);
   const visible = useDetailVisibility();
-  const attach = useCallback((element: HTMLDivElement | null) => {
+  const attach = useCallback((element: HTMLElement | null) => {
     if (element && visible) return owner?.observe(element);
   }, [owner, visible]);
   useEffect(() => { if (visible) owner?.demand(); }, [owner, visible, text]);

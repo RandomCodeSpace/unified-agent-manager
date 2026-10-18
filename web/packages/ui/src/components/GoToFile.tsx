@@ -3,6 +3,7 @@ import { Popover as BasePopover } from '@base-ui/react/popover';
 import { AtSign, ChevronRight, Copy, CornerDownLeft, Download, Ellipsis, ExternalLink, FileCode2, FileDiff, FileImage, FileText, Folder, FolderGit2, FolderOpen, GitBranch, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
+import { useFileVersion } from './FileReferences';
 import { describeError, type ChangeFile, type FileDiff as FileDiffData, type FileEntry, type Project, type SessionSummary } from '../api';
 import { popupOpen } from '../App';
 import { formatSize } from '../lib/attachments';
@@ -12,7 +13,7 @@ import { downloadUrl, type PreviewMetadata, type TextPreview } from '../lib/prev
 import { PreviewContext, type OpenPreview } from '../lib/previewContext';
 import { statusLetter } from '../lib/review';
 import { FileView as DiffView } from './Changes';
-import { Highlighted, Note, Skeleton } from './common';
+import { FileMedia, Highlighted, Note, Skeleton } from './common';
 import { Key } from './InlinePicker';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { BottomSheet, LiftedRow, PanelHeader, SidePanel } from './Subagents';
@@ -133,8 +134,10 @@ function useChanged(sessionId: string) {
 interface Opened { path: string; file?: PreviewMetadata & Partial<TextPreview>; error?: string }
 
 /** One file's preview (its first 64 KiB of text, or its kind), read while `path` is set. */
-function useFile(sessionId: string, path: string | null, version = 0): Opened | null {
+function useFile(sessionId: string, path: string | null): Opened | null {
   const api = useApi();
+  // Reloads in place when the agent changes the file; the old text stays until the new arrives.
+  const version = useFileVersion(path);
   const [shown, setShown] = useState<Opened | null>(null);
   useEffect(() => {
     if (!path) return;
@@ -158,7 +161,7 @@ const CODE_SLICE = 150;
  * Code with a line-number gutter that stays put while long lines scroll sideways; nothing wraps. The
  * whole text shows at once, plain; highlighting follows a slice per frame from the top.
  */
-export function CodeView({ path, text }: Readonly<{ path: string; text: string }>) {
+export function CodeView({ path, text, line }: Readonly<{ path: string; text: string; line?: number }>) {
   const slices = useMemo(() => {
     const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
     const out: string[] = [];
@@ -172,10 +175,15 @@ export function CodeView({ path, text }: Readonly<{ path: string; text: string }
     const frame = requestAnimationFrame(() => setLit({ text, count: count + 1 }));
     return () => cancelAnimationFrame(frame);
   }, [count, slices.parts.length, text]);
+  // A cited line (`a.go:12`, `#L12`) is marked and scrolled into view once per text.
+  const marked = line !== undefined && line >= 1 && line <= slices.lines ? line : undefined;
+  const mark = useRef<HTMLLIElement>(null);
+  useEffect(() => { mark.current?.scrollIntoView({ block: 'center' }); }, [marked, text]);
   return (
-    <div className="grid w-max min-w-full grid-cols-[auto_minmax(0,1fr)] py-2 font-mono text-code">
+    <div className="relative grid w-max min-w-full grid-cols-[auto_minmax(0,1fr)] py-2 font-mono text-code">
+      {marked && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 h-[1lh] bg-accent/10" style={{ top: `calc(0.5rem + ${marked - 1}lh)` }} />}
       <ol aria-hidden="true" className="sticky left-0 z-10 bg-canvas pr-3 pl-3 text-right text-faint tabular-nums select-none">
-        {Array.from({ length: slices.lines }, (_, i) => <li key={i}>{i + 1}</li>)}
+        {Array.from({ length: slices.lines }, (_, i) => <li key={i} ref={i + 1 === marked ? mark : undefined} className={i + 1 === marked ? 'font-medium text-ink' : undefined}>{i + 1}</li>)}
       </ol>
       <pre translate="no" className="pr-6 whitespace-pre text-ink"><code>{slices.parts.map((part, i) => (i < count ? <Highlighted key={i} language={language(path)} code={part} /> : part))}</code></pre>
     </div>
@@ -189,8 +197,9 @@ function FileBody({ sessionId, workdir, opened }: Readonly<{ sessionId: string; 
   if (error) return <Note tone="error" role="alert" className="m-3 [overflow-wrap:anywhere]">{error}</Note>;
   if (!file) return <Skeleton label="Opening the file…" rows={8} className="gap-2 p-3" rowClassName="h-4 w-full" />;
   if (file.kind === 'image') return <div className="p-3"><img src={api.viewFileUrl(sessionId, path)} alt={baseName(path)} className="h-auto max-w-full rounded-sm" /></div>;
+  if (file.kind === 'pdf' || file.kind === 'audio' || file.kind === 'video') return <div className="flex h-full flex-col p-3"><FileMedia kind={file.kind} url={api.viewFileUrl(sessionId, path)} name={baseName(path)} /></div>;
   if (file.text === undefined) return <Note className="m-3">Not shown here. Open it in a new tab or download it.</Note>;
-  if (!file.text) return <Note className="m-3">Empty file.</Note>;
+  if (!file.text) return <Note className="m-3">This file is empty.</Note>;
   const code = <CodeView path={path} text={file.text} />;
   return <>
     {file.truncated && <Note className="mx-3 mt-2">Showing the first 64 KiB. Open or download the file to read the rest.</Note>}

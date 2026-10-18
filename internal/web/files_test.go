@@ -270,7 +270,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		name, _ := url.PathUnescape(p)
 		body, _ := os.ReadFile(filepath.Join(realDir, name))
 		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), body) || h.Get("Content-Type") != want.mime ||
-			h.Get("Content-Security-Policy") != viewSecurity || h.Get("X-Content-Type-Options") != "nosniff" ||
+			h.Get("Content-Security-Policy") != viewPolicy(strings.Split(want.mime, ";")[0]) || h.Get("X-Content-Type-Options") != "nosniff" ||
 			h.Get("X-Frame-Options") != "SAMEORIGIN" ||
 			h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "private, no-cache" ||
 			!strings.HasPrefix(h.Get("Content-Disposition"), want.disposition+"; filename=") {
@@ -461,6 +461,13 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 	}
 	if w := ts.do(http.MethodHead, keyURL(sum.ID, key, "notes.md"), ""); w.Code != http.StatusOK {
 		t.Fatalf("keyed HEAD = %d", w.Code)
+	}
+	// Browsers refuse their PDF viewer in a sandboxed document; a PDF runs no
+	// page script under nosniff, while script-capable SVG stays sandboxed.
+	for p, policy := range map[string]string{"doc.pdf": mediaSecurity, "logo.svg": viewSecurity} {
+		if w := ts.do(http.MethodGet, keyURL(sum.ID, key, p), ""); w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != policy || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("keyed %s = %d policy %q", p, w.Code, w.Header().Get("Content-Security-Policy"))
+		}
 	}
 	// Confinement still applies under a key.
 	if w := ts.do(http.MethodGet, keyURL(sum.ID, key, "outside-link.x"), ""); w.Code != http.StatusNotFound {

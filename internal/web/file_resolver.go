@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"syscall"
 	"unicode/utf8"
 
@@ -91,7 +92,9 @@ func (m *Manager) resolveFiles(ctx context.Context, id string, paths []string) (
 			return nil, err
 		}
 		file := resolvedFile{Path: path, Kind: "unavailable"}
-		if readableTaskFile(workdir, path) {
+		// A name the connected file route refuses is never offered as a link,
+		// so a reference behaves the same on this instance and through another.
+		if !strings.ContainsAny(path, "\\\r\n") && readableTaskFile(workdir, path) {
 			file.Exists, file.Kind = true, "file"
 		}
 		files = append(files, file)

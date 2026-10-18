@@ -107,8 +107,14 @@ func (s *Server) rewriteConnectedGrant(response *http.Response, r, local *http.R
 		return errors.New("invalid remote file grant")
 	}
 	var grant fileGrant
-	if json.Unmarshal(data, &grant) != nil || !connectedID(grant.ID) || !grant.ExpiresAt.After(time.Now()) || grant.ExpiresAt.After(time.Now().Add(grantTTL+time.Second)) {
+	if json.Unmarshal(data, &grant) != nil || !connectedID(grant.ID) || grant.ExpiresAt.IsZero() {
 		return errors.New("invalid remote file grant")
+	}
+	// The other instance enforces its own expiry. This side's key lasts at most
+	// a grant's lifetime by this clock, so clock skew neither refuses the grant
+	// nor stretches it.
+	if limit := time.Now().Add(grantTTL); !grant.ExpiresAt.After(time.Now()) || grant.ExpiresAt.After(limit) {
+		grant.ExpiresAt = limit
 	}
 	task := strings.TrimSuffix(strings.TrimPrefix(local.URL.Path, sessionsPathPrefix), "/file-grants")
 	if !connectedID(task) {
@@ -183,7 +189,7 @@ func (s *Server) handleRemoteGrantFile(w http.ResponseWriter, r *http.Request) {
 func connectedFileHeaders(h http.Header, r *http.Request, f *ServedFile) {
 	h.Set("Content-Type", f.MIME)
 	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Security-Policy", viewSecurity)
+	h.Set("Content-Security-Policy", viewPolicy(f.MIME))
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("X-Content-Type-Options", "nosniff")
 	disposition := "inline"

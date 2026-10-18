@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestResolveFilesEnvelopeAndCaps(t *testing.T) {
@@ -78,6 +79,12 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(realDir, literal), []byte{0, 1, 2}, 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Names the connected file route refuses are never offered, on any instance.
+	for _, name := range []string{`back\slash.txt`, "line\nbreak.txt"} {
+		if err := os.WriteFile(filepath.Join(realDir, name), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := syscall.Mkfifo(filepath.Join(realDir, "pipe"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +101,7 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 		{"outside-link.png", false}, {"outside-dir/secret.png", false},
 		{filepath.Join(outside, "secret.png"), false}, {"../outside/secret.png", false},
 		{"missing", false}, {"shots", false}, {"pipe", false},
+		{`back\slash.txt`, false}, {"line\nbreak.txt", false},
 	} {
 		got, err := ts.m.resolveFiles(context.Background(), sum.ID, []string{tc.path})
 		if err != nil || len(got) != 1 || got[0].Exists != tc.available || got[0].Path != tc.path {
@@ -107,5 +115,23 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 	cancel()
 	if got, err := ts.m.resolveFiles(ctx, sum.ID, []string{literal}); !errors.Is(err, context.Canceled) || got != nil {
 		t.Fatalf("canceled lookup returned %+v, %v", got, err)
+	}
+}
+
+func TestSessionSummaryNamesTheRealWorkdirOfALinkedFolder(t *testing.T) {
+	realDir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(realDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := newSession("a", "copilot", "", link, "", time.Now()).realWorkdir; got != resolved {
+		t.Fatalf("linked folder realWorkdir=%q, want %q", got, resolved)
+	}
+	if got := newSession("b", "copilot", "", resolved, "", time.Now()).realWorkdir; got != "" {
+		t.Fatalf("plain folder realWorkdir=%q, want empty", got)
 	}
 }

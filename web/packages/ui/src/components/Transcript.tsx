@@ -1,9 +1,12 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
-import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FileText, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
 import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
+import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
 import { isChartCall } from '../lib/chart';
+import { localHints } from '../lib/fileReferences';
+import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
@@ -17,7 +20,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -933,8 +936,8 @@ function noticeRow({ text, className, whole }: MessageParts) {
   );
 }
 
-/** A clipped message's whole text, plain: as Markdown, megabytes of it would hold the page for seconds. */
-const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
+/** A clipped message's whole text, plain: as Markdown, megabytes of it would hold the page for seconds. Its file references still link. */
+const plainText = (text: string) => <PlainText text={text} />;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
 function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn, gitlab, edits }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string; gitlab?: Item[]; edits?: TurnChange }>) {
@@ -1085,6 +1088,10 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const [, copy] = useCopied();
   const { item: fullItem, body, attach, retry } = useItemBody(item, open);
   const t = item.tool;
+  const api = useApi();
+  const preview = usePreview();
+  const workdir = useContext(WorkdirContext);
+  const toggleButton = useRef<HTMLButtonElement>(null);
   // The input copies as its details read it: the command, or the input decoded.
   const inputCopy = useBodyCopy(item, (input) => copy(readableInput(t?.name ?? '', input).text));
   const outputCopy = useBodyCopy(item, copy);
@@ -1098,8 +1105,14 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const word = statusWord(status, ended);
   const images = item.images ?? [];
   const decided = approvals?.filter((ix) => ix.state !== 'pending') ?? [];
+  // The files a local file tool read or wrote open in the preview, as their links in a reply do.
+  const files = sessionId && preview && api.supports('files-v1') ? localHints(item, workdir ?? '').slice(0, 5) : [];
   const items: ActionItem[] = [
     { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
+    ...files.map((path, i): ActionItem => ({ key: `file:${path}`, label: `Open ${path.split('/').pop() || path}`, icon: <FileText />, separator: i === 0, onSelect: () => {
+      const url = api.viewFileUrl(sessionId!, path);
+      if (toggleButton.current) preview!({ url, name: path.split('/').pop() || path, description: path, path, frameable: true }, toggleButton.current);
+    } })),
     { key: 'cmd', label: toolKind(name) === 'command' ? 'Copy command' : 'Copy input', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => inputCopy.copyBody('input'), separator: true },
     { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => outputCopy.copyBody('output') },
   ];
@@ -1109,6 +1122,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
       <div ref={attach} id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
         <div className="flex items-center gap-1">
           <button
+            ref={toggleButton}
             type="button"
             aria-expanded={open}
             className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
