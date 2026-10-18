@@ -128,8 +128,8 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
       )}
     </Tip>
     <span id={descriptionId} className="sr-only">{[description, ...lines].join('. ')}</span>
-    {/* As tall as its content up to 46rem, so a short model list leaves no blank space; past that only the model list scrolls. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-w-[calc(100vw-1rem)] max-h-[min(46rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
+    {/* As tall as its content up to 50rem, room for Now above the allowance and the top five models, so a short model list leaves no blank space; past that only the model list scrolls. */}
+    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-w-[calc(100vw-1rem)] max-h-[min(50rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
       {open && <Suspense fallback={<Skeleton label="Loading usage…" rows={3} className="p-4" />}><UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} /></Suspense>}
     </Popover.Content>
   </Popover.Root>;

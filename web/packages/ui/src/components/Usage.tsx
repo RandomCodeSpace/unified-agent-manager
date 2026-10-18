@@ -141,9 +141,9 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
         <Button size="icon-sm" aria-label="Close usage" className="text-muted" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
     </PanelHead>
-    {/* One column: the allowance above the tokens. In All models only the model list scrolls; the whole body scrolls only when the screen is too short for the rest. */}
+    {/* One column: the allowance above the tokens. In All models only the model list scrolls; the whole body scrolls only when the screen is too short for the rest. The Tokens rows keep only the section's own gap, so Now, the allowance and the top five models fit an 800px-tall window. */}
     <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
-      <div className="flex min-h-0 flex-1 flex-col gap-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
       {calls && <NowSection calls={calls} onClose={onClose} />}
       <div className="flex min-w-0 shrink-0 flex-col gap-6">
         {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
@@ -193,8 +193,8 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
             <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', pricesLoading && models.length ? 'text-caption' : 'text-title')}>{pricesLoading && models.length ? 'Loading…' : costText(saved.saving)}</p>
           </div>
         </div>
-        <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>
-        <div role="group" aria-label="Usage view" className="mb-2 flex gap-1">
+        <div className="rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>
+        <div role="group" aria-label="Usage view" className="flex gap-1">
           <Button size="sm" aria-pressed={!all} onClick={() => setAll(false)}>Overview</Button>
           <Button size="sm" aria-pressed={all} onClick={() => setAll(true)}>All models · {models.length}</Button>
         </div>
@@ -332,8 +332,8 @@ function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: (
   const more = Math.max(0, (calls.busy ?? 0) - rows.length);
   const idle = callsInFlight(calls) === 0 && calls.local === 0;
   return (
-    <PanelSection label="Now" meta={idle ? undefined : modelCallsLines(calls)[0]} className="shrink-0">
-      {idle && <p className="text-caption text-muted">Nothing running</p>}
+    // Idle, "Nothing running" sits beside the label, so the section is one row and the top five models still fit.
+    <PanelSection label="Now" meta={idle ? 'Nothing running' : modelCallsLines(calls)[0]} className="shrink-0">
       {!idle && !named && modelCallsLines(calls).slice(1).map((line) => <p key={line} className="text-caption text-body">{line}</p>)}
       {!idle && named && (
         <ul className="-mx-2 flex flex-col">
