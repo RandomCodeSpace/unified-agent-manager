@@ -52,7 +52,7 @@ func TestResolveFilesEnvelopeAndCaps(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	want := []resolvedFile{{"notes.txt", true, "file"}, {"missing", false, "unavailable"}}
+	want := []resolvedFile{{Path: "notes.txt", Exists: true, Kind: "file"}, {Path: "missing", Kind: "unavailable"}}
 	if !reflect.DeepEqual(response.Files, want) || w.Header().Get("Location") != "" {
 		t.Fatalf("unexpected resolver results: %+v", response.Files)
 	}
@@ -115,6 +115,54 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 	cancel()
 	if got, err := ts.m.resolveFiles(ctx, sum.ID, []string{literal}); !errors.Is(err, context.Canceled) || got != nil {
 		t.Fatalf("canceled lookup returned %+v, %v", got, err)
+	}
+}
+
+func TestResolveFilesTargetsTheOneFileABareNameMeans(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, realDir, _ := rawImageTask(t, ts)
+	for _, name := range []string{"tools/gen.py", "tmp/survey.csv", "a/dup.txt", "b/dup.txt", "node_modules/pkg/vendored.js", ".git/hidden.cfg"} {
+		if err := os.MkdirAll(filepath.Join(realDir, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(realDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolve := func(path string) resolvedFile {
+		t.Helper()
+		got, err := ts.m.resolveFiles(context.Background(), sum.ID, []string{path})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("path %q: %+v, %v", path, got, err)
+		}
+		return got[0]
+	}
+	for _, tc := range []struct{ path, target string }{
+		{"gen.py", "tools/gen.py"}, {"survey.csv", "tmp/survey.csv"},
+		// Several files of that name, a directory, ignored folders and a
+		// partial path whose first segment is cut name no file.
+		{"dup.txt", ""}, {"tmp", ""}, {"vendored.js", ""}, {"hidden.cfg", ""},
+		{"ools/gen.py", ""}, {"other/gen.py", ""}, {filepath.Join(t.TempDir(), "gen.py"), ""},
+	} {
+		got := resolve(tc.path)
+		want := resolvedFile{Path: tc.path, Kind: "unavailable"}
+		if tc.target != "" {
+			want = resolvedFile{Path: tc.path, Kind: "file", Target: tc.target}
+		}
+		if got != want {
+			t.Errorf("path %q: %+v, want %+v", tc.path, got, want)
+		}
+	}
+	// The Thread's record settles a name the folder holds several of.
+	ts.m.mu.Lock()
+	ts.m.sessions[sum.ID].edits = map[string]time.Time{filepath.Join(realDir, "b/dup.txt"): time.Now()}
+	ts.m.mu.Unlock()
+	if got := resolve("dup.txt"); got.Target != "b/dup.txt" || got.Exists {
+		t.Fatalf("recorded name: %+v", got)
+	}
+	// A path that names a file itself keeps its own answer.
+	if got := resolve("tools/gen.py"); !got.Exists || got.Target != "" {
+		t.Fatalf("existing path: %+v", got)
 	}
 }
 

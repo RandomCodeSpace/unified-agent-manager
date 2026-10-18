@@ -2366,7 +2366,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     filePreview,
     createFileGrant: (id: string, path: string, signal: AbortSignal) => call<FileGrant>('POST', `/api/sessions/${enc(id)}/file-grants`, { path }, false, signal),
     revokeFileGrant: (id: string, grantId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/file-grants/${enc(grantId)}`),
-    resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable' }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal), signal, 'low'),
+    resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable'; target?: string }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal), signal, 'low'),
     attachmentUrl: (id: string, attachmentId: string) => url(`/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`),
     /** An image file of the Task's directory, by absolute path or one relative to it. */
     rawFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`),

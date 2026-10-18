@@ -968,7 +968,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   icon and the filename, or a link's own words when they say more than its
   path. A reference in a link or in inline code counts when it has a "/" or
   a file extension (`package.json`); a bare name without one (`Makefile`)
-  counts once a tool in the Thread read or wrote it. A cited line
+  counts once a tool in the Thread read or wrote it. A bare name or partial
+  path that names no file at the top of the Thread folder (`gen.py`,
+  `lib/gen.py`) opens the one file it means: the Thread's recorded files
+  (its edit tools and the provider's change record) decide first, then the
+  folder (`.git` and `node_modules` skipped). Two files of that name leave
+  it plain code. A cited line
   (`src/a.go:12`, `src/a.go:12:5` or a link's `#L12`) shows after the name.
   References link the same way in subagent results, the plan, questions,
   handoff facts, command output and a GitLab review note's `path:line`, and

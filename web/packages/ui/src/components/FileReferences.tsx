@@ -35,12 +35,17 @@ export function useFileHintItems(source: string, items: readonly Item[], open: b
   useLayoutEffect(() => () => owner?.removeItems(source), [owner, source]);
 }
 
+/** Not a candidate, and a candidate not known to be a file: never a path, as paths hold no NUL. */
+const INELIGIBLE = '\0';
+const UNKNOWN = '\0?';
+
+/** Whether `path` may name a file, whether it is known to, and the file it names: itself, or the one file a bare name means. */
 export function useFileReference(path: string | undefined, inlineText?: string) {
   const owner = useContext(Files);
   const lookup = path ? owner : null;
   const snapshot = useCallback(() => {
-    if (!lookup || !path || (inlineText !== undefined && !lookup.eligible(inlineText, path))) return 0;
-    return lookup.cache.get(path) === true ? 2 : 1;
+    if (!lookup || !path || (inlineText !== undefined && !lookup.eligible(inlineText, path))) return INELIGIBLE;
+    return lookup.cache.get(path) === true ? lookup.cache.target(path) ?? path : UNKNOWN;
   }, [lookup, path, inlineText]);
   // Unknown and unavailable render alike; unrelated resolver answers need no render. Every render reads the store
   // (answers expire); an answer renders as a transition, since a store React must render at once
@@ -55,7 +60,8 @@ export function useFileReference(path: string | undefined, inlineText?: string) 
     update();
     return lookup.subscribe(update);
   }, [lookup, snapshot]);
-  return { eligible: state !== 0, exists: state === 2 };
+  const exists = state !== INELIGIBLE && state !== UNKNOWN;
+  return { eligible: state !== INELIGIBLE, exists, file: exists ? state : undefined };
 }
 
 /** A count that grows each time a completed tool in this Thread changes `path`: an open view of it reloads on change. */

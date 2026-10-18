@@ -572,6 +572,9 @@ type webSession struct {
 	// the Thread's own files the Settle guard checks (git_pending.go).
 	nativePaths            []string
 	diffRunning, diffDirty bool
+	// targets caches folder searches for names that miss at the top of the
+	// Thread's folder (file_resolver.go).
+	targets map[string]targetAnswer
 	// idleToolEdits counts tool results that landed while no turn ran: a
 	// turn's native capture still in flight reads again after them
 	// (turn_changes.go).
