@@ -1,14 +1,13 @@
 import { Hand, Sparkle, Terminal, type LucideIcon } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useEffect, useState } from 'react';
 import { modelName, type ModelCalls, type Phase } from '../api';
 import { cn } from '../lib/cn';
 import { useApp } from './common';
 import { Chip } from './ui/chip';
-import { Tip } from './ui/tooltip';
 
 /**
  * The service's model calls in flight across its Threads (`model_calls`); null until a snapshot carries them, as from
- * an older service. Its own context, so the counts changing re-render the AI chip alone.
+ * an older service. Its own context, so the counts changing re-render the sidebar's Usage and AI button alone.
  */
 export const ModelCallsContext = createContext<ModelCalls | null>(null);
 
@@ -93,7 +92,7 @@ export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefin
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** The AI chip's tip, line by line: whether a model works now, for what, and what runs locally. */
+/** The Usage and AI button's words for the work in flight, line by line: whether a model works now, for what, and what runs locally. */
 export function modelCallsLines(calls: ModelCalls): string[] {
   const count = calls.threads + calls.subagents + calls.background;
   const lines = [count ? 'Model working now' : 'No model calls now'];
@@ -104,34 +103,4 @@ export function modelCallsLines(calls: ModelCalls): string[] {
   }
   if (calls.local) lines.push(`Local: ${plural(calls.local, 'Thread')} running a tool`);
   return lines;
-}
-
-/**
- * The sidebar foot's AI chip, beside Usage: the model calls in flight across this service's Threads, their
- * subagents and Background AI, the glyph in the accent while any is; muted with no count while none is. `rail` is
- * the collapsed rail's glyph over the count. Pressing it shows the tip, which says what calls and what runs locally.
- */
-export function ModelCallsChip({ side = 'top', variant = 'chip', className }: Readonly<{ side?: 'top' | 'right'; variant?: 'chip' | 'rail'; className?: string }>) {
-  const calls = useContext(ModelCallsContext);
-  if (!calls) return null;
-  const count = calls.threads + calls.subagents + calls.background;
-  const lines = modelCallsLines(calls);
-  const label = <>{lines.map((line, i) => <span key={line} className={cn('block', i > 0 && 'text-on-primary/70')}>{line}</span>)}</>;
-  const glyph = <Sparkle aria-hidden="true" className={cn('size-3.5 shrink-0', count ? 'text-accent' : 'text-faint')} />;
-  return (
-    <Tip openOnClick side={side} label={label}>
-      {variant === 'chip' ? (
-        <button type="button" data-model-calls={count} aria-label={`AI. ${lines.join('. ')}`} className={cn('lift flex h-7 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-full bg-raised px-2.5 text-caption shadow-raised', className)}>
-          {glyph}
-          <span className={cn('font-medium', count ? 'text-ink' : 'text-muted')}>AI</span>
-          {count > 0 && <span className="font-medium text-accent tabular-nums">{count}</span>}
-        </button>
-      ) : (
-        <button type="button" data-model-calls={count} aria-label={`AI. ${lines.join('. ')}`} className={cn('flex h-auto w-10 cursor-default flex-col items-center gap-1 rounded-sm py-1.5 text-caption leading-none', className)}>
-          {glyph}
-          <span className={cn('font-medium tabular-nums', count ? 'text-accent' : 'text-muted')}>{count || 'AI'}</span>
-        </button>
-      )}
-    </Tip>
-  );
 }

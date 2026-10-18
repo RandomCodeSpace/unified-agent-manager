@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
-import { Check, Info, TriangleAlert, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
-import { describeError, type ApiClient, type ConnectedStatus, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
+import { Check, Info, Sparkle, Terminal, TriangleAlert, X } from 'lucide-react';
+import { useCallback, useContext, useEffect, useState } from 'react';
+import { describeError, taskName, type ApiClient, type ConnectedStatus, type ModelCalls, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
@@ -13,7 +13,9 @@ import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Popover } from './ui/popover';
 import { Select } from './ui/select';
 import { HelpTip, Tip } from './ui/tooltip';
-import { allowanceName, daysText, QUOTA_FILLS, QUOTA_TONES } from './UsageButton';
+import { ModelCallsContext, modelCallsLines } from './ModelPhase';
+import { TaskList } from './taskActions';
+import { allowanceName, callsInFlight, daysText, QUOTA_FILLS, QUOTA_TONES } from './UsageButton';
 
 const PERIODS: { key: TokenPeriodKey; label: string }[] = [
   { key: 'today', label: 'Today' }, { key: '7d', label: '7 days' },
@@ -121,6 +123,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
   const names = modelNames(meta);
   const account = accountQuota(quotas);
   const [scrolled, setScrolled] = useState(false);
+  const calls = useContext(ModelCallsContext);
   return <>
     {sources.map((source) => !source.down && <UsageReader key={source.id} id={source.id} client={source.client} retry={retry} onRead={onRead} />)}
     <PanelHead scrolled={scrolled} className="px-4 pt-3 pb-2">
@@ -141,6 +144,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
     {/* One column: the allowance above the tokens. In All models only the model list scrolls; the whole body scrolls only when the screen is too short for the rest. */}
     <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
       <div className="flex min-h-0 flex-1 flex-col gap-5">
+      {calls && <NowSection calls={calls} onClose={onClose} />}
       <div className="flex min-w-0 shrink-0 flex-col gap-6">
         {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
         {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
@@ -301,6 +305,61 @@ function BurnBar({ burn, tone, used, entitlement }: Readonly<{ burn: NonNullable
         <span className="ml-auto">{entitlement.toLocaleString('en-US')}</span>
       </figcaption>
     </figure>
+  );
+}
+
+/** What a Thread in Now does: its main agent calls the model, its subagents do, or it runs a tool locally. */
+interface Busy { id: string; name: string; model: boolean; subagents: boolean; local: boolean }
+
+function busyWords(b: Busy): string {
+  if (b.local) return 'Local tool';
+  if (b.model && b.subagents) return 'Model · subagents';
+  return b.model ? 'Model' : 'Subagents';
+}
+
+/**
+ * Now (DESIGN.md Usage and AI): the work in flight on this service, each Thread a link that opens it, in the
+ * sidebar's order: whose model works (its main agent, its subagents) and which run a tool locally; then the Background
+ * AI calls. An older service names no Threads: its counts in words. "Nothing running" while idle.
+ */
+function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: () => void }>) {
+  const { sessions, openTask } = useContext(TaskList);
+  const model = new Set(calls.model_threads), subagents = new Set(calls.subagent_threads), local = new Set(calls.local_threads);
+  const named = !!calls.model_threads;
+  const rows: Busy[] = sessions.filter((s) => model.has(s.id) || subagents.has(s.id) || local.has(s.id))
+    .map((s) => ({ id: s.id, name: taskName(s) || 'New thread', model: model.has(s.id), subagents: subagents.has(s.id), local: local.has(s.id) }));
+  // Threads counted but not listed: past the service's cap, or not in this browser's list.
+  const more = Math.max(0, (calls.busy ?? 0) - rows.length);
+  const idle = callsInFlight(calls) === 0 && calls.local === 0;
+  return (
+    <PanelSection label="Now" meta={idle ? undefined : modelCallsLines(calls)[0]} className="shrink-0">
+      {idle && <p className="text-caption text-muted">Nothing running</p>}
+      {!idle && !named && modelCallsLines(calls).slice(1).map((line) => <p key={line} className="text-caption text-body">{line}</p>)}
+      {!idle && named && (
+        <ul className="-mx-2 flex flex-col">
+          {rows.map((b) => {
+            const Icon = b.local ? Terminal : Sparkle;
+            return (
+              <li key={b.id}>
+                <button type="button" className="flex h-8 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-ui transition-colors hover:bg-tint-hover focus-visible:-outline-offset-2 pointer-coarse:h-11" onClick={() => { onClose(); openTask(b.id); }}>
+                  <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', b.local ? 'text-success' : 'text-accent')} />
+                  <span className="min-w-0 flex-1 truncate text-ink">{b.name}</span>
+                  <span className={cn('shrink-0 text-caption', b.local ? 'text-success' : 'text-accent')}>{busyWords(b)}</span>
+                </button>
+              </li>
+            );
+          })}
+          {more > 0 && <li className="flex h-8 items-center px-2 text-caption text-muted">{more} more {more === 1 ? 'thread' : 'threads'}</li>}
+          {calls.background > 0 && (
+            <li className="flex h-8 items-center gap-2 px-2 text-ui text-body">
+              <Sparkle aria-hidden="true" className="size-3.5 shrink-0 text-accent" />
+              <span className="flex-1">Background AI</span>
+              <span className="text-caption text-accent tabular-nums">{calls.background} {calls.background === 1 ? 'call' : 'calls'}</span>
+            </li>
+          )}
+        </ul>
+      )}
+    </PanelSection>
   );
 }
 

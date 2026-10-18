@@ -1,7 +1,10 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
+import { Sparkle, Terminal } from 'lucide-react';
+import { lazy, Suspense, useContext, useEffect, useId, useRef, useState } from 'react';
+import type { ModelCalls } from '../api';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { Skeleton, useApp } from './common';
+import { ModelCallsContext, modelCallsLines } from './ModelPhase';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
@@ -41,13 +44,37 @@ function Meter({ remaining, tone, className }: Readonly<{ remaining: number; ton
   );
 }
 
+/** The model calls in flight the button counts: the Threads' main agents, their subagents and Background AI. */
+export const callsInFlight = (calls: ModelCalls) => calls.threads + calls.subagents + calls.background;
+
 /**
- * Account allowance is live from SSE; recorded usage reads only while open. `chip` is the sidebar
- * footer's small pill (a meter and the share left, the pace word when it needs saying); `rail` is
- * the collapsed rail's stacked share and meter. Both carry the whole sentence in their tip.
+ * The button's AI part: the sparkle and the model calls in flight in the accent, or "idle" by a faint sparkle while
+ * none is (the rail, short of room, shows the sparkle alone); then, while any Thread runs a tool locally, the
+ * terminal glyph and how many.
+ */
+function CallsFace({ calls, rail = false }: Readonly<{ calls: ModelCalls; rail?: boolean }>) {
+  const count = callsInFlight(calls);
+  return <>
+    <span className="flex items-center gap-1">
+      <Sparkle aria-hidden="true" className={count ? 'text-accent' : 'text-faint'} />
+      {count > 0 && <span className="font-medium text-accent tabular-nums">{count}</span>}
+      {count === 0 && !rail && <span className="text-muted">idle</span>}
+    </span>
+    {calls.local > 0 && <span className="flex items-center gap-1"><Terminal aria-hidden="true" className="text-success" /><span className="font-medium text-success tabular-nums">{calls.local}</span></span>}
+  </>;
+}
+
+/**
+ * The sidebar foot's one button for the account allowance and the work in flight, flat like Settings beside it: no
+ * surface at rest, the tint on hover and while open. `chip` is one row: a short meter and the share left (the pace
+ * word when it needs saying), a hairline, then the model calls in flight and the Threads running locally. `rail` is
+ * the collapsed rail's stack of the same. Without `model_calls` (an older service) it is the allowance alone. The tip
+ * and the description say all of it in words. Pressing it opens Usage, whose Now section names the Threads.
+ * The allowance is live from SSE; recorded usage reads only while open.
  */
 export function UsageButton({ side = 'top', variant = 'rail', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; variant?: 'chip' | 'rail'; className?: string; onAddPrices?: () => void }>) {
   const { usage } = useApp();
+  const calls = useContext(ModelCallsContext);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000);
@@ -77,24 +104,30 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
     setOpen(next);
   };
   const meter = known && !quota.unlimited;
+  const lines = calls ? modelCallsLines(calls) : [];
+  const count = calls ? callsInFlight(calls) : undefined;
+  const label = calls ? 'Usage and AI' : 'Usage';
+  const tip = <><span className="block">Usage · {description}</span>{lines.map((line) => <span key={line} className="block text-on-primary/70">{line}</span>)}</>;
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
-    <Tip label={`Usage · ${description}`} side={side} disabled={open}>
+    <Tip label={tip} side={side} disabled={open}>
       {variant === 'chip' ? (
-        // A small pill like a chip: it reads as something to press, and lifts on hover.
-        <Popover.Trigger render={<Button data-account-usage size="sm" aria-label="Usage" aria-describedby={descriptionId} className={cn('lift h-7 min-w-0 gap-1.5 rounded-full bg-raised px-2.5 font-normal shadow-raised hover:bg-raised data-popup-open:bg-tint-selected', className)} />}>
-          {meter && <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-8 shrink-0" />}
-          <span className={cn('shrink-0 text-caption font-medium tabular-nums', known ? 'text-ink' : 'text-muted')}>{known ? (quota.unlimited ? 'Unlimited' : `${share} left`) : 'Usage'}</span>
-          {word && <span className={cn('min-w-0 truncate text-caption', QUOTA_TONES[pace.tone])}>{word}</span>}
+        // 28px like the buttons beside it; a touch's hit area grows to 44px (`sm`).
+        <Popover.Trigger render={<Button data-account-usage data-model-calls={count} size="sm" aria-label={label} aria-describedby={descriptionId} className={cn('min-w-0 gap-1.5 px-2 text-caption font-normal data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
+          {meter && <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-7 shrink-0" />}
+          <span className={cn('shrink-0 font-medium tabular-nums', known ? 'text-ink' : 'text-muted')}>{known ? (quota.unlimited ? 'Unlimited' : `${share} left`) : 'Usage'}</span>
+          {word && <span className={cn('min-w-0 truncate', QUOTA_TONES[pace.tone])}>{word}</span>}
+          {calls && <><span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-hairline-strong" /><CallsFace calls={calls} /></>}
         </Popover.Trigger>
       ) : (
-        // The rail's: the share left in words over a short meter, as wide as the rail allows.
-        <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5', className)} />}>
-          <span className={cn('text-caption font-medium leading-none tabular-nums', pace.tone === 'healthy' ? 'text-ink' : QUOTA_TONES[pace.tone])}>{share}</span>
+        // The rail's: the share left in words over a short meter, then the work in flight, as wide as the rail allows.
+        <Popover.Trigger render={<Button data-account-usage data-model-calls={count} aria-label={label} aria-describedby={descriptionId} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5 text-caption leading-none data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
+          <span className={cn('font-medium tabular-nums', pace.tone === 'healthy' ? 'text-ink' : QUOTA_TONES[pace.tone])}>{share}</span>
           {meter ? <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-6" /> : <span aria-hidden="true" className="block h-1" />}
+          {calls && <CallsFace calls={calls} rail />}
         </Popover.Trigger>
       )}
     </Tip>
-    <span id={descriptionId} className="sr-only">{description}</span>
+    <span id={descriptionId} className="sr-only">{[description, ...lines].join('. ')}</span>
     {/* As tall as its content up to 46rem, so a short model list leaves no blank space; past that only the model list scrolls. */}
     <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-w-[calc(100vw-1rem)] max-h-[min(46rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
       {open && <Suspense fallback={<Skeleton label="Loading usage…" rows={3} className="p-4" />}><UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} /></Suspense>}

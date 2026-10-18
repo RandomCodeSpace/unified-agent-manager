@@ -1,6 +1,7 @@
 package web
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -95,23 +96,42 @@ func samePhase(a, b *Phase) bool {
 	return a == b || a != nil && b != nil && *a == *b
 }
 
+// maxModelCallThreads bounds each list of Threads in ModelCalls.
+const maxModelCallThreads = 50
+
 // modelCallsLocked counts the model calls in flight across the Threads, and
 // the Threads running locally, from their phases, with the Utility calls in
-// flight.
+// flight; it names the Threads of each, up to maxModelCallThreads.
 func (m *Manager) modelCallsLocked() ModelCalls {
-	c := ModelCalls{Background: m.utilityLive}
+	c := ModelCalls{Background: m.utilityLive, ModelThreads: []string{}, SubagentThreads: []string{}, LocalThreads: []string{}}
 	for _, s := range m.sessions {
 		p := s.turnActivity.Phase
 		if p == nil {
 			continue
 		}
+		busy := false
 		if p.Calls > p.Subagents {
 			c.Threads++
+			c.ModelThreads = append(c.ModelThreads, s.id)
+			busy = true
 		}
-		c.Subagents += p.Subagents
+		if p.Subagents > 0 {
+			c.Subagents += p.Subagents
+			c.SubagentThreads = append(c.SubagentThreads, s.id)
+			busy = true
+		}
 		if p.Kind == PhaseLocal {
 			c.Local++
+			c.LocalThreads = append(c.LocalThreads, s.id)
+			busy = true
 		}
+		if busy {
+			c.Busy++
+		}
+	}
+	for _, ids := range []*[]string{&c.ModelThreads, &c.SubagentThreads, &c.LocalThreads} {
+		slices.Sort(*ids)
+		*ids = (*ids)[:min(len(*ids), maxModelCallThreads)]
 	}
 	return c
 }

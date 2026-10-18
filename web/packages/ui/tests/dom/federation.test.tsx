@@ -728,7 +728,7 @@ function usageSummary(label: 'Estimated cost' | 'Cache saving' | 'Total tokens')
 async function openUsage(user: ReturnType<typeof userEvent.setup>) {
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
-  await user.click(rows.getByRole('button', { name: 'Usage', exact: true }));
+  await user.click(rows.getByRole('button', { name: 'Usage and AI', exact: true }));
   return within(await screen.findByRole('dialog', { name: 'Usage' }));
 }
 
@@ -774,7 +774,7 @@ test('Usage leaves out a machine on another Copilot account', async () => {
   const { user, calls } = federated('', [{ ...record('b', 'Workstation B'), status: 'account_mismatch', reason: 'Workstation B is linked to Copilot account mallory.' }]);
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B, unavailable: linked to a different Copilot account' });
-  await user.click(rows.getByRole('button', { name: 'Usage', exact: true }));
+  await user.click(rows.getByRole('button', { name: 'Usage and AI', exact: true }));
   const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
   expect(await popover.findByText('Workstation B not included: linked to a different Copilot account')).toBeTruthy();
   await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.87'));

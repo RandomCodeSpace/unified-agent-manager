@@ -445,6 +445,16 @@ type ModelCalls struct {
 	// Local counts the Threads running a tool, a subagent's between turns
 	// included, with no model call in flight.
 	Local int `json:"local"`
+	// Busy counts the Threads behind any of these, each once: a Thread whose
+	// subagents alone call the model is in no other count.
+	Busy int `json:"busy"`
+	// ModelThreads, SubagentThreads and LocalThreads name the Threads the
+	// counts come from, by ID, sorted: whose main agent has a model call in
+	// flight, which have subagent calls in flight, and which run a tool. At
+	// most maxModelCallThreads each; the counts stay whole.
+	ModelThreads    []string `json:"model_threads"`
+	SubagentThreads []string `json:"subagent_threads"`
+	LocalThreads    []string `json:"local_threads"`
 }
 
 // TodoView is the open conversation's todo list.

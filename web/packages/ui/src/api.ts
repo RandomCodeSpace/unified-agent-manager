@@ -1121,9 +1121,11 @@ export interface Phase {
 /**
  * The snapshot's and the `model_calls` frame's counts across this service's Threads: those whose main agent has a
  * model call in flight (compaction included), the subagent calls in flight (in a turn or after it), the Background AI
- * calls in flight, and the Threads running a tool with no model call; live only.
+ * calls in flight, and the Threads running a tool with no model call; live only. The lists name the Threads behind
+ * them by ID (at most 50 each): whose main agent calls the model, which have subagent calls, which run a tool; `busy`
+ * counts those Threads once each. An older service leaves them out.
  */
-export interface ModelCalls { threads: number; subagents: number; background: number; local: number }
+export interface ModelCalls { threads: number; subagents: number; background: number; local: number; busy?: number; model_threads?: string[]; subagent_threads?: string[]; local_threads?: string[] }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {

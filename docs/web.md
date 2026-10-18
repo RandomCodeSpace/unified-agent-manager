@@ -736,19 +736,27 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `waiting`, `by` `compaction` or, between turns, `subagent`, `since`,
   `model`, `tool`, `detail`, and `calls` and `subagents`, the model calls
   in flight in any phase, compaction included, and how many are
-  subagents'). The sidebar's foot has
-  an **AI** chip after Usage: the model calls in flight across the service's
-  Threads, their subagents and Background AI, in the accent while any is and
-  muted without a count while none is; its tip says for what ("2 Threads · 1
-  subagent · Background AI idle") and how many Threads run a tool locally.
+  subagents'). The sidebar's foot has one **Usage and AI** button after
+  Settings: the allowance left ("96% left" with a short meter), then the
+  model calls in flight across the service's Threads, their subagents and
+  Background AI (a count in the accent, or "idle"), and how many Threads run
+  a tool locally. Its tip says for what ("2 Threads · 1 subagent ·
+  Background AI idle"). Pressing it opens Usage, whose **Now** section names
+  each Thread at work (model, subagents or a local tool) as a link that opens
+  it, and the Background AI calls; "Nothing running" while idle. The collapsed
+  rail stacks the same.
   The snapshot's `model_calls` and the `model_calls` event carry `threads`
   (Threads whose main agent has a call in flight, compaction included),
   `subagents` (subagent calls, a turn's and those after it; a Thread whose
   subagent alone calls the model is not counted under `threads`),
   `background` and `local` (Threads running a tool with no call in flight,
-  a subagent's between turns included), a few times a
-  second at most. Both are live only, never saved; a connected instance shows
-  its own.
+  a subagent's between turns included), and the Thread IDs behind them,
+  sorted, at most 50 each: `model_threads`, `subagent_threads` and
+  `local_threads`, with `busy`, those Threads counted once each. They come a
+  few times a second at most. Both are live
+  only, never saved; a connected instance shows its own. An older service
+  without `model_calls` shows the allowance alone; one without the ID lists
+  shows the counts in words.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
   left it. Its last reply's foot reads "Todo 4/7 · 1 in progress · 1 blocked
   · 1 to do" and stays on screen (the turn has ended, so "in progress" is
