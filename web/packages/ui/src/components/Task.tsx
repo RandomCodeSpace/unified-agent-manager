@@ -29,7 +29,7 @@ import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
-import { PhasePill } from './ModelPhase';
+import { PhaseBlock } from './ModelPhase';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { HandoffCard } from './Handoff';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
@@ -1178,16 +1178,19 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           <ComposerFoot>
             {goToFileAvailable && (
               <Tip label={<>Go to file<span className="block text-on-primary/70">Alt+P</span></>} disabled={!!goToFile?.open}>
-                <Button size="icon" variant="subtle" data-go-to-file="" aria-label="Go to file" aria-haspopup="dialog" aria-expanded={!!goToFile?.open} aria-keyshortcuts="Alt+P" className={cn('shrink-0 text-muted', goToFile?.open && 'bg-raised text-ink shadow-raised')} onClick={openGoToFile}>
-                  <FolderTree />
+                <Button size="sm" variant="subtle" data-go-to-file="" aria-haspopup="dialog" aria-expanded={!!goToFile?.open} aria-keyshortcuts="Alt+P" className={cn('text-caption font-normal [&_svg]:size-3.5 [&_svg]:text-muted', goToFile?.open && 'bg-raised text-ink shadow-raised')} onClick={openGoToFile}>
+                  <FolderTree aria-hidden="true" />
+                  Files
                 </Button>
               </Tip>
             )}
             <PlaceFoot session={session} project={project} />
-            {/* At the right: what the turn waits on now, then the time split. A phone keeps the branch: the phase, when
-                there is one, stands alone there. */}
-            <span className="ml-auto flex min-w-0 shrink-0 items-center empty:hidden max-sm:[&>[data-phase]+*]:hidden">
-              <PhasePill phase={session.turn_activity?.phase} provider={session.provider} />
+            {/* At the right, items of this row (the group is `contents`): what the turn waits on now, then the time
+                split. The phase's detail shrinks first, so the branch keeps its room. A phone keeps the branch: the
+                phase, when there is one, stands alone there. */}
+            <span className="contents max-sm:[&>[data-phase]~*]:hidden">
+              <span aria-hidden="true" className="ml-auto" />
+              <PhaseBlock phase={session.turn_activity?.phase} />
               <TimeSplitSummary session={session} />
             </span>
           </ComposerFoot>
@@ -1210,9 +1213,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   );
 }
 
-/** The strip under the composer: where the Thread runs (PlacePicker), then what its turn waits on now (ModelPhase). */
+/**
+ * The row under the composer (DESIGN.md "Row under the composer"): Files and where the Thread runs (PlacePicker), then
+ * what its turn waits on now (ModelPhase) and the time split (TimeSplit) as blocks.
+ */
 function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
-  return <div className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
+  return <div data-composer-foot="" className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
 }
 
 function NewTaskIntro({ project }: Readonly<{ project: Project | undefined }>) {

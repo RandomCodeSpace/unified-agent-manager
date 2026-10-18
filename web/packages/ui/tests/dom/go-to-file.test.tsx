@@ -75,7 +75,9 @@ describe('Go to file', () => {
 
   test('the Files button left of the branch under the composer opens it; the header has none', async () => {
     const { user } = await openTask('t3');
-    const files = screen.getByRole('button', { name: 'Go to file' });
+    // Labelled "Files" (its name is what it shows); Go to file and Alt+P are its tip.
+    const files = screen.getByRole('button', { name: 'Files' });
+    expect(files.getAttribute('aria-keyshortcuts')).toBe('Alt+P');
     expect(files.nextElementSibling?.textContent).toContain(screen.getByRole('button', { name: /^Branch / }).textContent ?? '-');
     expect(within(screen.getByRole('heading', { level: 1 }).closest('header')!).queryByRole('button', { name: /^(Files|Go to file)$/ })).toBeNull();
     await user.click(files);

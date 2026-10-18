@@ -1,4 +1,4 @@
-// Where a Thread runs, under the composer (mock D). Mock p1: t1 works in its folder, t3 is finished there, t15 runs in
+// Where a Thread runs, under the composer (footer A, blocks). Mock p1: t1 works in its folder, t3 is finished there, t15 runs in
 // its own worktree; the folder is on feat/web-project-defaults-and-sidebar-revamp.
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -54,8 +54,10 @@ async function send(user: User, text: string) {
 describe('a draft Thread', () => {
   test('shows only the place and the branch, and the menu names the Thread that keeps the folder on its branch', async () => {
     const { user } = await draft(/unified-agent-manager/);
-    expect(screen.getByRole('button', { name: 'Where this Thread runs: Current branch' })).toBeTruthy();
-    expect(strip().textContent).toBe(`Current branch${FOLDER}`);
+    const where = within(screen.getByRole('radiogroup', { name: 'Where this Thread runs' }));
+    expect(where.getByRole('radio', { name: 'Project folder' }).getAttribute('aria-checked')).toBe('true');
+    expect(where.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-checked')).toBe('false');
+    expect(strip().textContent).toBe(`Project folderNew worktree${FOLDER}`);
     const menu = await openBranches(user);
     expect(menu.getByText('Fix re-attach redraw regression').closest('p')!.textContent).toBe('Fix re-attach redraw regression is working');
     const options = menu.getAllByRole('option');
@@ -106,20 +108,19 @@ describe('a draft Thread', () => {
   test('a new worktree picks its source branch, shows no name before the first message, and its Thread shows it after', async () => {
     const create = vi.spyOn(api, 'createSession');
     const { user } = await draft(/unified-agent-manager/);
-    await user.click(screen.getByRole('button', { name: 'Where this Thread runs: Current branch' }));
-    await user.click(await screen.findByRole('menuitemradio', { name: 'New worktree' }));
-    await user.keyboard('{Escape}');
-    await screen.findByRole('button', { name: 'Where this Thread runs: New worktree' });
+    await user.click(screen.getByRole('radio', { name: 'New worktree' }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-checked')).toBe('true'));
     const menu = await openBranches(user);
     // A source branch: no New branch row, no guard.
     expect(menu.queryByText(/^New branch/)).toBeNull();
     expect(menu.queryByText(/is working/)).toBeNull();
     await user.click(menu.getByRole('option', { name: /^origin\/main/ }));
-    expect(strip().textContent).toBe('New worktreeorigin/main');
+    expect(strip().textContent).toBe('Project folderNew worktreeorigin/main');
     await send(user, 'Try the new parser');
     expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: 'origin/main' });
-    const wt = await screen.findByLabelText(/^Worktree, branch uam\/[0-9a-f]{8}, folder uam-[0-9a-f]{8}$/);
-    expect(wt.textContent).toMatch(/^Worktree·uam\/[0-9a-f]{8}·uam-[0-9a-f]{8}$/);
+    // Once it exists: the worktree and its branch, without the folder named for that branch.
+    const wt = await screen.findByLabelText(/^Worktree, branch uam\/[0-9a-f]{8}$/);
+    expect(wt.textContent).toMatch(/^Worktreeuam\/[0-9a-f]{8}$/);
   });
 
   test('the current branch sends no place', async () => {
@@ -138,19 +139,20 @@ describe('a draft Thread', () => {
 });
 
 describe('a started Thread', () => {
-  test('in its own worktree: worktree, branch and folder as plain text, the path on hover', async () => {
+  test('in its own worktree: worktree and branch as plain text, the folder that repeats the branch left out, the path on hover', async () => {
     const { user } = await openTask('t15');
-    const wt = screen.getByRole('button', { name: 'Worktree, branch uam/remove-unused-exports, folder uam-remove-unused-exports' });
-    expect(wt.textContent).toBe('Worktree·uam/remove-unused-exports·uam-remove-unused-exports');
+    const wt = screen.getByRole('button', { name: 'Worktree, branch uam/remove-unused-exports' });
+    expect(wt.textContent).toBe('Worktreeuam/remove-unused-exports');
     expect(wt.parentElement!.textContent).toBe(wt.textContent);
     expect(screen.queryByRole('button', { name: /^Branch / })).toBeNull();
     await user.hover(wt);
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBe('/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports'));
   });
 
-  test('in the Project folder: Current branch and a switch that waits for the folder', async () => {
+  test('in the Project folder: the branch alone, and a switch that waits for the folder', async () => {
     const { user } = await openTask('t3');
-    expect(strip().textContent).toBe(`Current branch${FOLDER}`);
+    expect(strip().textContent).toBe(FOLDER);
+    expect(screen.queryByText('Current branch')).toBeNull();
     const menu = await openBranches(user);
     expect(menu.getByText(/is working/).textContent).toBe('Fix re-attach redraw regression is working');
     expect(menu.getAllByRole('option').every(off)).toBe(true);

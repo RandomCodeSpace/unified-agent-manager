@@ -1,9 +1,7 @@
-import { Hand, Sparkle, Terminal, type LucideIcon } from 'lucide-react';
+import { Cpu, Hand, Terminal, type LucideIcon } from 'lucide-react';
 import { createContext, useEffect, useState } from 'react';
-import { modelName, type ModelCalls, type Phase } from '../api';
-import { cn } from '../lib/cn';
-import { useApp } from './common';
-import { Chip } from './ui/chip';
+import type { ModelCalls, Phase } from '../api';
+import { Blocks, type BlockTone } from './ui/blocks';
 
 /**
  * The service's model calls in flight across its Threads (`model_calls`); null until a snapshot carries them, as from
@@ -37,54 +35,58 @@ function useSecondTick(on: boolean): number {
   return now;
 }
 
-/** Each phase's pill: its words, and the short word a phone shows. */
-const FACES: Record<Phase['kind'], { label: string; short: string; Icon: LucideIcon; tone: 'accent' | 'success' | 'attention'; wash: string }> = {
-  model: { label: 'Model', short: 'Model', Icon: Sparkle, tone: 'accent', wash: 'bg-accent-wash' },
-  local: { label: 'Local · no model', short: 'Local', Icon: Terminal, tone: 'success', wash: 'bg-success-wash' },
-  waiting: { label: 'Waiting on you', short: 'You', Icon: Hand, tone: 'attention', wash: '' },
+/** Each phase's block: its tone, glyph and word, and its words in full for the screen reader and the hover title. */
+const FACES: Record<Phase['kind'], { word: string; full: string; Icon: LucideIcon; tone: BlockTone }> = {
+  model: { word: 'Model', full: 'Model', Icon: Cpu, tone: 'accent' },
+  local: { word: 'Local', full: 'Local · no model', Icon: Terminal, tone: 'success' },
+  waiting: { word: 'You', full: 'Waiting on you', Icon: Hand, tone: 'attention' },
 };
 
-/** The phase's words: whose work it is when not the turn's main agent's, a subagent's between turns or compaction. */
-function phaseLabel(phase: Phase): string {
-  const face = FACES[phase.kind];
-  if (phase.kind === 'waiting') return face.label;
-  if (phase.by === 'compaction' && phase.kind === 'model') return 'Model · compacting';
-  if (phase.by === 'subagent') return `${face.short} · subagent`;
-  return face.label;
+/** Whose work it is when not the turn's main agent's: a subagent's between turns, or compaction. */
+function phaseBy(phase: Phase): string {
+  if (phase.kind === 'waiting') return '';
+  if (phase.by === 'compaction' && phase.kind === 'model') return 'compacting';
+  return phase.by === 'subagent' ? 'subagent' : '';
 }
 
 /**
- * The phase's second words: the model called, by its catalog name, or the subagent calling it, the tool and its
- * argument, or what the owner is asked.
+ * The phase's detail beside its block: what the subagent calling the model does, the tool and its argument, or what
+ * the owner is asked. Never the model's name: the composer's Model picker shows it.
  */
-function phaseDetail(phase: Phase, name: (id: string) => string): string {
-  if (phase.kind === 'model') return (phase.by === 'subagent' && phase.detail) || (phase.model ? name(phase.model) : '');
+function phaseDetail(phase: Phase): string {
+  if (phase.kind === 'model') return phase.by === 'subagent' ? phase.detail ?? '' : '';
   if (phase.kind === 'local') return [phase.tool, phase.detail].filter(Boolean).join(' ');
   return phase.detail ?? '';
 }
 
 /**
  * Under the composer, at the right: what the open Thread's turn waits on now, the model, a tool running locally or
- * you, with the detail and a clock since it started; between turns, a subagent still running or compaction. Words carry the state; nothing spins. Nothing while none holds.
- * A phone shows the glyph, a short word and the clock, so the branch keeps its room. A hairline parts it from the
- * time split that may follow it (TimeSplitSummary), only while one does; a phone shows the pill alone (Task).
+ * you, as one block (glyph, word, a clock since it started) with its detail at its left; between turns, a subagent
+ * still running or compaction. Words carry the state; nothing spins. Nothing while none holds.
+ * The wrapper is `display: contents`, so the detail is an item of the footer's own row: it truncates first (its
+ * shrink outweighs the branch's), and the branch gives way only once the detail is gone. A phone hides the detail and
+ * whose work it is, so the branch keeps its room. A hairline parts the block from the time split that may follow it
+ * (TimeSplitSummary), only while one does; a phone shows the block alone (Task).
  */
-export function PhasePill({ phase, provider }: Readonly<{ phase: Phase | undefined; provider: string }>) {
-  const { meta } = useApp();
+export function PhaseBlock({ phase }: Readonly<{ phase: Phase | undefined }>) {
   const now = useSecondTick(!!phase);
   if (!phase) return null;
   const face = FACES[phase.kind];
-  const detail = phaseDetail(phase, (id) => modelName(meta, provider, id));
+  const by = phaseBy(phase);
+  const detail = phaseDetail(phase);
   const since = Date.parse(phase.since);
+  const clock = Number.isFinite(since) ? phaseClock(now - since) : '';
+  const words = by ? `${face.word} · ${by}` : face.full;
   return (
-    <span data-phase={phase.kind} className="flex min-w-0 shrink items-center gap-2 text-caption [&:has(+*)_[data-phase-rule]]:block">
-      <Chip tone={face.tone} className={cn('rounded-full px-2 font-medium max-sm:gap-1 max-sm:px-1.5', face.wash)}>
-        <face.Icon aria-hidden="true" className="size-3.5" />
-        <span className="max-sm:sr-only">{phaseLabel(phase)}</span>
-        <span aria-hidden="true" className="sm:hidden">{face.short}</span>
-      </Chip>
-      {detail && <span className="min-w-0 max-w-80 truncate text-muted max-sm:hidden">{detail}</span>}
-      {Number.isFinite(since) && <span className="shrink-0 text-muted tabular-nums">{phaseClock(now - since)}</span>}
+    <span data-phase={phase.kind} className="contents [&:has(+*)_[data-phase-rule]]:block">
+      {detail && <span data-phase-detail="" title={detail} className="min-w-0 max-w-90 shrink-1000 truncate text-caption text-muted max-sm:hidden">{detail}</span>}
+      <Blocks items={[{
+        key: phase.kind,
+        tone: face.tone,
+        Icon: face.Icon,
+        label: <>{face.word}{by && <span className="max-sm:hidden"> · {by}</span>}{clock && ` ${clock}`}</>,
+        title: clock ? `${words}, ${clock}` : words,
+      }]} />
       <span aria-hidden="true" data-phase-rule="" className="mx-1 hidden h-4 w-px shrink-0 bg-hairline-strong max-sm:hidden!" />
     </span>
   );
