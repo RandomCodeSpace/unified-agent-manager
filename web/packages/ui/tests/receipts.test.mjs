@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { claimsOf, receipts, settle, allVerified, allUnseen, lastTurnContradicted } from '../src/lib/receipts.ts';
+import { claimsOf, receipts, settle, lastTurnContradicted } from '../src/lib/receipts.ts';
 
 const at = (s) => `2026-10-09T10:00:${String(s).padStart(2, '0')}Z`;
 const call = (id, name, input, extra = {}, s = 1) => ({ id, kind: 'tool', time: at(s), tool: { name, status: 'completed', input: JSON.stringify(input), ...extra } });
@@ -43,12 +43,12 @@ test('a path is a claim only beside an edit verb, outside a negated sentence; a 
   ]);
 });
 
-test('a turn with no tool calls and no subagents contradicts its run and edit claims, as it does a test claim', () => {
+test('a turn with no tool calls leaves its run, edit and test claims unseen: the reply may restate what an earlier turn did', () => {
   const stamps = receipts('I ran `npm test` and updated `inventory.py`. All tests pass.', []);
   assert.deepEqual(stamps.map((s) => [s.claim, s.verdict, s.note]), [
-    ['npm test', 'contradicted', 'not run this turn'],
-    ['inventory.py', 'contradicted', 'not changed this turn'],
-    ['All tests pass', 'contradicted', 'no test command ran this turn'],
+    ['npm test', 'unseen', 'not run this turn'],
+    ['inventory.py', 'unseen', 'not changed this turn'],
+    ['All tests pass', 'unseen', 'no test command ran this turn'],
   ]);
   // Subagent work is not read here: the same claims are only unseen, and say why.
   const delegated = receipts('I ran `npm test` and updated `inventory.py`.', [call('t1', 'task', { agent_type: 'task' })]);
@@ -63,13 +63,7 @@ test('every claim is stamped: no cap drops one', () => {
   const items = files.map((f, i) => call(`e${i}`, 'edit', { path: f }));
   const stamps = receipts(`Updated ${files.map((f) => `\`${f}\``).join(', ')}.`, items);
   assert.equal(stamps.length, 15);
-  assert.equal(allVerified(stamps), true);
-});
-
-test('claims the record cannot see either way collapse: all unseen, none with evidence', () => {
-  const delegated = receipts('Ran `ls` on `README.md`.', [call('t1', 'task', { agent_type: 'task' })]);
-  assert.equal(allUnseen(delegated), true);
-  assert.equal(allUnseen(receipts('Read `README.md`.', [call('v1', 'view', { path: 'README.md' })])), false);
+  assert.ok(stamps.every((s) => s.verdict === 'verified'));
 });
 
 test('a changed path, a run command and a green test run are verified, each with its evidence', () => {
@@ -82,18 +76,16 @@ test('a changed path, a run command and a green test run are verified, each with
   const stamps = receipts('Changed `charts.go` and updated `docs/web.md`, ran `npm test`; tests pass.', items);
   assert.deepEqual(stamps.map((s) => [s.claim, s.verdict, s.itemId]), [
     ['charts.go', 'verified', 'e1'],
-    ['docs/web.md', 'contradicted', 'v1'],
+    ['docs/web.md', 'unseen', 'v1'],
     ['npm test', 'verified', 'b1'],
     ['tests pass', 'verified', 'b2'],
   ]);
   assert.equal(stamps[1].note, 'viewed, not changed');
   assert.equal(stamps[2].note, 'exit 0');
-  assert.equal(allVerified(stamps), false);
-  assert.equal(allVerified(stamps.filter((s) => s.verdict === 'verified')), true);
 });
 
-test('a test claim with no test command, or a failing one, is contradicted', () => {
-  assert.deepEqual(receipts('All tests pass.', [bash('b1', 'ls')]).map((s) => [s.verdict, s.note]), [['contradicted', 'no test command ran this turn']]);
+test('a test claim with a failing test run is contradicted; with no test command it is unseen, since a reply may restate an earlier turn', () => {
+  assert.deepEqual(receipts('All tests pass.', [bash('b1', 'ls')]).map((s) => [s.verdict, s.note]), [['unseen', 'no test command ran this turn']]);
   const failed = receipts('The tests pass now.', [bash('b1', 'go test ./...', 1)]);
   assert.deepEqual(failed.map((s) => [s.verdict, s.note, s.itemId]), [['contradicted', 'last test run exit 1', 'b1']]);
   const reported = receipts('tests passed', [bash('b1', 'npx vitest run', 0, { output: 'Tests  2 failed | 10 passed' })]);
@@ -105,8 +97,8 @@ test('a test claim with no test command, or a failing one, is contradicted', () 
   assert.equal(reported[0].note, 'last test run reported failures');
 });
 
-test('a command the record lacks is contradicted when the reply says it ran it, unseen when it only names it', () => {
-  assert.deepEqual(receipts('Ran `ls`.', [bash('b1', 'sleep 20')]).map((s) => [s.verdict, s.note]), [['contradicted', 'not run this turn']]);
+test('a command the record lacks is unseen, whether the reply says it ran it or only names it; a failed run is contradicted', () => {
+  assert.deepEqual(receipts('Ran `ls`.', [bash('b1', 'sleep 20')]).map((s) => [s.verdict, s.note]), [['unseen', 'not run this turn']]);
   assert.deepEqual(receipts('To install, run `make install` yourself.', [bash('b1', 'go build ./...')]).map((s) => [s.verdict, s.note]), [['unseen', 'not run this turn']]);
   assert.deepEqual(receipts('Ran `make install`.', [bash('b1', 'make install', 2)]).map((s) => [s.verdict, s.note]), [['contradicted', 'exit 2']]);
   const delegated = receipts('Ran `ls` and `uname -a`; tests pass.', [call('t1', 'task', { agent_type: 'task', description: 'runner' }), bash('b1', 'sleep 20')]);
@@ -124,7 +116,7 @@ test('a command matches whole at a boundary, a path by its tail; a patch names i
   assert.deepEqual(stamps.map((s) => [s.claim, s.verdict, s.itemId]), [
     ['ls', 'verified', 'b1'],
     ['lib/a.ts', 'verified', 'p1'],
-    ['README.md', 'contradicted', 'b2'],
+    ['README.md', 'unseen', 'b2'],
   ]);
 });
 
@@ -145,8 +137,6 @@ test('a test run whose output the page has not loaded waits for it, then settles
   const pending = receipts('All 4 tests pass.', [held]);
   assert.deepEqual(pending.map((s) => [s.verdict, s.note, s.itemId]), [['pending', 'reading the test output', 'b1']]);
   assert.equal(pending[0].awaits.id, 'b1');
-  assert.equal(allVerified(pending), false);
-  assert.equal(allUnseen(pending), false);
   const body = (output) => bash('b1', 'go test ./... 2>&1 | tail -3', 0, { output });
   assert.deepEqual([settle(pending[0], body('ok  \tpkg\t0.2s'))].map((s) => [s.verdict, s.itemId]), [['verified', 'b1']]);
   assert.deepEqual([settle(pending[0], body('--- FAIL: TestX\nFAIL'))].map((s) => [s.verdict, s.note]), [['contradicted', 'last test run reported failures']]);
@@ -160,7 +150,7 @@ test('a test run whose output the page has not loaded waits for it, then settles
 
 test('subagent calls and running calls are not evidence', () => {
   const items = [{ ...bash('b1', 'go test ./...'), agent_id: 'a1' }];
-  assert.deepEqual(receipts('tests pass', items).map((s) => s.verdict), ['contradicted']);
+  assert.deepEqual(receipts('tests pass', items).map((s) => s.verdict), ['unseen']);
 });
 
 test('a file the reply names as someone else\'s work, a refusal and quoted text claim nothing; its own work still does', () => {

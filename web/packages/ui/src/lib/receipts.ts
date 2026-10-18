@@ -303,47 +303,39 @@ export function settle(stamp: Stamp, body: Item): Stamp {
 }
 
 /**
- * The reply's claims against the turn's record, every one of them. A claim the main agent's calls
- * do not bear out is contradicted: a changed path the turn did not change, a command the reply
- * says it ran that did not run, a test claim with no passing test run. When the turn started
- * subagents, whose work is not read here, such a claim is only unseen, and the note says so. A
- * command the reply only names (it may suggest it) is unseen when the record lacks it; any
- * command is contradicted when the run it names failed.
+ * The reply's claims against the turn's record, every one of them. Only the record can contradict
+ * a claim: a command whose run failed, a test claim whose last test run failed. A claim the turn's
+ * calls do not show (a path it did not change, a command or test run it did not make) is unseen:
+ * a reply often restates what earlier turns did, so absence is never a contradiction.
  */
 export function receipts(text: string, items: readonly Item[]): Stamp[] {
   const claims = claimsOf(text);
   if (!claims.length) return [];
   const record = recordOf(items);
   const aside = record.subagents ? ` · ${record.subagents} ${record.subagents === 1 ? 'subagent' : 'subagents'} ran` : '';
-  const missing: Verdict = record.subagents ? 'unseen' : 'contradicted';
   const where = record.subagents ? ' by the main agent' : ' this turn';
   const stamps: Stamp[] = [];
-  for (const { kind, claim, ran } of claims) {
+  for (const { kind, claim } of claims) {
     if (kind === 'path') {
       const changed = findPath(record.changed, claim);
       if (changed) stamps.push({ claim, kind, verdict: 'verified', note: 'changed', itemId: changed });
       else {
         const viewed = findPath(record.viewed, claim);
-        if (viewed) stamps.push({ claim, kind, verdict: missing, note: `viewed, not changed${aside}`, itemId: viewed });
-        else stamps.push({ claim, kind, verdict: missing, note: `not changed${where}${aside}` });
+        if (viewed) stamps.push({ claim, kind, verdict: 'unseen', note: `viewed, not changed${aside}`, itemId: viewed });
+        else stamps.push({ claim, kind, verdict: 'unseen', note: `not changed${where}${aside}` });
       }
     } else if (kind === 'command') {
       const run = findRun(record.runs, claim);
       if (run) stamps.push({ claim, kind, verdict: run.failed ? 'contradicted' : 'verified', note: exitNote(run), itemId: run.itemId });
-      else stamps.push({ claim, kind, verdict: ran ? missing : 'unseen', note: `not run${where}${aside}` });
+      else stamps.push({ claim, kind, verdict: 'unseen', note: `not run${where}${aside}` });
     } else {
       const last = record.runs.filter((r) => TEST_COMMAND.test(r.command)).at(-1);
-      if (!last) stamps.push({ claim, kind, verdict: missing, note: `no test command ran${record.subagents ? ' in the main agent’s work' : ' this turn'}${aside}` });
+      if (!last) stamps.push({ claim, kind, verdict: 'unseen', note: `no test command ran${record.subagents ? ' in the main agent’s work' : ' this turn'}${aside}` });
       else stamps.push(testStamp(claim, last));
     }
   }
   return stamps;
 }
-
-export const allVerified = (stamps: readonly Stamp[]) => stamps.length > 0 && stamps.every((s) => s.verdict === 'verified');
-
-/** Every claim is unseen with no evidence either way (a turn whose work subagents did): one line says so instead of a stamp each. */
-export const allUnseen = (stamps: readonly Stamp[]) => stamps.length > 0 && stamps.every((s) => s.verdict === 'unseen' && !s.itemId);
 
 /** Whether the last turn's reply makes a claim the turn's own record contradicts, as its receipts would stamp it. */
 export function lastTurnContradicted(items: readonly Item[]): boolean {

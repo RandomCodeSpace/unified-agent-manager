@@ -16,48 +16,35 @@ function draw(session: SessionDetail, { working = session.state === 'working', s
   return <StatusLine line={statusLine(session, working, !!session.compacting, connected)} session={session} since={since} hidden={false} onJump={onJump} />;
 }
 
-test('the clock excludes approval and question waits, including after remount', () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(start + 5000);
-  const at = (value: TurnTiming) => draw(task({ turn_timings: [value] }));
-  const view = render(at(timing));
-  expect(screen.getByText('5s')).toBeTruthy();
-  view.rerender(at({ ...timing, paused_at: new Date(start + 5000).toISOString() }));
-  act(() => vi.advanceTimersByTime(60_000));
-  expect(screen.getByText('5s')).toBeTruthy();
-  view.rerender(at({ ...timing, paused_ms: 60_000 }));
-  expect(screen.getByText('5s')).toBeTruthy();
-  act(() => vi.advanceTimersByTime(1000));
-  expect(screen.getByText('6s')).toBeTruthy();
-  view.unmount();
-  const resumed = render(at({ ...timing, paused_ms: 60_000 }));
-  expect(screen.getByText('6s')).toBeTruthy();
-  act(() => vi.advanceTimersByTime(1000));
-  expect(screen.getByText('7s')).toBeTruthy();
-  resumed.rerender(at({ ...timing, paused_ms: 60_000, paused_at: new Date(start + 67_000).toISOString() }));
-  act(() => vi.advanceTimersByTime(30_000));
-  expect(screen.getByText('7s')).toBeTruthy();
-});
-
-test('the line leads with the intent, else "Working", never a made-up verb, and its one button reads the sentence once', () => {
+test('a working turn with nothing of its own draws no strip, its time being the turn card\'s; the intent, a retry, the list each bring it back, without a clock', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const onJump = vi.fn();
   const view = render(draw(task(), { onJump }));
-  expect(screen.getByText('Working')).toBeTruthy();
-  const button = screen.getByRole('button', { name: 'Working, 2 minutes. Jump to bottom' });
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.queryByText('Working')).toBeNull();
+  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } }), { onJump }));
+  expect(screen.getByText('Building the index page')).toBeTruthy();
+  const button = screen.getByRole('button', { name: 'Building the index page. Jump to bottom' });
+  expect(screen.queryByText('2m')).toBeNull();
   // Nothing on the line moves: no ring and no breathing dot.
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
   fireEvent.click(button);
   expect(onJump).toHaveBeenCalledTimes(1);
-  view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } })));
-  expect(screen.getByText('Building the index page')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Building the index page, 2 minutes. Jump to bottom' })).toBeTruthy();
-  // A retry of the main agent's call stands beside the clock.
+  // A retry of the main agent's call stands beside the intent.
   view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', retry: { count: 1, status: 429, reason: 'rate_limited', at: timing.started_at }, todos: { known: false } } })));
   expect(screen.getByText('Retrying, attempt 2')).toBeTruthy();
   expect(screen.getByText('· HTTP 429 · rate limited')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Building the index page, 2 minutes. Retrying, attempt 2: HTTP 429, rate limited. Jump to bottom' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Building the index page. Retrying, attempt 2: HTTP 429, rate limited. Jump to bottom' })).toBeTruthy();
+});
+
+test('subagents that outlived the turn keep "Working" and their own clock on the strip', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(start + 125_000);
+  render(draw(task(), { since: new Date(start + 5000).toISOString() }));
+  expect(screen.getByText('Working')).toBeTruthy();
+  expect(screen.getByText('2m')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Working, 2 minutes. Jump to bottom' })).toBeTruthy();
 });
 
 test('after a stop the line says why until the next turn; nothing to say, no line', () => {
@@ -116,7 +103,7 @@ test('the line stays while a subagent outlives the turn', () => {
   }
 });
 
-test('a turn starting says nothing of the last one: no line until its timing comes, then "Working" and the clock', () => {
+test('a turn starting says nothing of the last one: no line until its timing comes, then still none while it has nothing of its own', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 20_000);
   const before = { id: 'before', user_item_id: 'u0', state: 'cancelled', started_at: new Date(start - 30_000).toISOString(), ended_at: new Date(start - 10_000).toISOString() } as TurnTiming;
@@ -127,10 +114,8 @@ test('a turn starting says nothing of the last one: no line until its timing com
   view.rerender(draw(task({ turn_timings: [before] })));
   expect(screen.queryByRole('button')).toBeNull();
   view.rerender(draw(task({ turn_timings: [before, next] })));
-  expect(screen.getByText('Working')).toBeTruthy();
-  expect(screen.getByText('<1s')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
-  expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(statusLine(task({ turn_timings: [before, next] }), true, false)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined });
 });
 
 test('a turn a restart or close cut off gives the next one no line while it starts; a dropped stream keeps the running turn\'s', () => {
@@ -143,8 +128,7 @@ test('a turn a restart or close cut off gives the next one no line while it star
     view.unmount();
   }
   // The page lost its stream and marked the running turn unknown itself: the turn may still run.
-  render(draw(task({ turn_timings: [cut] }), { connected: false }));
-  expect(screen.getByText('Working')).toBeTruthy();
+  expect(statusLine(task({ turn_timings: [cut] }), true, false, false)?.kind).toBe('working');
 });
 
 const rows = (extra: Partial<Todo>[] = []): Todo[] =>
@@ -191,7 +175,7 @@ test('the todo list is stage blocks with their glyph and number, then Now; no me
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const view = render(draw(withTodos(listOf(rows()))));
-  const button = screen.getByRole('button', { name: 'Now: Build the index page, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' });
+  const button = screen.getByRole('button', { name: 'Now: Build the index page. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
   // ✓ done, ◉ in progress, ⊘ blocked: each its number behind its glyph in its tone; a stage with no rows is left out.
@@ -214,10 +198,10 @@ test('the todo list is stage blocks with their glyph and number, then Now; no me
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
   expect(screen.getByText('From the last turn')).toBeTruthy();
   expect(screen.getByText('From the last turn').previousElementSibling!.className).toContain('opacity-55');
-  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Working on the site. Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   // No list: the line jumps to the bottom as before.
   view.rerender(draw(withTodos({ known: false, touched: false, todos: [], counts: {} })));
-  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Jump to bottom' }).getAttribute('aria-haspopup')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Working on the site. Jump to bottom' }).getAttribute('aria-haspopup')).toBeNull();
 });
 
 test('the reader opens on its Todo tab beside the line: rows in plan order, no repeated counts; Esc gives focus back', async () => {

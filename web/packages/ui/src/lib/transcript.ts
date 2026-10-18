@@ -611,6 +611,8 @@ export interface SummaryPart {
   text: string;
   /** `error` for the failures; the rest stay `muted`. */
   tone: 'muted' | 'error';
+  /** The files-changed count, which the turn card's change chip states instead when it shows. */
+  kind?: 'changed';
 }
 
 export interface TurnSummary {
@@ -695,11 +697,11 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   const thinkMs = spanMs(thinking);
   const thinkTime = thinkMs > 0 ? formatMs(thinkMs) : null;
   const thinkSuffix = thinkTime ? ` (${thinkTime})` : '';
-  const quiet = (text: string | 0): SummaryPart | null => (text ? { text, tone: 'muted' } : null);
+  const quiet = (text: string | 0, kind?: SummaryPart['kind']): SummaryPart | null => (text ? { text, tone: 'muted', ...(kind && { kind }) } : null);
   const parts = [
     quiet(thoughts && `${noun(thoughts, 'thought')}${thinkSuffix}`),
     quiet(commands && noun(commands, 'command')),
-    quiet(changed.size && `${noun(changed.size, 'file')} changed`),
+    quiet(changed.size && `${noun(changed.size, 'file')} changed`, 'changed'),
     quiet(read.size && `${noun(read.size, 'file')} read`),
     quiet(searches && noun(searches, 'search', 'searches')),
     quiet(other && noun(other, 'tool')),

@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FileText, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
-import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
@@ -134,9 +134,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const stamps = new Map<string, Stamp[]>();
   const gitlab = useContext(GitLabItemsContext);
-  const gitlabRefs = new Map<string, Item[]>();
-  const turnChanges = new Map<string, TurnChange>();
-  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, gitlab: gitlabRefs, changes: turnChanges, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
+  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
   const scratch = scratchPlan(planPath, workdir);
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart or the images its result returned.
@@ -172,13 +170,13 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
     }
+    let refs: Item[] | undefined;
     // The turn's last reply, once the turn is over, gets its receipts from the turn's calls (the main agent's, held here).
     if (!agentId && !open) {
       const reply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
       if (reply?.text && ctx.replyEnd?.has(reply.id)) stamps.set(reply.id, stampsFor(reply, group.flatMap((e) => (e.item ? [e.item] : []))));
       // And the GitLab items the turn touched, when the Thread's project is a signed-in GitLab one.
-      const refs = reply && gitlab && ctx.replyEnd?.has(reply.id) ? gitLabCallsFor(reply, group.flatMap((e) => (e.item ? [e.item] : [])), gitlab.origin) : undefined;
-      if (reply && refs) gitlabRefs.set(reply.id, refs);
+      if (reply && gitlab && ctx.replyEnd?.has(reply.id)) refs = gitLabCallsFor(reply, group.flatMap((e) => (e.item ? [e.item] : [])), gitlab.origin);
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && begunSince(entry));
     const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
@@ -191,12 +189,11 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // entries stand in the answer, and a steer bubble sits in the turn at its place.
     const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked, scratch });
     const changed = changedFiles(group, scratch);
-    // The reply that ends the turn carries its outcome bar, the turn's edits among it; a turn
-    // without one (still working, or ended without a reply) keeps its edits in a bar of their own.
+    // What the turn left sits in its card's head: the reply that ends it brings copy, the turn's
+    // menu and its outcome chips; a turn without one (still working, or ended without a reply) has its edits' chip alone.
     const lastReply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
     const replyEnd = lastReply && ctx.replyEnd?.get(lastReply.id);
     const edits = changedLine && changed.length > 0 ? turnChangeFor(lastReply ?? group[0].item, changed, last && liveCard, onOpenChanges, editCounts(group, scratch)) : undefined;
-    if (replyEnd && edits) turnChanges.set(lastReply.id, edits);
     const first = (group[0].item ?? group[0].interaction).id;
     const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
     const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
@@ -206,9 +203,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
     out.push(
       <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-        {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
+        {runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null}
         {renderCompact(group, gctx, product, own)}
-        {!replyEnd && edits && <EditsBar edits={edits} />}
       </div>,
     );
     group = [];
@@ -262,7 +258,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} gitlab={ctx.gitlab?.get(item.id)} edits={ctx.changes?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -351,7 +347,7 @@ function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean
  * they turn `attention` while a call waits for the user. The running step is the live step at the
  * transcript's foot: the head never names it.
  */
-const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
+const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES, reply, end, edits, gitlab }: Readonly<{ /** The reply that ends the turn: the head copies it. */ reply?: Item; /** The turn's end, once a reply ends it: its outcome and menu. */ end?: ReplyEnd; /** The files the turn's edit calls named. */ edits?: TurnChange; /** The turn's items that can name GitLab items. */ gitlab?: Item[]; id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
@@ -361,9 +357,13 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   const [listOpen, setListOpen] = useSubagentDisclosure(`subagents:${scopedId}`, subagents);
   const [listOpened, setListOpened] = useState(listOpen);
   if (listOpen && !listOpened) setListOpened(true);
+  const card = useRef<HTMLDivElement>(null);
+  const outcome = useTurnOutcome({ reply, end, edits, gitlab, replyActions: ctx.replyActions, anchor: card });
   const failures = summary.parts.filter((p) => p.tone === 'error');
-  const counts = summary.parts.filter((p) => p.tone !== 'error');
-  const text = summary.parts.map((p) => p.text).join(' · ');
+  // The change chip states the files changed, with their lines: the counts leave them out then, unless nothing else would open the steps.
+  const others = summary.parts.filter((p) => p.tone !== 'error' && !(outcome.changed && p.kind === 'changed'));
+  const counts = others.length ? others : summary.parts.filter((p) => p.tone !== 'error');
+  const text = summary.parts.filter((p) => counts.includes(p) || p.tone === 'error').map((p) => p.text).join(' · ');
   const domId = `${scope}-${scopedId}`;
   const timelineId = `${domId}-timeline`;
   const listId = `${domId}-subagents`;
@@ -380,10 +380,10 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     setOpen(false);
   };
   return (
-    <div id={domId} className={CARD}>
+    <div ref={card} id={domId} className={CARD}>
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
         {dotted([...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="whitespace-nowrap text-error">{p.text}</span>)])}
-        {summary.parts.length > 0 && (
+        {counts.length + failures.length > 0 && (
           <button
             ref={headButton}
             type="button"
@@ -406,7 +406,10 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           </button>
         )}
         {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
+        {outcome.actions && <span className={cn(counts.length + failures.length === 0 && 'ml-auto')}>{outcome.actions}</span>}
       </div>
+      <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-2 empty:hidden">{outcome.chips}</div>
+      {outcome.reader}
       {listOpened && subagents.length > 0 && (
         <Collapse open={listOpen} appear inner="px-3 pb-2">
           <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} calls={calls} tones={tones} /></DetailVisibility>
@@ -430,7 +433,8 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.at === b.at && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
     && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.replyActions === b.ctx.replyActions && a.ctx.approvals === b.ctx.approvals
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
-    && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item));
+    && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item))
+    && a.reply === b.reply && a.end === b.end && a.edits === b.edits && a.gitlab === b.gitlab;
 });
 
 /** A step's bar colour: running `accent`, failed `error`, waiting on the user `warning`, a thought `faint`, done `success`, no result `hairline-strong`. */
@@ -537,39 +541,92 @@ function turnTodoBlocks(counts: TodoCounts, stopped: boolean): Block[] {
   return todoBlocks(todoTally(counts)).map((block) => (stopped && block.key === 'in_progress' ? { ...block, tone: 'none' } : block));
 }
 
-/** The outcome bar's card, once it holds an outcome (DESIGN.md outcome bar). */
-const OUTCOME = 'rounded-md bg-surface px-3 py-2 shadow-raised';
-
-/** "Changed" and the turn's one total chip: "2 files" (with "+52 −3" when the counts were captured), never a file's name. */
-function ChangedChip({ files, additions, deletions, unavailable = false, expanded, onClick }: Readonly<{ files: number; additions?: number; deletions?: number; unavailable?: boolean; expanded?: boolean; onClick?: (button: HTMLButtonElement) => void }>) {
+/** The turn's one total change chip: "2 files" (with "+52 −3" when the counts are known), never a file's name. */
+function ChangedChip({ files, additions, deletions, expanded, onClick }: Readonly<{ files: number; additions?: number; deletions?: number; expanded?: boolean; onClick?: (button: HTMLButtonElement) => void }>) {
+  const label = `Changed ${files} ${files === 1 ? 'file' : 'files'}${additions !== undefined ? ` +${additions} −${deletions ?? 0}` : ''}`;
   const body = <>
     <FileDiff aria-hidden="true" className="size-3 shrink-0 text-muted" />
-    {unavailable ? 'Changes unavailable' : <>{files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <span className="text-success">+{additions}</span> <span className="text-error">−{deletions ?? 0}</span></>}</>}
+    {files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <span className="text-success">+{additions}</span> <span className="text-error">−{deletions ?? 0}</span></>}
   </>;
-  const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-raised px-2 text-caption whitespace-nowrap tabular-nums text-ink shadow-raised';
-  return (
-    <span className="flex items-center gap-2">
-      <span aria-hidden="true" className="text-eyebrow uppercase text-muted">Changed</span>
-      {onClick ? (
-        // Focused first (Safari does not focus a clicked button), so closing what it opens brings focus back here.
-        <button type="button" data-turn-changes="" aria-haspopup={expanded === undefined ? undefined : 'dialog'} aria-expanded={expanded} aria-label={unavailable ? 'Changed: changes unavailable' : `Changed ${files} ${files === 1 ? 'file' : 'files'}${additions !== undefined ? ` +${additions} −${deletions ?? 0}` : ''}`} className={cn(chip, "transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-expanded:bg-tint-selected pointer-coarse:after:-inset-y-2.5")} onClick={(e) => { e.currentTarget.focus(); onClick(e.currentTarget); }}>
-          {body}
-        </button>
-      ) : (
-        <span className={chip}>{body}</span>
-      )}
-    </span>
+  const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-surface px-2 text-caption whitespace-nowrap tabular-nums text-ink';
+  // Focused first (Safari does not focus a clicked button), so closing what it opens brings focus back here.
+  return onClick ? (
+    <button type="button" data-turn-changes="" aria-haspopup={expanded === undefined ? undefined : 'dialog'} aria-expanded={expanded} aria-label={label} title={label} className={cn(chip, "transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-expanded:bg-tint-selected pointer-coarse:after:-inset-y-2.5")} onClick={(e) => { e.currentTarget.focus(); onClick(e.currentTarget); }}>
+      {body}
+    </button>
+  ) : (
+    <span className={chip} title={label}><span className="sr-only">Changed </span>{body}</span>
   );
 }
 
-/** The edits of a turn that has no reply ending it yet (it runs, or it ended without one): the outcome bar's Changed chip alone. */
-function EditsBar({ edits }: Readonly<{ edits: TurnChange }>) {
-  const { files, counts, latest, onOpen } = edits;
+/** Copies a turn's reply from its card's head; a clipped reply is read whole first. */
+function ReplyCopy({ reply }: Readonly<{ reply: Item }>) {
+  const [copied, copy] = useCopied();
+  const whole = useWholeText(reply);
+  const run = () => { if (reply.clipped) void whole.read().then(copy, () => {}); else copy(reply.text ?? ''); };
   return (
-    <div data-foot="" className={cn('flex flex-wrap items-center', OUTCOME)}>
-      <ChangedChip files={files.length} additions={counts?.additions} deletions={counts?.deletions} onClick={onOpen && (() => onOpen({ files, latest }))} />
-    </div>
+    <Tip label={copied ? 'Copied' : 'Copy message'}>
+      <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : 'Copy message'} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </Tip>
   );
+}
+
+/**
+ * What an ended turn left, in its card's head (DESIGN.md turn card): `actions` (copy the reply, the
+ * turn's menu) at the head row's end, `chips` (the turn's total change, its todo list, the GitLab
+ * items it touched, its asides) in a row under it. Nothing the turn did not produce shows: no
+ * change, no chip. A turn still running or without a reply has only its change chip.
+ */
+function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Readonly<{ reply?: Item; end?: ReplyEnd; edits?: TurnChange; gitlab?: Item[]; replyActions?: ReplyActions; anchor: RefObject<HTMLDivElement | null> }>) {
+  const task = useContext(SessionContext) ?? '';
+  const asides = useTurnHasAsides(task, end?.turn);
+  const visible = useDetailVisibility();
+  const [changesReader, setChangesReader] = useState<{ generation: string; phone: boolean; open: boolean; anchor: HTMLElement | null } | null>(null);
+  if (changesReader && (!visible || replyActions?.active === false || changesReader.generation !== (replyActions?.generation ?? ''))) setChangesReader(null);
+  const timing = end?.timing;
+  // Only captured changes with something in them make a chip; "unavailable" or none says nothing.
+  const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
+  const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
+  const openEdits = edits?.onOpen && (() => edits.onOpen!({ files: edits.files, latest: edits.latest }));
+  const at = (pick?: (userItemId: string, anchor: HTMLElement | null) => void) => (end?.userItemId && pick ? () => pick(end.userItemId, anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) : undefined);
+  const branch = at(replyActions?.branch);
+  const rewind = at(replyActions?.rewind);
+  const edit = end?.userItemId && replyActions?.edit ? () => replyActions.edit!(end.userItemId, anchor.current) : undefined;
+  const menu: ActionItem[] = end ? [
+    ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
+    // The chip opens the captured changes; the files the turn's calls named stay one step away in Changes.
+    ...(changes && openEdits ? [{ key: 'turn-files', label: "This turn's files in Changes", icon: <FileDiff />, onSelect: openEdits }] : []),
+    ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
+    ...(edit ? [{ key: 'edit', label: 'Edit and resend…', icon: <Pencil />, takesFocus: true, onSelect: edit }] : []),
+    ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: branch }] : []),
+    ...(rewind ? [{ key: 'rewind', label: 'Rewind to before this prompt…', icon: <RotateCcw />, takesFocus: true, onSelect: rewind }] : []),
+  ] : [];
+  // The captured counts open the turn's changes; without them, the files its calls named (with their calls' own line counts when all recorded them) open Changes.
+  const changeChip = changes?.status === 'available'
+    ? <ChangedChip files={changes.files ?? 0} additions={changes.additions ?? 0} deletions={changes.deletions ?? 0} expanded={!!changesReader?.open} onClick={showChanges} />
+    : edits ? <ChangedChip files={edits.files.length} additions={edits.counts?.additions} deletions={edits.counts?.deletions} onClick={openEdits} /> : null;
+  // Its row shows only when something is in it; the GitLab chips may still be loading, so an empty row hides itself.
+  const actions = end && (
+    <span className="-mr-1.5 flex shrink-0 items-center gap-0.5">
+      {reply?.text && <ReplyCopy reply={reply} />}
+      {menu.length > 0 && <Menu.Root>
+        <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint hover:text-ink" />}><Ellipsis /></Menu.Trigger>
+        <Menu.Content><Menu.Actions items={menu} /></Menu.Content>
+      </Menu.Root>}
+    </span>
+  );
+  const chips = (
+    <>
+      {changeChip}
+      {timing?.todo?.total ? <TurnTodo timing={timing} blocks={turnTodoBlocks(timing.todo, timing.state !== 'working')} /> : null}
+      {end && gitlab && <TurnStrip items={gitlab} />}
+      {asides && <AsideChip task={task} turn={end!.turn} sep={false} />}
+    </>
+  );
+  const reader = changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onAllChanges={replyActions?.allChanges} /></Suspense>;
+  return { actions, chips, reader, changed: !!changeChip };
 }
 
 /**
@@ -654,10 +711,6 @@ interface RenderContext {
   replyEnd?: ReadonlyMap<string, ReplyEnd>;
   /** For the last reply of each ended turn: its claims stamped against the turn's record (lib/receipts). */
   receipts?: ReadonlyMap<string, Stamp[]>;
-  /** For the last reply of each ended turn: the turn's items that can name GitLab items (lib/gitlabRefs). */
-  gitlab?: ReadonlyMap<string, Item[]>;
-  /** For the last reply of each ended turn: the files its edit calls named, for its outcome bar's Changed chip. */
-  changes?: ReadonlyMap<string, TurnChange>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -697,61 +750,25 @@ function TurnStatus({ working = false, timing, empty = false }: Readonly<{ worki
 
 interface ReplyActions { allChanges?: () => void; branch?: BranchReply; rewind?: BranchReply; edit?: BranchReply; active: boolean; generation: string }
 
-/**
- * A hover copy button plus a right-click menu around any block of provider or user text. The reply
- * that ends a turn (`at` on the right) ends in its outcome bar instead (DESIGN.md outcome bar).
- */
-function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [], asideTurn, edits, gitlab }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began (the user's) or its turn ended (the reply's): the user's clock time in the foot under the block, the full date in its tooltip; on a reply, that it ends its turn. */ at?: string; /** The turn this reply ends: its captured changes and its todo list in the outcome bar. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[]; /** The files the turn's edit calls named, when this reply ends it. */ edits?: TurnChange; /** The turn's items that can name GitLab items, when this reply ends it. */ gitlab?: Item[] }>) {
+/** A hover copy button plus a right-click menu around any block of provider or user text; a reply that ends its turn has its copy in the turn card's head (DESIGN.md turn card). */
+function Copyable({ text, read, label, className, side = 'right', at, foot = true, children, extra = [], asideTurn }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: the user's clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const task = useContext(SessionContext) ?? '';
   const asides = useTurnHasAsides(task, foot ? asideTurn : undefined);
   const context = useLazyContextMenu();
-  const anchor = useRef<HTMLDivElement>(null);
-  const visible = useDetailVisibility();
-  const [changesReader, setChangesReader] = useState<{ generation: string; phone: boolean; open: boolean; anchor: HTMLElement | null } | null>(null);
-  if (changesReader && (!visible || replyActions?.active === false || changesReader.generation !== (replyActions?.generation ?? ''))) setChangesReader(null);
-  // The reply that ends a turn: its foot is the outcome bar, in the flow.
-  const outcome = foot && side === 'right' && !!at;
-  // A turn that changed nothing says nothing: no "0 files" in its bar or its menu.
-  const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
-  const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
-  const openEdits = edits?.onOpen && (() => edits.onOpen!({ files: edits.files, latest: edits.latest }));
   const run = () => { if (read) void read().then(copy, () => {}); else copy(text); };
-  const turnItems: ActionItem[] = [
-    ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
-    // The chip opens the captured changes; the files the turn's calls named stay one step away in Changes.
-    ...(changes && openEdits ? [{ key: 'turn-files', label: "This turn's files in Changes", icon: <FileDiff />, onSelect: openEdits }] : []),
-    ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
-    ...(edit ? [{ key: 'edit', label: 'Edit and resend…', icon: <Pencil />, takesFocus: true, onSelect: () => edit(anchor.current) }] : []),
-    ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: () => branch(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
-    ...(rewind ? [{ key: 'rewind', label: 'Rewind to before this prompt…', icon: <RotateCcw />, takesFocus: true, onSelect: () => rewind(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
-  ];
-  const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...turnItems, ...extra];
-  const copyButton = (
-    <Tip label={copied ? 'Copied' : label}>
-      <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
-        {copied ? <Check /> : <Copy />}
-      </Button>
-    </Tip>
-  );
-  // The captured counts open the turn's changes; without them, the files its calls named (with their calls' own line counts when all recorded them) open Changes.
-  const changeChip = changes?.status === 'available'
-    ? <ChangedChip files={changes.files ?? 0} additions={changes.additions ?? 0} deletions={changes.deletions ?? 0} expanded={!!changesReader?.open} onClick={showChanges} />
-    : edits ? <ChangedChip files={edits.files.length} additions={edits.counts?.additions} deletions={edits.counts?.deletions} onClick={openEdits} />
-    : changes ? <ChangedChip files={0} unavailable expanded={!!changesReader?.open} onClick={showChanges} /> : null;
-
+  const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...extra];
   return (
-    <div
-      ref={anchor}
-      data-foot={foot && !outcome ? '' : undefined}
-      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && !outcome && 'not-last:mb-3', className)}
-      {...context.shell}
-    >
+    <div data-foot={foot ? '' : undefined} className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && 'not-last:mb-3', className)} {...context.shell}>
       {children}
       {/* A message's foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
-      {foot && !outcome && (
+      {foot && (
         <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || asides) && 'opacity-100')}>
-          {copyButton}
+          <Tip label={copied ? 'Copied' : label}>
+            <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
+              {copied ? <Check /> : <Copy />}
+            </Button>
+          </Tip>
           {at && (
             <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap">
               {clockTime(at)}
@@ -760,25 +777,6 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
           {asides && <AsideChip task={task} turn={asideTurn!} />}
         </div>
       )}
-      {/* The reply's outcome bar: what the turn left (its edits, its todo list, the GitLab items it touched, its asides), then copy and the turn's actions. In the flow, always in view, wrapping: never over the next message or past the edge. Without an outcome it is the two buttons alone. */}
-      {outcome && (
-        <div data-foot="" className="mt-3 flex min-w-0 items-start gap-2 has-[[data-outcome]>*]:rounded-md has-[[data-outcome]>*]:bg-surface has-[[data-outcome]>*]:px-3 has-[[data-outcome]>*]:py-2 has-[[data-outcome]>*]:shadow-raised">
-          <div data-outcome="" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 empty:hidden">
-            {changeChip}
-            {timing?.todo?.total ? <TurnTodo timing={timing} blocks={turnTodoBlocks(timing.todo, timing.state !== 'working')} /> : null}
-            {gitlab && <TurnStrip items={gitlab} />}
-            {asides && <AsideChip task={task} turn={asideTurn!} sep={false} />}
-          </div>
-          <div className="flex shrink-0 items-center gap-0.5">
-            {copyButton}
-            {(branch || rewind || edit || (timing && (changes || replyActions?.allChanges))) && <Menu.Root>
-              <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint hover:text-ink" />}><Ellipsis /></Menu.Trigger>
-              <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
-            </Menu.Root>}
-          </div>
-        </div>
-      )}
-      {changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onAllChanges={replyActions?.allChanges} /></Suspense>}
       {context.menu(<ContextMenu.Actions items={items} />)}
     </div>
   );
@@ -877,7 +875,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className, asideT
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends the turn. */ gitlab?: Item[]; /** The files its turn's edit calls named, when it ends the turn. */ edits?: TurnChange; asideTurn?: string }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
@@ -912,12 +910,10 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn }: Mess
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps, gitlab, edits }: MessageParts) {
-  const onBranch = replyActions?.branch;
-  const onRewind = replyActions?.rewind;
-  const onEdit = replyActions?.edit;
+function assistantMessage({ item, text, streaming = false, className, whole, stamps }: MessageParts) {
+  // A reply has no foot: the turn card's head copies the reply that ends the turn, and any reply copies from its right-click menu.
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} rewind={end?.userItemId && onRewind ? anchor => onRewind(end.userItemId, anchor) : undefined} edit={end?.userItemId && onEdit ? anchor => onEdit(end.userItemId, anchor) : undefined} foot={!!end} className={className} asideTurn={end?.turn} edits={end ? edits : undefined} gitlab={end ? gitlab : undefined}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
@@ -940,9 +936,9 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <PlainText text={text} />;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn, gitlab, edits }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string; gitlab?: Item[]; edits?: TurnChange }>) {
+function ClippedMessage({ item, sessionId, streaming, className, asideTurn }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; asideTurn?: string }>) {
   const whole = useWholeText(item);
-  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn, gitlab, edits };
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole, asideTurn };
   if (item.kind === 'user') return userBubble(parts);
   if (item.kind === 'notice') return noticeRow(parts);
   return assistantMessage(parts);
@@ -1383,15 +1379,15 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps, gitlab, edits }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the outcome bar. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends its turn. */ gitlab?: Item[]; /** The files its turn's edit calls named, when it ends its turn. */ edits?: TurnChange; replyActions?: ReplyActions; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, className, stamps }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
-      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} gitlab={gitlab} edits={edits} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps, gitlab, edits }) : noticeRow({ item, text: item.text ?? '', className });
+      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':

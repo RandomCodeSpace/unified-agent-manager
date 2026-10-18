@@ -35,6 +35,8 @@ test('a reply claim the turn\'s record contradicts turns the header chip too', a
   withChart((t) => {
     const reply = t.items.filter((i) => i.kind === 'assistant').at(-1)!;
     reply.text = `${reply.text}\n\nAll tests pass.`;
+    // Only the record proves a claim wrong: the turn's own test run failed.
+    t.items.splice(t.items.indexOf(reply), 0, { id: 'red-tests', kind: 'tool', time: reply.time, tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./...' }), exit_code: 1, output: 'FAIL' } });
   });
   await openTask('t-chart');
   const chip = await within(header()).findByText('Finished · a claim contradicted');
