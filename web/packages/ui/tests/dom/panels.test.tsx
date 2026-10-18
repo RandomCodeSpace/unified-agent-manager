@@ -153,10 +153,11 @@ describe('subagents', () => {
     await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).toBeTruthy());
   });
 
-  test('the strip ends with the subagents as blocks and opens one reader with Todo and Subagents tabs; ← and → switch them', async () => {
+  test('the strip ends with the subagents as a button of their own and opens one reader with Todo and Subagents tabs; ← and → switch them', async () => {
     const { user } = await openTask('t8');
-    const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done\. Show the list and the subagents$/ });
-    const subagents = strip.querySelector<HTMLElement>('[data-strip-subagents]')!;
+    // Two buttons: the line opens the list, the subagents their own tab; each its own name.
+    const strip = screen.getByRole('button', { name: /Show the list$/ });
+    const subagents = screen.getByRole('button', { name: 'Subagents: 5, 1 failed, 3 running, 1 done. Show the subagents' });
     // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
     expect([...subagents.querySelectorAll('[title]')].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')])).toEqual([
       ['1 failed', 'error', true],
@@ -184,6 +185,17 @@ describe('subagents', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.activeElement).toBe(strip);
+  });
+
+  test('opening the subagents leaves the line alone: only the button pressed is expanded and lifted', async () => {
+    const { user } = await openTask('t8');
+    const line = screen.getByRole('button', { name: /Show the list$/ });
+    const subagents = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
+    expect(line.contains(subagents)).toBe(false);
+    await user.click(subagents);
+    await screen.findByRole('dialog', { name: 'Todo and subagents' });
+    expect(subagents.getAttribute('aria-expanded')).toBe('true');
+    expect(line.getAttribute('aria-expanded')).toBe('false');
   });
 
   test('a reply\'s chip waits while the live set shows all its subagents', async () => {

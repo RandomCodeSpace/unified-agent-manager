@@ -55,7 +55,7 @@ for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
   test(`${scheme} text keeps AA on every surface, and non-text faint keeps 3:1`, () => {
     const grounds = ['rail', 'canvas', 'surface', 'raised', 'sunken', 'bubble', 'code-bg', 'tint-hover', 'tint-selected', 'tint-well'];
     const pairs = [];
-    for (const text of ['ink', 'body', 'muted', 'accent', 'attention', 'success', 'warning', 'error']) for (const ground of grounds) pairs.push([text, ground, 4.5]);
+    for (const text of ['ink', 'body', 'muted', 'accent', 'link', 'file-link', 'attention', 'success', 'warning', 'error']) for (const ground of grounds) pairs.push([text, ground, 4.5]);
     for (const signal of ['attention', 'success', 'warning', 'error', 'info', 'accent']) pairs.push([signal, `${signal}-wash`, 4.5]);
     for (const ground of grounds) pairs.push(['faint', ground, 3]);
     pairs.push(['on-primary', 'primary', 4.5], ['on-accent', 'accent', 4.5], ['diff-add-text', 'diff-add-bg', 4.5], ['diff-del-text', 'diff-del-bg', 4.5]);

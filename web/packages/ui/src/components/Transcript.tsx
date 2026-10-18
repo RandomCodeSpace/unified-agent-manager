@@ -379,10 +379,12 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     headButton.current?.focus({ preventScroll: true });
     setOpen(false);
   };
+  const facts = [...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="whitespace-nowrap text-error">{p.text}</span>)].filter(Boolean);
   return (
     <div ref={card} id={domId} className={CARD}>
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
-        {dotted([...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="whitespace-nowrap text-error">{p.text}</span>)])}
+        {dotted(facts)}
+        {facts.length > 0 && counts.length + failures.length > 0 && <span aria-hidden="true" className="text-faint">·</span>}
         {counts.length + failures.length > 0 && (
           <button
             ref={headButton}
@@ -390,7 +392,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
             aria-expanded={open}
             aria-controls={opened ? timelineId : undefined}
             title={text}
-            className={cn("relative -mr-1.5 ml-auto flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-2.5", summary.tone === 'attention' && 'text-attention')}
+            className={cn("relative -mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-2.5", summary.tone === 'attention' && 'text-attention')}
             onClick={toggle}
           >
             <span className="min-w-0 truncate">
@@ -406,7 +408,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           </button>
         )}
         {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
-        {outcome.actions && <span className={cn(counts.length + failures.length === 0 && 'ml-auto')}>{outcome.actions}</span>}
+        {outcome.actions && <span className="ml-auto">{outcome.actions}</span>}
       </div>
       <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>
       {outcome.reader}

@@ -36,6 +36,9 @@
   --color-accent: #111111;
   --color-on-accent: #ffffff;
   --color-accent-wash: #e8e8e8;
+  /* Web links and file references in prose: the only hues in running text, so they read apart from it and from each other. */
+  --color-link: #3a5ec4;
+  --color-file-link: #0f6c62;
   --color-focus: #111111;
   --color-selection: #d9d9d9;
   --color-attention: #ad3a0b;
@@ -231,6 +234,8 @@
     --color-accent: #f5f5f5;
     --color-on-accent: #000000;
     --color-accent-wash: #262626;
+    --color-link: #86a6ff;
+    --color-file-link: #4fd1bf;
     --color-focus: #f5f5f5;
     --color-selection: #333333;
     --color-attention: #fb923c;
@@ -645,7 +650,7 @@
     color: var(--color-ink);
   }
   .md a {
-    color: var(--color-accent);
+    color: var(--color-link);
     text-underline-offset: 3px;
   }
   .md a:hover {
