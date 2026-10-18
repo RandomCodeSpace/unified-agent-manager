@@ -127,7 +127,7 @@ func TestBudgetLimitMidToolWrapsUpWithTheHandoffReply(t *testing.T) {
 		t.Fatalf("handoff = %+v", h)
 	}
 	for _, want := range []string{"## Facts", "**AI credits:** 2.1 spent; budget 2.0", "**Last intent:** Running the tests", "1 done, 1 in progress, 1 to do", "[x] Write the parser", "[ ] Add the tests (in progress)",
-		"`bash`: `go test ./...` (exit 1)", "`tracked.txt` modified +2 −1", "`sub/new file.txt` untracked +3 −0"} {
+		"`bash`: `go test ./...` (exit 1)", "none of its edits differ from `HEAD`", "**Other changes in the folder:** 2 files differ from `HEAD`"} {
 		if !strings.Contains(h.Facts, want) {
 			t.Errorf("facts lack %q:\n%s", want, h.Facts)
 		}
@@ -503,6 +503,36 @@ func TestBudgetCreditTextMatchesTheWebUI(t *testing.T) {
 	for v, want := range map[float64]string{0: "0", 0.0001: "<0.01", 0.0196: "0.02", 2: "2.0", 2.14: "2.1", 84: "84", 1234.6: "1235"} {
 		if got := creditText(v); got != want {
 			t.Errorf("creditText(%v) = %q, want %q", v, got, want)
+		}
+	}
+}
+
+func TestHandoffFactsListOnlyTheThreadsFiles(t *testing.T) {
+	mine := ChangedFile{Path: "a.go", Status: "M", Additions: 3, Deletions: 1}
+	other := ChangedFile{Path: "b.go", Status: "M", Additions: 9}
+	cases := []struct {
+		name      string
+		files     taskListing
+		want, not []string
+	}{
+		{"own and others", taskListing{repo: &gitRepo{}, all: Changes{Files: []ChangedFile{mine, other, {Path: "c.go", Status: "A"}}}, task: []ChangedFile{mine}},
+			[]string{"**Files changed by this Thread** against `HEAD`: 1", "`a.go` M +3 −1", "**Other changes in the folder:** 2 files differ from"}, []string{"b.go", "c.go"}},
+		{"others only", taskListing{repo: &gitRepo{}, all: Changes{Files: []ChangedFile{other}}},
+			[]string{"none of its edits differ from `HEAD`", "**Other changes in the folder:** 1 file differs from"}, []string{"b.go"}},
+		{"own only", taskListing{repo: &gitRepo{}, all: Changes{Files: []ChangedFile{mine}}, task: []ChangedFile{mine}},
+			[]string{"`a.go` M +3 −1"}, []string{"Other changes"}},
+	}
+	for _, c := range cases {
+		facts := handoffNotes{}.markdown(c.files, nil, nil)
+		for _, w := range c.want {
+			if !strings.Contains(facts, w) {
+				t.Errorf("%s: facts lack %q:\n%s", c.name, w, facts)
+			}
+		}
+		for _, n := range c.not {
+			if strings.Contains(facts, n) {
+				t.Errorf("%s: facts carry %q:\n%s", c.name, n, facts)
+			}
 		}
 	}
 }
