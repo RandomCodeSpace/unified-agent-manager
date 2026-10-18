@@ -1,14 +1,15 @@
-import { CircleCheck, CircleDashed, CircleDot, CircleX, GitPullRequest, GitPullRequestDraft, Layers, SquareCheck } from 'lucide-react';
+import { Check, CircleCheck, CircleDashed, CircleDot, CircleX, GitPullRequest, GitPullRequestDraft, Layers, SquareCheck, X } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type GitLabItemSummary, type GitLabPipelineState, type Item } from '../api';
 import { cn } from '../lib/cn';
 import { needsBody, refKey, refText, sameRef, turnGitLabRefs, type GitLabOrigin, type GitLabOwnPipeline, type GitLabRef } from '../lib/gitlabRefs';
 import { useBodyRead } from './Details';
+import { Blocks, type Block, type BlockTone } from './ui/blocks';
 import type { ChipProps } from './ui/chip';
 
-// GitLab from the conversation (DESIGN.md): each reply that ended a turn which touched GitLab items
-// ends in a "GitLab" strip, one entry per item with its state word; an entry opens the item in the
+// GitLab from the conversation (DESIGN.md outcome bar): each reply that ended a turn which touched
+// GitLab items carries them in its outcome bar, one chip per item with its state as blocks; a chip opens the item in the
 // GitLab side panel, which steps between the turn's items. The Thread's own commit's merge
 // requests keep their writes; every other item is read-only.
 
@@ -268,32 +269,45 @@ export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
     void seen; // A body read since the last render changes what the calls show.
     return turnGitLabRefs(calls.map((call) => callBodies.get(`${sessionId}\n${call.id}\n${call.tool?.status}`) ?? call), origin, own);
   }, [calls, origin, own, sessionId, seen]);
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLSpanElement>(null);
   const items = useSummaries(sessionId, gl ? refs : [], box);
   if (!gl || !refs.length) return null;
   return (
-    <div ref={box} role="group" aria-label="GitLab items in this turn" className="mt-3 flex flex-wrap items-center gap-1.5 font-sans">
-      <span className="mr-1 text-eyebrow uppercase text-muted">GitLab</span>
+    <span ref={box} role="group" aria-label="GitLab items in this turn" className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 font-sans">
       {refs.map((r) => {
         const item = items.get(refKey(r));
-        const word = stateWord(item);
         const on = sameRef(gl.current, r);
         const body = <>
           <KindGlyph r={r} item={item} className="size-3" />
-          <span className={cn('font-medium', r.kind === 'job' && 'font-mono')}>{itemLabel(r, item)}</span>
-          {word && <span className={item?.error ? 'text-muted' : toneText(item?.draft ? 'draft' : item?.state ?? '')}>{word}</span>}
-          {item?.pipeline_state && item.state === 'opened' && <><span aria-hidden="true" className="text-muted">·</span><span className={toneText(item.pipeline_state)}>pipeline {statusLabel(item.pipeline_state).toLowerCase()}</span></>}
-          {item?.stale && !item.error && <span className="text-muted">stale</span>}
+          <span className={cn('min-w-0 truncate font-semibold', r.kind === 'job' && 'font-mono font-medium')}>{itemLabel(r, item)}</span>
+          <Blocks items={stateBlocks(item)} />
         </>;
-        const className = 'inline-flex h-6 items-center gap-1.5 rounded-sm bg-raised px-2 text-caption text-ink shadow-raised transition-colors duration-100 hover:bg-tint-hover aria-[current=true]:bg-tint-selected';
+        const className = "relative inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm bg-raised pr-0.5 pl-2 text-caption text-ink shadow-raised transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-[current=true]:bg-tint-selected pointer-coarse:after:-inset-y-2.5";
         const name = item?.title && r.kind !== 'job' ? `${itemLabel(r, item, true)} · ${item.title}` : undefined;
         const title = item?.stale && !item.error ? `${name ? `${name} · ` : ''}Last known state: GitLab is rate limiting reads` : name;
         return item?.web_url
           ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={className} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
           : <button key={refKey(r)} type="button" aria-current={on || undefined} title={title} className={className} onClick={() => gl.open(refs, r)}>{body}</button>;
       })}
-    </div>
+    </span>
   );
+}
+
+const BLOCK_TONE: Record<NonNullable<ChipProps['tone']>, BlockTone> = { success: 'success', error: 'error', accent: 'accent', warning: 'warning', attention: 'warning', muted: 'none' };
+const blockTone = (status: string): BlockTone => BLOCK_TONE[statusTone(status) ?? 'muted'];
+
+/** An item's state as blocks: its state word, an open merge request's pipeline (a glyph and "pipeline", its state in words) and "stale" while GitLab rate limits reads. */
+export function stateBlocks(item?: GitLabItemSummary): Block[] {
+  const word = stateWord(item);
+  if (!item || !word) return [];
+  if (item.error) return [{ key: 'state', tone: 'none', label: word, title: word }];
+  const out: Block[] = [{ key: 'state', tone: blockTone(item.draft ? 'draft' : item.state ?? ''), label: word, title: word }];
+  if (item.pipeline_state && item.state === 'opened') {
+    const pipeline = item.pipeline_state;
+    out.push({ key: 'pipeline', tone: blockTone(pipeline), Icon: pipeline === 'success' ? Check : pipeline === 'failed' ? X : CircleDashed, label: 'pipeline', title: `pipeline ${statusLabel(pipeline).toLowerCase()}` });
+  }
+  if (item.stale) out.push({ key: 'stale', tone: 'none', label: 'stale', title: 'stale' });
+  return out;
 }
 
 /** The open item's name and address in GitLab, for the panel's head. */

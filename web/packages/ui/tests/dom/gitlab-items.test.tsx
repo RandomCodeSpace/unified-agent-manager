@@ -45,7 +45,7 @@ function mockItems() {
   } as Record<string, NonNullable<Awaited<ReturnType<typeof api.gitlabItems>>['items'][number]>>)[ref] ?? { ref, kind: '', error: 'unavailable' }) }));
 }
 
-test('a reply that ended a turn which touched GitLab ends in a strip of its items with their states; a press opens one', async () => {
+test('a reply that ended a turn which touched GitLab carries its items in its outcome bar with their states as blocks; a press opens one', async () => {
   onScreen();
   const read = mockItems();
   const open = vi.fn();
@@ -61,7 +61,13 @@ test('a reply that ended a turn which touched GitLab ends in a strip of its item
     <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} />
   </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
   const strip = await screen.findByRole('group', { name: 'GitLab items in this turn' });
-  await waitFor(() => expect(within(strip).getAllByRole('link').map((a) => a.textContent)).toEqual(['!2draft·pipeline running', 'Pipeline #91failed', 'lintfailed', '#14open']));
+  // What a screen reader hears: the item, then its state blocks' words.
+  const heard = (el: Element) => { const copy = el.cloneNode(true) as Element; copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove()); return copy.textContent; };
+  await waitFor(() => expect(within(strip).getAllByRole('link').map(heard)).toEqual(['!2draftpipeline running', 'Pipeline #91failed', 'lintfailed', '#14open']));
+  // Chips in the reply's outcome bar, with no "GitLab" label; the open MR's pipeline is a block of its own.
+  expect(strip.closest('[data-foot]')).toBeTruthy();
+  expect(strip.textContent).not.toContain('GitLab');
+  expect(within(strip).getByTitle('pipeline running').className).toContain('bg-accent-wash');
   expect(read).toHaveBeenCalledExactlyOnceWith('thread', ['mr:2', 'pipeline:91', 'job:7', 'issue:14']);
   // The reply's own link stays a plain link.
   expect(screen.getByRole('link', { name: 'the issue' }).getAttribute('href')).toBe(`${P}/issues/14`);

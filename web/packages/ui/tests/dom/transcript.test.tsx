@@ -11,6 +11,10 @@ import { VisualBoundary } from '../../src/components/VisualBoundary';
 import { composer, log, openMenu, openSubagentIndex, openTask } from './render';
 
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
+/** The head of the turn `el` is in: its card's first row. */
+const headOf = (el: Element) => el.closest('[data-reply]')!.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
+/** The outcome bar under the reply `el` is in, if it has one. */
+const barOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':scope > [data-foot]') ?? null;
 
 describe('messages', () => {
   test('skill invocation notices stay visible and ordered in turns', () => {
@@ -116,21 +120,20 @@ describe('messages', () => {
     expect(foot.className).toContain('group-hover/copy:opacity-100');
   });
 
-  test("the turn's last reply carries its tokens out and generation speed after the time", async () => {
+  test("the turn's head carries when it ended, its time split, its tokens out and generation speed", async () => {
     await openTask('t3');
-    // The assistant's anchor is the text block; its foot is the block's sibling inside the copyable wrapper.
-    const reply = log().getByText('Done.', { exact: false }).closest('[data-history-anchor]')!.parentElement as HTMLElement;
-    const foot = within(reply).getByRole('time').parentElement!;
-    // 1,860 tokens out over 41.2 s of generation (mock t3).
-    expect(foot.textContent).toContain('1.9K tokens');
-    expect(foot.textContent).toContain('45 tok/s');
-    expect(foot.querySelector('[title*="48,210 tokens in"]')).toBeTruthy();
+    const head = headOf(log().getByText('Done.', { exact: false }));
+    expect(within(head).getByRole('time')).toBeTruthy();
+    // 1,860 tokens out over 41.2 s of generation (mock t3), the model's own time first in the split.
+    expect(head.textContent).toContain('1.9K tokens · 45 tok/s');
+    expect(head.textContent).toContain('(model 41s');
+    expect(head.querySelector('[title*="48,210 tokens in"]')).toBeTruthy();
     // The user's bubble carries the time alone.
     const bubble = log().getByText('Add a line to', { exact: false }).closest('[data-history-anchor]') as HTMLElement;
     expect(within(bubble).getByRole('time').parentElement!.textContent).not.toContain('tokens');
   });
 
-  test('only the last reply of an ended turn has a foot: the end time and the turn\'s tokens; earlier replies and a working turn have none', () => {
+  test('only the last reply of an ended turn has an outcome bar; the head says when the turn ended and its tokens, or that it works with its tokens so far', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
       { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
@@ -144,18 +147,25 @@ describe('messages', () => {
       { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed' as const, input_tokens: 1000, output_tokens: 940, generation_ms: 4000 },
       { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' as const, input_tokens: 2000, output_tokens: 610, generation_ms: 3000 },
     ];
-    const foot = (view: ReturnType<typeof render>, text: string) => within(view.getByText(text).closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent ?? null;
     const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
-    // The ended turn: one foot, under its last reply, with the time the turn ended and its count.
-    expect(foot(view, 'Looking.')).toBeNull();
-    expect(foot(view, 'Found it.')).toContain(`${new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · 940 tokens · 235 tok/s`);
-    // The working turn: no foot under either reply, however many tokens have been counted so far.
-    expect(foot(view, 'On it.')).toBeNull();
-    expect(foot(view, 'Patching.')).toBeNull();
-    // Once it ends, the foot lands under its last reply with the whole turn's count.
+    const head = (text: string) => headOf(view.getByText(text)).textContent;
+    // The ended turn: its head says when it ended and its count; one bar, under its last reply.
+    expect(barOf(view.getByText('Looking.'))).toBeNull();
+    expect(barOf(view.getByText('Found it.'))).toBeTruthy();
+    expect(head('Found it.')).toContain(new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+    expect(head('Found it.')).toContain('Took 6s (model 4s)');
+    expect(head('Found it.')).toContain('940 tokens · 235 tok/s');
+    // The working turn: no bar under either reply; its head works on with the tokens counted so far, live.
+    expect(barOf(view.getByText('On it.'))).toBeNull();
+    expect(barOf(view.getByText('Patching.'))).toBeNull();
+    expect(head('Patching.')).toMatch(/^Working/);
+    expect(head('Patching.')).toContain('610 tokens · 203 tok/s');
+    expect(within(headOf(view.getByText('Patching.'))).queryByRole('button', { name: /tokens/ })).toBeNull();
+    // Once it ends, the bar lands under its last reply and the head has the whole turn's count.
     view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
-    expect(foot(view, 'On it.')).toBeNull();
-    expect(foot(view, 'Patching.')).toContain('1.2K tokens · 242 tok/s');
+    expect(barOf(view.getByText('On it.'))).toBeNull();
+    expect(barOf(view.getByText('Patching.'))).toBeTruthy();
+    expect(head('Patching.')).toContain('1.2K tokens · 242 tok/s');
   });
 
   test("an ended turn's foot keeps its identity while the next reply streams, so that reply's row is not drawn again", () => {
@@ -178,7 +188,7 @@ describe('messages', () => {
     expect(replyEnds(items, [{ ...timings[0], output_tokens: 1000 }, timings[1]], true)?.get('a1')).not.toBe(before?.get('a1'));
   });
 
-  test("a turn that changed the todo list names it in its reply's foot, kept in view, and opens the list as the turn left it", async () => {
+  test("a turn that changed the todo list shows it as blocks in its reply's outcome bar and opens the list as the turn left it", async () => {
     const user = userEvent.setup();
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
@@ -206,23 +216,19 @@ describe('messages', () => {
     const view = render(draw([timing]));
     const button = screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 in progress, 1 blocked, 1 to do' });
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
-    expect(button.textContent).toBe('Todo 1/4·1 in progress·1 blocked·1 to do');
-    // Each stage in its colour behind its glyph; a phone drops the words, never the glyphs.
-    for (const [word, tone] of [['blocked', 'text-warning'], ['to do', 'text-muted']]) {
-      const words = within(button).getByText(word);
-      expect(words.className).toContain('max-sm:hidden');
-      expect(words.parentElement!.className).toContain(tone);
-      expect(words.parentElement!.querySelector('svg')).toBeTruthy();
+    // "Todo", then a block per stage: its glyph and count in its tone, its words for a screen reader.
+    expect(button.parentElement!.firstElementChild!.textContent).toBe('Todo');
+    const block = (title: string) => within(button).getByTitle(title);
+    for (const [title, tone] of [['1 done', 'bg-success-wash'], ['1 blocked', 'bg-warning-wash'], ['1 to do', 'bg-tint-well']]) {
+      expect(block(title).className).toContain(tone);
+      expect(block(title).querySelector('svg')).toBeTruthy();
     }
-    // The turn has ended, so nothing is in progress any more: that stage reads in words alone, on a phone too.
-    const stopped = within(button).getByText('in progress');
-    expect(stopped.className).not.toContain('max-sm:hidden');
-    expect(stopped.parentElement!.className).not.toContain('text-accent');
-    expect(stopped.parentElement!.querySelector('svg')).toBeNull();
-    // The words beside the tokens, and the foot stays in view without a hover.
-    const foot = button.parentElement!;
-    expect(foot.textContent).toContain('940 tokens · Todo 1/4');
-    expect(foot.className).toContain('opacity-100');
+    // The turn has ended, so nothing is in progress any more: that block keeps its glyph without the accent.
+    expect(block('1 in progress').className).not.toContain('accent');
+    expect(block('1 in progress').querySelector('svg')).toBeTruthy();
+    // In the outcome bar, in the flow and always in view.
+    const bar = button.closest('[data-foot]')!;
+    expect(bar.className).not.toMatch(/absolute|opacity-0/);
 
     await user.click(button);
     const reader = await screen.findByRole('dialog', { name: 'Todo at the end of this turn' });
@@ -260,7 +266,7 @@ describe('messages', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     // Counts kept before uam split in progress from to do: the open rows stay one count.
     view.rerender(draw([{ ...timing, todo: { done: 1, total: 4, blocked: 1, open: 2 } }]));
-    expect(screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 blocked, 2 left open' }).textContent).toBe('Todo 1/4·1 blocked·2 open');
+    expect(within(screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 blocked, 2 left open' })).getByTitle('2 open').textContent).toBe('2 open2 open');
     view.rerender(draw([{ ...timing, todo: undefined }]));
     expect(screen.queryByRole('button', { name: /^Todo at the end of this turn/ })).toBeNull();
     expect(screen.getByText('Planned.').closest('[data-history-anchor]')!.parentElement!.textContent).not.toContain('Todo');
@@ -467,14 +473,14 @@ describe('activity', () => {
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
   });
 
-  test('a stopped turn keeps its end and its reply foot while the next turn starts', () => {
+  test('a stopped turn keeps its end and its outcome bar while the next turn starts', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
     const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
     const view = render(draw([stopped], false));
-    const ends = () => [view.container.textContent?.includes('Took 5s'), within(view.getByText('Counting.').closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent?.includes('940 tokens')];
+    const ends = () => [view.container.textContent?.includes('Took 5s'), !!barOf(view.getByText('Counting.')) && headOf(view.getByText('Counting.')).textContent?.includes('940 tokens')];
     expect(ends()).toEqual([true, true]);
     // The Task works before the next turn's timing comes, then before its message lands: the stopped turn stays as it ended.
     view.rerender(draw([stopped], true));
@@ -522,7 +528,7 @@ describe('activity', () => {
       { id: 't2', user_item_id: 'u2', started_at: at(10), ended_at: at(13), state: 'completed' as const },
     ];
     const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
-    expect(view.getByText('Took 4s')).toBeTruthy();
+    expect(view.container.textContent).toContain('Took 4s');
     expect(view.getByText('Took 3s · No reply')).toBeTruthy();
   });
 
@@ -537,20 +543,42 @@ describe('activity', () => {
     copy.mockRestore();
   });
 
-  test('a test run shows its passed and failed counts on its row, without a total', () => {
-    const run = (id: string, tests?: { passed: number; failed: number }): Item => ({ id, kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status: 'completed', exit_code: tests?.failed ? 1 : 0, input: JSON.stringify({ command: 'go test ./...' }), ...(tests && { tests }) } });
+  test('a step ends in its result: its test counts, exit code or failure as a block, its edits as line counts', () => {
+    const run = (id: string, tests?: { passed: number; failed: number }, exit = tests?.failed ? 1 : 0, status: 'completed' | 'failed' = 'completed'): Item => ({ id, kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status, exit_code: exit, input: JSON.stringify({ command: 'go test ./...' }), ...(tests && { tests }) } });
     const failing = render(<ToolRow item={run('b1', { passed: 12, failed: 2 })} live={false} />);
-    expect(failing.getByText('12 passed · 2 failed')).toBeTruthy();
-    expect(failing.getByText('2 failed').className).toContain('sm:hidden');
+    const counts = failing.getByTitle('12 passed · 2 failed');
+    expect(counts.className).toContain('bg-error-wash');
+    // A phone keeps the failures alone.
+    expect(counts.querySelector('.max-sm\\:hidden')?.textContent).toBe('12 passed · ');
     expect(failing.queryByText(/\d+\/\d+/)).toBeNull();
     failing.unmount();
     const passing = render(<ToolRow item={run('b2', { passed: 15, failed: 0 })} live={false} />);
-    expect(passing.getByText('15 passed')).toBeTruthy();
+    expect(passing.getByTitle('15 passed').className).toContain('bg-success-wash');
     passing.unmount();
     const none = render(<ToolRow item={run('b4', { passed: 0, failed: 3 })} live={false} />);
-    expect(none.getByText('3 failed')).toBeTruthy();
+    expect(none.getByTitle('3 failed')).toBeTruthy();
     none.unmount();
-    expect(render(<ToolRow item={run('b3')} live={false} />).queryByText(/passed/)).toBeNull();
+    const plain = render(<ToolRow item={run('b3')} live={false} />);
+    expect(plain.queryByText(/passed/)).toBeNull();
+    expect(plain.getByTitle('exit 0').className).toContain('bg-success-wash');
+    plain.unmount();
+    const broke = render(<ToolRow item={run('b5', undefined, 2, 'failed')} live={false} />);
+    expect(broke.getByTitle('exit 2').className).toContain('bg-error-wash');
+    broke.unmount();
+    const fetch: Item = { id: 'f1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'web_fetch', status: 'failed', input: JSON.stringify({ url: 'https://example.test' }) } };
+    const lost = render(<ToolRow item={fetch} live={false} />);
+    expect(lost.getByTitle('failed').className).toContain('bg-error-wash');
+    lost.unmount();
+    const edit: Item = { id: 'e1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'edit', status: 'completed', edit_event_id: 'ev', input: JSON.stringify({ path: 'a.go' }), file_edits: [{ path: 'a.go', kind: 'modified', additions: 12, deletions: 3, diff_status: 'available' }] } };
+    // Its file rows carry the counts, so the step row shows none: one count per file.
+    const edited = render(<ToolRow item={edit} live={false} />);
+    expect(within(edited.getByRole('button', { name: /^edit/ })).queryByText('+12')).toBeNull();
+    expect(edited.getAllByText('+12')).toHaveLength(1);
+    edited.unmount();
+    // Counts without file rows stand on the step row.
+    const bare = render(<ToolRow item={{ ...edit, tool: { ...edit.tool!, edit_event_id: undefined } }} live={false} />);
+    expect(within(bare.getByRole('button', { name: /^edit/ })).getByText('+12').parentElement!.textContent).toBe('+12 −3');
+    bare.unmount();
   });
 
   test('a visual that throws while drawing leaves its fallback, not a broken transcript', () => {
@@ -584,6 +612,112 @@ describe('activity', () => {
     panel = within(await screen.findByRole('dialog', { name: 'Subagent transcript' }));
     expect(await panel.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeNull();
+  });
+});
+
+describe('turn card', () => {
+  const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+  const edit = (id: string, s: number, path: string): Item => ({ id, kind: 'tool', time: at(s), ended_at: at(s + 1), tool: { name: 'edit', status: 'completed', path, input: JSON.stringify({ path }) } });
+  const items: Item[] = [
+    { id: 'u1', kind: 'user', time: at(0), text: 'Fix both files' },
+    edit('e1', 1, '/w/internal/secret-a.go'),
+    edit('e2', 3, '/w/internal/secret-b.go'),
+    { id: 'a1', kind: 'assistant', time: at(8), text: 'Fixed both.' },
+  ];
+  const ended: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(9), state: 'completed', output_tokens: 940, generation_ms: 4000, paused_ms: 1000 };
+
+  test("the reply's outcome bar holds one Changed total chip, never a file's name, in the flow with copy and the turn's actions", () => {
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ ...ended, changes: { status: 'available', event_id: 'ev', files: 2, additions: 52, deletions: 3 } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} onOpenAllChanges={vi.fn()} />);
+    const bar = barOf(view.getByText('Fixed both.')) as HTMLElement;
+    // In the flow, always in view and wrapping: never over the next message or past the edge.
+    expect(bar.className).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
+    expect(bar.className).toContain('mt-3');
+    expect(within(bar).getAllByRole('button', { name: /^Changed/ }).map((b) => b.getAttribute('aria-label'))).toEqual(['Changed 2 files +52 −3']);
+    expect(within(bar).getByRole('button', { name: 'Copy message' })).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: 'Turn actions' })).toBeTruthy();
+    // No file's name anywhere in the bar, not even in a tooltip; no separate changed-files line or GitLab label.
+    expect(bar.textContent).not.toContain('secret');
+    expect([...bar.querySelectorAll('[title]')].map((el) => el.getAttribute('title')).join(' ')).not.toContain('secret');
+    expect(view.queryByRole('button', { name: 'View changes' })).toBeNull();
+    expect(view.container.textContent).not.toMatch(/Changed 2 files|GitLab/);
+  });
+
+  test("without captured counts the chip counts the files the turn's calls named and opens Changes on them", async () => {
+    const user = userEvent.setup();
+    const open = vi.fn();
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={open} liveCard />);
+    const chip = within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' });
+    expect(chip.textContent).toBe('2 files');
+    await user.click(chip);
+    expect(open).toHaveBeenCalledWith({ files: ['/w/internal/secret-a.go', '/w/internal/secret-b.go'], latest: true });
+  });
+
+  test("without a capture the chip takes its line counts from the edit calls' own patches, when every one recorded them", () => {
+    const patched = (item: Item, additions: number, deletions: number): Item => ({ ...item, tool: { ...item.tool!, edit_event_id: `ev-${item.id}`, file_edits: [{ path: item.tool!.path!.slice(3), kind: 'modified', additions, deletions, diff_status: 'available' }] } });
+    const draw = (list: Item[]) => <Transcript sessionId="s" items={list} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} />;
+    const view = render(draw([items[0], patched(items[1], 12, 3), patched(items[2], 40, 0), items[3]]));
+    const chip = within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files +52 −3' });
+    expect(within(chip).getByText('+52').className).toContain('text-success');
+    expect(within(chip).getByText('−3').className).toContain('text-error');
+    // One call without recorded counts: the files alone, no guessed lines.
+    view.rerender(draw([items[0], patched(items[1], 12, 3), items[2], items[3]]));
+    expect(within(barOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+  });
+
+  test('a todo block with nothing in it is left out', () => {
+    const view = render(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[{ ...ended, todo: { done: 0, total: 2, pending: 2, open: 2 } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    const todo = view.getByRole('button', { name: /^Todo at the end of this turn/ });
+    expect(within(todo).queryByTitle('0 done')).toBeNull();
+    expect(within(todo).getByTitle('2 to do')).toBeTruthy();
+  });
+
+  test("a turn with no reply ending it yet keeps its edits in a bar of their own; a reply's bar without an outcome is copy alone", () => {
+    const view = render(<Transcript sessionId="s" items={items.slice(0, 3)} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" onOpenChanges={vi.fn()} liveCard />);
+    const bars = view.container.querySelectorAll('[data-foot]:not(.group\\/copy)');
+    expect(bars).toHaveLength(1);
+    expect(within(bars[0] as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
+    view.rerender(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
+    const bar = barOf(view.getByText('Fixed both.')) as HTMLElement;
+    expect(within(bar).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Copy message']);
+    expect(bar.querySelector('[data-outcome]')!.childElementCount).toBe(0);
+  });
+
+  test("an ended turn's head splits its time: the model's own, its tool calls' and the time it waited on the user", () => {
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    const head = headOf(view.getByText('Fixed both.'));
+    // Two one-second edits, less the second the turn waited.
+    expect(head.textContent).toContain('Took 8s (model 4s · local 1s · waiting on you 1s)');
+    // The counts are the toggle, at the head's end.
+    expect(within(head).getByRole('button', { name: /activity of this turn/ }).textContent).toBe('2 files changed activity of this turn');
+  });
+
+  test("a running turn's head says it works, for how long, its tokens so far and its failures, never the running command", () => {
+    const failed: Item = { id: 'x1', kind: 'tool', time: at(2), ended_at: at(3), tool: { name: 'web_fetch', status: 'failed', input: JSON.stringify({ url: 'https://example.test' }) } };
+    const running: Item = { id: 'r1', kind: 'tool', time: at(4), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'go test ./internal/vterm' }) } };
+    const view = render(<Transcript sessionId="s" items={[items[0], failed, running]} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working', output_tokens: 4100, generation_ms: 79000 }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
+    const head = view.container.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
+    expect(head.textContent).toMatch(/^Working/);
+    expect(head.textContent).toContain('4.1K tokens · 52 tok/s');
+    expect(within(head).getByText('1 failed').className).toContain('text-error');
+    expect(head.textContent).not.toContain('go test');
+    // One ring: the running step's, at the foot.
+    expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+  });
+
+  test('open steps end in a bar placing each within the turn and its duration', async () => {
+    const user = userEvent.setup();
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    await user.click(view.getByRole('button', { name: /activity of this turn/ }));
+    const steps = await view.findByRole('button', { name: /^edit.*secret-b\.go/ });
+    const row = steps.closest('.grid')!;
+    const bar = row.querySelector('[style]') as HTMLElement;
+    // Started 3s into a 9s turn, ran 1s.
+    expect(parseFloat(bar.style.left)).toBeCloseTo(33.3, 1);
+    expect(parseFloat(bar.style.width)).toBeCloseTo(11.1, 1);
+    expect(bar.className).toContain('bg-success');
+    expect(row.lastElementChild!.textContent).toBe('1s');
+    // Per-step file names stay, behind the head.
+    expect(row.textContent).toContain('secret-b.go');
   });
 });
 

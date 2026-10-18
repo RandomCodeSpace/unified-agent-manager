@@ -1,12 +1,13 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
-import { Suspense, lazy, memo, useCallback, useContext, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
+import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
+import { todoTally } from '../lib/todos';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentStep, duration, foregroundItems, itemTook, completedDuration, isWork, promoted, summarizeTurn, timingForTurn, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, editCounts, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, isWork, localToolMs, promoted, stepResult, summarizeTurn, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
@@ -20,11 +21,12 @@ import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext,
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
-import { VisualBoundary } from './VisualBoundary';
 import { PlanNotice } from './Plan';
 import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
+import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -130,7 +132,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   const stamps = new Map<string, Stamp[]>();
   const gitlab = useContext(GitLabItemsContext);
   const gitlabRefs = new Map<string, Item[]>();
-  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, gitlab: gitlabRefs, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
+  const turnChanges = new Map<string, TurnChange>();
+  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, gitlab: gitlabRefs, changes: turnChanges, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
   const scratch = scratchPlan(planPath, workdir);
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart or the images its result returned.
@@ -185,6 +188,12 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // entries stand in the answer, and a steer bubble sits in the turn at its place.
     const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked, scratch });
     const changed = changedFiles(group, scratch);
+    // The reply that ends the turn carries its outcome bar, the turn's edits among it; a turn
+    // without one (still working, or ended without a reply) keeps its edits in a bar of their own.
+    const lastReply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
+    const replyEnd = lastReply && ctx.replyEnd?.get(lastReply.id);
+    const edits = changedLine && changed.length > 0 ? turnChangeFor(lastReply ?? group[0].item, changed, last && liveCard, onOpenChanges, editCounts(group, scratch)) : undefined;
+    if (replyEnd && edits) turnChanges.set(lastReply.id, edits);
     const first = (group[0].item ?? group[0].interaction).id;
     const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
     const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
@@ -194,9 +203,9 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
     out.push(
       <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-        {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
+        {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
         {renderCompact(group, gctx, product, own)}
-        {changedLine && changed.length > 0 && <ChangedLine files={changed} latest={last && liveCard} onOpen={onOpenChanges} />}
+        {!replyEnd && edits && <EditsBar edits={edits} />}
       </div>,
     );
     group = [];
@@ -219,7 +228,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
-        {working && !showedWorking && <TurnStatus working />}
+        {working && !showedWorking && <TurnStatus working timing={turnTimings.at(-1)?.state === 'working' ? turnTimings.at(-1) : undefined} />}
         {inline && liveCard && <LiveSubagents />}
         <WorkingTail working={working} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
       </WorkdirContext.Provider>
@@ -250,7 +259,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} gitlab={ctx.gitlab?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} gitlab={ctx.gitlab?.get(item.id)} edits={ctx.changes?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -265,20 +274,81 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
   return out;
 }
 
-/**
- * The row that heads a compact turn (DESIGN.md turn line), in the turn status row's slot:
- * "Took 12s" once it ended (while it runs the working label says so), then the turn's counts,
- * "5 thoughts (42s) · 3 commands · 2 files read", updating in place as items append. With
- * anything counted it is a button that opens the turn's whole timeline in place, mounted on
- * the first open only; the counts turn `error` after a failure and `attention`
- * while a call waits for the user. Before the first count (the first step still runs, or the
- * only call waits for the user) the row stays blank in its slot: the live step and the foot's
- * label say what is happening, and the counts land without moving anything.
- */
+/** The turn card (DESIGN.md turn card): its head on top, its steps under the head while open. */
+const CARD = 'flex flex-col overflow-hidden rounded-md bg-raised shadow-raised';
+/** The card's head row: the turn's facts, then its counts at the end; it wraps on a narrow screen. */
+const HEAD = 'flex min-h-9 flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-1.5 text-ui tabular-nums text-muted';
+
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
 
-const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
+/** `nodes` without the empty ones, a faint dot between each. */
+function dotted(nodes: ReactNode[]): ReactNode[] {
+  return nodes.filter(Boolean).flatMap((node, i) => [...(i ? [<span key={`dot-${i}`} aria-hidden="true" className="text-faint">·</span>] : []), <Fragment key={i}>{node}</Fragment>]);
+}
+
+const SPLIT_TITLE = "Model: the model calls' own time, subagents' included. Local: the turn's own tool calls running, overlaps counted once. Waiting on you: approvals and answers, which the turn's time leaves out.";
+
+/** The ended turn's time split, "model 41s · local 3s · waiting on you 5m", each part only when recorded. */
+function timeSplit(timing: TurnTiming, entries: Entry[]): string {
+  const paused = timing.paused_ms ?? 0;
+  const local = localToolMs(entries, paused);
+  return [
+    timing.generation_ms ? `model ${formatMs(timing.generation_ms)}` : '',
+    local > 0 ? `local ${formatMs(local)}` : '',
+    paused > 0 ? `waiting on you ${formatMs(paused)}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+/** The running turn's foreground time, waits for the user left out; only these digits re-render each second. */
+function LiveClock({ timing }: Readonly<{ timing?: TurnTiming }>) {
+  const [now, setNow] = useState(Date.now);
+  const ticking = timing?.state === 'working' && !timing.paused_at;
+  useEffect(() => {
+    if (!ticking) return;
+    const tick = () => setNow(Date.now());
+    const first = window.setTimeout(tick, 0);
+    const timer = window.setInterval(tick, 1000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [ticking]);
+  const elapsed = timing ? turnElapsed(timing, now) : null;
+  return elapsed ? <span className="font-medium text-ink">{elapsed}</span> : null;
+}
+
+/**
+ * The head's facts before its counts. Ended: when it ended, "Took 28m" with the time split in
+ * `faint` parentheses, then the turn's tokens and generation speed, a button to its waybill.
+ * Running: "Working 8m" and the tokens and speed so far, which stay live.
+ */
+function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean; timing?: TurnTiming; at?: string; entries: Entry[] }>): ReactNode[] {
+  const tokens = timing?.output_tokens ? <TurnTokens timing={timing} live={working} /> : null;
+  if (working) return [<span key="working" className="whitespace-nowrap"><span className="font-medium text-ink">Working</span> <LiveClock timing={timing} /></span>, tokens];
+  const elapsed = completedDuration(timing);
+  const split = elapsed && timing ? timeSplit(timing, entries) : '';
+  return [
+    at && <time dateTime={at} title={dateTime(at)} className="font-medium whitespace-nowrap text-ink">{clockTime(at)}</time>,
+    elapsed && (
+      <span title={durationTitle(elapsed)}>
+        <span className="whitespace-nowrap">Took <span className="font-medium text-ink">{elapsed}</span></span>
+        {split && <span className="text-faint" title={SPLIT_TITLE}> ({split})</span>}
+      </span>
+    ),
+    tokens,
+  ];
+}
+
+/**
+ * The head of a turn's card (DESIGN.md turn card), in the turn status row's slot: the turn's facts
+ * (`turnFacts`), its failures in `error`, then at its end the counts, "1 thought · 2 commands ·
+ * 1 question answered ›", updating in place as items append. With anything counted the counts are
+ * a button that opens the turn's steps in the card under the head, mounted on the first open only;
+ * they turn `attention` while a call waits for the user. The running step is the live step at the
+ * transcript's foot: the head never names it.
+ */
+const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
@@ -288,9 +358,9 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary,
   const [listOpen, setListOpen] = useSubagentDisclosure(`subagents:${scopedId}`, subagents);
   const [listOpened, setListOpened] = useState(listOpen);
   if (listOpen && !listOpened) setListOpened(true);
-  const elapsed = working ? null : completedDuration(timing);
-  const head = elapsed ? `Took ${elapsed}` : '';
-  const text = [head, ...summary.parts.map((p) => p.text)].filter(Boolean).join(' · ');
+  const failures = summary.parts.filter((p) => p.tone === 'error');
+  const counts = summary.parts.filter((p) => p.tone !== 'error');
+  const text = summary.parts.map((p) => p.text).join(' · ');
   const domId = `${scope}-${scopedId}`;
   const timelineId = `${domId}-timeline`;
   const listId = `${domId}-subagents`;
@@ -299,52 +369,51 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary,
     setOpen((o) => !o);
   };
   const headButton = useRef<HTMLButtonElement>(null);
-  // The foot of an open timeline folds it too: the turn line comes back into view, so a long timeline
-  // never has to be scrolled back up to close, and focus returns to the line.
+  // The foot of open steps folds them too: the head comes back into view, so a long list
+  // never has to be scrolled back up to close, and focus returns to the counts.
   const collapse = () => {
     headButton.current?.scrollIntoView({ block: 'nearest' });
     headButton.current?.focus({ preventScroll: true });
     setOpen(false);
   };
   return (
-    <div id={domId} className="flex flex-col rounded-sm">
-      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] flex-wrap items-center gap-x-4 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : durationTitle(elapsed)}>
-        {summary.parts.length > 0 ? (
+    <div id={domId} className={CARD}>
+      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
+        {dotted([...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="whitespace-nowrap text-error">{p.text}</span>)])}
+        {summary.parts.length > 0 && (
           <button
             ref={headButton}
             type="button"
             aria-expanded={open}
             aria-controls={opened ? timelineId : undefined}
             title={text}
-            className={cn('-mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11', summary.tone === 'attention' && 'text-attention')}
+            className={cn("relative -mr-1.5 ml-auto flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-2.5", summary.tone === 'attention' && 'text-attention')}
             onClick={toggle}
           >
             <span className="min-w-0 truncate">
-              {head}
-              {summary.parts.map((p, k) => (
-                <span key={k} className={cn(p.tone === 'error' && 'text-error')}>
-                  {(head || k > 0) && ' · '}
+              {counts.map((p, k) => (
+                <Fragment key={k}>
+                  {k > 0 && <span aria-hidden="true" className="text-faint"> · </span>}
                   {p.text}
-                </span>
+                </Fragment>
               ))}
             </span>
-            <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
-            <span className="sr-only"> activity of this turn</span>
+            <span className="sr-only">{failures.map((p) => ` · ${p.text}`).join('')} activity of this turn</span>
+            <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
           </button>
-        ) : (
-          head && <span className="animate-fade-in">{head}</span>
         )}
         {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
       </div>
       {listOpened && subagents.length > 0 && (
-        <Collapse open={listOpen} appear inner="pb-2">
+        <Collapse open={listOpen} appear inner="px-3 pb-2">
           <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} calls={calls} tones={tones} /></DetailVisibility>
         </Collapse>
       )}
       {opened && (
         <Collapse open={open} appear>
-          <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} /></DetailVisibility>
-          <button type="button" aria-controls={timelineId} className="mt-1 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
+          <div aria-hidden="true" className="fade-rule" />
+          <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} timing={timing} /></DetailVisibility>
+          <button type="button" aria-controls={timelineId} className="mb-1.5 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
             <ChevronUp aria-hidden="true" className="size-3" />
             Collapse
           </button>
@@ -354,78 +423,148 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary,
   );
 }, (a, b) => {
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
-  // Its counts and its timeline follow from its entries and these context fields alone; `summary` is rebuilt every render.
-  return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
+  // Its counts and its steps follow from its entries and these context fields alone; `summary` is rebuilt every render.
+  return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.at === b.at && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
     && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.replyActions === b.ctx.replyActions && a.ctx.approvals === b.ctx.approvals
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
     && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item));
 });
 
+/** A step's bar colour: running `accent`, failed `error`, waiting on the user `warning`, a thought `faint`, done `success`, no result `hairline-strong`. */
+type BarTone = 'running' | 'failed' | 'waiting' | 'thought' | 'done' | 'none';
+const BAR: Record<BarTone, string> = { running: 'bg-accent', failed: 'bg-error', waiting: 'bg-warning', thought: 'bg-faint', done: 'bg-success', none: 'bg-hairline-strong' };
+
+/** The span the bars place their steps in: the turn's recorded start and end, else its first step's start and its last step's end (a running turn's latest so far). */
+function turnRange(timing: TurnTiming | undefined, entries: Entry[]): { start: number; end: number } {
+  const times = entries.flatMap((e) => (e.item ? [Date.parse(e.item.time), Date.parse(e.item.ended_at ?? e.item.time)] : [Date.parse(e.interaction.time)])).filter(Number.isFinite);
+  const start = Date.parse(timing?.started_at ?? '') || Math.min(...times);
+  const end = Date.parse(timing?.ended_at ?? '') || Math.max(...times);
+  return { start, end };
+}
+
 /**
- * A turn's whole timeline, in order, under its head row: each thought (its text `muted` on
- * its own click), each tool call as its row with its approval, details and images, each
- * question row and each decided request.
+ * A turn's steps, in order, in its card under the head (DESIGN.md steps): each thought, each tool
+ * call as its row (status glyph, tool, argument, result) with its approval, details and images,
+ * each settled question and decided request as a one-line row. Every row ends in its bar, where
+ * it ran within the turn, and its recorded duration; a phone keeps the duration alone.
  */
-function Timeline({ id, entries, ctx }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext }>) {
+function Timeline({ id, entries, ctx, timing }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext; timing?: TurnTiming }>) {
+  const range = turnRange(timing, entries);
   const rows: ReactNode[] = [];
-  const row = (key: string, time: string, took: string | null, node: ReactNode) =>
+  const row = (key: string, time: string, end: string | undefined, tone: BarTone, took: string | null, node: ReactNode) =>
     rows.push(
-      <div key={key} className="flex items-start gap-3">
-        <StepTime time={time} took={took} />
-        <div className="min-w-0 flex-1">{node}</div>
+      <div key={key} className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 sm:grid-cols-[minmax(0,1fr)_minmax(3rem,8.75rem)_3rem]">
+        <div className="min-w-0">{node}</div>
+        <StepBar range={range} time={time} end={end} tone={tone} />
+        <StepTook time={time} took={took} />
       </div>,
     );
   for (const entry of entries) {
     if (!isWork(entry)) continue;
-    // A settled question stands in the answer as its card; the timeline only marks its place.
+    // A settled question stands in the answer as its card; the steps only mark its place.
     if (entry.interaction) {
-      row(entry.interaction.id, entry.interaction.time, null, <DecidedRow interaction={entry.interaction} />);
+      row(entry.interaction.id, entry.interaction.time, undefined, 'waiting', null, <DecidedRow interaction={entry.interaction} />);
       continue;
     }
     const item = entry.item;
-    const took = item.id === ctx.streamingId ? null : itemTook(item);
+    const streaming = item.id === ctx.streamingId;
+    const took = streaming ? null : itemTook(item);
     if (item.kind === 'reasoning') {
-      if (item.text?.trim() || item.compact?.has_reasoning) row(item.id, item.time, took, <Thinking item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
+      if (item.text?.trim() || item.compact?.has_reasoning) row(item.id, item.time, item.ended_at, streaming ? 'running' : 'thought', took, <Thinking item={item} streaming={streaming} endedAt={ctx.thoughtEnd.get(item.id)} bare />);
       continue;
     }
     // A subagent's call is its row in the reply's subagent list, not a step here.
     if (ctx.subagentOf?.(item)) continue;
     const asked = askedOn(item, ctx.approvals, ctx.live);
     const question = asked && asked.outcome !== 'pending' ? ctx.approvals.get(item.id)?.find((ix) => ix.kind === 'question') : undefined;
-    row(item.id, item.time, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
+    const status = item.tool?.status;
+    const tone: BarTone = asked ? 'waiting' : status === 'failed' ? 'failed' : status === 'completed' ? 'done' : ctx.live && isActive(status) ? 'running' : 'none';
+    row(item.id, item.time, item.ended_at, tone, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
   }
   return (
-    <div id={id} className="relative mb-2 ml-1.5 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
+    <div id={id} className="flex flex-col gap-0.5 px-3 pt-1.5 pb-1">
       {rows}
     </div>
   );
 }
 
-/** A timeline step's start (to the second, 24-hour) and its recorded duration, blank while it runs or when unrecorded. A phone keeps the duration alone, so the step's details keep the width; the start stays in the tooltip. */
-function StepTime({ time, took }: Readonly<{ time: string; took: string | null }>) {
-  const at = new Date(time);
+/** Where a step ran within its turn, as a bar on a 4px track (the step's start to its end; a sliver at least, so the shortest still shows). Hidden on a phone. */
+function StepBar({ range, time, end, tone }: Readonly<{ range: { start: number; end: number }; time: string; end?: string; tone: BarTone }>) {
+  const span = range.end - range.start;
+  const from = Date.parse(time);
+  const to = end ? Date.parse(end) : from;
+  const track = 'flex h-6 items-center max-sm:hidden pointer-coarse:h-11';
+  if (!(span > 0) || !Number.isFinite(from)) return <span aria-hidden="true" className={track} />;
+  const width = Math.min(100, Math.max(1.5, ((Math.max(to, from) - from) / span) * 100));
+  const left = Math.min(100 - width, Math.max(0, ((from - range.start) / span) * 100));
   return (
-    <span className="flex h-6 shrink-0 items-center gap-2 text-caption tabular-nums text-muted pointer-coarse:h-11" title={dateTime(at)}>
-      <span className="max-sm:hidden">{clockTime(at, true)}</span>
-      <span className="w-10 text-right text-muted">{took}</span>
+    <span aria-hidden="true" className={track}>
+      <span className="relative h-1 w-full rounded-full bg-tint-hover">
+        <span className={cn('absolute inset-y-0 rounded-full', BAR[tone])} style={{ left: `${left}%`, width: `${width}%` }} />
+      </span>
     </span>
   );
 }
 
-/** The one line a compact turn keeps for its edits: "Changed 2 files", with the paths in its tooltip, and the way to the Changes sheet. */
-function ChangedLine({ files, latest, onOpen }: Readonly<{ files: string[]; latest: boolean; onOpen?: (turn: { files: string[]; latest: boolean }) => void }>) {
+/** A step's recorded duration, right-aligned, blank while it runs or when unrecorded; its start to the second in the tooltip. */
+function StepTook({ time, took }: Readonly<{ time: string; took: string | null }>) {
+  const at = new Date(time);
   return (
-    <div className="flex h-6 items-center gap-2 text-caption text-muted" title={files.join('\n')}>
-      <FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
-      <span>
-        Changed {files.length} {files.length === 1 ? 'file' : 'files'}
-      </span>
-      {onOpen && (
-        // Focused first (Safari does not focus a clicked button), so closing Changes brings focus back here.
-        <button type="button" className="rounded-xs text-accent hover:underline" onClick={(e) => { e.currentTarget.focus(); onOpen({ files, latest }); }}>
-          View changes
+    <span className="flex h-6 items-center justify-end text-caption whitespace-nowrap tabular-nums text-muted pointer-coarse:h-11" title={`Started ${clockTime(at, true)} · ${dateTime(at)}`}>
+      {took}
+    </span>
+  );
+}
+
+/** A turn's edits for its Changed chip: the files its edit calls named, their line counts when every call recorded them, whether it is the Thread's latest turn, and the way to the Changes sheet. */
+interface TurnChange { files: string[]; counts: { additions: number; deletions: number } | null; latest: boolean; onOpen?: (turn: { files: string[]; latest: boolean }) => void }
+
+/** An unchanged turn's edits keep their identity, so its memoised reply holds while other rows stream. */
+const turnChangeOf = new WeakMap<Item, TurnChange>();
+function turnChangeFor(owner: Item | undefined, files: string[], latest: boolean, onOpen: TurnChange['onOpen'], counts: TurnChange['counts']): TurnChange {
+  const held = owner && turnChangeOf.get(owner);
+  if (held && held.latest === latest && held.onOpen === onOpen && held.files.join('\n') === files.join('\n') && held.counts?.additions === counts?.additions && held.counts?.deletions === counts?.deletions) return held;
+  const change = { files, counts, latest, onOpen };
+  if (owner) turnChangeOf.set(owner, change);
+  return change;
+}
+
+/** A turn's todo counts as the strip's blocks; once the turn ended nothing works on the list, so in progress keeps its glyph without the accent. */
+function turnTodoBlocks(counts: TodoCounts, stopped: boolean): Block[] {
+  return todoBlocks(todoTally(counts)).map((block) => (stopped && block.key === 'in_progress' ? { ...block, tone: 'none' } : block));
+}
+
+/** The outcome bar's card, once it holds an outcome (DESIGN.md outcome bar). */
+const OUTCOME = 'rounded-md bg-surface px-3 py-2 shadow-raised';
+
+/** "Changed" and the turn's one total chip: "2 files" (with "+52 −3" when the counts were captured), never a file's name. */
+function ChangedChip({ files, additions, deletions, unavailable = false, expanded, onClick }: Readonly<{ files: number; additions?: number; deletions?: number; unavailable?: boolean; expanded?: boolean; onClick?: (button: HTMLButtonElement) => void }>) {
+  const body = <>
+    <FileDiff aria-hidden="true" className="size-3 shrink-0 text-muted" />
+    {unavailable ? 'Changes unavailable' : <>{files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <span className="text-success">+{additions}</span> <span className="text-error">−{deletions ?? 0}</span></>}</>}
+  </>;
+  const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-raised px-2 text-caption whitespace-nowrap tabular-nums text-ink shadow-raised';
+  return (
+    <span className="flex items-center gap-2">
+      <span aria-hidden="true" className="text-eyebrow uppercase text-muted">Changed</span>
+      {onClick ? (
+        // Focused first (Safari does not focus a clicked button), so closing what it opens brings focus back here.
+        <button type="button" data-turn-changes="" aria-haspopup={expanded === undefined ? undefined : 'dialog'} aria-expanded={expanded} aria-label={unavailable ? 'Changed: changes unavailable' : `Changed ${files} ${files === 1 ? 'file' : 'files'}${additions !== undefined ? ` +${additions} −${deletions ?? 0}` : ''}`} className={cn(chip, "transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-expanded:bg-tint-selected pointer-coarse:after:-inset-y-2.5")} onClick={(e) => { e.currentTarget.focus(); onClick(e.currentTarget); }}>
+          {body}
         </button>
+      ) : (
+        <span className={chip}>{body}</span>
       )}
+    </span>
+  );
+}
+
+/** The edits of a turn that has no reply ending it yet (it runs, or it ended without one): the outcome bar's Changed chip alone. */
+function EditsBar({ edits }: Readonly<{ edits: TurnChange }>) {
+  const { files, counts, latest, onOpen } = edits;
+  return (
+    <div data-foot="" className={cn('flex flex-wrap items-center', OUTCOME)}>
+      <ChangedChip files={files.length} additions={counts?.additions} deletions={counts?.deletions} onClick={onOpen && (() => onOpen({ files, latest }))} />
     </div>
   );
 }
@@ -451,8 +590,7 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
   else if (step) text = step.label;
   else if (verb) text = `${turnVerb(turnId)}…`;
   return (
-    // After a turn whose last block has a foot (the Thread works on past the turn's end), the foot keeps its 24px row.
-    <Collapse open={working} appear onClosed={onClosed} className="-mt-6 [:has(>[data-foot]:last-child)+&]:-mt-3" inner="pt-3">
+    <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
       {working && verb && <output className="sr-only">Busy</output>}
       <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
         {current || (
@@ -515,6 +653,8 @@ interface RenderContext {
   receipts?: ReadonlyMap<string, Stamp[]>;
   /** For the last reply of each ended turn: the turn's items that can name GitLab items (lib/gitlabRefs). */
   gitlab?: ReadonlyMap<string, Item[]>;
+  /** For the last reply of each ended turn: the files its edit calls named, for its outcome bar's Changed chip. */
+  changes?: ReadonlyMap<string, TurnChange>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -535,23 +675,30 @@ function thoughtEnds(items: Item[]): Map<string, string> {
 const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries.some((e) => e.item?.id === id) ? id : undefined);
 
 /**
- * The row that heads a turn (DESIGN.md turn status), in one slot for both states: empty while
- * the turn runs (the working label says so), then "Took 12s" once it ended. Without a recorded
- * duration the row keeps its slot, with no label and no rule.
+ * The head of a turn with nothing in it yet (DESIGN.md turn status), the card the turn head then
+ * takes over in the same slot: "Working 3s" and its tokens while it starts, "Took 12s" once it
+ * ended, "Took 3s · No reply" when it ended with no reply, thought or call. Without a recorded
+ * duration an ended turn keeps its slot, blank, with no card.
  */
 function TurnStatus({ working = false, timing, empty = false }: Readonly<{ working?: boolean; timing?: TurnTiming; /** The turn ended without a reply, a thought or a call: say so after its duration. */ empty?: boolean }>) {
   const elapsed = working ? null : completedDuration(timing);
+  if (!working && !elapsed) return <div className="min-h-9" title={durationTitle(null)} />;
   return (
-    <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : durationTitle(elapsed)}>
-      {elapsed && <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
+    <div className={CARD}>
+      <div className={HEAD} title={working ? undefined : durationTitle(elapsed)}>
+        {working ? dotted(turnFacts({ working, timing, entries: [] })) : <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
+      </div>
     </div>
   );
 }
 
 interface ReplyActions { allChanges?: () => void; branch?: BranchReply; rewind?: BranchReply; edit?: BranchReply; active: boolean; generation: string }
 
-/** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [], asideTurn }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
+/**
+ * A hover copy button plus a right-click menu around any block of provider or user text. The reply
+ * that ends a turn (`at` on the right) ends in its outcome bar instead (DESIGN.md outcome bar).
+ */
+function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [], asideTurn, edits, gitlab }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began (the user's) or its turn ended (the reply's): the user's clock time in the foot under the block, the full date in its tooltip; on a reply, that it ends its turn. */ at?: string; /** The turn this reply ends: its captured changes and its todo list in the outcome bar. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[]; /** The files the turn's edit calls named, when this reply ends it. */ edits?: TurnChange; /** The turn's items that can name GitLab items, when this reply ends it. */ gitlab?: Item[] }>) {
   const [copied, copy] = useCopied();
   const task = useContext(SessionContext) ?? '';
   const asides = useTurnHasAsides(task, foot ? asideTurn : undefined);
@@ -560,53 +707,72 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   const visible = useDetailVisibility();
   const [changesReader, setChangesReader] = useState<{ generation: string; phone: boolean; open: boolean; anchor: HTMLElement | null } | null>(null);
   if (changesReader && (!visible || replyActions?.active === false || changesReader.generation !== (replyActions?.generation ?? ''))) setChangesReader(null);
-  // A turn that changed nothing says nothing: no "0 files" in its foot or its menu.
+  // The reply that ends a turn: its foot is the outcome bar, in the flow.
+  const outcome = foot && side === 'right' && !!at;
+  // A turn that changed nothing says nothing: no "0 files" in its bar or its menu.
   const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
   const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
+  const openEdits = edits?.onOpen && (() => edits.onOpen!({ files: edits.files, latest: edits.latest }));
   const run = () => { if (read) void read().then(copy, () => {}); else copy(text); };
   const turnItems: ActionItem[] = [
     ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
+    // The chip opens the captured changes; the files the turn's calls named stay one step away in Changes.
+    ...(changes && openEdits ? [{ key: 'turn-files', label: "This turn's files in Changes", icon: <FileDiff />, onSelect: openEdits }] : []),
     ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
     ...(edit ? [{ key: 'edit', label: 'Edit and resend…', icon: <Pencil />, takesFocus: true, onSelect: () => edit(anchor.current) }] : []),
     ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: () => branch(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
     ...(rewind ? [{ key: 'rewind', label: 'Rewind to before this prompt…', icon: <RotateCcw />, takesFocus: true, onSelect: () => rewind(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
   ];
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...turnItems, ...extra];
+  const copyButton = (
+    <Tip label={copied ? 'Copied' : label}>
+      <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </Tip>
+  );
+  // The captured counts open the turn's changes; without them, the files its calls named (with their calls' own line counts when all recorded them) open Changes.
+  const changeChip = changes?.status === 'available'
+    ? <ChangedChip files={changes.files ?? 0} additions={changes.additions ?? 0} deletions={changes.deletions ?? 0} expanded={!!changesReader?.open} onClick={showChanges} />
+    : edits ? <ChangedChip files={edits.files.length} additions={edits.counts?.additions} deletions={edits.counts?.deletions} onClick={openEdits} />
+    : changes ? <ChangedChip files={0} unavailable expanded={!!changesReader?.open} onClick={showChanges} /> : null;
 
   return (
     <div
       ref={anchor}
-      data-foot={foot ? '' : undefined}
-      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && 'not-last:mb-3', className)}
+      data-foot={foot && !outcome ? '' : undefined}
+      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && !outcome && 'not-last:mb-3', className)}
       {...context.shell}
     >
       {children}
-      {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
-      {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || asides) && 'opacity-100')}>
-          <Tip label={copied ? 'Copied' : label}>
-            <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
-              {copied ? <Check /> : <Copy />}
-            </Button>
-          </Tip>
+      {/* A message's foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
+      {foot && !outcome && (
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || asides) && 'opacity-100')}>
+          {copyButton}
           {at && (
             <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap">
               {clockTime(at)}
             </time>
           )}
-          {timing && <TurnTokens timing={timing} />}
-          {changes && <>
-            <span aria-hidden="true"> · </span>
-            <button data-turn-changes="" type="button" aria-haspopup="dialog" aria-expanded={!!changesReader?.open} className="rounded-sm px-1 whitespace-nowrap hover:text-ink" onClick={showChanges}>
-              {changes.status === 'available' ? <>{changes.files ?? 0} {(changes.files ?? 0) === 1 ? 'file' : 'files'} <span className="text-success">+{changes.additions ?? 0}</span> <span className="text-error">−{changes.deletions ?? 0}</span></> : 'Changes unavailable'}
-            </button>
-          </>}
-          {timing && <TurnTodo timing={timing} />}
           {asides && <AsideChip task={task} turn={asideTurn!} />}
-          {(branch || rewind || edit || (timing && (changes || replyActions?.allChanges))) && <Menu.Root>
-            <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint" />}><Ellipsis /></Menu.Trigger>
-            <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
-          </Menu.Root>}
+        </div>
+      )}
+      {/* The reply's outcome bar: what the turn left (its edits, its todo list, the GitLab items it touched, its asides), then copy and the turn's actions. In the flow, always in view, wrapping: never over the next message or past the edge. Without an outcome it is the two buttons alone. */}
+      {outcome && (
+        <div data-foot="" className="mt-3 flex min-w-0 items-start gap-2 has-[[data-outcome]>*]:rounded-md has-[[data-outcome]>*]:bg-surface has-[[data-outcome]>*]:px-3 has-[[data-outcome]>*]:py-2 has-[[data-outcome]>*]:shadow-raised">
+          <div data-outcome="" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 empty:hidden">
+            {changeChip}
+            {timing?.todo?.total ? <TurnTodo timing={timing} blocks={turnTodoBlocks(timing.todo, timing.state !== 'working')} /> : null}
+            {gitlab && <TurnStrip items={gitlab} />}
+            {asides && <AsideChip task={task} turn={asideTurn!} sep={false} />}
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {copyButton}
+            {(branch || rewind || edit || (timing && (changes || replyActions?.allChanges))) && <Menu.Root>
+              <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint hover:text-ink" />}><Ellipsis /></Menu.Trigger>
+              <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
+            </Menu.Root>}
+          </div>
         </div>
       )}
       {changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onAllChanges={replyActions?.allChanges} /></Suspense>}
@@ -615,28 +781,31 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   );
 }
 
-/** The reply's foot: the turn's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count, and a press opens the turn's waybill. */
-function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
+/** The turn head's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count. Ended, a press opens the turn's waybill; `live`, they count on while it runs. */
+function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; live?: boolean }>) {
   const [button, setButton] = useState<HTMLButtonElement | null>(null);
   const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
   const out = timing.output_tokens ?? 0;
   if (!out) return null;
   const rate = timing.generation_ms ? Math.round(out / (timing.generation_ms / 1000)) : 0;
   const title = `${(timing.input_tokens ?? 0).toLocaleString()} tokens in · ${out.toLocaleString()} out${timing.generation_ms ? ` · ${Math.round(timing.generation_ms / 1000)}s generating` : ''}`;
+  const words = <>
+    {compactTokens(out)} tokens
+    {rate > 0 && (
+      <>
+        <span aria-hidden="true" className="text-faint"> · </span>
+        {rate} tok/s
+      </>
+    )}
+  </>;
+  if (live) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
-    <span className="whitespace-nowrap">
-      <span aria-hidden="true"> · </span>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative h-6 rounded-sm px-1 text-stamp whitespace-nowrap tabular-nums text-muted transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia('(max-width: 639px)').matches })}>
-        {compactTokens(out)} tokens
-        {rate > 0 && (
-          <>
-            <span aria-hidden="true"> · </span>
-            {rate} tok/s
-          </>
-        )}
+    <>
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia('(max-width: 639px)').matches })}>
+        {words}
       </button>
       {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
-    </span>
+    </>
   );
 }
 
@@ -705,7 +874,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className, asideT
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends the turn. */ gitlab?: Item[]; asideTurn?: string }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends the turn. */ gitlab?: Item[]; /** The files its turn's edit calls named, when it ends the turn. */ edits?: TurnChange; asideTurn?: string }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
@@ -740,17 +909,16 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn }: Mess
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps, gitlab }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps, gitlab, edits }: MessageParts) {
   const onBranch = replyActions?.branch;
   const onRewind = replyActions?.rewind;
   const onEdit = replyActions?.edit;
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} rewind={end?.userItemId && onRewind ? anchor => onRewind(end.userItemId, anchor) : undefined} edit={end?.userItemId && onEdit ? anchor => onEdit(end.userItemId, anchor) : undefined} foot={!!end} className={className} asideTurn={end?.turn}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} rewind={end?.userItemId && onRewind ? anchor => onRewind(end.userItemId, anchor) : undefined} edit={end?.userItemId && onEdit ? anchor => onEdit(end.userItemId, anchor) : undefined} foot={!!end} className={className} asideTurn={end?.turn} edits={end ? edits : undefined} gitlab={end ? gitlab : undefined}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
-        {gitlab && <TurnStrip items={gitlab} />}
       </div>
     </Copyable>
   );
@@ -769,9 +937,9 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn, gitlab }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string; gitlab?: Item[] }>) {
+function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn, gitlab, edits }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string; gitlab?: Item[]; edits?: TurnChange }>) {
   const whole = useWholeText(item);
-  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn, gitlab };
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn, gitlab, edits };
   if (item.kind === 'user') return userBubble(parts);
   if (item.kind === 'notice') return noticeRow(parts);
   return assistantMessage(parts);
@@ -870,44 +1038,34 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
   );
 }
 
-const STRIP_W = 40;
-
 /**
- * A test run's counts on its collapsed row, from the served `tests`: "12 passed · 2 failed" and
- * a two-segment strip, passed in `success` and failed in `error` (a failure keeps at least 6px,
- * so one of hundreds still shows). The counts are the runner's own lines, which for some runners
- * mix packages and tests, so there is no total. The words carry it all; nothing is colour alone.
- * On a phone only the failures, or the passes when none failed, show beside the command.
+ * A finished step's result at the end of its row (DESIGN.md steps), from what the call recorded:
+ * its test counts ("✓ 12 passed", "✗ 14 passed · 1 failed"), its exit code ("✓ exit 0", "✗ exit 2")
+ * or that it failed, each a block; its edits' line counts as coloured numbers ("+12 −3") when it has
+ * no file rows under it to carry them. The block's
+ * words carry it all, never the colour alone; a phone keeps a test run's failures alone.
  */
-function TestCount({ tests }: Readonly<{ tests: { passed: number; failed: number } }>) {
-  const total = tests.passed + tests.failed;
-  if (total <= 0) return null;
-  const failed = tests.failed > 0;
-  const label = !failed ? `${tests.passed} passed` : tests.passed > 0 ? `${tests.passed} passed · ${tests.failed} failed` : `${tests.failed} failed`;
-
-  const gap = failed && tests.passed > 0 ? 2 : 0;
-  const fail = failed ? Math.max(6, Math.round(((STRIP_W - gap) * tests.failed) / total)) : 0;
-  const pass = tests.passed > 0 ? STRIP_W - gap - fail : 0;
-  return (
-    <>
-      <span className="min-w-2 flex-1" />
-      <span className={cn('flex shrink-0 items-center gap-1.5 font-sans text-caption tabular-nums', failed ? 'text-error' : 'text-muted')}>
-        {failed && tests.passed > 0 ? (
-          <>
-            <span className="max-sm:hidden">{label}</span>
-            {/* A phone row keeps its command readable: only the failures show there. */}
-            <span className="sm:hidden" title={label}>{tests.failed} failed</span>
-          </>
-        ) : (
-          <span>{label}</span>
-        )}
-        <svg aria-hidden="true" width={STRIP_W} height={4} viewBox={`0 0 ${STRIP_W} 4`} className="shrink-0">
-          {pass > 0 && <rect x={0} y={0} width={pass} height={4} rx={2} className="fill-success" />}
-          {fail > 0 && <rect x={pass + gap} y={0} width={fail} height={4} rx={2} className="fill-error" />}
-        </svg>
+function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
+  const result = stepResult(tool);
+  if (!result) return null;
+  if (result.kind === 'diff') {
+    // A step with file rows of its own leaves the counts to them: one count per file, never twice.
+    if (tool?.edit_event_id) return null;
+    return (
+      <span className="shrink-0 font-sans text-caption tabular-nums">
+        <span className="text-success">+{result.additions}</span> <span className="text-error">−{result.deletions}</span>
       </span>
-    </>
-  );
+    );
+  }
+  if (result.kind === 'tests') {
+    const failed = result.failed > 0;
+    const words = !failed ? `${result.passed} passed` : result.passed > 0 ? `${result.passed} passed · ${result.failed} failed` : `${result.failed} failed`;
+    const label = failed && result.passed > 0 ? <><span className="max-sm:hidden">{result.passed} passed · </span>{result.failed} failed</> : words;
+    return <Blocks className="font-sans" items={[{ key: 'tests', tone: failed ? 'error' : 'success', Icon: failed ? X : Check, label, title: words }]} />;
+  }
+  const ok = result.kind === 'exit' && result.code === 0;
+  const words = result.kind === 'exit' ? `exit ${result.code}` : 'failed';
+  return <Blocks className="font-sans" items={[{ key: 'result', tone: ok ? 'success' : 'error', Icon: ok ? Check : X, label: words, title: words }]} />;
 }
 
 /**
@@ -963,8 +1121,9 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
             {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
             <span className="sr-only">, {word}</span>
+            <span className="min-w-2 flex-1" />
             {decided.length > 0 && <ApprovalMark interactions={decided} />}
-            {t?.tests && <VisualBoundary fallback={null}><TestCount tests={t.tests} /></VisualBoundary>}
+            <StepOutcome tool={t} />
           </button>
         </div>
         {t?.edit_event_id && <NativeEdits item={item} />}
@@ -1210,15 +1369,15 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps, gitlab }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends its turn. */ gitlab?: Item[]; replyActions?: ReplyActions; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps, gitlab, edits }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the outcome bar. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends its turn. */ gitlab?: Item[]; /** The files its turn's edit calls named, when it ends its turn. */ edits?: TurnChange; replyActions?: ReplyActions; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
-      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} gitlab={gitlab} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps, gitlab }) : noticeRow({ item, text: item.text ?? '', className });
+      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} gitlab={gitlab} edits={edits} />;
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps, gitlab, edits }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':
@@ -1240,12 +1399,12 @@ export { duration };
  * browser session.
  */
 /** The row's word: "Thinking…" while it streams, the time it took once known, else just that it thought. */
-function thinkingLabel(streaming: boolean, took: string | null): string {
+function thinkingLabel(streaming: boolean, took: string | null | undefined): string {
   if (streaming) return 'Thinking…';
   return took ? `Thought for ${took}` : 'Thought';
 }
 
-export function Thinking({ item, streaming, endedAt, className }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string }>) {
+export function Thinking({ item, streaming, endedAt, className, bare = false }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string; /** A step row, whose duration column says how long it took: "Thought" alone. */ bare?: boolean }>) {
   const key = THINKING_KEY + (item.agent_id ? `${item.agent_id}:` : '') + item.id;
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
   const { item: fullItem, body, attach, retry } = useItemBody(item, expanded);
@@ -1260,7 +1419,7 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
         {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
-        <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
+        <span className="tabular-nums">{thinkingLabel(streaming, bare ? null : took)}</span>
       </button>
       <Collapse open={expanded}>
         {/* A closed thought is not read, so it has no body on its way to tell of. */}

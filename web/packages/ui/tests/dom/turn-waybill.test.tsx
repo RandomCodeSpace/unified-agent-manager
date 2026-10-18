@@ -15,13 +15,14 @@ const flash: TurnTiming = { id: 'flash', user_item_id: 'owner', started_at: at(0
 const show = (timing: TurnTiming) => render(<Transcript sessionId="task" items={items} turnTimings={[timing]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
 const sections = (dialog: HTMLElement) => Object.fromEntries([...dialog.querySelectorAll('dt')].map(dt => [dt.textContent, dt.nextElementSibling?.textContent]));
 
-test('the foot reads as before, now as a dialog button, and opens nothing until pressed', () => {
+test("the turn head's tokens are a dialog button that opens nothing until pressed", () => {
   show(luna);
   const button = screen.getByRole('button', { name: /^1\.2K tokens\s+39 tok\/s$/ });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
   expect(button.title).toBe('128,412 tokens in · 1,214 out · 31s generating');
-  expect(button.parentElement!.textContent).toBe(' · 1.2K tokens · 39 tok/s');
+  expect(button.textContent).toBe('1.2K tokens · 39 tok/s');
+  expect(button.closest('[data-history-anchor^="turn-head-"]')).toBeTruthy();
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 

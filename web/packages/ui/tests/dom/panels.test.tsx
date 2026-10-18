@@ -59,9 +59,9 @@ describe('changes', () => {
     expect(await sheet.findByText('--muted: #6b6560;')).toBeTruthy();
   });
 
-  test('the transcript\'s changed-files line opens the same sheet on that turn, and focus comes back to it', async () => {
+  test('a turn\'s Changed chip opens the same sheet on that turn, and focus comes back to it', async () => {
     const { user } = await openTask('t1');
-    const links = screen.getAllByRole('button', { name: 'View changes' });
+    const links = screen.getAllByRole('button', { name: /^Changed \d+ files?$/ });
     const latest = links.at(-1)!;
     await user.click(latest);
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));

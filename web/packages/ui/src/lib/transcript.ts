@@ -716,6 +716,38 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
 }
 
 /** The time `spans` cover together: thoughts recorded in parallel (several summaries of one model call) count once. */
+/**
+ * The turn head's "local" figure: how long the turn's own tool calls ran, overlapping calls
+ * counted once, less `pausedMs`, the time the turn waited on the user (a call that asks for
+ * approval runs while it waits). A subagent's `task` call is not local work, its time is the
+ * subagent's own, and a question call is waiting on the user. Calls without a recorded end add nothing.
+ */
+export function localToolMs(entries: readonly Entry[], pausedMs = 0): number {
+  const spans: [number, number][] = [];
+  for (const { item } of entries) {
+    if (item?.kind !== 'tool' || !item.ended_at || isSubagentCall(item) || toolKind(item.tool?.name ?? '') === 'question') continue;
+    spans.push([Date.parse(item.time), Date.parse(item.ended_at)]);
+  }
+  return Math.max(0, spanMs(spans) - pausedMs);
+}
+
+/** What a finished step produced, as its row's result: test counts, line counts of its edits, its exit code, or that it failed. */
+export type StepResult =
+  | { kind: 'tests'; passed: number; failed: number }
+  | { kind: 'diff'; additions: number; deletions: number }
+  | { kind: 'exit'; code: number }
+  | { kind: 'failed' };
+
+/** A step's result from what the call recorded, never inferred from its output text; null when it recorded nothing to show. */
+export function stepResult(tool: ToolCall | undefined): StepResult | null {
+  if (!tool || (tool.status !== 'completed' && tool.status !== 'failed')) return null;
+  if (tool.tests && tool.tests.passed + tool.tests.failed > 0) return { kind: 'tests', passed: tool.tests.passed, failed: tool.tests.failed };
+  const known = tool.status === 'completed' ? (tool.file_edits ?? []).filter((edit) => edit.diff_status === 'available') : [];
+  if (known.length) return { kind: 'diff', additions: known.reduce((n, e) => n + (e.additions ?? 0), 0), deletions: known.reduce((n, e) => n + (e.deletions ?? 0), 0) };
+  if (tool.status === 'failed') return tool.exit_code ? { kind: 'exit', code: tool.exit_code } : { kind: 'failed' };
+  return tool.exit_code === 0 ? { kind: 'exit', code: 0 } : null;
+}
+
 function spanMs(spans: [number, number][]): number {
   let total = 0, end = -Infinity;
   for (const [from, to] of spans.filter(([a, b]) => b > a).sort((a, b) => a[0] - b[0])) {
@@ -798,6 +830,26 @@ export function callProduct(item: Item): 'chart' | 'images' | null {
 }
 
 /** The distinct paths the turn's completed edit, write, create and apply_patch calls named, in order, but the scratch plan. */
+/**
+ * The line counts of a turn's edits from its edit calls' own recorded patches, for its Changed
+ * chip when no capture of the turn's changes was kept; null unless every completed edit call
+ * (the scratch plan's aside) recorded counts for each file it touched.
+ */
+export function editCounts(entries: Entry[], scratch?: (path: string) => boolean): { additions: number; deletions: number } | null {
+  let additions = 0, deletions = 0, any = false;
+  for (const { item } of entries) {
+    const t = item?.tool;
+    if (item?.kind !== 'tool' || t?.status !== 'completed' || !CHANGE_TOOLS.includes(t.name.toLowerCase())) continue;
+    const paths = changePaths(t);
+    if (paths.length && paths.every((path) => scratch?.(path))) continue;
+    const edits = t.file_edits ?? [];
+    if (!edits.length || t.file_edits_truncated || edits.some((e) => e.diff_status !== 'available')) return null;
+    for (const e of edits) { additions += e.additions ?? 0; deletions += e.deletions ?? 0; }
+    any = true;
+  }
+  return any ? { additions, deletions } : null;
+}
+
 export function changedFiles(entries: Entry[], scratch?: (path: string) => boolean): string[] {
   const out: string[] = [];
   for (const { item } of entries) {
