@@ -89,7 +89,8 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
   how many are in progress, blocked and to do, each stage in its own colour;
   the list shows blocked rows with the reason from their description. Each
   reply that changed it keeps the list as the turn left it. The owner
-  changes it by asking you in the chat.
+  changes it by asking you in the chat. Keep plans and step lists there,
+  not in Markdown files in the project, unless the owner asks for a file.
 
 ## Files: paths, links and uam_show_file
 

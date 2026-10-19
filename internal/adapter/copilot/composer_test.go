@@ -98,6 +98,7 @@ func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 		"no Co-authored-by trailer",
 		"\n\nFor work with more than two steps, keep a todo list in the session's `todos` table with the sql tool",
 		"tell it in its prompt to insert its own row in the same `todos` table",
+		"not in Markdown files in the project, unless the owner asks for a file.",
 		"Output over 8 KB is saved to a file and you get a preview and the file's path",
 	} {
 		if !strings.Contains(taskSystem, rule) {
