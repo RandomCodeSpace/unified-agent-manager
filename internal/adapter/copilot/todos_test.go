@@ -68,7 +68,7 @@ func TestSubagentStartHookOnCreateAndResume(t *testing.T) {
 			t.Fatalf("%s subagent start = %+v, %v", name, out, err)
 		}
 	}
-	for _, rule := range []string{"Keep your own row in the session's `todos` table with the sql tool", "set it to done right when you finish", "no Co-authored-by trailer and no line crediting an AI"} {
+	for _, rule := range []string{"Keep your own row in the session's `todos` table with the sql tool", "set it to done right when you finish", "not in Markdown files in the project", "no Co-authored-by trailer and no line crediting an AI"} {
 		if !strings.Contains(subagentSystem, rule) {
 			t.Errorf("subagentSystem lacks %q", rule)
 		}
