@@ -158,6 +158,67 @@ func TestWebQuotaFollowsModelCalls(t *testing.T) {
 	}
 }
 
+// sessionQuota is session.quota.get from CLI 1.0.100 for a Copilot Pro account
+// billed by tokens (2026-10-20), trimmed to the fields uam reads.
+const sessionQuota = `{"isTbbUser":true,"planTier":"pro","premiumRequestsBillable":false,"snapshots":{
+ "premium_interactions":{"entitlementRequests":1500,"hasQuota":true,"isUnlimitedEntitlement":false,"overage":0,"overageAllowedWithExhaustedQuota":false,"remainingPercentage":85.5,"tokenBasedBilling":true,"usageAllowedWithExhaustedQuota":false,"usedRequests":218}}}`
+
+// account.getQuota reports neither the plan nor what a quota counts, so they
+// come from an open session's session.quota.get and from model calls.
+func TestWebQuotaPlanAndUnit(t *testing.T) {
+	var res rpc.AccountGetQuotaResult
+	if err := json.Unmarshal([]byte(recordedQuota), &res); err != nil {
+		t.Fatal(err)
+	}
+	h := openWeb(t)
+	h.fc.mu.Lock()
+	h.fc.quota = res.QuotaSnapshots
+	h.fc.mu.Unlock()
+	quotas := func() []agentapi.Quota {
+		t.Helper()
+		got, err := h.p.Quota(context.Background())
+		if err != nil || len(got) != 3 {
+			t.Fatalf("quotas = %+v, %v", got, err)
+		}
+		return got
+	}
+	// A failed session read leaves both unknown.
+	if q := quotas()[2]; q.Unit != "" || q.Plan != "" {
+		t.Fatalf("before the session answered: %+v", q)
+	}
+	var info rpc.SessionQuotaGetResult
+	if err := json.Unmarshal([]byte(sessionQuota), &info); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.mu.Lock()
+	h.fs.quotaInfo = &info
+	h.fs.mu.Unlock()
+	got := quotas()
+	if q := got[2]; q.Unit != agentapi.QuotaUnitCredits || q.Plan != "pro" || q.Used != 180 {
+		t.Fatalf("premium after the session answered: %+v", q)
+	}
+	if q := got[0]; q.Type != "chat" || q.Unit != "" || q.Plan != "pro" {
+		t.Fatalf("chat after the session answered: %+v", q)
+	}
+	// A model call's own snapshot says how it was billed.
+	var call copilot.SessionEvent
+	if err := json.Unmarshal([]byte(strings.Replace(quotaCall, `"usedRequests":210}`, `"usedRequests":210,"tokenBasedBilling":false}`, 1)), &call); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.mu.Lock()
+	h.fs.quotaInfo = nil
+	h.fs.mu.Unlock()
+	h.fs.onEvent(call)
+	if q := quotas()[2]; q.Unit != agentapi.QuotaUnitRequests || q.Plan != "pro" || q.Used != 210 {
+		t.Fatalf("after a call billed by requests: %+v", q)
+	}
+	// A new CLI may be signed in to another account.
+	h.p.fail(h.fc, "Copilot CLI stopped")
+	if q := quotas()[2]; q.Unit != "" || q.Plan != "" {
+		t.Fatalf("after a restart: %+v", q)
+	}
+}
+
 func TestWebModelsCostTierAndDiscount(t *testing.T) {
 	var models []rpc.Model
 	if err := json.Unmarshal([]byte(recordedModels), &models); err != nil {

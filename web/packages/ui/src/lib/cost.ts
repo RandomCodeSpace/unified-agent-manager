@@ -192,9 +192,18 @@ export function providerQuota(quotas: readonly Quota[] | undefined, provider: st
   return mine.find((q) => !q.unlimited) ?? mine[0] ?? null;
 }
 
-/** "premium requests" for Copilot's premium_interactions; other types read as words. */
-export function quotaLabel(type: string): string {
-  return type === 'premium_interactions' ? 'premium requests' : type.replaceAll('_', ' ');
+/** "AI credits" when the provider bills the quota by tokens, "premium requests" for Copilot's premium_interactions; other types read as words. */
+export function quotaLabel(quota: Pick<Quota, 'type' | 'unit'>): string {
+  if (quota.unit === 'ai_credits') return 'AI credits';
+  return quota.type === 'premium_interactions' ? 'premium requests' : quota.type.replaceAll('_', ' ');
+}
+
+const PLAN_NAMES: Record<string, string> = { free: 'Free', pro: 'Pro', pro_plus: 'Pro+', max: 'Max', business: 'Business', enterprise: 'Enterprise', edu: 'Education' };
+
+/** "Pro+" for Copilot's pro_plus; an unknown tier reads as words, a missing one as "". */
+export function planName(plan: string | undefined): string {
+  if (!plan) return '';
+  return PLAN_NAMES[plan] ?? plan.replaceAll('_', ' ');
 }
 
 /** The chip's face: "88% left", or "Unlimited". */
@@ -204,7 +213,7 @@ export function quotaFace(quota: Pick<Quota, 'unlimited' | 'remaining_percent'>)
 
 /** "180 of 1,500 premium requests used", with the overage when there is one. */
 export function quotaText(quota: Quota): string {
-  if (quota.unlimited) return `Unlimited ${quotaLabel(quota.type)}`;
-  const base = `${quota.used.toLocaleString('en-US')} of ${quota.entitlement.toLocaleString('en-US')} ${quotaLabel(quota.type)} used`;
+  if (quota.unlimited) return `Unlimited ${quotaLabel(quota)}`;
+  const base = `${quota.used.toLocaleString('en-US')} of ${quota.entitlement.toLocaleString('en-US')} ${quotaLabel(quota)} used`;
   return quota.overage > 0 ? `${base} · ${quota.overage.toLocaleString('en-US')} over` : base;
 }

@@ -230,6 +230,10 @@ type Quota struct {
 	RemainingPercent float64   `json:"remaining_percent"`
 	Overage          float64   `json:"overage"`
 	ResetAt          time.Time `json:"reset_at,omitzero"`
+	// Unit is agentapi.QuotaUnitCredits or QuotaUnitRequests, absent when
+	// the provider has not said; Plan is the account's plan tier.
+	Unit string `json:"unit,omitempty"`
+	Plan string `json:"plan,omitempty"`
 }
 
 // Meta is the /api/meta response.

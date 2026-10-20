@@ -160,6 +160,10 @@ export interface Quota {
   overage: number;
   /** Present only while it lies in the future. */
   reset_at?: string;
+  /** What used and entitlement count; absent when the provider has not said. */
+  unit?: 'ai_credits' | 'requests';
+  /** The account's plan tier as the provider names it, e.g. Copilot's "pro_plus". */
+  plan?: string;
 }
 
 /** Input includes cache reads and writes. Total is the collector-normalized token count. */

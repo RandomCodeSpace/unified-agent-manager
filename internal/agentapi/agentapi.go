@@ -344,7 +344,19 @@ type Quota struct {
 	// ResetAt is when the provider says the quota resets; zero when it does
 	// not say. It is not checked here.
 	ResetAt time.Time
+	// Unit is what Used and Entitlement count, QuotaUnitCredits or
+	// QuotaUnitRequests; "" when the provider has not said.
+	Unit string
+	// Plan is the account's plan tier as the provider names it, e.g.
+	// Copilot's "pro" or "pro_plus"; "" when it is not known.
+	Plan string
 }
+
+// Quota units.
+const (
+	QuotaUnitCredits  = "ai_credits"
+	QuotaUnitRequests = "requests"
+)
 
 // Relative model cost tiers, cheapest first.
 const (

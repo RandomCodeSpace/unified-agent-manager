@@ -264,6 +264,7 @@ type fakeSession struct {
 	answers           map[string]rpc.PermissionDecision
 	notPending        map[string]bool
 	disconnected      bool
+	quotaInfo         *rpc.SessionQuotaGetResult
 	subCancels        []string
 	subCancelErr      error
 	subCancelRejected bool
@@ -541,6 +542,15 @@ func (s *fakeSession) Log(_ context.Context, text string) error {
 		onEvent(event)
 	}
 	return nil
+}
+
+func (s *fakeSession) QuotaInfo(context.Context) (*rpc.SessionQuotaGetResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.quotaInfo == nil {
+		return nil, errors.New("session.quota.get not answered")
+	}
+	return s.quotaInfo, nil
 }
 
 func (s *fakeSession) SetName(_ context.Context, name string) error {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota } from '../src/lib/cost.ts';
+import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota, planName, quotaLabel, quotaText } from '../src/lib/cost.ts';
 
 // Pace counts working days in the browser's time zone; the expectations below are in UTC unless a test picks a zone.
 process.env.TZ = 'UTC';
@@ -178,4 +178,15 @@ test('the allowance month: used so far, projected to the reset at the average pa
   assert.equal(quotaBurn({ ...quota, unlimited: true }, now), null);
   assert.equal(quotaBurn({ ...quota, reset_at: '2026-10-20T00:00:00Z' }, now), null);
   assert.equal(quotaBurn(null, now), null);
+});
+
+test('a quota billed by tokens reads as AI credits, and the plan tier reads as its name', () => {
+  const quota = { provider: 'copilot', type: 'premium_interactions', used: 218, entitlement: 1500, unlimited: false, remaining_percent: 85.5, overage: 0 };
+  assert.equal(quotaText(quota), '218 of 1,500 premium requests used');
+  assert.equal(quotaText({ ...quota, unit: 'requests' }), '218 of 1,500 premium requests used');
+  assert.equal(quotaText({ ...quota, unit: 'ai_credits' }), '218 of 1,500 AI credits used');
+  assert.equal(quotaLabel({ type: 'chat' }), 'chat');
+  assert.equal(planName('pro_plus'), 'Pro+');
+  assert.equal(planName('team_plan'), 'team plan');
+  assert.equal(planName(undefined), '');
 });
