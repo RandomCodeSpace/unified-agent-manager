@@ -65,17 +65,18 @@ func TestAccountUsageCleanedCachedAndInSnapshot(t *testing.T) {
 	m, prov := startUsageManager(t, []agentapi.Quota{
 		premium(180),
 		{Type: "chat", Unlimited: true, Entitlement: -1, RemainingPercent: 100, ResetAt: usageT0.Add(-10 * time.Minute)},
-		{Type: " odd\x1b[31m ", Used: -3, RemainingPercent: math.NaN(), Overage: math.Inf(1)},
-		{Type: "wide", RemainingPercent: 250, Overage: -2},
+		{Type: " odd\x1b[31m ", Used: -3, RemainingPercent: math.NaN(), Overage: math.Inf(1), Unit: "tokens", Plan: " pro_plus\x1b[31m "},
+		{Type: "wide", RemainingPercent: 250, Overage: -2, Unit: agentapi.QuotaUnitCredits},
 		{Type: " "},
 	}, nil)
 	// The past reset time is dropped; the type is sanitized; counts and
-	// percentages are kept within range; an entry without a type is dropped.
+	// percentages are kept within range; an unknown unit is dropped and the
+	// plan sanitized; an entry without a type is dropped.
 	want := `{"quotas":[` +
 		`{"provider":"fake","type":"chat","used":0,"entitlement":0,"unlimited":true,"remaining_percent":100,"overage":0},` +
-		`{"provider":"fake","type":"odd","used":0,"entitlement":0,"unlimited":false,"remaining_percent":0,"overage":0},` +
+		`{"provider":"fake","type":"odd","used":0,"entitlement":0,"unlimited":false,"remaining_percent":0,"overage":0,"plan":"pro_plus"},` +
 		`{"provider":"fake","type":"premium_interactions","used":180,"entitlement":1500,"unlimited":false,"remaining_percent":88,"overage":0,"reset_at":"2026-09-25T12:00:00Z"},` +
-		`{"provider":"fake","type":"wide","used":0,"entitlement":0,"unlimited":false,"remaining_percent":100,"overage":0}],` +
+		`{"provider":"fake","type":"wide","used":0,"entitlement":0,"unlimited":false,"remaining_percent":100,"overage":0,"unit":"ai_credits"}],` +
 		`"stale":false,"updated_at":"2026-09-24T12:00:00Z"}`
 	if got := usageJSON(t, m.AccountUsage()); got != want {
 		t.Fatalf("usage =\n%s\nwant\n%s", got, want)

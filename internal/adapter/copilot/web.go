@@ -303,6 +303,12 @@ func (a sdkSessionAdapter) Log(ctx context.Context, text string) error {
 	return a.s.Log(ctx, text, &copilot.LogOptions{Ephemeral: copilot.Bool(false)})
 }
 
+// QuotaInfo reads the session's quota and account projection through the
+// experimental session.quota.get, which makes no network request.
+func (a sdkSessionAdapter) QuotaInfo(ctx context.Context) (*rpc.SessionQuotaGetResult, error) {
+	return a.s.RPC.Quota.Get(ctx)
+}
+
 func (a sdkSessionAdapter) SetName(ctx context.Context, name string) error {
 	_, err := a.s.RPC.Name.Set(ctx, &rpc.NameSetRequest{Name: name})
 	return err
@@ -397,9 +403,13 @@ type webProvider struct {
 	githubMCP bool
 	// quotaMu guards live, the quota snapshots by type from the latest model
 	// call's response since this CLI started. account.getQuota keeps
-	// returning what the CLI read at sign-in, so these supersede it.
+	// returning what the CLI read at sign-in, so these supersede it. It also
+	// guards what account.getQuota does not report: plan, the account's plan
+	// tier, and credits, whether a quota type is billed by tokens.
 	quotaMu sync.Mutex
 	live    map[string]rpc.AssistantUsageQuotaSnapshot
+	plan    string
+	credits map[string]bool
 }
 
 // NewWebProvider returns the Copilot integration for the web service.
@@ -734,6 +744,7 @@ func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
 		p.poke()
 		return nil, fmt.Errorf("read copilot quota: %s", errText(err))
 	}
+	p.noteAccount(ctx, client)
 	p.quotaMu.Lock()
 	defer p.quotaMu.Unlock()
 	out := make([]agentapi.Quota, 0, len(snaps))
@@ -754,6 +765,13 @@ func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
 		if q.ResetDate != nil {
 			quota.ResetAt = *q.ResetDate
 		}
+		if credits, ok := p.credits[kind]; ok {
+			quota.Unit = agentapi.QuotaUnitRequests
+			if credits {
+				quota.Unit = agentapi.QuotaUnitCredits
+			}
+		}
+		quota.Plan = p.plan
 		out = append(out, quota)
 	}
 	slices.SortFunc(out, func(a, b agentapi.Quota) int { return strings.Compare(a.Type, b.Type) })
@@ -771,6 +789,59 @@ func (p *webProvider) noteQuota(snaps map[string]rpc.AssistantUsageQuotaSnapshot
 		p.live = make(map[string]rpc.AssistantUsageQuotaSnapshot, len(snaps))
 	}
 	maps.Copy(p.live, snaps)
+	for kind, q := range snaps {
+		p.noteCreditsLocked(kind, q.TokenBasedBilling)
+	}
+}
+
+// quotaSession is a session that reads its quota and account projection;
+// only the SDK adapter has it.
+type quotaSession interface {
+	QuotaInfo(ctx context.Context) (*rpc.SessionQuotaGetResult, error)
+}
+
+// noteAccount keeps the plan tier and the billing of each quota type from an
+// open conversation of client, when it has one: account.getQuota reports
+// neither, and session.quota.get needs a session. A failed read keeps what
+// was known.
+func (p *webProvider) noteAccount(ctx context.Context, client sdkClient) {
+	p.mu.Lock()
+	convs := slices.Collect(maps.Keys(p.convs))
+	p.mu.Unlock()
+	for _, c := range convs {
+		c.mu.Lock()
+		qs, ok := c.sess.(quotaSession)
+		c.mu.Unlock()
+		if !ok || c.client != client {
+			continue
+		}
+		res, err := qs.QuotaInfo(ctx)
+		if err != nil || res == nil {
+			log.Debug("read copilot session quota failed", "error", err)
+			return
+		}
+		p.quotaMu.Lock()
+		defer p.quotaMu.Unlock()
+		if res.PlanTier != "" && res.PlanTier != rpc.SessionQuotaPlanTierUnknown {
+			p.plan = string(res.PlanTier)
+		}
+		for kind, q := range res.Snapshots {
+			p.noteCreditsLocked(kind, q.TokenBasedBilling)
+		}
+		return
+	}
+}
+
+// noteCreditsLocked keeps whether quota type kind is billed by tokens, when
+// the CLI said.
+func (p *webProvider) noteCreditsLocked(kind string, tokenBased *bool) {
+	if tokenBased == nil {
+		return
+	}
+	if p.credits == nil {
+		p.credits = map[string]bool{}
+	}
+	p.credits[kind] = *tokenBased
 }
 
 // titleDeleteTimeout bounds deleting a title session, whatever ended it.
@@ -1818,7 +1889,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	p.assistedRefused = ""
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()
-	p.live = nil
+	p.live, p.plan, p.credits = nil, "", nil
 	p.quotaMu.Unlock()
 	go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
 	return c, nil

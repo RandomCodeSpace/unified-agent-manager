@@ -201,6 +201,10 @@ func cleanQuota(provider string, q agentapi.Quota) (Quota, bool) {
 	if out.Unlimited {
 		out.Entitlement = 0
 	}
+	if q.Unit == agentapi.QuotaUnitCredits || q.Unit == agentapi.QuotaUnitRequests {
+		out.Unit = q.Unit
+	}
+	out.Plan = clipRunes(strings.TrimSpace(displaytext.Sanitize(q.Plan)), maxNameRunes)
 	return out, true
 }
 

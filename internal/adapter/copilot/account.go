@@ -222,7 +222,7 @@ func (p *webProvider) SignOut(ctx context.Context) (agentapi.Account, error) {
 // signInChanged drops the quota snapshots of the account before.
 func (p *webProvider) signInChanged() {
 	p.quotaMu.Lock()
-	p.live = nil
+	p.live, p.plan, p.credits = nil, "", nil
 	p.quotaMu.Unlock()
 }
 

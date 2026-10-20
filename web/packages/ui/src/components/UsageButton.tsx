@@ -1,6 +1,6 @@
 import { Cpu, Terminal } from 'lucide-react';
 import { lazy, Suspense, useContext, useEffect, useId, useRef, useState } from 'react';
-import type { ModelCalls } from '../api';
+import type { ModelCalls, Quota } from '../api';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { Skeleton, useApp } from './common';
@@ -27,8 +27,8 @@ export function daysText(days: number, unit = 'day'): string {
 export const QUOTA_FILLS = { healthy: 'bg-success', attention: 'bg-warning', danger: 'bg-error', muted: 'bg-faint' };
 
 /** "Premium requests", "AI credits": the allowance's unit, as a label. */
-export function allowanceName(type: string): string {
-  const label = quotaLabel(type).replace(/\bai\b/, 'AI');
+export function allowanceName(quota: Pick<Quota, 'type' | 'unit'>): string {
+  const label = quotaLabel(quota).replace(/\bai\b/, 'AI');
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -93,7 +93,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
   const known = !!quota && (quota.unlimited || pace.remaining !== null);
   const share = !quota || !known ? '—' : quota.unlimited ? '∞' : `${Math.round(pace.remaining ?? 0)}%`;
   const word = quota ? CHIP_PACE[pace.label] : undefined;
-  const description = quota ? `${allowanceName(quota.type)}: ${quotaFace(quota)}. ${pace.label}${!quota.unlimited && pace.daysUntilReset !== null ? `. Resets in ${daysText(pace.daysUntilReset)}` : ''}` : 'Account usage unavailable';
+  const description = quota ? `${allowanceName(quota)}: ${quotaFace(quota)}. ${pace.label}${!quota.unlimited && pace.daysUntilReset !== null ? `. Resets in ${daysText(pace.daysUntilReset)}` : ''}` : 'Account usage unavailable';
   const descriptionId = useId();
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);

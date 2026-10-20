@@ -4,7 +4,7 @@ import { useCallback, useContext, useEffect, useState } from 'react';
 import { describeError, taskName, type ApiClient, type ConnectedStatus, type ModelCalls, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
-import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
+import { accountQuota, planName, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { dateTime, Note, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeTokenReports, sumCacheSavings } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
@@ -235,13 +235,13 @@ const day = (at: number, timeZone?: string) => new Date(at).toLocaleDateString(u
 function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now: number; stale?: boolean; provider: string }>) {
   const pace = quotaPace(quota, now, stale);
   const burn = stale ? null : quotaBurn(quota, now);
-  const unit = quotaLabel(quota.type);
+  const unit = quotaLabel(quota);
   const n = (v: number) => Math.round(v).toLocaleString('en-US');
   // With the bar its legend says where the pace lands; without it, a row does.
   const projection = !burn && pace.daysAtPace !== null ? `About ${daysText(pace.daysAtPace, 'working day')} left` : null;
   const resetAt = pace.daysUntilReset !== null ? now + pace.daysUntilReset * 86400000 : null;
   return (
-    <PanelSection label="Allowance" meta={`${provider} · ${allowanceName(quota.type)}`}>
+    <PanelSection label="Allowance" meta={`${[provider, planName(quota.plan)].filter(Boolean).join(' ')} · ${allowanceName(quota)}`}>
       {quota.unlimited ? (
         <p className="text-ui text-body">Unlimited {unit}{stale ? ' · previous report; refresh failed' : ''}</p>
       ) : (
