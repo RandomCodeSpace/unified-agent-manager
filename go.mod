@@ -1,6 +1,6 @@
 module github.com/RandomCodeSpace/unified-agent-manager
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/RandomCodeSpace/aiusage-core v0.1.2
