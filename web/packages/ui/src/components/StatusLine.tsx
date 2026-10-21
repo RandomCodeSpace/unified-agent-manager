@@ -306,6 +306,20 @@ export function StatusLine({ line: given, session, since, hidden, error, onJump 
 
 const TAB_ICON: Record<Tab, typeof ListChecks> = { todo: ListChecks, subagents: Workflow };
 
+/** Where the sheet hangs: the strip's own right end (inside its padding), not the subagents button, which "Jump to bottom" pushes aside. */
+function stripEnd(row: RefObject<HTMLDivElement | null>) {
+  return () => {
+    const strip = row.current?.parentElement;
+    if (!strip) return document.getElementById('subagents-link');
+    return {
+      getBoundingClientRect: () => {
+        const r = strip.getBoundingClientRect();
+        return DOMRect.fromRect({ x: r.x, y: r.y, width: r.width - Number.parseFloat(getComputedStyle(strip).paddingRight), height: r.height });
+      },
+    };
+  };
+}
+
 /**
  * The strip's sheet (DESIGN.md Status line, sheet): one box of fixed place and size hung off the
  * strip's right end, its right edge flush with it, 10px above it and 560px wide (the strip button
@@ -319,7 +333,7 @@ function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoL
   id: string;
   open: boolean;
   phone: boolean;
-  /** The strip's row: the sheet hangs off the subagents button at its end, else off the row's end. */
+  /** The strip's row: the sheet hangs off the strip's right end, wherever the subagents button sits. */
   row: RefObject<HTMLDivElement | null>;
   lift: HTMLElement | null;
   back: HTMLElement | null;
@@ -414,7 +428,7 @@ function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoL
         <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
         {open && lift?.isConnected && <LiftedRow row={lift} />}
         {/* The same place and size whoever opened it: never beside a row in the conversation. */}
-        <BasePopover.Positioner anchor={() => document.getElementById('subagents-link') ?? row.current} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
+        <BasePopover.Positioner anchor={stripEnd(row)} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup
             id={id}
             data-popup=""

@@ -923,8 +923,12 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
     const changes = new MutationObserver(() => { copyRow(); place(); });
     changes.observe(row, { subtree: true, childList: true, characterData: true });
     window.addEventListener('resize', place);
+    // A neighbour arriving beside the row (the strip's "Jump to bottom" arrow) moves it without a mutation inside it.
+    const moves = new ResizeObserver(place);
+    if (row.parentElement) moves.observe(row.parentElement);
     return () => {
       changes.disconnect();
+      moves.disconnect();
       window.removeEventListener('resize', place);
     };
   }, [row]);
