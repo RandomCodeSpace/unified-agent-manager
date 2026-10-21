@@ -431,6 +431,52 @@ describe('subagents', () => {
     expect(older.getAllByRole('button', { name: /^Audit package / })).toHaveLength(22);
   });
 
+  test('at the end of the list the step buttons stay focusable and do nothing, so ↑ ↓ ← keep working; → never leaves the detail', async () => {
+    const { user } = await openTask('t8');
+    await user.click(live().getByRole('button', { name: /^Run the accessibility linter, failed/ }));
+    const open = await sheet();
+    expect(open.getByText('4 of 5')).toBeTruthy();
+    const next = open.getByRole('button', { name: 'Next subagent' });
+    await user.click(next);
+    expect(await open.findByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
+    // The last one: Next says it cannot go on, keeps the focus, and a press does nothing.
+    expect(next.getAttribute('aria-disabled')).toBe('true');
+    expect(next.hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(next);
+    await user.click(next);
+    expect(open.getByText('5 of 5')).toBeTruthy();
+    // → stays in the detail rather than switching to the Todo tab.
+    await user.keyboard('{ArrowRight}');
+    expect(open.getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true');
+    expect(open.getByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
+    await user.keyboard('{ArrowUp}');
+    expect(await open.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
+    await user.keyboard('{ArrowLeft}');
+    expect(await open.findByRole('searchbox', { name: 'Search subagents' })).toBeTruthy();
+  });
+
+  test('a reply\'s list offers no older subagents (they would join no reply); the whole list does', async () => {
+    const { user } = await openTask('t15');
+    await user.click(await screen.findByRole('button', { name: /^1 subagent · [\d.]+M tokens · 1 done/ }));
+    const list = await sheet();
+    expect(await list.findByRole('button', { name: /^From .*show every message's subagents$/ })).toBeTruthy();
+    expect(list.queryByRole('button', { name: 'Show older subagents' })).toBeNull();
+    await user.click(list.getByRole('button', { name: /^From / }));
+    expect(list.getByRole('button', { name: 'Show older subagents' })).toBeTruthy();
+  });
+
+  test('with a search and a status filter the first message still shown shows all its rows', async () => {
+    const { user } = await openTask('t22');
+    const index = await openSubagentIndex(user);
+    // Done ones named cmd/tool…: none in the newest message, so the one before it leads, uncapped.
+    await user.click(index.getByRole('button', { name: 'Done 33' }));
+    await user.type(index.getByRole('searchbox', { name: 'Search subagents' }), 'cmd/tool');
+    expect(index.queryByRole('region', { name: /^“Retry the failed ones/ })).toBeNull();
+    const first = within(index.getByRole('region', { name: /^“Yes, run the rest/ }));
+    expect(first.getAllByRole('button', { name: /^Audit package cmd\/tool/ }).length).toBeGreaterThan(4);
+    expect(first.queryByRole('button', { name: /more · Show all/ })).toBeNull();
+  });
+
   test('hovering a row opens nothing: no peek, the sheet opens only on a press', async () => {
     const { user } = await openTask('t8');
     await user.hover(live().getByRole('button', { name: /^Run the accessibility linter, failed/ }));

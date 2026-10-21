@@ -838,7 +838,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const subagents = latestSession.current.subagents;
     const spawned = parentMap(subagents).get(toolCallId);
     const call = (spawned && mainCall(spawned, subagents)) ?? toolCallId;
-    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the header’s Subagents list.'); return; }
+    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the Subagents list on the status strip.'); return; }
     atBottom.current = false;
     // Its row (the live rows at the foot), else what folds the call: the reply's subagent chip, else the turn's activity, opened.
     let fold: HTMLElement | undefined;

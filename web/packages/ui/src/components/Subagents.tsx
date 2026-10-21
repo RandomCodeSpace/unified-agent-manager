@@ -5,7 +5,7 @@ import { isSubagentCall, subagentSummary, duration, windowInteractions } from '.
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, CornerDownRight, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -517,13 +517,14 @@ function SubagentDetail({ id, order, phone, onList, onOpen }: Readonly<{ id: str
   const facts = [took, s.tokens ? `${compactTokens(s.tokens)} tokens` : '', s.tool_calls ? `${s.tool_calls} tool ${s.tool_calls === 1 ? 'call' : 'calls'}` : '', s.model ? modelName(meta, task.provider, s.model) : ''].filter(Boolean);
   const parentId = s.parent_tool_call_id;
   const spawnedAt = clock(s.runs?.[0]?.started_at || s.started_at);
-  // ↑ ↓ step through the list and ← goes back to it, from anywhere but a text field or the transcript, which scrolls with them.
+  // ↑ ↓ step through the list and ← goes back to it, from anywhere but a text field or the transcript, which scrolls with them;
+  // → does nothing here, so it never switches to the Todo tab and drops the list's search, filters and open groups.
   const onKeyDown = (e: ReactKeyboardEvent) => {
     const target = e.target as HTMLElement;
     if (e.altKey || e.ctrlKey || e.metaKey || target.closest('input, textarea, [contenteditable="true"], [role="region"]')) return;
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') step(e.key === 'ArrowUp' ? -1 : 1);
     else if (e.key === 'ArrowLeft') onList();
-    else return;
+    else if (e.key !== 'ArrowRight') return;
     e.preventDefault();
   };
   return (
@@ -540,10 +541,11 @@ function SubagentDetail({ id, order, phone, onList, onOpen }: Readonly<{ id: str
             <span className="mr-1 text-meta tabular-nums text-muted">
               {at + 1} of {order.length}
             </span>
-            <Button size="icon-sm" aria-label="Previous subagent" disabled={at === 0} className="text-muted" onClick={() => step(-1)}>
+            {/* At the ends they stay focusable (aria-disabled, a press does nothing), so focus and the keys stay in the detail. */}
+            <Button size="icon-sm" aria-label="Previous subagent" aria-disabled={at === 0} className="text-muted" onClick={() => step(-1)}>
               <ChevronUp />
             </Button>
-            <Button size="icon-sm" aria-label="Next subagent" disabled={at === order.length - 1} className="text-muted" onClick={() => step(1)}>
+            <Button size="icon-sm" aria-label="Next subagent" aria-disabled={at === order.length - 1} className="text-muted" onClick={() => step(1)}>
               <ChevronDown />
             </Button>
           </>
@@ -751,6 +753,11 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const list = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
+  // Stable, so the memoised rows do not render again with every update.
+  const open = useCallback((id: string) => {
+    setSelected(id);
+    setAgent(id);
+  }, []);
   useLayoutEffect(() => {
     if (agent) return;
     const row = list.current?.querySelector<HTMLElement>('[data-index-row][aria-current="true"]');
@@ -766,20 +773,17 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const found = new Set(query ? all.filter((s) => matches(s, rowSummary(summaries, s), query)) : all);
   const c = countSubagents([...found]);
   const counts: Record<IndexFilter, number> = { all: c.total, running: c.running, failed: c.failed, done: c.done, stopped: c.stopped };
-  const shown = pool.flatMap((g, at) => {
-    const matched = g.subagents.filter((s) => inFilter(s, filter) && found.has(s));
-    // Each under the one that spawned it, running first, as in the conversation.
-    const rows = families(matched).flatMap((f) => f.rows);
-    // Caps defer: the newest message shows all its rows, older ones three until "Show all".
-    const cap = reply !== null || at === 0 || rows.length <= GROUP_ROWS + 1 || expanded.has(g.key) ? rows.length : GROUP_ROWS;
-    return rows.length ? [{ ...g, matched, rows, cap }] : [];
-  });
+  const shown = pool
+    .flatMap((g) => {
+      const matched = g.subagents.filter((s) => inFilter(s, filter) && found.has(s));
+      // Each under the one that spawned it, running first, as in the conversation.
+      const rows = families(matched).flatMap((f) => f.rows);
+      return rows.length ? [{ ...g, matched, rows }] : [];
+    })
+    // Caps defer: the newest message shown (after the search and filters) shows all its rows, older ones three until "Show all".
+    .map((g, at) => ({ ...g, cap: reply !== null || at === 0 || g.rows.length <= GROUP_ROWS + 1 || expanded.has(g.key) ? g.rows.length : GROUP_ROWS }));
   const order = shown.flatMap((g) => g.rows.map((r) => r.subagent.id));
   const from = reply === null ? undefined : groups.find((g) => g.key === reply);
-  const open = (id: string) => {
-    setSelected(id);
-    setAgent(id);
-  };
   // Back to the list: a row past its group's cap brings the whole group with it.
   const back = () => {
     const g = shown.find((x) => x.rows.findIndex((r) => r.subagent.id === agent) >= x.cap);
@@ -867,7 +871,8 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
             );
           })}
           {!shown.length && <p className="px-2 py-2 text-caption text-muted">{query ? `No subagent matches “${query}”.` : 'No subagents in this state.'}</p>}
-          {before && <OlderSubagents key={`${taskId}:${before}`} sessionId={taskId} before={before} />}
+          {/* Older pages join no reply here, so a reply's list would drop them: only the whole list reads them. */}
+          {before && reply === null && <OlderSubagents key={`${taskId}:${before}`} sessionId={taskId} before={before} />}
         </div>
       </div>
       {!phone && (
