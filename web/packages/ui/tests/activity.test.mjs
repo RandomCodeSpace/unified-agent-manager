@@ -136,6 +136,8 @@ test('a step reads as plain words with its recorded result: the call kind, the f
   assert.deepEqual(words(call('s1', tool('skill', '{"skill":"tdd"}'))), ['Loaded skill tdd', '', 'muted']);
   assert.deepEqual(words(bash('b1', 'go test ./...', at(2), { tests: { passed: 12, failed: 0 } })), ['Ran go test ./...', 'ok · 12 passed', 'muted']);
   assert.deepEqual(words(bash('b2', 'go vet ./...', at(2), { status: 'failed', exit_code: 1, output: '# pkg\nredraw.go:88:2: unreachable code\nexit status 1' })), ['Ran go vet ./...', 'exit 1 · redraw.go:88:2: unreachable code', 'error']);
+  assert.deepEqual(words(bash('b6', 'make', at(2), { exit_code: 2, output: 'make: *** [all] Error 2' })), ['Ran make', 'exit 2 · make: *** [all] Error 2', 'error'], 'a completed call that exited non-zero failed');
+  assert.deepEqual(words(bash('b7', 'go test', at(2), { tests: { passed: 3, failed: 1 } })), ['Ran go test', '3 passed · 1 failed', 'error']);
   assert.deepEqual(words(bash('b3', 'sleep 9', at(2), { status: 'running' }), true), ['Running sleep 9', '', 'muted']);
   assert.deepEqual(words(bash('b4', 'sleep 9', at(2), { status: 'running' })), ['Ran sleep 9', 'no result', 'muted']);
   assert.deepEqual(words(edit('e1', 'a/redraw.go', at(2), { file_edits: [{ path: 'a/redraw.go', kind: 'update', diff_status: 'available', additions: 12, deletions: 3 }] }), false, [perm('p1')]), ['Edited redraw.go', '+12 −3 · auto-approved', 'muted']);
@@ -159,12 +161,21 @@ test('the timeline folds runs of one kind, marks gaps over 30s and caps at 20 st
   );
   const approvals = new Map([['c5', [perm('p5', { resolution: 'allowed once' })]]]);
   const rows = timelineRows(turn, { live: false, approvals });
-  assert.deepEqual(rows.map((r) => r.type === 'fold' ? `fold:${r.items.length}` : r.type === 'gap' ? `gap:${r.ms / 1000}:${r.you ? 'you' : 'model'}` : `entry:${r.key}`), ['entry:r1', 'fold:3', 'gap:42:model', 'entry:c4', 'entry:c5', 'gap:147:you', 'entry:c6']);
+  assert.deepEqual(rows.map((r) => r.type === 'fold' ? `fold:${r.items.length}` : r.type === 'gap' ? `gap:${r.ms / 1000}:${r.you ? 'you' : 'model'}` : `entry:${r.key}`), ['entry:r1', 'fold:3', 'gap:42:model', 'entry:c4', 'entry:c5', 'gap:147:model', 'entry:c6']);
+  // The person was asked before the call ran: the gap after it is the model's. Asked within the gap, it was theirs; a yolo answer never is.
+  const later = new Map([['c5', [perm('p5', { resolution: 'allowed once', time: sec(100) })]]]);
+  assert.equal(timelineRows(turn, { live: false, approvals: later }).find((r) => r.type === 'gap' && r.ms === 147_000).you, true);
+  const yolo = new Map([['c5', [perm('p5', { time: sec(100) })]]]);
+  assert.equal(timelineRows(turn, { live: false, approvals: yolo }).find((r) => r.type === 'gap' && r.ms === 147_000).you, false);
+  // Right after a decided request standing alone, the gap is the person's.
+  assert.deepEqual(timelineRows([...entries(done(bash('d1', 'a'), 0)), { interaction: perm('p9', { time: sec(2), resolution: 'allowed once' }) }, ...entries(done(bash('d2', 'b'), 60))], { live: false }).filter((r) => r.type === 'gap').map((r) => r.you), [true]);
   assert.equal(foldLabel('read', 3), 'Read 3 files');
   // No recorded end, no gap: nothing is inferred from what followed.
   assert.equal(timelineRows(entries(read('x1', 'a.go', sec(0)), bash('x2', 'ls', sec(90))), { live: false }).filter((r) => r.type === 'gap').length, 0);
-  // A failed call never folds into a run.
+  // A failed call never folds into a run, nor one that completed with a non-zero exit or failed tests.
   assert.equal(timelineRows(entries(done(bash('f1', 'a'), 0), done(bash('f2', 'b', at(2), { status: 'failed' }), 2)), { live: false }).length, 2);
+  assert.equal(timelineRows(entries(done(bash('f3', 'a'), 0), done(bash('f4', 'b', at(2), { exit_code: 2 }), 2)), { live: false }).length, 2);
+  assert.equal(timelineRows(entries(done(bash('f5', 'a'), 0), done(bash('f6', 'b', at(2), { tests: { passed: 3, failed: 1 } }), 2)), { live: false }).length, 2);
   // A subagent's call is left out where its row stands elsewhere.
   assert.equal(timelineRows(entries(call('t1', tool('task', '{"description":"d"}'))), { live: false, skip: () => true }).length, 0);
   // 30 steps of alternating kinds: the first, "17 earlier steps · Show all 30 calls", the last 12.

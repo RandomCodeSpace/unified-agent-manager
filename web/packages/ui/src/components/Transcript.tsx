@@ -446,11 +446,14 @@ const WORD_TONE: Record<WordTone, string> = { muted: 'text-muted', error: 'text-
 const ICON_TONE: Record<WordTone, string> = { muted: 'text-muted', error: 'text-error', attention: 'text-attention' };
 
 /** A step's grid (DESIGN.md steps): its clock, the rail's icon column, the step, its duration; what it opens spans the last two. A phone's clock drops the seconds. */
-const STEP_GRID = 'grid grid-cols-[76px_14px_minmax(0,1fr)_auto] gap-x-2 max-sm:grid-cols-[48px_14px_minmax(0,1fr)_auto]';
+const STEP_GRID = 'grid grid-cols-[76px_14px_minmax(0,1fr)_auto] gap-x-2 max-sm:grid-cols-[56px_14px_minmax(0,1fr)_auto]';
 /** One 24px line of a step (44px under a coarse pointer). */
 const STEP_LINE = 'flex min-h-6 items-center pointer-coarse:min-h-11';
 
 interface Edge { first: boolean; last: boolean }
+/** The four edges as constants: a new object per row would defeat the steps' memo. */
+const EDGES: Edge[] = [{ first: false, last: false }, { first: true, last: false }, { first: false, last: true }, { first: true, last: true }];
+const edgeOf = (first: boolean, last: boolean) => EDGES[Number(first) + 2 * Number(last)];
 
 /** The rail down the icon column: a 1px hairline from the first step's glyph to the last one's, dashed across a gap; the glyph sits on it. */
 function Rail({ icon, edge, dashed = false, className }: Readonly<{ icon?: ReactNode; edge: Edge; dashed?: boolean; className?: string }>) {
@@ -486,9 +489,9 @@ function StepFrame({ at, icon, iconClass, edge, dur, under, children, ref, ...re
 }
 
 /** A step's words as its button: the step, then its result words (`muted`, failures `error`, a person's decision `attention`); a phone puts the result under the step. */
-function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef }: Readonly<{ label: string; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement> }>) {
+function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef, className }: Readonly<{ label: string; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement>; className?: string }>) {
   return (
-    <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className="-mx-1.5 flex min-h-6 w-[calc(100%+0.75rem)] min-w-0 items-center gap-x-1 rounded-sm px-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11">
+    <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className={cn("-mx-1.5 flex min-h-6 w-[calc(100%+0.75rem)] min-w-0 items-center gap-x-1 rounded-sm px-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11", className)}>
       <span className="flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
         {lead}
         <span className={cn('min-w-0 truncate', intent && 'text-muted italic', ink && 'text-ink')}>{label}</span>
@@ -499,6 +502,7 @@ function StepButton({ label, result, open, onClick, fold = false, intent = false
           {result.map((r, i) => (
             <span key={i} className={WORD_TONE[r.tone]}>
               <span aria-hidden="true" className={cn('text-faint', i === 0 && 'max-sm:hidden')}>{i ? ' · ' : '· '}</span>
+              <span className="sr-only">, </span>
               {r.text}
             </span>
           ))}
@@ -618,24 +622,34 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
       )}
     </>
   );
-  const button = <StepButton buttonRef={actions.anchor} label={words.label} result={words.result} open={open} onClick={toggle} intent={words.intent} ink={running} title={title} lead={nested ? <Icon aria-hidden="true" className={cn('size-3 shrink-0', words.tone === 'error' ? 'text-error' : 'text-faint')} /> : undefined} />;
-  const menu = context.menu(<ContextMenu.Actions items={actions.items} />);
+  const button = <StepButton buttonRef={actions.anchor} className="pr-7 pointer-coarse:pr-11" label={words.label} result={words.result} open={open} onClick={toggle} intent={words.intent} ink={running} title={title} lead={nested ? <Icon aria-hidden="true" className={cn('size-3 shrink-0', words.tone === 'error' ? 'text-error' : 'text-faint')} /> : undefined} />;
+  const menu = (
+    <>
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${actions.label}`} />}>
+          <Ellipsis />
+        </Menu.Trigger>
+        <Menu.Content align="end" side="bottom">
+          <Menu.Actions items={actions.items} />
+        </Menu.Content>
+      </Menu.Root>
+      {context.menu(<ContextMenu.Actions items={actions.items} />)}
+    </>
+  );
   if (nested) {
     return (
       <div ref={attach} id={`item-${item.id}`} className="flex flex-col pl-3" {...context.shell}>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2">
-          {button}
+          <div className="group/tool relative min-w-0">{button}{menu}</div>
           <span className={cn(STEP_LINE, 'justify-end text-caption whitespace-nowrap tabular-nums text-muted')}>{took}</span>
         </div>
         {under}
-        {menu}
       </div>
     );
   }
   return (
     <StepFrame ref={attach} id={`item-${item.id}`} at={words.intent ? undefined : item.time} icon={glyph} iconClass={words.intent ? 'text-faint' : ICON_TONE[words.tone]} edge={edge} dur={took} under={under} {...context.shell}>
-      {button}
-      {menu}
+      <div className="group/tool relative">{button}{menu}</div>
     </StepFrame>
   );
 });
@@ -705,7 +719,7 @@ function StepGap({ children, you = false }: Readonly<{ children: ReactNode; you?
   return (
     <div role="listitem" className={STEP_GRID}>
       <span />
-      <Rail edge={{ first: false, last: false }} dashed />
+      <Rail edge={EDGES[0]} dashed />
       <span className={cn('col-span-2 flex min-h-[22px] items-center text-meta tabular-nums', you ? 'text-attention' : 'text-faint')}>{children}</span>
     </div>
   );
@@ -720,16 +734,28 @@ function StepGap({ children, you = false }: Readonly<{ children: ReactNode; you?
  */
 function Timeline({ id, entries, ctx, agentId }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext; agentId?: string }>) {
   const [all, setAll] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
+  const reveal = useRef(-1);
+  useEffect(() => {
+    if (!all || reveal.current < 0) return;
+    list.current?.children[reveal.current]?.querySelector<HTMLElement>('button')?.focus();
+    reveal.current = -1;
+  }, [all]);
+  const showAll = () => {
+    // The first step the cap hid: the row after the first step and any gap after it.
+    reveal.current = timelineRows(entries, { live: ctx.live, approvals: ctx.approvals, skip: (item) => !!ctx.subagentOf?.(item), all: true }).findIndex((r, i) => i > 0 && r.type !== 'gap');
+    setAll(true);
+  };
   const rows = timelineRows(entries, { live: ctx.live, approvals: ctx.approvals, skip: (item) => !!ctx.subagentOf?.(item), all });
   const out = rows.map((row, i) => {
-    const edge = { first: i === 0, last: i === rows.length - 1 };
+    const edge = edgeOf(i === 0, i === rows.length - 1);
     switch (row.type) {
       case 'gap':
         return <StepGap key={row.key} you={row.you}>· {formatMs(row.ms)} {row.you ? 'waiting on you' : 'model'}</StepGap>;
       case 'more':
         return (
           <StepGap key={row.key}>
-            <button type="button" className="-mx-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11" onClick={() => setAll(true)}>
+            <button type="button" className="-mx-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11" onClick={showAll}>
               {row.hidden} earlier steps · <span className="text-ink">Show all {row.calls} calls</span>
             </button>
           </StepGap>
@@ -748,7 +774,7 @@ function Timeline({ id, entries, ctx, agentId }: Readonly<{ id: string; entries:
     return <StepCall key={row.key} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} edge={edge} />;
   });
   return (
-    <div id={id} role="list" aria-label="Steps" className="flex max-w-[720px] flex-col pt-2 pb-1">
+    <div ref={list} id={id} role="list" aria-label="Steps" className="flex max-w-[720px] flex-col pt-2 pb-1">
       {out}
     </div>
   );

@@ -918,7 +918,9 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   else if (r?.kind === 'diff') result.push({ text: `+${r.additions} −${r.deletions}`, tone: 'muted' });
   else if (r?.kind === 'exit') result.push({ text: r.code === 0 ? 'ok' : `exit ${r.code}`, tone: r.code === 0 ? 'muted' : 'error' });
   else if (r?.kind === 'failed') result.push({ text: 'failed', tone: 'error' });
-  const failed = t?.status === 'failed';
+  // A completed call that exited non-zero failed all the same (stepResult leaves its code out).
+  if (t?.status === 'completed' && t.exit_code && r?.kind !== 'tests') result.push({ text: `exit ${t.exit_code}`, tone: 'error' });
+  const failed = t?.status === 'failed' || !!t?.exit_code || result.some((x) => x.tone === 'error');
   const why = failed ? firstErrorLine(t?.output) : '';
   if (why) result.push({ text: why, tone: 'error' });
   const asked = n === ASK_TOOL ? questionOf(t, undefined, live)?.outcome : undefined;
@@ -929,13 +931,13 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   const machine = mark?.word === 'auto' || mark?.word === 'reviewed';
   if (mark) result.push({ text: machine ? `${mark.word === 'auto' ? 'auto' : 'review'}-approved` : mark.word, tone: machine ? 'muted' : 'attention' });
   // A call a person decided on, one that failed or one that returned images stands alone: its words are its own.
-  const fold = w.fold && t?.status === 'completed' && !mark && !item.images?.length ? w.fold : undefined;
+  const fold = w.fold && t?.status === 'completed' && !failed && !mark && !item.images?.length ? w.fold : undefined;
   return { ...w, fold, result, tone: failed ? 'error' : (mark && !machine) || asked ? 'attention' : 'muted' };
 }
 
 /** A step of the timeline (its `end` not finite when unrecorded): one entry, a folded run of same-kind calls, the time between two steps, or the cap's "N earlier steps". */
 export type TimelineRow =
-  | { type: 'entry'; key: string; entry: Entry; start: number; end: number; you: boolean }
+  | { type: 'entry'; key: string; entry: Entry; start: number; end: number }
   | { type: 'fold'; key: string; items: Item[]; fold: NonNullable<StepWords['fold']>; start: number; end: number }
   | { type: 'gap'; key: string; ms: number; you: boolean }
   | { type: 'more'; key: string; hidden: number; calls: number };
@@ -958,7 +960,7 @@ export const foldLabel = (fold: NonNullable<StepWords['fold']>, n: number) => FO
  * A turn's work as timeline rows (DESIGN.md steps): each thought with something in it, each call
  * (`skip` leaves some out: a subagent's call is its row in the reply's list) and each decided
  * request; consecutive completed calls of one kind fold; a gap over 30s between one step's end and
- * the next one's start is its own row, "waiting on you" after a step a person decided. Over
+ * the next one's start is its own row, "waiting on you" when the turn asked the person within it (or right after a decided request). Over
  * `STEP_CAP` steps, unless `all`, the first, a "N earlier steps" row and the last 12.
  */
 export function timelineRows(entries: readonly Entry[], { live, approvals, skip, all = false }: { live: boolean; approvals?: Map<string, Interaction[]>; skip?: (item: Item) => boolean; all?: boolean }): TimelineRow[] {
@@ -969,7 +971,7 @@ export function timelineRows(entries: readonly Entry[], { live, approvals, skip,
     if (!isWork(entry)) continue;
     if (entry.interaction) {
       const at = Date.parse(entry.interaction.time);
-      steps.push({ type: 'entry', key: entry.interaction.id, entry, start: at, end: at, you: true });
+      steps.push({ type: 'entry', key: entry.interaction.id, entry, start: at, end: at });
       continue;
     }
     const item = entry.item;
@@ -984,15 +986,16 @@ export function timelineRows(entries: readonly Entry[], { live, approvals, skip,
       steps[steps.length - 1] = { type: 'fold', key: items[0].id, items, fold: words.fold, start: prev.start, end: Math.max(...[prev.end, end].filter(Number.isFinite)) };
       continue;
     }
-    const asked = item.kind === 'tool' ? askedOn(item, approvals, live) : null;
-    steps.push({ type: 'entry', key: item.id, entry, start, end, you: words?.tone === 'attention' || (!!asked && asked.outcome !== 'pending') });
+    steps.push({ type: 'entry', key: item.id, entry, start, end });
   }
+  // When the turn asked the person: a gap holding one of those moments was theirs, any other is the model's.
+  const asks = entries.flatMap((e) => (e.item ? (approvals?.get(e.item.id) ?? []) : [])).filter((ix) => ix.state !== 'pending' && !['auto', 'reviewed'].includes(approvalMark(ix).word)).map((ix) => Date.parse(ix.time));
   const rows: TimelineRow[] = [];
   steps.forEach((step, i) => {
     rows.push(step);
     const next = steps[i + 1];
     const ms = next ? next.start - step.end : 0;
-    if (Number.isFinite(ms) && ms > GAP_MS) rows.push({ type: 'gap', key: `gap-${step.key}`, ms, you: step.type === 'entry' && step.you });
+    if (Number.isFinite(ms) && ms > GAP_MS) rows.push({ type: 'gap', key: `gap-${step.key}`, ms, you: (step.type === 'entry' && !!step.entry.interaction) || asks.some((t) => t > step.end && t < next.start) });
   });
   if (all || steps.length <= STEP_CAP) return rows;
   const calls = steps.reduce((n, s) => n + (s.type === 'fold' ? s.items.length : 1), 0);

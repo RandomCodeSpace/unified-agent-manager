@@ -8,7 +8,7 @@ import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
-import { composer, log, openSubagentIndex, openTask } from './render';
+import { composer, log, openMenu, openSubagentIndex, openTask } from './render';
 
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 /** The head of the turn `el` is in: its card's first row. */
@@ -460,8 +460,8 @@ describe('activity', () => {
     // Over 20 steps the earlier ones wait behind one press.
     await user.click(await log().findByRole('button', { name: /^\d+ earlier steps · Show all \d+ calls$/ }));
     const step = await log().findByRole('button', { name: /^Ran ls ~\/projects\/sky-dodge/ });
-    fireEvent.contextMenu(step);
-    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Copy command' }));
+    const menu = await openMenu(user, 'Actions for bash ls ~/projects/sky-dodge');
+    await user.click(menu.getByRole('menuitem', { name: 'Copy command' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith('ls ~/projects/sky-dodge'));
     copy.mockRestore();
     await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
@@ -766,6 +766,25 @@ describe('turn card', () => {
     const again = render(draw({ ...working, paused_ms: 60_000 }));
     act(() => vi.advanceTimersByTime(0));
     expect(again.container.textContent).toContain('Working 6s');
+  });
+
+  test('a step reads its result words apart for a screen reader, and a non-zero exit is a failure', () => {
+    const vet: Item = { id: 'v1', kind: 'tool', time: at(1), ended_at: at(2), tool: { name: 'bash', status: 'completed', exit_code: 1, input: JSON.stringify({ command: 'go vet ./...' }), output: 'redraw.go:88:2: unreachable code' } };
+    const view = render(<Transcript sessionId="s" items={[items[0], vet, items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    fireEvent.click(view.getByRole('button', { name: /activity of this turn/ }));
+    // The dots are not read; a comma parts the words (the test DOM pads inline boundaries with a space).
+    const name = (n: string) => n.replaceAll(/\s+,/g, ',') === 'Ran go vet ./..., exit 1, redraw.go:88:2: unreachable code';
+    expect(view.getByRole('button', { name })).toBeTruthy();
+  });
+
+  test('"Show all N calls" puts focus on the first step it showed', async () => {
+    const user = userEvent.setup();
+    const many: Item[] = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, kind: 'tool', time: at(1), tool: { name: i % 2 ? 'view' : 'bash', status: 'completed', input: JSON.stringify(i % 2 ? { path: `f${i}.go` } : { command: `echo ${i}` }) } }));
+    const view = render(<Transcript sessionId="s" items={[items[0], ...many, items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    await user.click(view.getByRole('button', { name: /activity of this turn/ }));
+    expect(view.queryByRole('button', { name: /^Read f1\.go/ })).toBeNull();
+    await user.click(view.getByRole('button', { name: '17 earlier steps · Show all 30 calls' }));
+    await waitFor(() => expect(document.activeElement).toBe(view.getByRole('button', { name: /^Read f1\.go/ })));
   });
 
   test('open steps are one clock-stamped timeline: a run of one kind folds, its duration on the row, its calls indented without a clock', async () => {
