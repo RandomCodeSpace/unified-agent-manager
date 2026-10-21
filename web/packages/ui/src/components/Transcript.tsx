@@ -10,17 +10,16 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
-import { turnVerb } from '../lib/verbs';
 import { receipts, type Stamp } from '../lib/receipts';
 import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
 import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -81,9 +80,7 @@ interface Props {
   onOpenAllChanges?: () => void;
   readersActive?: boolean;
   readerGeneration?: string;
-  /** Name the turn's verb on the foot line between steps; the main pane's floating `WorkingLabel` carries it instead, and its foot line names only the current step (Compact). */
-  footVerb?: boolean;
-  /** The conversation is being compacted: the foot says so in place of the current step. */
+  /** The conversation is being compacted: the foot shows no step (the strip says so). */
   compacting?: boolean;
   /** Branch the exact owner message at the final reply's stable foot. */
   onBranch?: BranchReply;
@@ -117,7 +114,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line, and plain rows at the foot while one runs;
  * the chip and each row open the strip's sheet.
  */
-export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -229,7 +226,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
         {out}
         {working && !showedWorking && <TurnStatus working timing={turnTimings.at(-1)?.state === 'working' ? turnTimings.at(-1) : undefined} />}
         {inline && liveCard && <LiveSubagents />}
-        <WorkingTail working={working} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
+        <WorkingTail working={working} turnId={userItemId ?? 'start'} current={current} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -593,7 +590,8 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
   const running = live && isActive(t?.status);
   const words = callWords(full ?? item, live, approvals);
   const Icon = STEP_ICONS[words.icon];
-  const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
+  // Held still: the strip's live line has the pane's one moving mark.
+  const glyph = running ? <span className={cn('contents', STILL_STEP)}><ToolMark tone="running" /></span> : <Icon aria-hidden="true" />;
   const took = running ? null : itemTook(item);
   const ended = !live && isActive(t?.status);
   const title = ended ? 'The turn ended before this tool reported a result' : undefined;
@@ -877,48 +875,31 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
 }
 
 /**
- * The live line at the foot of a running turn, where new output lands: a steady gerund
- * ("Untangling…", words only: the working mark comes with a step or compacting) while prose
- * streams or the agent is between steps. The verb
- * is picked from the id of the user message that began the turn, so it holds for the whole turn
- * and comes back the same after a reload. It steps aside while the last row is already live,
- * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
- * status row already announces the state, so this one is not read out again.
+ * The foot of a running turn, where new output lands: the step in progress unfolded (`LiveStep`), and nothing else.
+ * What happens now is said once, by the strip's live line above the composer (StatusLine), never here: no label,
+ * no verb, no mark. It grows in when the turn starts and folds away when it ends.
  */
-function WorkingTail({ working, turnId, step, verb = true, current, compacting = false }: Readonly<{ /** The conversation is being compacted: say so in place of the step or verb. */ compacting?: boolean; working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean; /** Compact: the step in progress, unfolded (`LiveStep`), in place of its one-line label. */ current?: ReactNode }>) {
+function WorkingTail({ working, turnId, current }: Readonly<{ working: boolean; turnId: string; /** Compact: the step in progress, unfolded (`LiveStep`). */ current?: ReactNode }>) {
   const { mounted, onClosed } = usePresence(working);
   // Once a turn showed a step unfolded, the foot keeps that room until the turn ends: a step
   // folding into the turn line never pulls the transcript up, and the next one lands in the same room.
   const [roomFor, setRoomFor] = useState<string | null>(null);
   if (current && roomFor !== turnId) setRoomFor(turnId);
   if (!mounted) return null;
-  let text = '';
-  if (compacting) text = 'Compacting the conversation…';
-  else if (step) text = step.label;
-  else if (verb) text = `${turnVerb(turnId)}…`;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
-      {working && verb && <output className="sr-only">Busy</output>}
-      <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
-        {current || (
-          <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-            {text && (compacting || step) && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
-            <span className={cn('min-w-0 truncate', compacting ? 'text-badge-violet' : step?.tone === 'attention' && 'text-warning')} title={step?.label}>
-              {text}
-            </span>
-          </div>
-        )}
-      </div>
+      <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>{current}</div>
     </Collapse>
   );
 }
 
 /**
  * Compact (DESIGN.md live step): the step in progress at the turn's foot, unfolded. A thought
- * streaming is "Thinking…" over its text as it arrives, in a box at most 80px tall that shows its
- * newest lines, the older ones clipped above, so it never grows into a block and nothing scrolls;
- * a call running is its tool row (mark, name, argument) over its newest output lines, which its
- * row carries (`LiveOutput`). It rises in; once the step ends it is gone from here and counted on the turn line.
+ * streaming is its text as it arrives, in a box at most 80px tall that shows its newest lines,
+ * the older ones clipped above, so it never grows into a block and nothing scrolls; a call
+ * running is its tool row (name, argument) over its newest output lines (`LiveOutput`). Neither
+ * has a mark that moves: the strip's live line holds the one animated mark, so the running row's
+ * own ring is held still here (`STILL_STEP`). It rises in; once the step ends it is gone from here and counted on the turn line.
  */
 function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
   const thought = item.kind === 'reasoning';
@@ -926,14 +907,7 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
   const text = thought ? full?.text ?? '' : '';
   return (
     <div ref={attach} className="flex animate-rise flex-col gap-1">
-      {thought ? (
-        <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-          <WorkingMark />
-          <span>Thinking…</span>
-        </div>
-      ) : (
-        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step />
-      )}
+      {!thought && <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step className={STILL_STEP} />}
       {text.trim() && (
         <div className="relative flex max-h-20 flex-col justify-end overflow-hidden pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
           <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
@@ -943,6 +917,9 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
     </div>
   );
 }
+
+/** The running step's mark, held still: the strip's live line has the pane's one ring (r13 A). The one place the running row's mark is set. */
+const STILL_STEP = '[&_.animate-spin]:animate-none';
 
 interface RenderContext {
   planVersion?: number;

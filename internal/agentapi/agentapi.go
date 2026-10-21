@@ -1125,8 +1125,8 @@ type Phase struct {
 	Calls     int `json:"calls,omitempty"`
 	Subagents int `json:"subagents,omitempty"`
 	// Model is the model of the main agent's call in flight, else of its
-	// compaction, else of the oldest subagent call; CallsSince is when the
-	// oldest call started. Compacting is set when Model's call is the
+	// compaction, else of the oldest subagent call; CallsSince is when
+	// Model's call started. Compacting is set when Model's call is the
 	// compaction; Agent describes the subagent when it is a subagent's.
 	Model      string    `json:"model,omitempty"`
 	CallsSince time.Time `json:"calls_since,omitzero"`

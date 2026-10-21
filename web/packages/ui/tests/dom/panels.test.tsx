@@ -3,7 +3,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
-import { VERBS } from '../../src/lib/verbs';
 import { log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
 
 describe('changes', () => {
@@ -216,7 +215,7 @@ describe('subagents', () => {
       ['1 done', 'success', true],
     ]);
     // Pressed on its words, it opens on Todo.
-    await user.click(screen.getByText('Now:'));
+    await user.click(strip);
     const reader = await screen.findByRole('dialog', { name: 'Todo and subagents' });
     const tab = (name: string) => within(reader).getByRole('tab', { name });
     await waitFor(() => expect(document.activeElement).toBe(tab('Todo')));
@@ -485,16 +484,17 @@ describe('subagents', () => {
   });
 });
 
-// The ring turns only at the Task's state glyph and the step in progress; whatever else runs is still, in words and colour.
+// One mark moves in the pane: the strip's live line (r13 A). The header's state, the running step and everything else are still, in words and colour.
 describe('one working ring per place', () => {
   const rings = (root: ParentNode) => [...root.querySelectorAll('.animate-spin')];
 
-  test('while subagents run, only the state glyph turns: their rows, the strip\'s subagent blocks and the Changes dot are still', async () => {
+  test('while subagents run, only the live line\'s mark moves: the header, their rows, the strip\'s subagent blocks and the Changes dot are still', async () => {
     await openTask('t8');
     const pane = document.querySelector('main')!;
     const header = pane.querySelector('header')!;
-    // The header: the state chip turns; the strip says how many run in a still block.
-    expect(rings(header).map((ring) => ring.parentElement?.parentElement?.textContent)).toEqual(['Working']);
+    // The header: "Working" beside a still dot; the strip says how many run in a still block.
+    expect(rings(header)).toHaveLength(0);
+    expect(header.textContent).toContain('Working');
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
     expect(rings(strip)).toHaveLength(0);
@@ -509,27 +509,35 @@ describe('one working ring per place', () => {
     // Changed files keep a steady amber dot (once the changes load), and the status line's dot is still: nothing in the pane pulses.
     await waitFor(() => expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull());
     expect(pane.querySelectorAll('.animate-pulse-dot')).toHaveLength(0);
-    expect(rings(pane)).toHaveLength(1);
+    // t8 waits on the model: the live line breathes (or, once the wait passes its threshold, holds a still clock), and nothing in the pane turns.
+    expect(rings(pane)).toHaveLength(0);
+    expect(screen.getByRole('button', { name: /^Waiting for the model, / })).toBeTruthy();
+    expect(pane.querySelectorAll('.animate-breathe').length).toBeLessThanOrEqual(1);
   });
 
-  test('a running subagent\'s transcript turns only at its running call; its head says "Running", still', async () => {
+  test('a running subagent\'s step moves nothing: its running call\'s ring is held still, its thought streams unlabelled; its head says "Running", still', async () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
     const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
     expect(within(dialog).getByText('Running')).toBeTruthy();
-    // Its bash call is the step: the sheet's one ring.
-    await waitFor(() => expect(rings(transcript)).toHaveLength(1));
-    expect(rings(dialog)).toHaveLength(1);
+    // First its bash call is the step: its ring is the only one, held still (the strip's live line has the one moving mark).
+    const held = (root: ParentNode) => rings(root).every((ring) => ring.closest('[class*="[&_.animate-spin]:animate-none"]'));
+    expect(rings(dialog).length).toBeLessThanOrEqual(1);
+    expect(held(dialog)).toBe(true);
+    // Then a thought streams (the mock's): the foot has no "Thinking…" label and no ring.
+    await waitFor(() => expect(rings(dialog)).toHaveLength(0), { timeout: 3000 });
+    expect(within(transcript).queryByText('Thinking…')).toBeNull();
   });
 
-  test('between steps a subagent\'s foot is its gerund, words only', async () => {
+  test('between steps a subagent\'s foot is blank: no filler verb, no mark', async () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Verify store callers, running/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
-    await within(dialog).findByText(new RegExp(`^(${VERBS.join('|')})…$`));
+    await within(dialog).findByRole('region', { name: /^Transcript of / });
+    expect(within(dialog).queryByText(/…$/, { ignore: '.sr-only, textarea, input' })).toBeNull();
     expect(rings(dialog)).toHaveLength(0);
   });
 

@@ -478,7 +478,7 @@ describe('activity', () => {
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled' };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" liveCard />;
     const ring = () => view.container.querySelector('.animate-spin');
     const view = render(draw([stopped], false));
     expect(ring()).toBeNull();
@@ -500,7 +500,7 @@ describe('activity', () => {
     expect(row.container.querySelector('.lucide-circle-dashed')).not.toBeNull();
     row.unmount();
     const items: Item[] = [{ id: 'u1', kind: 'user', time: '2026-10-05T10:00:00Z', text: 'List' }, item];
-    const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: '2026-10-05T10:00:00Z', state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" footVerb={false} liveCard />);
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: '2026-10-05T10:00:00Z', state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
   });
 
@@ -509,7 +509,7 @@ describe('activity', () => {
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" liveCard />;
     const view = render(draw([stopped], false));
     const ends = () => [view.container.textContent?.includes('Took 5s'), !!outcomeOf(view.getByText('Counting.')) && headOf(view.getByText('Counting.')).textContent?.includes('940 tokens')];
     expect(ends()).toEqual([true, true]);
@@ -529,7 +529,7 @@ describe('activity', () => {
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
     // A restart or close cut the turn off: the service marks it unknown, without an end.
     const cut: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'unknown' };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" liveCard />;
     const ring = () => view.container.querySelector('.animate-spin');
     const view = render(draw([cut], false));
     expect(ring()).toBeNull();
@@ -751,7 +751,7 @@ describe('turn card', () => {
     const start = Date.parse(at(0));
     vi.setSystemTime(start + 5000);
     const working: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' };
-    const draw = (timing: TurnTiming) => <Transcript sessionId="s" items={[items[0]]} turnTimings={[timing]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" footVerb={false} liveCard />;
+    const draw = (timing: TurnTiming) => <Transcript sessionId="s" items={[items[0]]} turnTimings={[timing]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />;
     const view = render(draw(working));
     const clock = () => view.container.textContent!.match(/Working\s*(\S+)/)?.[1];
     act(() => vi.advanceTimersByTime(0));

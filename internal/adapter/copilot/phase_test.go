@@ -58,8 +58,9 @@ func TestWebPhaseFollowsMainAndSubagentCalls(t *testing.T) {
 	}
 	h.fs.onEvent(phaseEv("s2", "child", 102, &rpc.AssistantTurnStartData{TurnID: "0", Model: copilot.String("ollama/deepseek-v4.1-flash")}))
 	h.fs.onEvent(phaseEv("s3", "", 103, &rpc.AssistantTurnStartData{TurnID: "1", Model: copilot.String("gpt-6-luna")}))
-	// Both in flight: the main agent's model shows, since the oldest call.
-	if p := lastPhase(t, h); p == nil || p.Calls != 2 || p.Subagents != 1 || p.Model != "gpt-6-luna" || !p.CallsSince.Equal(time.Unix(102, 0)) {
+	// Both in flight: the main agent's call shows, timed from its own start,
+	// not the older subagent call's.
+	if p := lastPhase(t, h); p == nil || p.Calls != 2 || p.Subagents != 1 || p.Model != "gpt-6-luna" || !p.CallsSince.Equal(time.Unix(103, 0)) {
 		t.Fatalf("overlapping calls = %+v", p)
 	}
 	// A retry keeps the call in flight.
@@ -217,7 +218,7 @@ func TestWebPhaseSubagentOutlivesTheTurn(t *testing.T) {
 	// The next turn keeps it, with the main agent's call.
 	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
 	h.fs.onEvent(phaseEv("s2", "", 110, &rpc.AssistantTurnStartData{TurnID: "0", Model: copilot.String("gpt-6-luna")}))
-	if p := lastPhase(t, h); p == nil || p.Calls != 2 || p.Subagents != 1 || p.Model != "gpt-6-luna" || p.Agent != "" || !p.CallsSince.Equal(time.Unix(107, 0)) {
+	if p := lastPhase(t, h); p == nil || p.Calls != 2 || p.Subagents != 1 || p.Model != "gpt-6-luna" || p.Agent != "" || !p.CallsSince.Equal(time.Unix(110, 0)) {
 		t.Fatalf("in the next turn = %+v", p)
 	}
 	endTurn(t, h, 111)

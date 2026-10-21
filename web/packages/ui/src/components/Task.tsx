@@ -29,7 +29,6 @@ import { SubagentScope } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
-import { PhaseBlock } from './ModelPhase';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { HandoffCard } from './Handoff';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
@@ -135,7 +134,6 @@ interface HeaderProps {
   session: SessionSummary;
   project: Project | undefined;
   state: SessionState;
-  compacting: boolean;
   changes: ChangesData | null;
   evidenceAvailable: boolean;
   evidenceError: string;
@@ -151,19 +149,20 @@ interface HeaderProps {
   onMcp: (open: boolean) => void;
 }
 
-/** The header's state chip: the state's glyph and word, or what took their place (compacting, who stopped it, the finished turn's failures). */
-function HeaderState({ session, state, compacting, failures, label }: Readonly<{ session: SessionSummary; state: SessionState; compacting: boolean; failures: string; label: boolean }>) {
+/**
+ * The header's state chip: the state's glyph and word, or what took their place (who stopped it, the finished turn's
+ * failures). Working is a still dot and the word: what the work is, and the one moving mark, are the strip's live line.
+ */
+function HeaderState({ session, state, failures, label }: Readonly<{ session: SessionSummary; state: SessionState; failures: string; label: boolean }>) {
   let title = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   let text: string | undefined;
   let icon: ReactNode;
   let tone: Tone | undefined;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
-  if (compacting) {
-    text = 'Compacting…';
-    title = 'Compacting the conversation';
-  } else if (state === 'working' && session.budget?.wrapping_up) {
-    // The working mark stays; only the word says the budget is reached.
+  if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="size-1.5 rounded-full bg-ink" />;
+  if (state === 'working' && session.budget?.wrapping_up) {
+    // The still dot stays; only the word says the budget is reached.
     text = 'Wrapping up';
     title = 'Budget reached: tools are denied and the agent is writing a handoff';
   } else if (stop) {
@@ -184,11 +183,11 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
       tone = 'warning';
     }
   }
-  return <StateMark state={state} label={label} compacting={compacting} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
+  return <StateMark state={state} label={label} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -243,9 +242,9 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
           // On a phone a Settled Task says so in its composer note, so the squeezed title keeps the room.
           <Chip fill="outline" className={session.stage === 'settled' ? 'max-sm:hidden' : undefined}>{stageLabel(session)}</Chip>
         ) : (
-          <HeaderState session={session} state={state} compacting={compacting} failures={failures} label={!phone} />
+          <HeaderState session={session} state={state} failures={failures} label={!phone} />
         )}
-        {/* A Task action in flight is words: the state glyph is the header's one ring. */}
+        {/* A Task action in flight is words: nothing in the header turns. */}
         {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
         {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
         {renamable && !renaming && (
@@ -992,7 +991,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <GitLabItemsContext.Provider value={gitlabItems}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -1045,7 +1044,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               connected={connected}
               provider={session.provider}
               workdir={session.workdir}
-              footVerb={false}
               compacting={compacting}
               onOpenChanges={openTurnChanges}
               onOpenAllChanges={noGit ? undefined : openAllChanges}
@@ -1121,12 +1119,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             )}
             <PlaceFoot session={session} project={project} />
-            {/* At the right, items of this row (the group is `contents`): what the turn waits on now, then the time
-                split. The phase's detail shrinks first, so the branch keeps its room. A phone keeps the branch: the
-                phase, when there is one, stands alone there. */}
-            <span className="contents max-sm:[&>[data-phase]~*]:hidden">
+            {/* At the right, an item of this row (the group is `contents`): the time split. What the turn waits on now is the strip's live line. */}
+            <span className="contents">
               <span aria-hidden="true" className="ml-auto" />
-              <PhaseBlock phase={session.turn_activity?.phase} />
               <TimeSplitSummary session={session} />
             </span>
           </ComposerFoot>

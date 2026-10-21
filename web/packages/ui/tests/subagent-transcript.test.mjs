@@ -52,7 +52,6 @@ const modules = {
     useSubagentReplies: () => scopeReplies,
     useLiveSubagentIds: () => liveIds,
   },
-  '../lib/verbs': { turnVerb: () => 'Working' },
   './AskAside': { AsideChip: () => null, useTurnHasAsides: () => false },
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
   './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), PlainText: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, Dot: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }), clockTime: (at) => new Date(at).toISOString().slice(11, 19), dateTime: (at) => new Date(at).toISOString() },
@@ -115,16 +114,17 @@ test('subagent transcripts use turn heads, follow-up boundaries and lazy timelin
   assert.doesNotMatch(main, /Child question|Other child question/);
 });
 
-test('a compact turn line with nothing counted yet draws no bare chevron; the foot names a call waiting for permission', () => {
+test('a compact turn line with nothing counted yet draws no bare chevron; the foot leaves a call waiting for permission to the strip', () => {
   const items = [
     { id: 'u1', kind: 'user', time: '2026-09-26T12:00:01Z', text: 'Clean up' },
     { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'bash', input: '{"command":"rm -rf build"}', status: 'running' } },
   ];
   const waiting = { id: 'p1', kind: 'permission', state: 'pending', tool_call_id: 'c2', title: 'Run shell command', time: '2026-09-26T12:00:03Z' };
-  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true, footVerb: false }));
+  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true }));
   const pending = draw([waiting]);
   assert.doesNotMatch(pending, /activity of this turn/);
-  assert.match(pending, /Waiting for your approval: bash rm -rf build/);
+  // "Needs you" is the strip's live line, said once: the foot draws no label for it.
+  assert.doesNotMatch(pending, /Waiting for your approval/);
   // Running, the call is the live step at the foot, and the line still waits for its first count.
   const running = draw([]);
   assert.doesNotMatch(running, /activity of this turn/);

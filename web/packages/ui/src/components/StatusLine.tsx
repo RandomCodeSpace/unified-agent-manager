@@ -1,27 +1,29 @@
 // The status strip (DESIGN.md Status line): one quiet line over the composer. While the Thread
 // works it gives the todo list as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do), then
-// "Now:" and the row the work is at (without a list, what the agent says it is doing,
-// `assistant.intent`), for how long, a model call being retried and automatic compaction running
+// the live line, what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs you · allow
+// …"), the one place that says so; with nothing live, "Now:" and the row the work is at (without a
+// list, what the agent says it is doing, `assistant.intent`), for how long, a model call being retried and automatic compaction running
 // beside the turn ("Compacting in background", words only); after a stop it says why, until the
 // next turn. Its right end holds the Thread's subagents as blocks (✗ failed, ● running, ✓ done,
 // ○ stopped), there whenever the Thread has any. Pressing it opens one fixed sheet off the strip's
 // right end with a Todo and a Subagents tab (a bottom sheet on a phone), the one home of subagents.
 // It sits in the dock's overlap, outside the scroller, so coming and going never moves the composer
-// or the transcript. It is still: the ring stays at the
-// Thread's state glyph and the running step. A subagent's retry stands under its row instead
+// or the transcript. The live line's mark is the pane's one animated element; everything else on
+// the strip is still. A subagent's retry stands under its row instead
 // (`SubagentRetry`).
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Tabs } from '@base-ui/react/tabs';
-import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, ListChecks, Minus, Pause, RotateCw, Workflow, X, type LucideProps } from 'lucide-react';
+import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
 import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
+import { ATTENTION, LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
 import { todoLine, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
-import { elapsedSince } from '../lib/transcript';
+import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
+import { BreathingDot, WorkingMark } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow, SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
 import { PHONE, TodoTab } from './Todos';
@@ -33,7 +35,7 @@ import { HelpTip } from './ui/tooltip';
 
 /** What the line says. */
 export type Line =
-  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine; plan?: boolean; /** Automatic compaction runs beside the turn. */ background?: boolean }
+  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine; plan?: boolean; /** Automatic compaction runs beside the turn. */ background?: boolean; /** What happens now, in place of the slot's "Now:" (`liveLine`). */ live?: Live | null }
   | { kind: 'stopped'; short: string; long: string; notYours: boolean }
   | { kind: 'paused'; text: string };
 
@@ -44,14 +46,15 @@ export type Line =
  * restart or close cut off), not the running one this page lost track of while it reconnects.
  */
 export function statusLine(session: SessionDetail, working: boolean, compacting: boolean, connected = true): Line | null {
-  if (working) {
-    if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting };
+  // A turn waiting on you still runs: the live line says "Needs you" where the work was.
+  if (working || (ATTENTION.includes(session.state) && session.turn_activity?.phase?.kind === 'waiting')) {
+    if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting, live: liveLine(session, compacting) };
     const turn = session.turn_timings?.at(-1);
     // The Thread runs a turn whose timing has not come yet: all there is belongs to the last turn, which ended or was cut off.
     if ((turn?.ended_at || (connected && turn?.state === 'unknown')) && LIVE.includes(session.state)) return null;
     const activity = session.turn_activity;
     const todo = todoLine(activity?.todos, turn?.started_at);
-    return { kind: 'working', lead: activity?.intent ?? '', compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), ...(session.compacting_background ? { background: true } : {}), todo };
+    return { kind: 'working', lead: activity?.intent ?? '', compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), ...(session.compacting_background ? { background: true } : {}), todo, live: liveLine(session, compacting) };
   }
   if (readOnly(session)) return null;
   if (session.state === 'cancelled' && session.stop_reason) {
@@ -61,6 +64,78 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
   const objective = session.execution?.objective;
   if (session.execution?.mode === 'autopilot' && objective?.status === 'paused' && objective.pause_reason) return { kind: 'paused', text: `Autopilot paused: ${objective.pause_reason}` };
   return null;
+}
+
+/**
+ * The live line's mark: model work breathes (`dot`), local work turns (`ring`), the model's first token still on its
+ * way breathes until WAIT_STILL_MS, then is a still clock (`wait`); you (`you`) and subagents (`subagents`) are still.
+ */
+export type LiveMark = 'dot' | 'ring' | 'wait' | 'you' | 'subagents';
+
+/** What the turn does now, as the strip's one live line: [mark] phase · detail · elapsed (since `since`), then a running command's newest output line (`tail`). */
+export interface Live { mark: LiveMark; phase: string; detail?: string; since?: string; tail?: string }
+
+/** A model call silent this long reads as a wait, not work: its mark stops. */
+export const WAIT_STILL_MS = 60_000;
+
+/** How long the last live line stays once nothing is live while the turn still works. */
+export const LIVE_HOLD_MS = 1500;
+
+const READS = new Set(['view', 'read', 'list']);
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * The live line from what the service says the turn waits on (`turn_activity.phase`) and the main agent's newest
+ * items: compaction, you, subagents with the main agent idle, a local tool, the model thinking, writing or not
+ * answering yet. Null when none holds, so the slot's "Now:" (or the intent) comes back.
+ */
+export function liveLine(session: SessionDetail, compacting: boolean): Live | null {
+  const phase = session.turn_activity?.phase;
+  if (compacting || phase?.by === 'compaction') return { mark: 'dot', phase: 'Compacting the conversation', since: phase?.by === 'compaction' ? phase.since : undefined };
+  if (phase?.kind === 'waiting') {
+    const ask = session.interactions.filter((i) => i.state === 'pending' && !i.auto).sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0];
+    const detail = ask?.kind === 'permission' && ask.detail ? `allow ${ask.detail.split('\n')[0]}` : phase.detail;
+    return { mark: 'you', phase: 'Needs you', detail, since: phase.since };
+  }
+  const running = session.subagents.filter((s) => s.status === 'running').length;
+  if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
+  if (!phase) return null;
+  const items = (session.recent_items ?? session.items).filter((i) => !i.agent_id);
+  if (phase.kind === 'local') {
+    const tool = phase.tool ?? '';
+    const calls = items.filter((i) => i.kind === 'tool' && (i.tool?.status === 'running' || i.tool?.status === 'pending') && !isSubagentCall(i));
+    // A plain local phase may be a subagent's tool mid-turn: with no call of the main agent's running, it waits on them.
+    if (running && !calls.length) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
+    const reads = calls.filter((i) => READS.has(i.tool?.name.toLowerCase() ?? '')).length;
+    const kind = toolKind(tool);
+    const arg = phase.detail || tool;
+    const words = READS.has(tool.toLowerCase()) ? (reads > 1 ? `Reading ${plural(reads, 'file')}` : `Reading ${arg}`)
+      : kind === 'file' ? `Editing ${arg}`
+      : kind === 'search' ? `Searching ${arg}`
+      : kind === 'command' ? `Running ${arg}`
+      : `Running ${[tool, phase.detail].filter(Boolean).join(' ')}`;
+    // The phase names the oldest running tool, so the output line is the oldest running command's.
+    const tail = kind === 'command' ? calls.find((i) => toolKind(i.tool?.name ?? '') === 'command')?.tool?.tail?.filter((l) => l.text.trim()).at(-1)?.text.trim() : undefined;
+    return { mark: 'ring', phase: words, since: phase.since, ...(tail ? { tail } : {}) };
+  }
+  // The model: what its newest item since the call began is says whether it thinks or writes; nothing yet is a wait.
+  const last = items.at(-1);
+  const fresh = last && !(Date.parse(last.time) < Date.parse(phase.since)) ? last.kind : undefined;
+  if (fresh === 'reasoning') return { mark: 'dot', phase: 'Thinking', since: phase.since };
+  if (fresh === 'assistant') {
+    const t = session.turn_timings?.at(-1);
+    const rate = t?.output_tokens && t.generation_ms ? Math.round(t.output_tokens / (t.generation_ms / 1000)) : 0;
+    return { mark: 'dot', phase: 'Writing the reply', ...(rate > 0 ? { detail: `${rate} tok/s` } : {}) };
+  }
+  return { mark: 'wait', phase: 'Waiting for the model', since: phase.since };
+}
+
+/** "41s", "1m 04s", "1h 02m": the live line's elapsed time, to the second under an hour. */
+export function liveClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
 /** A running subagent's block glyph: a small filled dot, still (the ring stays at the running step). */
@@ -112,7 +187,7 @@ type Tab = 'todo' | 'subagents';
  * `hidden` gives its place to another strip (the sheet then opens from the bottom). `error`: why the
  * last jump to a subagent did not land, said in the Subagents tab.
  */
-export function StatusLine({ line, session, since, hidden, error, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, error, onJump }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
@@ -124,7 +199,10 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) would only
   // repeat the turn card's head, "Working 18s": the strip says nothing then. Subagents that outlived the
   // turn (`since`) are another matter: the head says "Took …", so the strip counts their time.
-  const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background;
+  // Between a tool's end and the next model call nothing is live for a moment: the last live line holds for LIVE_HOLD_MS, so the strip does not blink.
+  const held = useHeld(given?.kind === 'working' ? given.live : null, given?.kind === 'working', LIVE_HOLD_MS);
+  const line = given?.kind === 'working' && !given.live && held ? { ...given, live: held } : given;
+  const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background && !line.live;
   const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
   const any = !!index?.subagents.length;
@@ -189,7 +267,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
                 {shownLine.kind === 'working' ? (
                   <>
                     {slotWords(shownLine, !!since)}
-                    <ClockWords since={since} />
+                    <ClockWords since={shownLine.live?.since ?? since} />
                     {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
                     {shownLine.retry && retrySentence(shownLine.retry)}
                     {shownLine.background && '. Compacting in background'}
@@ -379,6 +457,7 @@ function retrySentence(retry: Retry): string {
 /** The working line's one slot in words, as the strip's name starts. */
 function slotWords(line: Extract<Line, { kind: 'working' }>, outlived: boolean): string {
   const now = line.todo?.kind === 'list' ? line.todo.now : undefined;
+  if (line.live) return [line.live.phase, line.live.detail].filter(Boolean).join(', ');
   if (line.compacting) return line.lead;
   if (line.todo?.kind !== 'carried' && now) return `Now: ${now}`;
   return line.lead || (outlived ? 'Working' : '');
@@ -396,8 +475,10 @@ function Working({ line, since }: Readonly<{ line: Extract<Line, { kind: 'workin
           <Blocks items={todoBlocks(todo)} />
         </span>
       )}
-      {/* The slot gives way before the clock does. */}
-      {line.compacting ? (
+      {/* The slot gives way before the clock does. Live, the line says what happens now; "Now:" stays in the reader. */}
+      {line.live ? (
+        <LiveSlot live={since && !line.live.since ? { ...line.live, since } : line.live} />
+      ) : line.compacting ? (
         <span className="min-w-0 truncate text-ui text-badge-violet">{line.lead}…</span>
       ) : todo?.kind === 'carried' ? (
         <span className="min-w-0 truncate text-ui text-muted">From the last turn</span>
@@ -408,7 +489,7 @@ function Working({ line, since }: Readonly<{ line: Extract<Line, { kind: 'workin
       ) : line.lead || since ? (
         <span className="min-w-0 truncate text-ui text-body">{line.lead || 'Working'}</span>
       ) : null}
-      {since && <Clock since={since} />}
+      {since && !line.live && <Clock since={since} />}
       {retry && (
         <>
           <Sep />
@@ -467,11 +548,11 @@ export function SubagentRetry({ retry, indent }: Readonly<{ retry: Retry; /** Wh
   );
 }
 
-/** Time since `since`, the work that outlived the turn; ticks each second while it counts. */
-function useElapsed(since: string | undefined): string | null {
+/** Date.now(), again each second while `on`. */
+function useNow(on: unknown): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!since) return;
+    if (!on) return;
     const tick = () => setNow(Date.now());
     const first = window.setTimeout(tick, 0);
     const timer = window.setInterval(tick, 1000);
@@ -479,8 +560,80 @@ function useElapsed(since: string | undefined): string | null {
       window.clearTimeout(first);
       window.clearInterval(timer);
     };
-  }, [since]);
+  }, [on]);
+  return now;
+}
+
+/** Time since `since`, the work that outlived the turn; ticks each second while it counts. */
+function useElapsed(since: string | undefined): string | null {
+  const now = useNow(since);
   return since ? elapsedSince(since, now) : null;
+}
+
+/** `value`, or for `ms` after it went away while `on`, the last one it was; nothing once `on` ends. */
+function useHeld<T>(value: T | null | undefined, on: boolean, ms: number): T | null {
+  const [held, setHeld] = useState<T | null>(null);
+  if (value && value !== held) setHeld(value);
+  if (!on && held) setHeld(null);
+  useEffect(() => {
+    if (value || !on) return;
+    const timer = window.setTimeout(() => setHeld(null), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, on, ms]);
+  return on ? value ?? held : null;
+}
+
+/** True while `el` is off screen (the dock under a phone's keyboard), so its animation pauses. */
+function useOffScreen(el: HTMLElement | null): boolean {
+  const [off, setOff] = useState(false);
+  useEffect(() => {
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const watch = new IntersectionObserver(([entry]) => setOff(!entry.isIntersecting));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [el]);
+  return off;
+}
+
+/**
+ * The live line (DESIGN.md Status line, live line): [mark] phase · detail · elapsed, then a running command's newest
+ * output line, quieter, which gives way first (hidden on a phone). Its mark is the one animated element in the pane
+ * besides the sidebar's glyph: model work breathes, local work turns, a wait past WAIT_STILL_MS is a still clock in
+ * muted words, "Needs you" is a still amber shield, subagents a still glyph. Paused off screen; still under reduced motion.
+ */
+function LiveSlot({ live }: Readonly<{ live: Live }>) {
+  const [el, setEl] = useState<HTMLSpanElement | null>(null);
+  const off = useOffScreen(el);
+  const now = useNow(live.since);
+  const ms = live.since ? now - Date.parse(live.since) : Number.NaN;
+  const elapsed = Number.isFinite(ms) ? liveClock(ms) : '';
+  const waited = live.mark === 'wait' && ms >= WAIT_STILL_MS;
+  const you = live.mark === 'you';
+  const mark = you ? <ShieldQuestionMark className="size-3.5" />
+    : live.mark === 'subagents' ? <Workflow className="size-3.5" />
+    : waited ? <ClockIcon className="size-3.5" />
+    : live.mark === 'ring' ? <WorkingMark />
+    : <BreathingDot />;
+  return (
+    <span ref={setEl} className={cn('flex min-w-0 items-center gap-2 overflow-hidden text-ui whitespace-nowrap', you ? 'text-attention' : 'text-body', off && '[&_*]:[animation-play-state:paused]')}>
+      <span className={cn('grid size-3.5 shrink-0 place-items-center', !you && 'text-muted')}>{mark}</span>
+      <span className={cn('min-w-0 truncate', live.detail && 'shrink-0', you ? 'font-semibold' : waited ? 'text-muted' : 'text-ink')}>{live.phase}</span>
+      {live.detail && (
+        <>
+          <Sep />
+          <span className={cn('min-w-0 shrink-1000 truncate', waited && 'text-muted')}>{live.detail}</span>
+        </>
+      )}
+      {/* The output line gives way first, then the detail, then the phase; the clock stays whole (the line clips past it). */}
+      {elapsed && (
+        <span className={cn('shrink-0 tabular-nums', !you && 'text-muted')}>
+          <span className="pr-2 text-faint">·</span>
+          {elapsed}
+        </span>
+      )}
+      {live.tail && <span className="min-w-0 shrink-1000 truncate pl-1.5 font-mono text-code-sm text-faint max-sm:hidden">{live.tail}</span>}
+    </span>
+  );
 }
 
 /** The clock's digits: only they re-render each second. Under an hour they are at most three characters wide, and the slot holds them all, so the line keeps its width. */
