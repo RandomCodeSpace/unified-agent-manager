@@ -5,7 +5,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Item, Phase, SessionDetail, SnapshotData } from '../../src/api';
-import { StatusLine, WAIT_STILL_MS, liveClock, liveLine, statusLine } from '../../src/components/StatusLine';
+import { LIVE_HOLD_MS, StatusLine, WAIT_STILL_MS, liveClock, liveLine, statusLine } from '../../src/components/StatusLine';
 import { initialState, reducer } from '../../src/state';
 import { openTask } from './render';
 
@@ -80,6 +80,53 @@ describe('the live line at the strip', () => {
     expect(late.moves).toEqual([]);
     expect(late.view.container.querySelector('.lucide-clock')).not.toBeNull();
     expect(screen.getByText('Waiting for the model').className).toContain('text-muted');
+  });
+
+  test('a subagent\'s tool mid-turn (a plain local phase) is not the main agent\'s: with only its task call running, the main agent waits on it', () => {
+    const subagents = [{ id: 'a', status: 'running' }] as SessionDetail['subagents'];
+    const session = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { subagents, items: [tool('t', 'task', 'running'), { ...tool('c', 'bash'), agent_id: 'a' } as Item] });
+    expect(liveLine(session, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 1 subagent' });
+    // A running call of the main agent's own is its work.
+    expect(liveLine({ ...session, items: [...session.items, tool('m', 'bash')] }, false)?.phase).toBe('Running go test ./...');
+  });
+
+  test('the output line is the oldest running command\'s, the one the phase names', () => {
+    const session = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { items: [tool('old', 'bash', 'running', { tail: [{ text: 'ok  pkg/a' }] }), tool('new', 'bash', 'running', { tail: [{ text: 'newer' }] })] });
+    expect(liveLine(session, false)?.tail).toBe('ok  pkg/a');
+  });
+
+  test('the strip\'s name counts the live line\'s own time, as it shows, not the outlived subagents\'', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+    const session = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' });
+    render(<StatusLine line={statusLine(session, false, false)} session={session} since={ago(540)} hidden={false} onJump={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Needs you, approve bash, 1 minute. Jump to bottom' })).toBeTruthy();
+    expect(screen.getByText('1m 12s')).toBeTruthy();
+  });
+
+  test('between a tool\'s end and the next model call the last live line holds a moment, so the strip does not blink', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+    const draw = (s: SessionDetail) => <StatusLine line={statusLine(s, true, false)} session={s} hidden={false} onJump={() => {}} />;
+    const running = task({ kind: 'local', since: ago(5), tool: 'bash', detail: 'go test ./...' });
+    const view = render(draw(running));
+    expect(screen.getByRole('button', { name: /^Running go test \.\/\.\.\., / })).toBeTruthy();
+    // The tool ended; no model call yet: nothing is live, and the turn has nothing else to say.
+    view.rerender(draw(task(undefined)));
+    expect(screen.getByRole('button', { name: /^Running go test \.\/\.\.\., / })).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(LIVE_HOLD_MS - 100); });
+    expect(screen.queryByRole('button')).not.toBeNull();
+    // The next call comes within the hold: the line moves on without the strip leaving.
+    view.rerender(draw(task({ kind: 'model', since: ago(0), calls: 1 })));
+    expect(screen.getByRole('button', { name: /^Waiting for the model, / })).toBeTruthy();
+    // Nothing comes: once the hold passes, the bare strip goes.
+    view.rerender(draw(task(undefined)));
+    await act(async () => { vi.advanceTimersByTime(LIVE_HOLD_MS); });
+    expect(screen.queryByRole('button')).toBeNull();
+    // A turn that ended drops it at once.
+    view.rerender(draw(running));
+    view.rerender(<StatusLine line={null} session={running} hidden={false} onJump={() => {}} />);
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   test('the clock reads seconds, then minutes and seconds, then hours and minutes', () => {

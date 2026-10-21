@@ -287,7 +287,11 @@ func (p *phaseState) snapshot(turn bool) *agentapi.Phase {
 		shown, ok = p.calls[compactionCall]
 		out.Compacting = ok
 	}
-	if !ok && out.Calls > 0 {
+	if ok {
+		// The main agent's call (or its compaction) is timed from its own
+		// start: an older subagent call would make a new call look stalled.
+		out.CallsSince = shown.at
+	} else if out.Calls > 0 {
 		shown = p.calls[oldest]
 		out.Agent = shown.agent
 	}

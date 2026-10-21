@@ -78,6 +78,9 @@ export interface Live { mark: LiveMark; phase: string; detail?: string; since?: 
 /** A model call silent this long reads as a wait, not work: its mark stops. */
 export const WAIT_STILL_MS = 60_000;
 
+/** How long the last live line stays once nothing is live while the turn still works. */
+export const LIVE_HOLD_MS = 1500;
+
 const READS = new Set(['view', 'read', 'list']);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -101,6 +104,8 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   if (phase.kind === 'local') {
     const tool = phase.tool ?? '';
     const calls = items.filter((i) => i.kind === 'tool' && (i.tool?.status === 'running' || i.tool?.status === 'pending') && !isSubagentCall(i));
+    // A plain local phase may be a subagent's tool mid-turn: with no call of the main agent's running, it waits on them.
+    if (running && !calls.length) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
     const reads = calls.filter((i) => READS.has(i.tool?.name.toLowerCase() ?? '')).length;
     const kind = toolKind(tool);
     const arg = phase.detail || tool;
@@ -109,7 +114,8 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
       : kind === 'search' ? `Searching ${arg}`
       : kind === 'command' ? `Running ${arg}`
       : `Running ${[tool, phase.detail].filter(Boolean).join(' ')}`;
-    const tail = kind === 'command' ? calls.at(-1)?.tool?.tail?.filter((l) => l.text.trim()).at(-1)?.text.trim() : undefined;
+    // The phase names the oldest running tool, so the output line is the oldest running command's.
+    const tail = kind === 'command' ? calls.find((i) => toolKind(i.tool?.name ?? '') === 'command')?.tool?.tail?.filter((l) => l.text.trim()).at(-1)?.text.trim() : undefined;
     return { mark: 'ring', phase: words, since: phase.since, ...(tail ? { tail } : {}) };
   }
   // The model: what its newest item since the call began is says whether it thinks or writes; nothing yet is a wait.
@@ -181,7 +187,7 @@ type Tab = 'todo' | 'subagents';
  * `hidden` gives its place to another strip (the sheet then opens from the bottom). `error`: why the
  * last jump to a subagent did not land, said in the Subagents tab.
  */
-export function StatusLine({ line, session, since, hidden, error, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, error, onJump }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
@@ -193,6 +199,9 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) would only
   // repeat the turn card's head, "Working 18s": the strip says nothing then. Subagents that outlived the
   // turn (`since`) are another matter: the head says "Took …", so the strip counts their time.
+  // Between a tool's end and the next model call nothing is live for a moment: the last live line holds for LIVE_HOLD_MS, so the strip does not blink.
+  const held = useHeld(given?.kind === 'working' ? given.live : null, given?.kind === 'working', LIVE_HOLD_MS);
+  const line = given?.kind === 'working' && !given.live && held ? { ...given, live: held } : given;
   const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background && !line.live;
   const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
@@ -258,7 +267,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
                 {shownLine.kind === 'working' ? (
                   <>
                     {slotWords(shownLine, !!since)}
-                    <ClockWords since={since ?? shownLine.live?.since} />
+                    <ClockWords since={shownLine.live?.since ?? since} />
                     {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
                     {shownLine.retry && retrySentence(shownLine.retry)}
                     {shownLine.background && '. Compacting in background'}
@@ -559,6 +568,19 @@ function useNow(on: unknown): number {
 function useElapsed(since: string | undefined): string | null {
   const now = useNow(since);
   return since ? elapsedSince(since, now) : null;
+}
+
+/** `value`, or for `ms` after it went away while `on`, the last one it was; nothing once `on` ends. */
+function useHeld<T>(value: T | null | undefined, on: boolean, ms: number): T | null {
+  const [held, setHeld] = useState<T | null>(null);
+  if (value && value !== held) setHeld(value);
+  if (!on && held) setHeld(null);
+  useEffect(() => {
+    if (value || !on) return;
+    const timer = window.setTimeout(() => setHeld(null), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, on, ms]);
+  return on ? value ?? held : null;
 }
 
 /** True while `el` is off screen (the dock under a phone's keyboard), so its animation pauses. */
