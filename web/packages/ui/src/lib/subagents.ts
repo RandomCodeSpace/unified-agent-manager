@@ -2,7 +2,7 @@ import type { Item, OutlineItem, Subagent, SubagentStatus } from '../api';
 import { duration, toolKind } from './transcript.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
-// tones, the live card's set and rows, the status groups of a long list and the header index.
+// tones, the live rows' set, a list's families and the strip sheet's groups.
 
 /** Identity tones in spawn order: badge tones that never stand for a state (no red, green or blue). */
 export const IDENTITY_TONES = ['violet', 'pink', 'cyan', 'amber', 'teal'] as const;
@@ -10,9 +10,7 @@ export type IdentityTone = (typeof IDENTITY_TONES)[number];
 
 /** A reply with more subagents than this draws them neutral: past five, colours stop telling them apart. */
 export const IDENTITY_LIMIT = 5;
-/** A subagent list offers a filter with more than this many families. */
-export const FILTER_OVER = 12;
-/** Families a list (or the live set) renders at a time; "Show 50 more" adds the next. */
+/** Rows the live rows render at a time; "Show 50 more" adds the next. */
 export const PAGE_ROWS = 50;
 
 export const isDone = (s: Subagent) => s.status === 'completed' || s.status === 'idle';
@@ -192,7 +190,7 @@ export interface LiveSubagent {
 }
 
 /**
- * The live card's set: the subagents the latest reply spawned and every running one an earlier
+ * The live rows' set: the subagents the latest reply spawned and every running one an earlier
  * reply spawned. Empty once none of them runs and no row of the card is open (`keep`, which
  * stays in the set while it is open even after it has stopped).
  */
@@ -262,12 +260,12 @@ export interface Family {
   rows: { subagent: Subagent; depth: number }[];
 }
 
-const RANK: Partial<Record<SubagentStatus, number>> = { failed: 0, running: 1 };
+const RANK: Partial<Record<SubagentStatus, number>> = { running: 0, failed: 1, cancelled: 3 };
 
 /**
- * A list's rows, each subagent followed by the ones it spawned: the families with a failed
- * member first, then those with a running one, then the rest, each in spawn order. Without
- * `ranked` (the header index) the families stay in spawn order.
+ * A list's rows, each subagent followed by the ones it spawned: the families with a running
+ * member first, then those with a failed one, then done, then stopped, each in spawn order.
+ * Without `ranked` the families stay in spawn order.
  */
 export function families(subagents: readonly Subagent[], ranked = true): Family[] {
   const ids = new Set(subagents.map((s) => s.id));
@@ -298,11 +296,12 @@ export function matches(s: Subagent, summary: string, query: string): boolean {
   return !q || s.name.toLowerCase().includes(q) || summary.toLowerCase().includes(q);
 }
 
-export type IndexFilter = 'all' | 'running' | 'failed' | 'done';
+export type IndexFilter = 'all' | 'running' | 'failed' | 'done' | 'stopped';
 
 export function inFilter(s: Subagent, filter: IndexFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'done') return isDone(s);
+  if (filter === 'stopped') return s.status === 'cancelled';
   return s.status === filter;
 }
 

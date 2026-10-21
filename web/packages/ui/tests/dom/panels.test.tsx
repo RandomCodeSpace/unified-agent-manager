@@ -132,10 +132,13 @@ describe('changes', () => {
 });
 
 describe('subagents', () => {
-  const panel = async () => within(await screen.findByRole('dialog', { name: 'Subagent transcript' }));
+  // The strip's sheet: one box for the Todo and Subagents tabs (named for the tabs it has).
+  const sheet = async () => within(await screen.findByRole('dialog', { name: /ubagents$/ }));
+  const live = () => within(screen.getByRole('region', { name: 'Subagents at work' }));
+  const flashed = () => document.querySelector<HTMLElement>('.animate-flash');
 
-  // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that lands on the row.
-  test('the strip\'s subagent index groups subagents by their message; a pick lands on its row and opens its transcript', async () => {
+  // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that opens its detail in the same box.
+  test('the strip\'s subagent list groups subagents by their message; a pick opens its detail in the same box, and ‹ All goes back', async () => {
     const { user } = await openTask('t8');
     // The header has no Subagents button any more: the strip counts them.
     expect(document.querySelector('header')!.textContent).not.toContain('Subagents');
@@ -143,14 +146,62 @@ describe('subagents', () => {
     const group = within(index.getByRole('region', { name: /^“Audit templates\/post\.html for accessibility problems/ }));
     expect(group.getByRole('button', { name: /^Jump to the subagents of/ })).toBeTruthy();
     expect(index.queryByText(/Turn \d/)).toBeNull();
+    // Chips only for the states some subagent is in: none stopped here.
+    expect(index.getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Running 3', 'Failed 1', 'Done 1']);
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
     expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
     await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /ubagents$/ })).toBeNull());
-    // It lands on its row and its transcript opens beside it, focus inside.
-    const open = await panel();
-    expect(await open.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
-    await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).toBeTruthy());
+    // The same box: the detail takes the list's place, its way back focused, its place in the list said.
+    expect(await index.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
+    expect(index.getByText('1 of 1')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('All 1'));
+    // The error is said once, under Error, not again as a result.
+    expect(index.getByRole('region', { name: 'Error' }).textContent).toContain('axe-core is not installed in this project.');
+    expect(index.queryByRole('region', { name: 'Result' })).toBeNull();
+    await user.keyboard('{ArrowLeft}');
+    // Back on the list, the row it came from lit and focused.
+    expect(await index.findByRole('searchbox', { name: 'Search subagents' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Run the accessibility linter, failed/));
+    expect(document.activeElement?.getAttribute('aria-current')).toBe('true');
+  });
+
+  test('a row, the strip and the reply\'s chip open the same sheet: on that subagent, on the list, on the reply\'s list', async () => {
+    const { user } = await openTask('t8');
+    const link = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
+    const opened = async () => {
+      const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
+      // The strip's own sheet: its subagents button controls it, its Subagents tab is chosen.
+      expect(link.getAttribute('aria-controls')).toBe(dialog.id);
+      await waitFor(() => expect(within(dialog).getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true'));
+      return dialog;
+    };
+    const closed = async () => {
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    };
+    // A row: the sheet on that subagent's detail; Esc gives the focus back to the row.
+    const row = live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ });
+    await user.click(row);
+    const fromRow = await opened();
+    expect(await within(fromRow).findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
+    expect(within(fromRow).getByText('2 of 5')).toBeTruthy();
+    await closed();
+    expect(document.activeElement).toBe(row);
+    // The strip: the same sheet on the whole list.
+    await user.click(link);
+    const fromStrip = await opened();
+    expect(fromStrip.id).toBe(fromRow.id);
+    expect(within(fromStrip).getByRole('searchbox', { name: 'Search subagents' }).getAttribute('placeholder')).toBe('Search 5 subagents');
+    expect(within(fromStrip).queryByRole('button', { name: /^From / })).toBeNull();
+    await closed();
+    // The chip: the same sheet on the list filtered to its reply, until "From … ×" lifts it.
+    await user.click(live().getByRole('button', { name: /^5 subagents · [\d.]+M tokens · 1 done · 1 failed · 3 running/ }));
+    const fromChip = await opened();
+    expect(fromChip.id).toBe(fromRow.id);
+    const filter = within(fromChip).getByRole('button', { name: /^From .*show every message's subagents$/ });
+    expect(within(fromChip).getAllByRole('button', { name: /, (running|failed|completed)/ })).toHaveLength(5);
+    await user.click(filter);
+    expect(within(fromChip).queryByRole('button', { name: /^From / })).toBeNull();
   });
 
   test('the strip ends with the subagents as a button of their own and opens one reader with Todo and Subagents tabs; ← and → switch them', async () => {
@@ -198,54 +249,54 @@ describe('subagents', () => {
     expect(line.getAttribute('aria-expanded')).toBe('false');
   });
 
-  test('a reply\'s chip waits while the live set shows all its subagents', async () => {
+  test('a reply\'s chip waits while the live rows show all its subagents under their own', async () => {
     await openTask('t8');
-    expect(screen.getByRole('region', { name: 'Subagents at work' })).toBeTruthy();
-    expect(log().queryByRole('button', { name: /^5 subagents/ })).toBeNull();
+    const chips = log().getAllByRole('button', { name: /^5 subagents/ });
+    expect(chips).toHaveLength(1);
+    expect(chips[0].closest('[aria-label="Subagents at work"]')).toBeTruthy();
   });
 
-  test('a few subagents read as one column, each row naming what it was asked to do beside its name', async () => {
+  test('subagents at work are plain one-line rows in one column: glyph, name and caption, a failed one\'s error as its caption', async () => {
     await openTask('t8');
-    const live = screen.getByRole('region', { name: 'Subagents at work' });
-    // Four families: one column, not spread into columns across a wide conversation.
-    const list = live.querySelector('ul')!;
+    const list = screen.getByRole('region', { name: 'Subagents at work' }).querySelector('ul')!;
     expect(list.className).not.toContain('columns-');
     expect(list.className).toContain('max-w-2xl');
-    // The task call's description sits beside the name, and the row's name carries it too.
-    const row = within(live).getByRole('button', { name: /^Run the accessibility linter, failed: axe-core is not installed in this project\. · Run axe on the rendered post page/ });
-    expect(row.textContent).toContain('Run axe on the rendered post page and report violations.');
+    // No card: no head line of its own, no progress bar, no description beside the name.
+    const row = live().getByRole('button', { name: 'Run the accessibility linter, failed: axe-core is not installed in this project.' });
+    expect(row.textContent).toContain('axe-core is not installed in this project.');
+    expect(row.textContent).not.toContain('Run axe on the rendered post page');
+    expect(row.querySelector('span.text-error')?.textContent).toBe('axe-core is not installed in this project.');
   });
 
-  test('an earlier reply\'s chip opens its rows; a row opens its transcript, which leads to where it was spawned', async () => {
+  test('an earlier reply\'s chip opens the sheet on its list; a row opens its detail, which leads to where it was spawned', async () => {
     const { user } = await openTask('t22');
     const chip = log().getByRole('button', { name: /^12 subagents · [\d.]+M tokens · 11 done · 1 running/ });
-    expect(chip.getAttribute('aria-expanded')).toBe('false');
+    expect(chip.getAttribute('aria-expanded')).toBeNull();
     await user.click(chip);
-    const list = within(await log().findByRole('region', { name: '12 subagents' }));
-    // One line each, no groups to open: the running one first.
+    const list = await sheet();
+    // That reply's rows alone, all of them: the running one first.
     const rows = list.getAllByRole('button', { name: /^Audit package / });
     expect(rows).toHaveLength(12);
     expect(rows[0].getAttribute('aria-label')).toMatch(/^Audit package internal\/store, running/);
     await user.click(list.getByRole('button', { name: /^Audit package internal\/web, completed/ }));
-    const open = await panel();
-    // Read result first: what went back to the main agent leads the panel.
-    const result = await open.findByRole('region', { name: 'Result' });
+    // Read result first: what went back to the main agent leads the detail.
+    const result = await list.findByRole('region', { name: 'Result' });
     // Its last message is that result: drawn once, not again under Work.
     const said = result.querySelector('p')!.textContent!;
     expect(said.length).toBeGreaterThan(10);
-    await waitFor(() => expect(open.getByRole('region', { name: 'Work' }).textContent).not.toContain('Loading'));
-    expect(open.getByRole('region', { name: 'Work' }).textContent).not.toContain(said);
-    expect(open.queryByRole('textbox')).toBeNull();
-    await user.click(open.getByRole('button', { name: 'Show where it was spawned' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagent transcript' })).toBeNull());
-    await waitFor(() => expect(document.getElementById('item-sc2')?.classList.contains('animate-flash')).toBe(true));
+    await waitFor(() => expect(list.getByRole('region', { name: 'Work' }).textContent).not.toContain('Loading'));
+    expect(list.getByRole('region', { name: 'Work' }).textContent).not.toContain(said);
+    expect(list.queryByRole('textbox')).toBeNull();
+    await user.click(list.getByRole('button', { name: 'Show where it was spawned' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Its reply has no rows of its own on the page: it lands on the chip that holds its call.
+    await waitFor(() => expect(flashed()).toBe(chip));
   });
 
-  test('Stop in the transcript is confirmed; a failed stop says so on the row, an accepted one waits for the run to end', async () => {
+  test('Stop in the detail is confirmed; a failed stop says so on the row, an accepted one waits for the run to end', async () => {
     const { user } = await openTask('t8');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    let open = await panel();
+    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    let open = await sheet();
     expect(await open.findByText(/is 2\.85:1, below AA/)).toBeTruthy();
     const refused = vi.spyOn(api, 'cancelSubagent').mockRejectedValueOnce(new Error('the provider did not answer'));
     await user.click(open.getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
@@ -253,7 +304,8 @@ describe('subagents', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Stop subagent' }));
     await waitFor(() => expect(document.querySelector('[data-subagent-row] [role="alert"]')?.textContent).toBe('Could not stop it: the provider did not answer'));
     refused.mockRestore();
-    open = await panel();
+    // The confirmation sat outside the sheet: pressing in it left the sheet open.
+    open = await sheet();
     await user.click(open.getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop subagent' }));
     // Stopped, it stays open where it was read.
@@ -262,9 +314,8 @@ describe('subagents', () => {
 
   test('picking a run never calls it gone while the transcript can still show it: the first run is the start, a fresh running run the end', async () => {
     const { user } = await openTask('t8');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    const open = await panel();
+    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    const open = await sheet();
     const transcript = await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' });
     await open.findByText(/is 2\.85:1, below AA/);
     await user.click(open.getByRole('button', { name: /^Run 2 · / }));
@@ -276,28 +327,32 @@ describe('subagents', () => {
     expect(open.queryByText('That run is not in the retained transcript.')).toBeNull();
   });
 
-  test('a subagent with several runs shows each in its transcript\'s run strip', async () => {
+  test('a subagent with several runs shows each in its detail\'s run strip', async () => {
     const { user } = await openTask('t22');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    await user.click(live.getByRole('button', { name: /^Audit package internal\/store, running/ }));
-    const open = await panel();
-    const runs = open.getAllByRole('button', { name: /^Run \d · / }).map((b) => b.textContent);
+    await user.click(live().getByRole('button', { name: /^Audit package internal\/store, running/ }));
+    const open = await sheet();
+    const runs = (await open.findAllByRole('button', { name: /^Run \d · / })).map((b) => b.textContent);
     expect(runs).toEqual(['Run 1 · ✓ 2m 0s', 'Run 2 · ✓ 2m 0s', 'Run 3 · running']);
     await user.click(open.getByRole('button', { name: /^Run 2/ }));
     expect(open.queryByText('That run is not in the retained transcript.')).toBeNull();
   });
 
-  test('a subagent another spawned sits under it, and opens from its transcript with the way back', async () => {
+  test('a subagent another spawned sits under it, opens from its detail, and leads back to it; ↑ ↓ step through the list', async () => {
     const { user } = await openTask('t8');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    const names = live.getAllByRole('button', { name: /, (failed|running|completed)/ }).map((b) => b.getAttribute('aria-label')?.split(',')[0]);
+    const names = live().getAllByRole('button', { name: /, (failed|running|completed)/ }).map((b) => b.getAttribute('aria-label')?.split(',')[0]);
     expect(names.indexOf('Verify store callers')).toBe(names.indexOf('Check contrast of the theme tokens') + 1);
-    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    let open = await panel();
-    await user.click(open.getByRole('button', { name: /^Verify store callers$/ }));
-    open = await panel();
+    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    const open = await sheet();
+    await user.click(await open.findByRole('button', { name: /^Verify store callers$/ }));
     expect(await open.findByRole('region', { name: 'Transcript of Verify store callers' })).toBeTruthy();
+    expect(open.getByText('3 of 5')).toBeTruthy();
     await user.click(open.getByRole('button', { name: 'Check contrast of the theme tokens' }));
+    expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
+    // The way back holds the focus; ↓ goes to the next row of the list.
+    open.getByRole('button', { name: 'All 5' }).focus();
+    await user.keyboard('{ArrowDown}');
+    expect(await open.findByRole('region', { name: 'Transcript of Verify store callers' })).toBeTruthy();
+    await user.click(open.getByRole('button', { name: 'Previous subagent' }));
     expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
   });
 
@@ -314,87 +369,73 @@ describe('subagents', () => {
       const { user } = await openTask('t15');
       const index = await openSubagentIndex(user);
       await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
-      const open = await panel();
-      expect(await open.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
+      expect(await index.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(open.queryByText('Details load as you scroll here…')).toBeNull();
+      expect(index.queryByText('Details load as you scroll here…')).toBeNull();
     } finally {
       seed.mockRestore();
     }
   });
 
-  test('older subagents load from the record on request and open by the strip; where they were spawned is gone, and it says so', async () => {
+  test('older subagents load from the record on request and open in the sheet; where they were spawned is gone, and it says so', async () => {
     const { user } = await openTask('t15');
     const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: 'Show older subagents' }));
     // Their calls are not in the history held here: they wait under "Earlier in the conversation".
     const earlier = within(await index.findByRole('region', { name: 'Earlier in the conversation' }));
     await user.click(earlier.getByRole('button', { name: /^Audit package batch 2/ }));
-    const open = await panel();
-    expect(await open.findByRole('region', { name: 'Transcript of Audit package batch 2' })).toBeTruthy();
-    await user.click(open.getByRole('button', { name: 'Show where it was spawned' }));
+    expect(await index.findByRole('region', { name: 'Transcript of Audit package batch 2' })).toBeTruthy();
+    await user.click(index.getByRole('button', { name: 'Show where it was spawned' }));
     // Locating pages through the record first; under coverage instrumentation that outlasts the default wait.
     const said = await screen.findAllByText(/^Where this subagent was spawned is not in the retained history/, {}, { timeout: 15000 });
     const alert = said.map((node) => node.closest<HTMLElement>('div[role="alert"]')).find(Boolean);
     await waitFor(() => expect(document.activeElement).toBe(alert));
   });
 
-  test('the live set lists every subagent at work, failed then running first, with their tokens', async () => {
+  test('the live rows list every subagent at work, running then failed first, with their tokens', async () => {
     await openTask('t22');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    expect(live.getByText(/^8 subagents · [\d.]+M tokens$/)).toBeTruthy();
-    const rows = live.getAllByRole('button', { name: /^Audit package .*, (failed|running|completed|stopped)/ }).map((b) => b.getAttribute('aria-label') ?? '');
+    expect(live().getByRole('button', { name: /^8 subagents · [\d.]+M tokens/ })).toBeTruthy();
+    const rows = live().getAllByRole('button', { name: /^Audit package .*, (failed|running|completed|stopped)/ }).map((b) => b.getAttribute('aria-label') ?? '');
     expect(rows).toHaveLength(8);
-    expect(rows[0]).toMatch(/^Audit package cmd\/tool15, failed/);
-    expect(rows.slice(1, 5).every((name) => /, running/.test(name))).toBe(true);
+    expect(rows.slice(0, 4).every((name) => /, running/.test(name))).toBe(true);
+    expect(rows[4]).toMatch(/^Audit package cmd\/tool15, failed/);
   });
 
-  test('while a transcript is open its rows keep their places as others finish; once it closes they rank again', async () => {
-    const { user } = await openTask('t8');
-    const rows = () => [...document.querySelectorAll('[aria-label="Subagents at work"] [data-subagent-toggle]')].map((b) => b.getAttribute('aria-label') ?? '');
-    const names = () => rows().map((label) => label.split(',')[0]);
-    const before = names();
-    await user.click(within(screen.getByRole('region', { name: 'Subagents at work' })).getAllByRole('button', { name: /, running/ }).at(-1)!);
-    await panel();
-    // The mock's first running subagent goes idle after a few seconds, which would rank it after the ones still running.
-    await waitFor(() => expect(rows().find((label) => label.startsWith('Survey templates'))).toMatch(/^Survey templates[^,]*, idle/), { timeout: 20_000 });
-    expect(names()).toEqual(before);
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagent transcript' })).toBeNull());
-    await waitFor(() => expect(names().indexOf('Survey templates for missing alt text and labels')).toBeGreaterThan(names().indexOf('Verify store callers')));
-  }, 40_000);
-
-  test('a running subagent\'s row says what it is doing now, not only what it was asked', async () => {
+  test('a running subagent\'s row says what it is doing now, not what it was asked', async () => {
     await openTask('t22');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    const row = live.getByRole('button', { name: /^Audit package web\/src\/lib, running · List the exported symbols of web\/src\/lib that nothing calls\./ });
+    const row = live().getByRole('button', { name: /^Audit package web\/src\/lib, running: Reading transcript\.ts · step 4/ });
     expect(row.textContent).toContain('Reading transcript.ts · step 4');
     expect(row.textContent).not.toContain('List the exported symbols');
   });
 
-  test('a long reply\'s list takes a filter by name or result; no subagent takes a follow-up', async () => {
+  test('a long reply\'s list takes a search by name or result; no subagent takes a follow-up', async () => {
     const { user } = await openTask('t22');
     await user.click(log().getByRole('button', { name: /^22 subagents · [\d.]+M tokens · 20 done · 2 failed/ }));
-    const list = within(await log().findByRole('region', { name: '22 subagents' }));
-    await user.type(list.getByRole('searchbox', { name: 'Filter 22 subagents by name or result' }), 'TOOL9');
+    const list = await sheet();
+    await user.type(list.getByRole('searchbox', { name: 'Search subagents' }), 'TOOL9');
     const idle = await list.findByRole('button', { name: /^Audit package cmd\/tool9, idle/ });
     expect(list.getAllByRole('button', { name: /^Audit package / })).toHaveLength(1);
     await user.click(idle);
-    const open = await panel();
-    expect(await open.findByRole('region', { name: 'Transcript of Audit package cmd/tool9' })).toBeTruthy();
-    expect(open.queryByRole('textbox')).toBeNull();
+    expect(await list.findByRole('region', { name: 'Transcript of Audit package cmd/tool9' })).toBeTruthy();
+    expect(list.queryByRole('textbox')).toBeNull();
   });
 
-  test('hovering a row peeks at it; Full transcript opens it', async () => {
+  test('an older message shows three rows, then "N more · Show all"; the newest shows all of its own', async () => {
+    const { user } = await openTask('t22');
+    const index = await openSubagentIndex(user);
+    const newest = within(index.getByRole('region', { name: /^“Retry the failed ones/ }));
+    expect(newest.queryByRole('button', { name: /more · Show all/ })).toBeNull();
+    const older = within(index.getByRole('region', { name: /^“Yes, run the rest/ }));
+    expect(older.getAllByRole('button', { name: /^Audit package / })).toHaveLength(3);
+    await user.click(older.getByRole('button', { name: '19 more · Show all 22' }));
+    expect(older.getAllByRole('button', { name: /^Audit package / })).toHaveLength(22);
+  });
+
+  test('hovering a row opens nothing: no peek, the sheet opens only on a press', async () => {
     const { user } = await openTask('t8');
-    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
-    await user.hover(live.getByRole('button', { name: /^Run the accessibility linter, failed/ }));
-    const peek = within(await screen.findByRole('dialog', { name: 'Subagent' }, { timeout: 3000 }));
-    expect(peek.getByText('Failed')).toBeTruthy();
-    expect(peek.getByText('41.8K tokens')).toBeTruthy();
-    expect(peek.getByText('3 tool calls')).toBeTruthy();
-    await user.click(peek.getByRole('button', { name: 'Full transcript' }));
-    expect(await (await panel()).findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
+    await user.hover(live().getByRole('button', { name: /^Run the accessibility linter, failed/ }));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 
@@ -411,7 +452,7 @@ describe('one working ring per place', () => {
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
     expect(rings(strip)).toHaveLength(0);
-    // The live set's running rows: a still `accent` dot, "running" in their names.
+    // The live rows of the running ones: a still `accent` dot, "running" in their names.
     const live = screen.getByRole('region', { name: 'Subagents at work' });
     expect(rings(live)).toHaveLength(0);
     const running = within(live).getAllByRole('button', { name: /, running/ });
@@ -429,10 +470,10 @@ describe('one working ring per place', () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Subagent transcript' });
+    const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
     const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
     expect(within(dialog).getByText('Running')).toBeTruthy();
-    // Its bash call is the step: the panel's one ring.
+    // Its bash call is the step: the sheet's one ring.
     await waitFor(() => expect(rings(transcript)).toHaveLength(1));
     expect(rings(dialog)).toHaveLength(1);
   });
@@ -441,7 +482,7 @@ describe('one working ring per place', () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Verify store callers, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Subagent transcript' });
+    const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
     await within(dialog).findByText(new RegExp(`^(${VERBS.join('|')})…$`));
     expect(rings(dialog)).toHaveLength(0);
   });
