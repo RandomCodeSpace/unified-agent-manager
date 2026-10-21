@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
-import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FileText, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
-import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FilePen, FilePlus, Files, FileText, FolderSearch, GitBranch, Globe, Image as ImageIcon, MessageCircleQuestion, Minus, Pencil, Plug, RotateCcw, Search, ShieldQuestionMark, Signpost, Terminal, Workflow, X, type LucideIcon } from 'lucide-react';
+import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
@@ -10,7 +10,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, editCounts, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, isWork, localToolMs, promoted, stepResult, summarizeTurn, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
@@ -21,7 +21,7 @@ import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
-import { APPROVAL_ICONS, DecidedRow } from './Interactions';
+import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { todoBlocks } from './StatusLine';
@@ -420,7 +420,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
       {opened && (
         <Collapse open={open} appear>
           <div aria-hidden="true" className="fade-rule" />
-          <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} timing={timing} /></DetailVisibility>
+          <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} agentId={agentId} /></DetailVisibility>
           <button type="button" aria-controls={timelineId} className="mb-1.5 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
             <ChevronUp aria-hidden="true" className="size-3" />
             Collapse
@@ -439,89 +439,344 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     && a.reply === b.reply && a.end === b.end && a.edits === b.edits && a.gitlab === b.gitlab;
 });
 
-/** A step's bar colour: running `accent`, failed `error`, waiting on the user `warning`, a thought `faint`, done `success`, no result `hairline-strong`. */
-type BarTone = 'running' | 'failed' | 'waiting' | 'thought' | 'done' | 'none';
-const BAR: Record<BarTone, string> = { running: 'bg-accent', failed: 'bg-error', waiting: 'bg-warning', thought: 'bg-faint', done: 'bg-success', none: 'bg-hairline-strong' };
+/** Each step kind's glyph (Lucide, the app's 1.5 stroke). */
+const STEP_ICONS: Record<StepIcon, LucideIcon> = { thought: Brain, skill: BookOpen, read: FileText, image: ImageIcon, search: Search, find: FolderSearch, fetch: Globe, tool: Plug, edit: FilePen, create: FilePlus, files: Files, intent: Signpost, command: Terminal, question: MessageCircleQuestion, subagent: Workflow };
+const FOLD_ICONS: Record<NonNullable<StepWords['fold']>, LucideIcon> = { read: Files, search: Search, edit: FilePen, command: Terminal };
+const WORD_TONE: Record<WordTone, string> = { muted: 'text-muted', error: 'text-error', attention: 'text-attention' };
+const ICON_TONE: Record<WordTone, string> = { muted: 'text-muted', error: 'text-error', attention: 'text-attention' };
 
-/** The span the bars place their steps in: the turn's recorded start and end, else its first step's start and its last step's end (a running turn's latest so far). */
-function turnRange(timing: TurnTiming | undefined, entries: Entry[]): { start: number; end: number } {
-  const times = entries.flatMap((e) => (e.item ? [Date.parse(e.item.time), Date.parse(e.item.ended_at ?? e.item.time)] : [Date.parse(e.interaction.time)])).filter(Number.isFinite);
-  const start = Date.parse(timing?.started_at ?? '') || Math.min(...times);
-  const end = Date.parse(timing?.ended_at ?? '') || Math.max(...times);
-  return { start, end };
+/** A step's grid (DESIGN.md steps): its clock, the rail's icon column, the step, its duration; what it opens spans the last two. A phone's clock drops the seconds. */
+const STEP_GRID = 'grid grid-cols-[76px_14px_minmax(0,1fr)_auto] gap-x-2 max-sm:grid-cols-[56px_14px_minmax(0,1fr)_auto]';
+/** One 24px line of a step (44px under a coarse pointer). */
+const STEP_LINE = 'flex min-h-6 items-center pointer-coarse:min-h-11';
+
+interface Edge { first: boolean; last: boolean }
+/** The four edges as constants: a new object per row would defeat the steps' memo. */
+const EDGES: Edge[] = [{ first: false, last: false }, { first: true, last: false }, { first: false, last: true }, { first: true, last: true }];
+const edgeOf = (first: boolean, last: boolean) => EDGES[Number(first) + 2 * Number(last)];
+
+/** The rail down the icon column: a 1px hairline from the first step's glyph to the last one's, dashed across a gap; the glyph sits on it. */
+function Rail({ icon, edge, dashed = false, className }: Readonly<{ icon?: ReactNode; edge: Edge; dashed?: boolean; className?: string }>) {
+  const line = dashed ? 'w-0 border-l border-dashed border-hairline-strong' : 'w-px bg-hairline-strong';
+  return (
+    <span aria-hidden="true" className="row-span-2 flex flex-col items-center">
+      {icon ? (
+        <>
+          <span className={cn('mb-0.5 h-[3px] shrink-0 pointer-coarse:h-[13px]', !edge.first && line)} />
+          <span className={cn('flex size-3.5 shrink-0 items-center justify-center [&_svg]:size-3.5', className)}>{icon}</span>
+          <span className={cn('mt-0.5 flex-1', !edge.last && line)} />
+        </>
+      ) : (
+        <span className={cn('flex-1', line)} />
+      )}
+    </span>
+  );
 }
 
-/**
- * A turn's steps, in order, in its card under the head (DESIGN.md steps): each thought, each tool
- * call as its row (status glyph, tool, argument, result) with its approval, details and images,
- * each settled question and decided request as a one-line row. Every row ends in its bar, where
- * it ran within the turn, and its recorded duration; a phone keeps the duration alone.
- */
-function Timeline({ id, entries, ctx, timing }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext; timing?: TurnTiming }>) {
-  const range = turnRange(timing, entries);
-  const rows: ReactNode[] = [];
-  const row = (key: string, time: string, end: string | undefined, tone: BarTone, took: string | null, node: ReactNode) =>
-    rows.push(
-      <div key={key} className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 sm:grid-cols-[minmax(0,1fr)_minmax(3rem,8.75rem)_3rem]">
-        <div className="min-w-0">{node}</div>
-        <StepBar range={range} time={time} end={end} tone={tone} />
-        <StepTook time={time} took={took} />
-      </div>,
-    );
-  for (const entry of entries) {
-    if (!isWork(entry)) continue;
-    // A settled question stands in the answer as its card; the steps only mark its place.
-    if (entry.interaction) {
-      row(entry.interaction.id, entry.interaction.time, undefined, 'waiting', null, <DecidedRow interaction={entry.interaction} />);
-      continue;
-    }
-    const item = entry.item;
-    const streaming = item.id === ctx.streamingId;
-    const took = streaming ? null : itemTook(item);
-    if (item.kind === 'reasoning') {
-      if (item.text?.trim() || item.compact?.has_reasoning) row(item.id, item.time, item.ended_at, streaming ? 'running' : 'thought', took, <Thinking item={item} streaming={streaming} endedAt={ctx.thoughtEnd.get(item.id)} bare />);
-      continue;
-    }
-    // A subagent's call is its row in the reply's subagent list, not a step here.
-    if (ctx.subagentOf?.(item)) continue;
-    const asked = askedOn(item, ctx.approvals, ctx.live);
-    const question = asked && asked.outcome !== 'pending' ? ctx.approvals.get(item.id)?.find((ix) => ix.kind === 'question') : undefined;
-    const status = item.tool?.status;
-    const tone: BarTone = asked ? 'waiting' : status === 'failed' ? 'failed' : status === 'completed' ? 'done' : ctx.live && isActive(status) ? 'running' : 'none';
-    row(item.id, item.time, item.ended_at, tone, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
-  }
+/** One step on the rail: its clock (blank for an intent), glyph, label slot and duration, and under them what it opens. */
+function StepFrame({ at, icon, iconClass, edge, dur, under, children, ref, ...rest }: Readonly<{ at?: string; icon: ReactNode; iconClass?: string; edge: Edge; dur?: string | null; under?: ReactNode; children: ReactNode; ref?: Ref<HTMLDivElement> } & Omit<HTMLAttributes<HTMLDivElement>, 'children'>>) {
   return (
-    <div id={id} className="flex flex-col gap-0.5 pt-1.5 pb-1">
-      {rows}
+    <div ref={ref} role="listitem" className={STEP_GRID} {...rest}>
+      <span className={cn(STEP_LINE, 'text-caption whitespace-nowrap tabular-nums text-faint')} title={at ? dateTime(at) : undefined}>
+        {at && <><span className="max-sm:hidden">{clockTime(at, true)}</span><span className="sm:hidden">{clockTime(at)}</span></>}
+      </span>
+      <Rail icon={icon} edge={edge} className={iconClass} />
+      <div className="min-w-0">{children}</div>
+      <span className={cn(STEP_LINE, 'justify-end text-caption whitespace-nowrap tabular-nums text-muted')}>{dur}</span>
+      {under && <div className="col-span-2 col-start-3 min-w-0">{under}</div>}
     </div>
   );
 }
 
-/** Where a step ran within its turn, as a bar on a 4px track (the step's start to its end; a sliver at least, so the shortest still shows). Hidden on a phone. */
-function StepBar({ range, time, end, tone }: Readonly<{ range: { start: number; end: number }; time: string; end?: string; tone: BarTone }>) {
-  const span = range.end - range.start;
-  const from = Date.parse(time);
-  const to = end ? Date.parse(end) : from;
-  const track = 'flex h-6 items-center max-sm:hidden pointer-coarse:h-11';
-  if (!(span > 0) || !Number.isFinite(from)) return <span aria-hidden="true" className={track} />;
-  const width = Math.min(100, Math.max(1.5, ((Math.max(to, from) - from) / span) * 100));
-  const left = Math.min(100 - width, Math.max(0, ((from - range.start) / span) * 100));
+/** A step's words as its button: the step, then its result words (`muted`, failures `error`, a person's decision `attention`); a phone puts the result under the step. */
+function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef, className }: Readonly<{ label: string; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement>; className?: string }>) {
   return (
-    <span aria-hidden="true" className={track}>
-      <span className="relative h-1 w-full rounded-full bg-tint-hover">
-        <span className={cn('absolute inset-y-0 rounded-full', BAR[tone])} style={{ left: `${left}%`, width: `${width}%` }} />
+    <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className={cn("-mx-1.5 flex min-h-6 w-[calc(100%+0.75rem)] min-w-0 items-center gap-x-1 rounded-sm px-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11", className)}>
+      <span className="flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
+        {lead}
+        <span className={cn('min-w-0 truncate', intent && 'text-muted italic', ink && 'text-ink')}>{label}</span>
+        {fold && <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
       </span>
-    </span>
+      {result.length > 0 && (
+        <span className="max-w-full min-w-0 truncate max-sm:text-meta">
+          {result.map((r, i) => (
+            <span key={i} className={WORD_TONE[r.tone]}>
+              <span aria-hidden="true" className={cn('text-faint', i === 0 && 'max-sm:hidden')}>{i ? ' · ' : '· '}</span>
+              <span className="sr-only">, </span>
+              {r.text}
+            </span>
+          ))}
+        </span>
+      )}
+    </button>
   );
 }
 
-/** A step's recorded duration, right-aligned, blank while it runs or when unrecorded; its start to the second in the tooltip. */
-function StepTook({ time, took }: Readonly<{ time: string; took: string | null }>) {
-  const at = new Date(time);
+/** A long text in a call's raw view: three lines, then "Show all N lines". */
+function RawLines({ text: raw, className }: Readonly<{ text: string; className?: string }>) {
+  const [all, setAll] = useState(false);
+  const text = raw.replace(/^\n+|\s+$/g, '');
+  const lines = text.split('\n').length;
   return (
-    <span className="flex h-6 items-center justify-end text-caption whitespace-nowrap tabular-nums text-muted pointer-coarse:h-11" title={`Started ${clockTime(at, true)} · ${dateTime(at)}`}>
-      {took}
-    </span>
+    <>
+      <pre translate="no" className={cn('m-0 font-mono text-code-sm leading-[18px] whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[54px] overflow-hidden', className)}>{text}</pre>
+      {lines > 3 && (
+        <button type="button" aria-expanded={all} className="flex h-[22px] w-fit items-center gap-1 rounded-xs text-caption text-accent hover:underline" onClick={() => setAll((a) => !a)}>
+          <ChevronDown aria-hidden="true" className={cn('size-3', all && 'rotate-180')} />
+          {all ? 'Show less' : `Show all ${lines} lines`}
+        </button>
+      )}
+    </>
+  );
+}
+
+/** A call's raw view: its command (or its input) and its output, each three lines until asked, with its exit code and Copy. */
+function StepRaw({ item, onCopy }: Readonly<{ item: Item; onCopy?: () => void }>) {
+  const t = item.tool;
+  const input = t?.input ? readableInput(t.name, t.input) : null;
+  const command = input?.kind === 'command';
+  return (
+    <div className="mt-0.5 mb-1.5 flex flex-col gap-0.5 rounded-md bg-sunken px-2 py-1.5">
+      <div className="flex min-w-0 items-center gap-2 text-meta text-muted">
+        <span className="min-w-0 flex-1 truncate font-mono" title={command ? input.text : undefined}>{command ? `$ ${input.text}` : t?.name}</span>
+        {t?.exit_code !== undefined && <span className={cn(t.exit_code !== 0 && 'text-error')}>exit {t.exit_code}</span>}
+        {onCopy && (t?.output || t?.input) && (
+          <button type="button" className="flex items-center gap-1 rounded-xs hover:text-body" onClick={onCopy}>
+            <Copy aria-hidden="true" className="size-3" />
+            Copy
+          </button>
+        )}
+      </div>
+      {item.text && <Markdown text={item.text} className="text-caption" />}
+      {input && !command && <RawLines text={input.text} className="text-muted" />}
+      {t?.output && <RawLines text={t.output} />}
+      {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
+    </div>
+  );
+}
+
+/** A call's row menu (right-click): expand, open its files in the preview, copy its command or input and its output. */
+function useToolActions(item: Item, open: boolean, toggle: () => void, sessionId?: string) {
+  const [, copy] = useCopied();
+  const api = useApi();
+  const preview = usePreview();
+  const workdir = useContext(WorkdirContext);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const t = item.tool;
+  // The input copies as its details read it: the command, or the input decoded.
+  const inputCopy = useBodyCopy(item, (input) => copy(readableInput(t?.name ?? '', input).text));
+  const outputCopy = useBodyCopy(item, copy);
+  const { name, arg } = toolLabel(t);
+  // The files a local file tool read or wrote open in the preview, as their links in a reply do.
+  const files = sessionId && preview && api.supports('files-v1') ? localHints(item, workdir ?? '').slice(0, 5) : [];
+  const items: ActionItem[] = [
+    { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
+    ...files.map((path, i): ActionItem => ({ key: `file:${path}`, label: `Open ${path.split('/').pop() || path}`, icon: <FileText />, separator: i === 0, onSelect: () => {
+      const url = api.viewFileUrl(sessionId!, path);
+      if (anchor.current) preview!({ url, name: path.split('/').pop() || path, description: path, path, frameable: true }, anchor.current);
+    } })),
+    { key: 'cmd', label: toolKind(name) === 'command' ? 'Copy command' : 'Copy input', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => inputCopy.copyBody('input'), separator: true },
+    { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => outputCopy.copyBody('output') },
+  ];
+  const copyRaw = () => (t?.output || t?.has_output ? outputCopy.copyBody('output') : inputCopy.copyBody('input'));
+  return { items, anchor, label: arg ? `${name} ${arg}` : name, copyError: inputCopy.copyError || outputCopy.copyError, copyRaw };
+}
+
+/**
+ * One call as a step (DESIGN.md steps): its glyph on the rail, "Ran go test ./..." and its result
+ * words, its duration; while it runs the spinner and its newest output line. It opens onto its
+ * raw command or input and output, its per-file edits and its images. `nested`: a call inside an
+ * unfolded run, indented under the run's label, without a clock.
+ */
+const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge, nested = false }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; edge: Edge; nested?: boolean }) {
+  const [open, setOpen] = useDisclosure(`tool:${item.agent_id ?? ''}:${item.id}`);
+  // What it opens is mounted on the first open only.
+  const [opened, setOpened] = useState(open);
+  const toggle = () => {
+    setOpened(true);
+    setOpen((o) => !o);
+  };
+  const { item: full, body, attach, retry } = useItemBody(item, open);
+  const actions = useToolActions(item, open, toggle, sessionId);
+  const context = useLazyContextMenu();
+  const t = item.tool;
+  const running = live && isActive(t?.status);
+  const words = callWords(full ?? item, live, approvals);
+  const Icon = STEP_ICONS[words.icon];
+  const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
+  const took = running ? null : itemTook(item);
+  const ended = !live && isActive(t?.status);
+  const title = ended ? 'The turn ended before this tool reported a result' : undefined;
+  const under = (
+    <>
+      {running && <LiveOutput lines={t?.tail?.slice(-1)} className="mb-1" />}
+      {live && toolProgress(t)}
+      {actions.copyError && <p role="alert" className="text-caption text-error">{actions.copyError}</p>}
+      {opened && (
+        <Collapse open={open} appear>
+          <BodyNotice body={body} retry={retry} />
+          {t?.edit_event_id && <NativeEdits item={item} />}
+          {(item.images?.length || item.images_note) && <ToolImages item={item} sessionId={sessionId} className="mb-1.5" />}
+          {full && <StepRaw item={full} onCopy={actions.copyRaw} />}
+        </Collapse>
+      )}
+    </>
+  );
+  const button = <StepButton buttonRef={actions.anchor} className="pr-7 pointer-coarse:pr-11" label={words.label} result={words.result} open={open} onClick={toggle} intent={words.intent} ink={running} title={title} lead={nested ? <Icon aria-hidden="true" className={cn('size-3 shrink-0', words.tone === 'error' ? 'text-error' : 'text-faint')} /> : undefined} />;
+  const menu = (
+    <>
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${actions.label}`} />}>
+          <Ellipsis />
+        </Menu.Trigger>
+        <Menu.Content align="end" side="bottom">
+          <Menu.Actions items={actions.items} />
+        </Menu.Content>
+      </Menu.Root>
+      {context.menu(<ContextMenu.Actions items={actions.items} />)}
+    </>
+  );
+  if (nested) {
+    return (
+      <div ref={attach} id={`item-${item.id}`} className="flex flex-col pl-3" {...context.shell}>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2">
+          <div className="group/tool relative min-w-0">{button}{menu}</div>
+          <span className={cn(STEP_LINE, 'justify-end text-caption whitespace-nowrap tabular-nums text-muted')}>{took}</span>
+        </div>
+        {under}
+      </div>
+    );
+  }
+  return (
+    <StepFrame ref={attach} id={`item-${item.id}`} at={words.intent ? undefined : item.time} icon={glyph} iconClass={words.intent ? 'text-faint' : ICON_TONE[words.tone]} edge={edge} dur={took} under={under} {...context.shell}>
+      <div className="group/tool relative">{button}{menu}</div>
+    </StepFrame>
+  );
+});
+
+/** A run of same-kind calls as one step, "Read 3 files ›", from its first call's start to its last one's end; it unfolds to the calls, indented, without a clock. */
+function StepFold({ row, live, sessionId, approvals, edge, agentId }: Readonly<{ row: Extract<TimelineRow, { type: 'fold' }>; live: boolean; sessionId?: string; approvals: Map<string, Interaction[]>; edge: Edge; agentId?: string }>) {
+  const [open, setOpen] = useDisclosure(`fold:${agentId ?? ''}:${row.key}`);
+  const [opened, setOpened] = useState(open);
+  const Icon = FOLD_ICONS[row.fold];
+  const under = opened && (
+    <Collapse open={open} appear>
+      <div role="list" className="flex flex-col pb-0.5">
+        {row.items.map((item) => <div key={item.id} role="listitem"><StepCall item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} edge={edge} nested /></div>)}
+      </div>
+    </Collapse>
+  );
+  return (
+    <StepFrame at={row.items[0].time} icon={<Icon aria-hidden="true" />} iconClass="text-muted" edge={edge} dur={formatMs(row.end - row.start)} under={under}>
+      <StepButton label={foldLabel(row.fold, row.items.length)} result={[]} open={open} fold onClick={() => { setOpened(true); setOpen((o) => !o); }} />
+    </StepFrame>
+  );
+}
+
+/** A thought as a step, "Thought · its first line", its duration; it opens onto its text (`muted`, behind a fading rule) with Copy thinking. */
+function StepThought({ item, streaming, edge }: Readonly<{ item: Item; streaming: boolean; edge: Edge }>) {
+  const [open, setOpen] = useDisclosure(`thought:${item.agent_id ?? ''}:${item.id}`);
+  const [opened, setOpened] = useState(open);
+  const { item: full, body, attach, retry } = useItemBody(item, open);
+  const text = full?.text ?? '';
+  const first = firstLine(item.text);
+  const under = opened && (
+    <Collapse open={open} appear>
+      <BodyNotice body={body} retry={retry} />
+      {full && <Copyable text={text} label="Copy thinking" className="mt-0.5 mb-1.5 pr-6 pl-3 text-caption text-muted before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-hairline-strong before:content-['']">
+        <Markdown text={text} className="md-quiet" streaming={streaming} />
+      </Copyable>}
+    </Collapse>
+  );
+  return (
+    <StepFrame ref={attach} at={item.time} icon={<Brain aria-hidden="true" />} iconClass="text-muted" edge={edge} dur={streaming ? null : itemTook(item)} under={under}>
+      <StepButton label={streaming ? 'Thinking…' : 'Thought'} result={first ? [{ text: first, tone: 'muted' }] : []} open={open} ink={streaming} onClick={() => { setOpened(true); setOpen((o) => !o); }} />
+    </StepFrame>
+  );
+}
+
+/** A decided request or settled question as a step: its title, its first line and the outcome word in `attention`, the full resolution in its tooltip. */
+function StepDecided({ interaction, at = interaction.time, dur, edge }: Readonly<{ interaction: Interaction; at?: string; dur?: string | null; edge: Edge }>) {
+  const { word, full, tone } = approvalMark(interaction);
+  const Icon = interaction.kind === 'question' ? MessageCircleQuestion : tone === 'ok' ? ShieldQuestionMark : APPROVAL_ICONS[tone];
+  const detail = interaction.detail?.split('\n').map((l) => l.trim()).find(Boolean);
+  return (
+    <StepFrame at={at} icon={<Icon aria-hidden="true" />} iconClass="text-attention" edge={edge} dur={dur} title={full}>
+      <div className="flex min-h-6 min-w-0 items-center text-caption max-sm:flex-col max-sm:items-start pointer-coarse:min-h-11">
+        <span className="min-w-0 truncate text-body">{interaction.title}</span>
+        <span className="min-w-0 truncate pl-[0.3em] max-sm:pl-0">
+          {detail && <span className="font-mono text-code-sm text-muted"><span className="text-faint">· </span>{detail} </span>}
+          <span className="text-attention"><span className="text-faint">· </span>{word}</span>
+        </span>
+        <span className="sr-only">: {full}</span>
+      </div>
+    </StepFrame>
+  );
+}
+
+/** The time between two steps on the rail, dashed: "· 41s model", or "· 1m 12s waiting on you" in `attention`; the cap's "N earlier steps · Show all N calls" in the same place. */
+function StepGap({ children, you = false }: Readonly<{ children: ReactNode; you?: boolean }>) {
+  return (
+    <div role="listitem" className={STEP_GRID}>
+      <span />
+      <Rail edge={EDGES[0]} dashed />
+      <span className={cn('col-span-2 flex min-h-[22px] items-center text-meta tabular-nums', you ? 'text-attention' : 'text-faint')}>{children}</span>
+    </div>
+  );
+}
+
+/**
+ * A turn's steps, in order, in its card under the head (DESIGN.md steps): one clock-stamped
+ * timeline, the same in the main thread and in a subagent's work. Each thought, call and
+ * decided request is a row on the rail ([clock] [glyph] [step · result] [duration]); runs of one
+ * kind fold; the time between steps over 30s shows on the rail; over 20 steps the first, "N earlier
+ * steps · Show all N calls" and the last 12, every step one press away.
+ */
+function Timeline({ id, entries, ctx, agentId }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext; agentId?: string }>) {
+  const [all, setAll] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
+  const reveal = useRef(-1);
+  useEffect(() => {
+    if (!all || reveal.current < 0) return;
+    list.current?.children[reveal.current]?.querySelector<HTMLElement>('button')?.focus();
+    reveal.current = -1;
+  }, [all]);
+  const showAll = () => {
+    // The first step the cap hid: the row after the first step and any gap after it.
+    reveal.current = timelineRows(entries, { live: ctx.live, approvals: ctx.approvals, skip: (item) => !!ctx.subagentOf?.(item), all: true }).findIndex((r, i) => i > 0 && r.type !== 'gap');
+    setAll(true);
+  };
+  const rows = timelineRows(entries, { live: ctx.live, approvals: ctx.approvals, skip: (item) => !!ctx.subagentOf?.(item), all });
+  const out = rows.map((row, i) => {
+    const edge = edgeOf(i === 0, i === rows.length - 1);
+    switch (row.type) {
+      case 'gap':
+        return <StepGap key={row.key} you={row.you}>· {formatMs(row.ms)} {row.you ? 'waiting on you' : 'model'}</StepGap>;
+      case 'more':
+        return (
+          <StepGap key={row.key}>
+            <button type="button" className="-mx-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11" onClick={showAll}>
+              {row.hidden} earlier steps · <span className="text-ink">Show all {row.calls} calls</span>
+            </button>
+          </StepGap>
+        );
+      case 'fold':
+        return <StepFold key={row.key} row={row} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals} edge={edge} agentId={agentId} />;
+    }
+    const { entry } = row;
+    if (entry.interaction) return <StepDecided key={row.key} interaction={entry.interaction} edge={edge} />;
+    const item = entry.item;
+    if (item.kind === 'reasoning') return <StepThought key={row.key} item={item} streaming={item.id === ctx.streamingId} edge={edge} />;
+    // A settled question stands in the answer as its card; the step marks its place.
+    const asked = askedOn(item, ctx.approvals, ctx.live);
+    const question = asked && asked.outcome !== 'pending' ? ctx.approvals.get(item.id)?.find((ix) => ix.kind === 'question') : undefined;
+    if (question) return <StepDecided key={row.key} interaction={question} at={item.time} dur={itemTook(item)} edge={edge} />;
+    return <StepCall key={row.key} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} edge={edge} />;
+  });
+  return (
+    <div ref={list} id={id} role="list" aria-label="Steps" className="flex max-w-[720px] flex-col pt-2 pb-1">
+      {out}
+    </div>
   );
 }
 
@@ -1083,37 +1338,17 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     setOpened(true);
     setOpen((o) => !o);
   };
-  const [, copy] = useCopied();
   const { item: fullItem, body, attach, retry } = useItemBody(item, open);
   const t = item.tool;
-  const api = useApi();
-  const preview = usePreview();
-  const workdir = useContext(WorkdirContext);
-  const toggleButton = useRef<HTMLButtonElement>(null);
-  // The input copies as its details read it: the command, or the input decoded.
-  const inputCopy = useBodyCopy(item, (input) => copy(readableInput(t?.name ?? '', input).text));
-  const outputCopy = useBodyCopy(item, copy);
-  const copyError = inputCopy.copyError || outputCopy.copyError;
+  const { items, anchor: toggleButton, label, copyError } = useToolActions(item, open, toggle, sessionId);
   const status = t?.status ?? 'pending';
   // Display only: a tool still pending/running after the turn ended never reported a result.
   const ended = !live && isActive(status);
   const tone = ended ? 'ended' : status;
   const { name, arg } = toolLabel(t);
-  const label = arg ? `${name} ${arg}` : name;
   const word = statusWord(status, ended);
   const images = item.images ?? [];
   const decided = approvals?.filter((ix) => ix.state !== 'pending') ?? [];
-  // The files a local file tool read or wrote open in the preview, as their links in a reply do.
-  const files = sessionId && preview && api.supports('files-v1') ? localHints(item, workdir ?? '').slice(0, 5) : [];
-  const items: ActionItem[] = [
-    { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
-    ...files.map((path, i): ActionItem => ({ key: `file:${path}`, label: `Open ${path.split('/').pop() || path}`, icon: <FileText />, separator: i === 0, onSelect: () => {
-      const url = api.viewFileUrl(sessionId!, path);
-      if (toggleButton.current) preview!({ url, name: path.split('/').pop() || path, description: path, path, frameable: true }, toggleButton.current);
-    } })),
-    { key: 'cmd', label: toolKind(name) === 'command' ? 'Copy command' : 'Copy input', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => inputCopy.copyBody('input'), separator: true },
-    { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => outputCopy.copyBody('output') },
-  ];
   const context = useLazyContextMenu();
   return (
     <div className={cn('group/tool relative', className)} {...context.shell}>
@@ -1416,7 +1651,7 @@ function thinkingLabel(streaming: boolean, took: string | null | undefined): str
   return took ? `Thought for ${took}` : 'Thought';
 }
 
-export function Thinking({ item, streaming, endedAt, className, bare = false }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string; /** A step row, whose duration column says how long it took: "Thought" alone. */ bare?: boolean }>) {
+export function Thinking({ item, streaming, endedAt, className }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string }>) {
   const key = THINKING_KEY + (item.agent_id ? `${item.agent_id}:` : '') + item.id;
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
   const { item: fullItem, body, attach, retry } = useItemBody(item, expanded);
@@ -1431,7 +1666,7 @@ export function Thinking({ item, streaming, endedAt, className, bare = false }: 
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
         {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
-        <span className="tabular-nums">{thinkingLabel(streaming, bare ? null : took)}</span>
+        <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>
         {/* A closed thought is not read, so it has no body on its way to tell of. */}

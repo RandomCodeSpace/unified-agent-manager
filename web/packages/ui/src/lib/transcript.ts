@@ -627,7 +627,7 @@ export interface TurnSummary {
 }
 
 /**
- * The turn line's counts (DESIGN.md turn line): finished thoughts with their total time, then
+ * The turn line's counts (DESIGN.md turn line), counts only (the durations are on the steps): finished thoughts, then
  * what the tools did by kind (commands, files changed and read by distinct path, searches,
  * other tools), the questions answered or declined and the requests decided, then what stays
  * explicit: failures, calls without a result, questions without an answer and images returned.
@@ -638,7 +638,6 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   let count = 0, thoughts = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
   const changed = new Set<string>();
   const read = new Set<string>();
-  const thinking: [number, number][] = [];
   const outcomes: AskedQuestion['outcome'][] = [];
   let waiting = false;
   for (const entry of entries) {
@@ -654,7 +653,6 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     if (item.kind === 'reasoning') {
       if (item.id === ctx.streamingId || (!item.text?.trim() && !item.compact?.has_reasoning)) continue;
       thoughts++;
-      if (item.ended_at) thinking.push([Date.parse(item.time), Date.parse(item.ended_at)]);
       continue;
     }
     const t = item.tool;
@@ -694,12 +692,9 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   }
   const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
   failed += asked('failed');
-  const thinkMs = spanMs(thinking);
-  const thinkTime = thinkMs > 0 ? formatMs(thinkMs) : null;
-  const thinkSuffix = thinkTime ? ` (${thinkTime})` : '';
   const quiet = (text: string | 0, kind?: SummaryPart['kind']): SummaryPart | null => (text ? { text, tone: 'muted', ...(kind && { kind }) } : null);
   const parts = [
-    quiet(thoughts && `${noun(thoughts, 'thought')}${thinkSuffix}`),
+    quiet(thoughts && noun(thoughts, 'thought')),
     quiet(commands && noun(commands, 'command')),
     quiet(changed.size && `${noun(changed.size, 'file')} changed`, 'changed'),
     quiet(read.size && `${noun(read.size, 'file')} read`),
@@ -860,4 +855,150 @@ export function changedFiles(entries: Entry[], scratch?: (path: string) => boole
     for (const path of changePaths(t)) if (!out.includes(path) && !scratch?.(path)) out.push(path);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------
+// The step timeline (DESIGN.md steps): one clock-stamped row per thought, call or decided
+// request, same-kind runs folded, the time between steps over 30s on the rail, a cap that defers.
+
+/** Which Lucide glyph a step wears; the component maps it. */
+export type StepIcon = 'thought' | 'skill' | 'read' | 'image' | 'search' | 'find' | 'fetch' | 'tool' | 'edit' | 'create' | 'files' | 'intent' | 'command' | 'question' | 'subagent';
+export type WordTone = 'muted' | 'error' | 'attention';
+export interface StepWords {
+  icon: StepIcon;
+  /** The step in plain words: "Read redraw.go", "Ran go test ./...", "Searched “1004”". */
+  label: string;
+  /** What it got, from what the call recorded: "ok · 12 passed", "exit 1", the first error line, "auto-approved". */
+  result: { text: string; tone: WordTone }[];
+  tone: WordTone;
+  /** A provider's stated intent (report_intent): a muted italic step without a clock. */
+  intent?: boolean;
+  /** Runs of the same key fold into one step. */
+  fold?: 'read' | 'search' | 'edit' | 'command';
+}
+
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+const baseName = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1) || path;
+const openCall = (status?: string) => status === 'pending' || status === 'running';
+
+/** The line of a failed call's output that says what broke: the first naming an error, a failure or a `file:line:`, else the first non-empty one. */
+export function firstErrorLine(output: string | undefined): string {
+  const lines = (output ?? '').split('\n').map((l) => l.trim()).filter((l) => l && !/^exit status \d+$/i.test(l));
+  return oneLine(lines.find((l) => /error|fail|panic|denied|not found|:\d+(?::\d+)?:/i.test(l)) ?? lines[0] ?? '');
+}
+
+/** A tool call as a step: its glyph, its label in plain words and its result words. `live`: the provider still holds the turn. */
+export function callWords(item: Item, live: boolean, approvals?: Interaction[]): StepWords {
+  const t = item.tool;
+  const { name, arg } = toolLabel(t);
+  const n = name.toLowerCase();
+  const running = live && openCall(t?.status);
+  const words = (icon: StepIcon, label: string, fold?: StepWords['fold']) => ({ icon, label, fold });
+  let w: ReturnType<typeof words>;
+  if (COMMAND_TOOLS.has(n)) w = words('command', `${running ? 'Running' : 'Ran'} ${arg || name}`, 'command');
+  else if (READ_TOOLS.has(n)) w = IMAGE_FILE.test(arg) ? words('image', `Viewed ${baseName(arg)}`) : words('read', `${n === 'list' ? 'Listed' : 'Read'} ${baseName(arg) || name}`, 'read');
+  else if (n === 'create') w = words('create', `Created ${baseName(arg) || name}`);
+  else if (CHANGE_TOOLS.includes(n)) w = words('edit', `Edited ${(n === 'apply_patch' ? arg : baseName(arg)) || name}`, 'edit');
+  else if (n === 'grep') {
+    // A title standing in for the input ("Search "x" in src") already says what was searched.
+    const what = arg.replace(/^search(?:ing|ed)?\s+/i, '');
+    w = words('search', `Searched ${/["“]/.test(what) ? what : `“${what}”`}`, 'search');
+  }
+  else if (n === 'glob') w = words('find', `Found ${arg}`, 'search');
+  else if (n === 'web_search' || n === 'websearch') w = words('search', `Searched the web for “${arg}”`);
+  else if (SEARCH_TOOLS.has(n)) w = words('fetch', `Fetched ${arg.replace(/^https?:\/\//, '')}`);
+  else if (n === 'skill') w = words('skill', `Loaded skill ${arg}`);
+  else if (n === 'report_intent') return { icon: 'intent', label: arg || 'Intent', result: [], tone: 'muted', intent: true };
+  else if (n === 'task') w = words('subagent', arg || 'Subagent');
+  else if (n === ASK_TOOL) w = words('question', arg || 'Asked a question');
+  else w = words('tool', arg ? `${name} · ${arg}` : name);
+  const result: StepWords['result'] = [];
+  const r = stepResult(t);
+  if (r?.kind === 'tests') result.push(r.failed ? { text: `${r.passed} passed · ${r.failed} failed`, tone: 'error' } : { text: `ok · ${r.passed} passed`, tone: 'muted' });
+  else if (r?.kind === 'diff') result.push({ text: `+${r.additions} −${r.deletions}`, tone: 'muted' });
+  else if (r?.kind === 'exit') result.push({ text: r.code === 0 ? 'ok' : `exit ${r.code}`, tone: r.code === 0 ? 'muted' : 'error' });
+  else if (r?.kind === 'failed') result.push({ text: 'failed', tone: 'error' });
+  // A completed call that exited non-zero failed all the same (stepResult leaves its code out).
+  if (t?.status === 'completed' && t.exit_code && r?.kind !== 'tests') result.push({ text: `exit ${t.exit_code}`, tone: 'error' });
+  const failed = t?.status === 'failed' || !!t?.exit_code || result.some((x) => x.tone === 'error');
+  const why = failed ? firstErrorLine(t?.output) : '';
+  if (why) result.push({ text: why, tone: 'error' });
+  const asked = n === ASK_TOOL ? questionOf(t, undefined, live)?.outcome : undefined;
+  if (asked && asked !== 'pending') result.push({ text: asked === 'none' ? 'not answered' : asked, tone: 'attention' });
+  else if (!live && openCall(t?.status)) result.push({ text: 'no result', tone: 'muted' });
+  const decided = approvals?.filter((ix) => ix.kind !== 'question' && ix.state !== 'pending').at(-1);
+  const mark = decided && approvalMark(decided);
+  const machine = mark?.word === 'auto' || mark?.word === 'reviewed';
+  if (mark) result.push({ text: machine ? `${mark.word === 'auto' ? 'auto' : 'review'}-approved` : mark.word, tone: machine ? 'muted' : 'attention' });
+  // A call a person decided on, one that failed or one that returned images stands alone: its words are its own.
+  const fold = w.fold && t?.status === 'completed' && !failed && !mark && !item.images?.length ? w.fold : undefined;
+  return { ...w, fold, result, tone: failed ? 'error' : (mark && !machine) || asked ? 'attention' : 'muted' };
+}
+
+/** A step of the timeline (its `end` not finite when unrecorded): one entry, a folded run of same-kind calls, the time between two steps, or the cap's "N earlier steps". */
+export type TimelineRow =
+  | { type: 'entry'; key: string; entry: Entry; start: number; end: number }
+  | { type: 'fold'; key: string; items: Item[]; fold: NonNullable<StepWords['fold']>; start: number; end: number }
+  | { type: 'gap'; key: string; ms: number; you: boolean }
+  | { type: 'more'; key: string; hidden: number; calls: number };
+
+/** Gaps between two steps longer than this show on the rail. */
+export const GAP_MS = 30_000;
+/** Timelines with more steps than this show the first, "N earlier steps", and the last `CAP_TAIL`. */
+export const STEP_CAP = 20;
+const CAP_TAIL = 12;
+
+const FOLD_LABEL: Record<NonNullable<StepWords['fold']>, (n: number) => string> = {
+  read: (n) => `Read ${noun(n, 'file')}`,
+  search: (n) => `Searched ${n} times`,
+  edit: (n) => `Edited ${noun(n, 'file')}`,
+  command: (n) => `Ran ${noun(n, 'command')}`,
+};
+export const foldLabel = (fold: NonNullable<StepWords['fold']>, n: number) => FOLD_LABEL[fold](n);
+
+/**
+ * A turn's work as timeline rows (DESIGN.md steps): each thought with something in it, each call
+ * (`skip` leaves some out: a subagent's call is its row in the reply's list) and each decided
+ * request; consecutive completed calls of one kind fold; a gap over 30s between one step's end and
+ * the next one's start is its own row, "waiting on you" when the turn asked the person within it (or right after a decided request). Over
+ * `STEP_CAP` steps, unless `all`, the first, a "N earlier steps" row and the last 12.
+ */
+export function timelineRows(entries: readonly Entry[], { live, approvals, skip, all = false }: { live: boolean; approvals?: Map<string, Interaction[]>; skip?: (item: Item) => boolean; all?: boolean }): TimelineRow[] {
+  type Step = Extract<TimelineRow, { type: 'entry' | 'fold' }>;
+  const steps: Step[] = [];
+  const foldOf = (step: Step | undefined) => (step?.type === 'fold' ? step.fold : step?.entry.item?.kind === 'tool' ? callWords(step.entry.item, live, approvals?.get(step.entry.item.id)).fold : undefined);
+  for (const entry of entries) {
+    if (!isWork(entry)) continue;
+    if (entry.interaction) {
+      const at = Date.parse(entry.interaction.time);
+      steps.push({ type: 'entry', key: entry.interaction.id, entry, start: at, end: at });
+      continue;
+    }
+    const item = entry.item;
+    if ((item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) || skip?.(item)) continue;
+    const start = Date.parse(item.time);
+    // No recorded end, no gap after it: nothing is inferred from what followed.
+    const end = item.ended_at ? Date.parse(item.ended_at) : Number.NaN;
+    const words = item.kind === 'tool' ? callWords(item, live, approvals?.get(item.id)) : undefined;
+    const prev = steps.at(-1);
+    if (words?.fold && prev && foldOf(prev) === words.fold) {
+      const items = prev.type === 'fold' ? [...prev.items, item] : [prev.entry.item!, item];
+      steps[steps.length - 1] = { type: 'fold', key: items[0].id, items, fold: words.fold, start: prev.start, end: Math.max(...[prev.end, end].filter(Number.isFinite)) };
+      continue;
+    }
+    steps.push({ type: 'entry', key: item.id, entry, start, end });
+  }
+  // When the turn asked the person: a gap holding one of those moments was theirs, any other is the model's.
+  const asks = entries.flatMap((e) => (e.item ? (approvals?.get(e.item.id) ?? []) : [])).filter((ix) => ix.state !== 'pending' && !['auto', 'reviewed'].includes(approvalMark(ix).word)).map((ix) => Date.parse(ix.time));
+  const rows: TimelineRow[] = [];
+  steps.forEach((step, i) => {
+    rows.push(step);
+    const next = steps[i + 1];
+    const ms = next ? next.start - step.end : 0;
+    if (Number.isFinite(ms) && ms > GAP_MS) rows.push({ type: 'gap', key: `gap-${step.key}`, ms, you: (step.type === 'entry' && !!step.entry.interaction) || asks.some((t) => t > step.end && t < next.start) });
+  });
+  if (all || steps.length <= STEP_CAP) return rows;
+  const calls = steps.reduce((n, s) => n + (s.type === 'fold' ? s.items.length : 1), 0);
+  const tail = rows.slice(rows.indexOf(steps[steps.length - CAP_TAIL]));
+  return [rows[0], { type: 'more', key: 'more', hidden: steps.length - 1 - CAP_TAIL, calls }, ...tail];
 }

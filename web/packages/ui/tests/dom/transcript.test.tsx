@@ -416,11 +416,11 @@ describe('activity', () => {
     expect(head.textContent).toMatch(/1 thought/);
     await user.click(head);
     await waitFor(() => expect(head.getAttribute('aria-expanded')).toBe('true'));
-    const edit = await log().findByRole('button', { name: /^edit.*cmd\/doctor\.go.*done$/ });
+    const edit = await log().findByRole('button', { name: /^Edited doctor\.go/ });
     await user.click(edit);
     await waitFor(() => expect(edit.getAttribute('aria-expanded')).toBe('true'));
     expect(conversation().textContent).toContain('printRow("terminal", term.Describe())');
-    const thought = log().getByRole('button', { name: 'Thought' });
+    const thought = log().getByRole('button', { name: /^Thought/ });
     await user.click(thought);
     await waitFor(() => expect(thought.getAttribute('aria-expanded')).toBe('true'));
     expect(conversation().textContent).toContain('the terminal probe already exposes');
@@ -457,17 +457,20 @@ describe('activity', () => {
     const copy = vi.spyOn(navigator.clipboard, 'writeText');
     const head = log().getAllByRole('button', { name: /activity of this turn/ })[0];
     await user.click(head);
+    // Over 20 steps the earlier ones wait behind one press.
+    await user.click(await log().findByRole('button', { name: /^\d+ earlier steps · Show all \d+ calls$/ }));
+    const step = await log().findByRole('button', { name: /^Ran ls ~\/projects\/sky-dodge/ });
     const menu = await openMenu(user, 'Actions for bash ls ~/projects/sky-dodge');
     await user.click(menu.getByRole('menuitem', { name: 'Copy command' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith('ls ~/projects/sky-dodge'));
     copy.mockRestore();
-    const again = await openMenu(user, 'Actions for bash ls ~/projects/sky-dodge');
-    await user.click(again.getByRole('menuitem', { name: 'Expand' }));
-    // The input reads as the command; Raw shows it as recorded.
-    const raw = await log().findByRole('button', { name: 'Raw' });
-    expect(raw.closest('.group\\/code')?.textContent).toContain('commandRawls ~/projects/sky-dodge');
-    await user.click(raw);
-    await waitFor(() => expect(conversation().textContent).toContain('{"command":"ls ~/projects/sky-dodge"}'));
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    fireEvent.contextMenu(step);
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Expand' }));
+    // The raw view reads the input as the command, never the JSON around it.
+    await waitFor(() => expect(step.getAttribute('aria-expanded')).toBe('true'));
+    expect(conversation().textContent).toContain('$ ls ~/projects/sky-dodge');
+    expect(conversation().textContent).not.toContain('{"command":"ls ~/projects/sky-dodge"}');
   });
 
   test('a call a stopped turn left running is not the running step while the next turn starts', () => {
@@ -765,20 +768,48 @@ describe('turn card', () => {
     expect(again.container.textContent).toContain('Working 6s');
   });
 
-  test('open steps end in a bar placing each within the turn and its duration', async () => {
+  test('a step reads its result words apart for a screen reader, and a non-zero exit is a failure', () => {
+    const vet: Item = { id: 'v1', kind: 'tool', time: at(1), ended_at: at(2), tool: { name: 'bash', status: 'completed', exit_code: 1, input: JSON.stringify({ command: 'go vet ./...' }), output: 'redraw.go:88:2: unreachable code' } };
+    const view = render(<Transcript sessionId="s" items={[items[0], vet, items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    fireEvent.click(view.getByRole('button', { name: /activity of this turn/ }));
+    // The dots are not read; a comma parts the words (the test DOM pads inline boundaries with a space).
+    const name = (n: string) => n.replaceAll(/\s+,/g, ',') === 'Ran go vet ./..., exit 1, redraw.go:88:2: unreachable code';
+    expect(view.getByRole('button', { name })).toBeTruthy();
+  });
+
+  test('"Show all N calls" puts focus on the first step it showed', async () => {
+    const user = userEvent.setup();
+    const many: Item[] = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, kind: 'tool', time: at(1), tool: { name: i % 2 ? 'view' : 'bash', status: 'completed', input: JSON.stringify(i % 2 ? { path: `f${i}.go` } : { command: `echo ${i}` }) } }));
+    const view = render(<Transcript sessionId="s" items={[items[0], ...many, items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    await user.click(view.getByRole('button', { name: /activity of this turn/ }));
+    expect(view.queryByRole('button', { name: /^Read f1\.go/ })).toBeNull();
+    await user.click(view.getByRole('button', { name: '17 earlier steps · Show all 30 calls' }));
+    await waitFor(() => expect(document.activeElement).toBe(view.getByRole('button', { name: /^Read f1\.go/ })));
+  });
+
+  test('open steps are one clock-stamped timeline: a run of one kind folds, its duration on the row, its calls indented without a clock', async () => {
     const user = userEvent.setup();
     const view = render(<Transcript sessionId="s" items={items} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
-    await user.click(view.getByRole('button', { name: /activity of this turn/ }));
-    const steps = await view.findByRole('button', { name: /^edit.*secret-b\.go/ });
-    const row = steps.closest('.grid')!;
-    const bar = row.querySelector('[style]') as HTMLElement;
-    // Started 3s into a 9s turn, ran 1s.
-    expect(parseFloat(bar.style.left)).toBeCloseTo(33.3, 1);
-    expect(parseFloat(bar.style.width)).toBeCloseTo(11.1, 1);
-    expect(bar.className).toContain('bg-success');
-    expect(row.lastElementChild!.textContent).toBe('1s');
-    // Per-step file names stay, behind the head.
-    expect(row.textContent).toContain('secret-b.go');
+    const head = view.getByRole('button', { name: /activity of this turn/ });
+    // The turn line keeps counts only; durations live on the rows.
+    expect(head.textContent).not.toMatch(/\(/);
+    await user.click(head);
+    const fold = await view.findByRole('button', { name: /^Edited 2 files/ });
+    const row = fold.closest('[role="listitem"]')!;
+    // Its clock (the full date in its tooltip), and its span from the first call's start to the last one's end.
+    expect(row.firstElementChild!.getAttribute('title')).toBeTruthy();
+    expect(row.children[3].textContent).toBe('3s');
+    expect(view.queryByRole('button', { name: /^Edited secret-b\.go/ })).toBeNull();
+    await user.click(fold);
+    const call = await view.findByRole('button', { name: /^Edited secret-b\.go/ });
+    // Per-step file names stay, behind the head; an unfolded call has its duration and no clock.
+    const callRow = call.closest('[role="listitem"]')!;
+    expect(callRow.textContent).toContain('1s');
+    expect(callRow.querySelector('[title]')).toBeNull();
+    // A call opens onto its raw input.
+    await user.click(call);
+    await waitFor(() => expect(call.getAttribute('aria-expanded')).toBe('true'));
+    expect(callRow.textContent).toContain('secret-b.go');
   });
 });
 
