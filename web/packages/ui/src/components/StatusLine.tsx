@@ -4,9 +4,10 @@
 // `assistant.intent`), for how long, a model call being retried and automatic compaction running
 // beside the turn ("Compacting in background", words only); after a stop it says why, until the
 // next turn. Its right end holds the Thread's subagents as blocks (✗ failed, ● running, ✓ done,
-// ○ stopped), there whenever the Thread has any. Pressing it opens one anchored reader with a Todo
-// and a Subagents tab (a sheet on a phone). It sits in the dock's overlap, outside the scroller, so
-// coming and going never moves the composer or the transcript. It is still: the ring stays at the
+// ○ stopped), there whenever the Thread has any. Pressing it opens one fixed sheet off the strip's
+// right end with a Todo and a Subagents tab (a bottom sheet on a phone), the one home of subagents.
+// It sits in the dock's overlap, outside the scroller, so coming and going never moves the composer
+// or the transcript. It is still: the ring stays at the
 // Thread's state glyph and the running step. A subagent's retry stands under its row instead
 // (`SubagentRetry`).
 
@@ -14,7 +15,7 @@ import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Tabs } from '@base-ui/react/tabs';
 import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, ListChecks, Minus, Pause, RotateCw, Workflow, X, type LucideProps } from 'lucide-react';
-import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
@@ -22,7 +23,7 @@ import { countSubagents } from '../lib/subagents';
 import { todoLine, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince } from '../lib/transcript';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow, SubagentIndexBody, useSubagentIndex, type IndexPick } from './Subagents';
+import { BottomSheet, LiftedRow, SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
 import { PHONE, TodoTab } from './Todos';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
@@ -104,11 +105,12 @@ type Tab = 'todo' | 'subagents';
 /**
  * The strip as two buttons on one row: the line, and the subagents at its end. Each one's name is a
  * sentence (sr-only), the words on screen are hidden from assistive tech, and a polite live region
- * beside them speaks only what `useCue` lets through. The line opens the reader on its Todo tab, or
+ * beside them speaks only what `useCue` lets through. The line opens the sheet on its Todo tab, or
  * without a list shows the end of the conversation, where the work is; the subagents open it on
- * their tab. Each lights and lifts alone, so the subagents never light the line. `hidden`
- * gives its place to another strip. `error`: why the last jump to a subagent did not land, said in
- * the Subagents tab.
+ * their tab, and so does a subagent row or chip in the conversation (`useSheetRequest`), on that
+ * subagent or that reply's list. Each lights and lifts alone, so the subagents never light the line.
+ * `hidden` gives its place to another strip (the sheet then opens from the bottom). `error`: why the
+ * last jump to a subagent did not land, said in the Subagents tab.
  */
 export function StatusLine({ line, session, since, hidden, error, onJump }: Readonly<{
   line: Line | null;
@@ -125,39 +127,41 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
   const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background;
   const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
-  const subagents = hidden || !index?.subagents.length ? undefined : index.subagents;
+  const any = !!index?.subagents.length;
+  const subagents = hidden || !any ? undefined : index!.subagents;
   const timing = session.turn_timings?.at(-1);
   // The live region still says a turn started when the strip draws nothing for it.
   const spoken = hidden ? null : line;
   const cue = useCue(spoken, timing?.id ?? '');
   const list = shownLine?.kind === 'working' ? shownLine.todo : undefined;
   const view = list ? session.turn_activity?.todos : undefined;
-  const tabs: Tab[] = [...(view ? ['todo' as const] : []), ...(subagents ? ['subagents' as const] : [])];
+  const tabs: Tab[] = [...(view ? ['todo' as const] : []), ...(any ? ['subagents' as const] : [])];
   const readerId = useId();
-  // Phone or not is chosen as it opens, so a resize does not remount it; the reader hangs from the button that opened it.
-  const [reader, setReader] = useState<{ open: boolean; phone: boolean; tab: Tab; anchor: HTMLElement } | null>(null);
-  // Where a pick in the Subagents tab goes once the reader has closed.
-  const picked = useRef<IndexPick | null>(null);
+  const row = useRef<HTMLDivElement>(null);
+  // Phone or not is chosen as it opens, so a resize does not remount it. `opener` takes the focus back,
+  // `lift` is the strip button drawn above the dim, `to` where the Subagents tab opens; `n` counts the
+  // openings, so a new one starts the tab afresh; `leaving`: it closes for a jump into the conversation.
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean; tab: Tab; opener: HTMLElement | null; lift: HTMLElement | null; to: SheetTo | null; n: number; leaving: boolean } | null>(null);
+  const confirming = useStopConfirming();
   // With nothing left to show (the turn ended, the conversation closed), the reader goes too.
   if (reader && !tabs.length) setReader(null);
   const tab = reader && tabs.includes(reader.tab) ? reader.tab : tabs[0];
-  const show = (on: Tab, anchor: HTMLElement) => {
-    picked.current = null;
-    setReader({ open: true, phone: window.matchMedia(PHONE).matches, tab: on, anchor });
+  const sheetMode = () => window.matchMedia(PHONE).matches || hidden;
+  const show = (on: Tab, opener: HTMLElement) => setReader({ open: true, phone: sheetMode(), tab: on, opener, lift: opener, to: null, n: (reader?.n ?? 0) + 1, leaving: false });
+  // A subagent row or chip in the conversation opens the same sheet, on the subagent or the reply's list; a jump closes it.
+  const request = useSheetRequest();
+  const [seen, setSeen] = useState(request?.n);
+  if (request && request.n !== seen) {
+    setSeen(request.n);
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (request.to) setReader({ open: true, phone: sheetMode(), tab: 'subagents', opener, lift: document.getElementById('subagents-link'), to: request.to, n: (reader?.n ?? 0) + 1, leaving: false });
+    else if (reader?.open) setReader({ ...reader, open: false, leaving: true });
+  }
+  // A stop's confirmation sits outside the sheet: a press there is not a press away from it.
+  const close = () => {
+    if (!confirming) setReader((r) => r && { ...r, open: false });
   };
-  const close = () => setReader((r) => r && { ...r, open: false });
-  const closed = () => {
-    setReader(null);
-    const to = picked.current;
-    picked.current = null;
-    if (!to || !index) return;
-    if ('agent' in to) index.actions.open(to.agent, document.getElementById('subagents-link'));
-    else index.actions.locate(to.call, to.expand);
-  };
-  const pick = (to: IndexPick) => {
-    picked.current = to;
-    close();
-  };
+  const closed = () => setReader(null);
   const plan = shownLine?.kind === 'working' && shownLine.plan;
   const listed = tabs.includes('todo');
   const strip = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
@@ -168,7 +172,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
       </div>
       {(shownLine || subagents) && (
         // Two buttons on one row: the line (its todo list, or the jump to the end) and the subagents, each lit and lifted on its own.
-        <div className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
+        <div ref={row} className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
           {shownLine ? (
             <button
               type="button"
@@ -216,7 +220,7 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
         </div>
       )}
       {reader && tab && (
-        <StripReader id={readerId} open={reader.open} phone={reader.phone} anchor={reader.anchor} tabs={tabs} tab={tab} onTab={(t) => setReader((r) => r && { ...r, tab: t })} todoLabel={plan ? 'Plan' : 'Todo'} todo={view && list ? { view, blocks: todoBlocks(list) } : undefined} subagents={session.subagents} error={error} onPick={pick} picked={picked} onClose={close} onClosed={closed} />
+        <StripReader id={readerId} open={reader.open} phone={reader.phone} row={row} lift={reader.lift} back={reader.leaving ? null : reader.opener} tabs={tabs} tab={tab} onTab={(t) => setReader((r) => r && { ...r, tab: t })} todoLabel={plan ? 'Plan' : 'Todo'} todo={view && list ? { view, blocks: todoBlocks(list) } : undefined} subagents={session.subagents} body={<SubagentSheetBody key={reader.n} to={reader.to} error={error} phone={reader.phone} />} onClose={close} onClosed={closed} />
       )}
     </>
   );
@@ -225,38 +229,39 @@ export function StatusLine({ line, session, since, hidden, error, onJump }: Read
 const TAB_ICON: Record<Tab, typeof ListChecks> = { todo: ListChecks, subagents: Workflow };
 
 /**
- * The strip's reader (DESIGN.md Status line, reader): an anchored reader above the strip (the strip
- * lifted above a 160ms dim), or on a phone (`phone`, chosen as it opened) a sheet from the bottom,
- * with a tab per thing the strip counts: Todo (or Plan), the list in plan order, and Subagents, the
- * subagent index. It opens with focus on the chosen tab; ← and → switch tabs from anywhere but a
- * text field; Esc, the close button or a press outside close it and give focus back to the strip,
- * unless a pick in the index takes it on.
+ * The strip's sheet (DESIGN.md Status line, sheet): one box of fixed place and size hung off the
+ * strip's right end, its right edge flush with it, 10px above it and 560px wide (the strip button
+ * that opened it lifted above a 160ms dim), or on a phone (`phone`, chosen as it opened) a bottom
+ * sheet of 70% of the screen, with a tab per thing the strip counts: Todo (or Plan), the list in
+ * plan order, and Subagents (`body`, list and detail in turn). It opens with focus on the chosen tab
+ * (on a subagent's detail, its way back to the list); ← and → switch tabs from anywhere but a text
+ * field; Esc, the close button or a press outside close it and give focus back to `back`.
  */
-function StripReader({ id, open, phone, anchor, tabs, tab, onTab, todoLabel, todo, subagents, error, onPick, picked, onClose, onClosed }: Readonly<{
+function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoLabel, todo, subagents, body, onClose, onClosed }: Readonly<{
   id: string;
   open: boolean;
   phone: boolean;
-  anchor: HTMLElement | null;
+  /** The strip's row: the sheet hangs off the subagents button at its end, else off the row's end. */
+  row: RefObject<HTMLDivElement | null>;
+  lift: HTMLElement | null;
+  back: HTMLElement | null;
   tabs: Tab[];
   tab: Tab;
   onTab: (tab: Tab) => void;
   todoLabel: 'Todo' | 'Plan';
   todo?: { view: TodoView; blocks: Block[] };
   subagents: readonly Subagent[];
-  error?: string;
-  onPick: (to: IndexPick) => void;
-  picked: { readonly current: IndexPick | null };
+  body: ReactNode;
   onClose: () => void;
   onClosed: () => void;
 }>) {
   const activeTab = useRef<HTMLButtonElement>(null);
-  const search = useRef<HTMLInputElement>(null);
-  const sheet = phone || !anchor;
   const names: Record<Tab, string> = { todo: todoLabel, subagents: 'Subagents' };
   const label = tabs.map((t, i) => (i ? names[t].toLowerCase() : names[t])).join(' and ');
-  const back = () => (picked.current ? false : anchor ?? false);
+  const finalFocus = () => (back?.isConnected ? back : false);
+  const initialFocus = () => document.getElementById(id)?.querySelector<HTMLElement>('[data-sheet-focus]') ?? activeTab.current;
   const onArrows = (e: ReactKeyboardEvent) => {
-    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || tabs.length < 2 || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.defaultPrevented || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || tabs.length < 2 || e.altKey || e.ctrlKey || e.metaKey) return;
     const target = e.target as HTMLElement;
     // The tabs move themselves, and a text field keeps its caret.
     if (target.closest('[role="tablist"], input, textarea, [contenteditable="true"]')) return;
@@ -265,7 +270,7 @@ function StripReader({ id, open, phone, anchor, tabs, tab, onTab, todoLabel, tod
     onTab(next);
     requestAnimationFrame(() => activeTab.current?.focus());
   };
-  const body = (closeButton: ReactNode) => (
+  const content = (closeButton: ReactNode) => (
     <Tabs.Root value={tab} onValueChange={(v) => onTab(v as Tab)} className="flex min-h-0 flex-1 flex-col">
       <PanelHead className="pt-2 pr-2 pb-1.5 pl-2.5">
         <div className="flex min-h-7 min-w-0 items-center gap-1">
@@ -284,16 +289,17 @@ function StripReader({ id, open, phone, anchor, tabs, tab, onTab, todoLabel, tod
         </div>
       </PanelHead>
       {todo && (
-        <Tabs.Panel value="todo" className="flex min-h-0 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3 outline-hidden">
-          {tab === 'todo' && <TodoTab view={todo.view} subagents={subagents} blocks={sheet ? <Blocks items={todo.blocks} className="self-start" /> : undefined} />}
+        <Tabs.Panel value="todo" className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3 outline-hidden">
+          {tab === 'todo' && <TodoTab view={todo.view} subagents={subagents} blocks={phone ? <Blocks items={todo.blocks} className="self-start" /> : undefined} />}
         </Tabs.Panel>
       )}
       {tabs.includes('subagents') && (
-        <Tabs.Panel value="subagents" className="flex min-h-0 flex-col gap-1.5 px-3 pt-0.5 pb-2 outline-hidden">
-          {tab === 'subagents' && <SubagentIndexBody input={search} error={error} onPick={onPick} />}
+        <Tabs.Panel value="subagents" className="flex min-h-0 flex-1 flex-col outline-hidden">
+          {tab === 'subagents' && body}
         </Tabs.Panel>
       )}
-      {!sheet && (
+      {/* The Subagents tab keeps its own foot: the list's keys, or the detail's with Stop. */}
+      {!phone && tab === 'todo' && (
         <PanelFoot>
           <span className="flex items-center gap-1.5">
             <Key>Esc</Key>close
@@ -304,27 +310,19 @@ function StripReader({ id, open, phone, anchor, tabs, tab, onTab, todoLabel, tod
               <Key>→</Key>switch
             </span>
           )}
-          {tab === 'subagents' ? (
-            <span className="flex items-center gap-1.5">
-              <Key>↵</Key>open
-            </span>
-          ) : (
-            <>
-              <span className="flex-1" />
-              <span className="flex items-center gap-0.5">
-                Read only
-                <HelpTip label="Read only">To change it, ask in the chat</HelpTip>
-              </span>
-            </>
-          )}
+          <span className="flex-1" />
+          <span className="flex items-center gap-0.5">
+            Read only
+            <HelpTip label="Read only">To change it, ask in the chat</HelpTip>
+          </span>
         </PanelFoot>
       )}
     </Tabs.Root>
   );
-  if (sheet) {
+  if (phone) {
     return (
-      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className="duration-160" backdropClassName="duration-160" initialFocus={activeTab} finalFocus={back}>
-        {body(
+      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className="h-[70dvh] duration-160" backdropClassName="duration-160" initialFocus={initialFocus} finalFocus={finalFocus}>
+        {content(
           <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
             <X />
           </BaseDialog.Close>,
@@ -336,19 +334,20 @@ function StripReader({ id, open, phone, anchor, tabs, tab, onTab, todoLabel, tod
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
         <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-        {open && anchor.isConnected && <LiftedRow row={anchor} />}
-        <BasePopover.Positioner anchor={anchor} side="top" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
+        {open && lift?.isConnected && <LiftedRow row={lift} />}
+        {/* The same place and size whoever opened it: never beside a row in the conversation. */}
+        <BasePopover.Positioner anchor={() => document.getElementById('subagents-link') ?? row.current} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup
             id={id}
             data-popup=""
             aria-label={label}
             aria-modal="true"
-            initialFocus={activeTab}
-            finalFocus={back}
+            initialFocus={initialFocus}
+            finalFocus={finalFocus}
             onKeyDown={onArrows}
-            className="flex max-h-[min(80vh,var(--available-height))] w-[460px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+            className="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0"
           >
-            {body(
+            {content(
               <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
                 <X />
               </BasePopover.Close>,

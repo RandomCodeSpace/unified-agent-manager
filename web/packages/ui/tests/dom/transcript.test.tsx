@@ -620,28 +620,28 @@ describe('activity', () => {
     quiet.mockRestore();
   });
 
-  test('subagents in use sit at the foot in one-line rows; a row opens its transcript beside it, one at a time', async () => {
+  test('subagents in use sit at the foot in plain one-line rows under their chip; a row opens the strip\'s sheet on it', async () => {
     const { user } = await openTask('t8');
-    // The failed one first, then the running ones (each followed by what it spawned), then the done one.
+    // The running ones first (each followed by what it spawned), then the failed one, then the done one.
     const live = within(await log().findByRole('region', { name: 'Subagents at work' }));
     const rows = live.getAllByRole('button', { name: /, (failed|running|completed)/ });
-    expect(rows.map((row) => row.getAttribute('aria-label')?.split(',')[0])).toEqual(['Run the accessibility linter', 'Survey templates for missing alt text and labels', 'Check contrast of the theme tokens', 'Verify store callers', 'Check the heading order']);
-    // A failed row says why under it; the head counts them with their tokens.
+    expect(rows.map((row) => row.getAttribute('aria-label')?.split(',')[0])).toEqual(['Survey templates for missing alt text and labels', 'Check contrast of the theme tokens', 'Verify store callers', 'Run the accessibility linter', 'Check the heading order']);
+    // A failed row's caption is why; the chip above counts them with their tokens.
     expect(live.getByText('axe-core is not installed in this project.')).toBeTruthy();
-    expect(live.getByText(/^5 subagents · [\d.]+M tokens$/)).toBeTruthy();
+    expect(live.getByRole('button', { name: /^5 subagents · [\d.]+M tokens · 1 done · 1 failed · 3 running/ })).toBeTruthy();
     // Nothing of them stands at their calls, and the turn line does not count them.
     expect(log().queryByRole('button', { name: 'Open' })).toBeNull();
     expect(log().queryByRole('button', { name: /activity of this turn/ })).toBeNull();
-    await user.click(rows[1]);
-    let panel = within(await screen.findByRole('dialog', { name: 'Subagent transcript' }));
-    expect(await panel.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeTruthy();
+    await user.click(rows[0]);
+    let sheet = within(await screen.findByRole('dialog', { name: 'Todo and subagents' }));
+    expect(await sheet.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeTruthy();
     // Nothing to type: subagents take no follow-up.
-    expect(panel.queryByRole('textbox')).toBeNull();
-    await user.click(panel.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagent transcript' })).toBeNull());
-    await user.click(rows[2]);
-    panel = within(await screen.findByRole('dialog', { name: 'Subagent transcript' }));
-    expect(await panel.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
+    expect(sheet.queryByRole('textbox')).toBeNull();
+    await user.click(sheet.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await user.click(rows[1]);
+    sheet = within(await screen.findByRole('dialog', { name: 'Todo and subagents' }));
+    expect(await sheet.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeNull();
   });
 });
@@ -874,14 +874,16 @@ describe('history', () => {
     expect(await log().findByText('Turn 126: check pkg126 for unused exports.')).toBeTruthy();
   });
 
-  test('a subagent picked from the strip\'s index is found in its reply, its list opened, its transcript open', async () => {
+  test('a subagent picked from the strip\'s list opens in the sheet; "Spawned" finds where in its reply, paging the history in', async () => {
     const { user } = await openTask('t15');
     const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
-    await waitFor(() => expect(document.getElementById('item-h-audit')?.classList.contains('animate-flash')).toBe(true));
-    // The open transcript is modal, so what is behind it is hidden from the accessibility tree.
-    expect(screen.getByRole('button', { name: /^1 subagent · [\d.]+M tokens · 1 done/, hidden: true }).getAttribute('aria-expanded')).toBe('true');
-    // Picked from the index, its transcript opens beside the row it landed on.
-    expect(await screen.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
+    expect(await index.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
+    await user.click(index.getByRole('button', { name: 'Show where it was spawned' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Its reply's chip holds its call: the conversation lands there.
+    const chip = await screen.findByRole('button', { name: /^1 subagent · [\d.]+M tokens · 1 done/ });
+    await waitFor(() => expect(chip.classList.contains('animate-flash')).toBe(true));
+    expect(chip.dataset.subagentItems).toContain('h-audit');
   });
 });

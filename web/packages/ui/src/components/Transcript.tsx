@@ -23,7 +23,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
-import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
 import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
@@ -71,7 +71,7 @@ interface Props {
   provider: string;
   /** The Task's directory, for links to its files. */
   workdir: string;
-  /** The window ends at the live tail: the live subagent card sits at its foot. */
+  /** The window ends at the live tail: the live subagent rows sit at its foot. */
   liveCard?: boolean;
   /** Open the Changes sheet on a turn's edits, from its "Changed n files" line; `latest` when it is the Task's latest turn. */
   onOpenChanges?: (turn: { files: string[]; latest: boolean }) => void;
@@ -114,8 +114,8 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * is one flat assistant turn: a head row opens the timeline of thinking and tool calls,
  * while prose and answered questions stay in the answer. A decided request without a
  * tool row joins the timeline at its time. The subagents a reply spawned
- * are a chip on its turn line, and the live card
- * at the foot while one runs; each opens in place onto its own transcript.
+ * are a chip on its turn line, and plain rows at the foot while one runs;
+ * the chip and each row open the strip's sheet.
  */
 export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
@@ -198,12 +198,12 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
     const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
     const spawned = reply?.subagents ?? NO_SUBAGENTS;
-    // The live card shows every one of them: its chip waits until the card leaves. Every call has spawned one
-    // the card shows (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
+    // The live rows show every one of them under their own chip: its chip waits until they leave. Every call has spawned one
+    // they show (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
     const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
     out.push(
       <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-        {runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null}
+        {runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} replyKey={userItemId ?? 'start'} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null}
         {renderCompact(group, gctx, product, own)}
       </div>,
     );
@@ -347,16 +347,12 @@ function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean
  * they turn `attention` while a call waits for the user. The running step is the live step at the
  * transcript's foot: the head never names it.
  */
-const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES, reply, end, edits, gitlab }: Readonly<{ /** The reply that ends the turn: the head copies it. */ reply?: Item; /** The turn's end, once a reply ends it: its outcome and menu. */ end?: ReplyEnd; /** The files the turn's edit calls named. */ edits?: TurnChange; /** The turn's items that can name GitLab items. */ gitlab?: Item[]; id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
+const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, replyKey, tones = NO_TONES, reply, end, edits, gitlab }: Readonly<{ /** The reply that ends the turn: the head copies it. */ reply?: Item; /** The turn's end, once a reply ends it: its outcome and menu. */ end?: ReplyEnd; /** The files the turn's edit calls named. */ edits?: TurnChange; /** The turn's items that can name GitLab items. */ gitlab?: Item[]; id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list in the strip's sheet. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live rows at the foot show the same subagents under their own chip. */ chip?: boolean; /** The reply's key (its message's id, "start" before any): the chip opens the sheet's list filtered to it. */ replyKey?: string; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
   const [open, setOpen] = useDisclosure(`${scope}:${scopedId}`);
   const [opened, setOpened] = useState(open);
-  // The reply's subagent list, mounted on its first open (a `locate` may be what opens it).
-  const [listOpen, setListOpen] = useSubagentDisclosure(`subagents:${scopedId}`, subagents);
-  const [listOpened, setListOpened] = useState(listOpen);
-  if (listOpen && !listOpened) setListOpened(true);
   const card = useRef<HTMLDivElement>(null);
   const outcome = useTurnOutcome({ reply, end, edits, gitlab, replyActions: ctx.replyActions, anchor: card });
   const failures = summary.parts.filter((p) => p.tone === 'error');
@@ -366,7 +362,6 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   const text = summary.parts.filter((p) => counts.includes(p) || p.tone === 'error').map((p) => p.text).join(' · ');
   const domId = `${scope}-${scopedId}`;
   const timelineId = `${domId}-timeline`;
-  const listId = `${domId}-subagents`;
   const toggle = () => {
     setOpened(true);
     setOpen((o) => !o);
@@ -407,16 +402,11 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
             <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
           </button>
         )}
-        {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
+        {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
         {outcome.actions && <span className="ml-auto">{outcome.actions}</span>}
       </div>
       <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>
       {outcome.reader}
-      {listOpened && subagents.length > 0 && (
-        <Collapse open={listOpen} appear inner="pb-2">
-          <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} calls={calls} tones={tones} /></DetailVisibility>
-        </Collapse>
-      )}
       {opened && (
         <Collapse open={open} appear>
           <div aria-hidden="true" className="fade-rule" />
@@ -432,7 +422,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
 }, (a, b) => {
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
   // Its counts and its steps follow from its entries and these context fields alone; `summary` is rebuilt every render.
-  return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.at === b.at && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
+  return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.at === b.at && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.replyKey === b.replyKey && a.tones === b.tones
     && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.replyActions === b.ctx.replyActions && a.ctx.approvals === b.ctx.approvals
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
     && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item))

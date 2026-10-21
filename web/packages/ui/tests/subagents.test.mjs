@@ -102,6 +102,8 @@ test('the filter reads name and summary; the index filters by status', () => {
   assert.equal(inFilter(agent('a', 'c', 'idle'), 'done'), true);
   assert.equal(inFilter(agent('a', 'c', 'cancelled'), 'done'), false);
   assert.equal(inFilter(agent('a', 'c', 'cancelled'), 'all'), true);
+  assert.equal(inFilter(agent('a', 'c', 'cancelled'), 'stopped'), true);
+  assert.equal(inFilter(agent('a', 'c', 'failed'), 'stopped'), false);
 });
 
 test('the header index groups subagents by the user message that started their reply, newest first, never by turn number', () => {
@@ -165,8 +167,9 @@ test('the server\'s outline places subagents whose reply is not loaded; loaded i
   assert.deepEqual(groups.map((g) => [g.key, g.text]), [['u2', 'Thanks, all of it'], ['u1', 'Audit every package']]);
 });
 
-test('a list draws families: each subagent then the ones it spawned, failed families first, then running ones, else in spawn order', () => {
+test('a list draws families: each subagent then the ones it spawned, running families first, then failed, done and stopped ones, else in spawn order', () => {
   const list = [
+    agent('stop1', 'c0', 'cancelled'),
     agent('done1', 'c1'),
     agent('outer', 'c2'),
     agent('run1', 'c3', 'running'),
@@ -174,8 +177,8 @@ test('a list draws families: each subagent then the ones it spawned, failed fami
     agent('deeper', 'k2', 'completed', { parent_agent_id: 'inner' }),
     agent('orphan', 'k3', 'completed', { parent_agent_id: 'gone' }),
   ];
-  assert.deepEqual(families(list).map((f) => f.rows.map((r) => `${r.subagent.id}:${r.depth}`)), [['outer:0', 'inner:1', 'deeper:2'], ['run1:0'], ['done1:0'], ['orphan:0']]);
-  // The header index nests them the same way but keeps spawn order.
-  assert.deepEqual(families(list, false).map((f) => f.head.id), ['done1', 'outer', 'run1', 'orphan']);
+  assert.deepEqual(families(list).map((f) => f.rows.map((r) => `${r.subagent.id}:${r.depth}`)), [['run1:0'], ['outer:0', 'inner:1', 'deeper:2'], ['done1:0'], ['orphan:0'], ['stop1:0']]);
+  // Unranked, they nest the same way but keep spawn order.
+  assert.deepEqual(families(list, false).map((f) => f.head.id), ['stop1', 'done1', 'outer', 'run1', 'orphan']);
   assert.equal(totalTokens([agent('a', 'c', 'completed', { tokens: 1200 }), agent('b', 'c'), agent('d', 'c', 'running', { tokens: 800 })]), 2000);
 });

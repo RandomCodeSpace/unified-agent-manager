@@ -25,7 +25,7 @@ import type { FileActions } from './GoToFile';
 import { keysTaken } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
-import { SubagentScope, type Reveal } from './Subagents';
+import { SubagentScope } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
@@ -401,31 +401,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
-  // A subagent's peek or transcript is open: the view keeps that subagent's row where it is, whatever
-  // arrives above or below it, so the row stays under the pointer and beside its panel.
-  const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
   const log = useRef<HTMLDivElement>(null);
-  const keepHeld = useCallback(() => {
-    const h = held.current, el = scroller.current;
-    if (!h || !el) return;
-    const row = h.row();
-    const top = row?.getBoundingClientRect().top;
-    if (row !== h.el || top === undefined) {
-      held.current = { ...h, el: row, top: top ?? 0 };
-      return;
-    }
-    if (top === h.top) return;
-    // At a turn's end its last message lands above the row while its status leaves below it: the view,
-    // already at its foot, has no room to scroll by that much. The content grows by what is missing
-    // until the hold ends.
-    const want = el.scrollTop + top - h.top;
-    const short = want - (el.scrollHeight - el.clientHeight);
-    if (short > 0 && log.current) log.current.style.minHeight = `${log.current.offsetHeight + short}px`;
-    el.scrollTop = want;
-  }, []);
-  // A row moves without the content's size changing (one part shrinking above it as another grows below,
-  // a transition): while it is held, every change and every frame checks it.
-  const watching = useRef<{ changes: MutationObserver; frame: number } | null>(null);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
@@ -633,57 +609,23 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (held.current) {
-      keepHeld();
-      return;
-    }
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) {
       jumpShown.current = true;
       setJump(true);
     }
-  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions, keepHeld]);
+  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
     const observer = new ResizeObserver(() => {
-      if (held.current) keepHeld();
-      else if (atBottom.current) el.scrollTop = el.scrollHeight;
+      if (atBottom.current) el.scrollTop = el.scrollHeight;
     });
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [keepHeld]);
-
-  // Once the peek or transcript closes, a view at the bottom catches up with what came meanwhile.
-  const hold = useCallback((row: (() => Element | null) | null) => {
-    if (row) {
-      const el = row();
-      held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0 };
-      if (!watching.current && log.current) {
-        const changes = new MutationObserver(keepHeld);
-        changes.observe(log.current, { subtree: true, childList: true, characterData: true, attributes: true });
-        const w = { changes, frame: 0 };
-        const tick = () => {
-          keepHeld();
-          w.frame = requestAnimationFrame(tick);
-        };
-        w.frame = requestAnimationFrame(tick);
-        watching.current = w;
-      }
-      return;
-    }
-    held.current = null;
-    if (watching.current) {
-      watching.current.changes.disconnect();
-      cancelAnimationFrame(watching.current.frame);
-      watching.current = null;
-    }
-    if (log.current) log.current.style.minHeight = '';
-    const el = scroller.current;
-    if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
-  }, [session.history_after, keepHeld]);
+  }, []);
 
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
@@ -845,8 +787,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closeSidePanels(keepOutput);
   };
 
-  /** The last request to show a subagent's row; the reply's list, its group and the row itself follow it (`SubagentScope`). */
-  const [reveal, setReveal] = useState<Reveal | null>(null);
   /** Page the transcript until item `id` is in the window, synchronously so it is in the DOM at once; false when the history held does not reach it. */
   async function bring(id: string): Promise<boolean> {
     let current = latestSession.current;
@@ -891,38 +831,32 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
-  /** Scroll the transcript to the row of the subagent a `task` call spawned and flash it; `expand` opens the row and focuses it. */
-  async function locate(toolCallId: string, expand = false) {
+  /** Scroll the transcript to the row of the subagent a `task` call spawned (else the chip or turn line holding it), flash it and focus it. */
+  async function locate(toolCallId: string) {
     setLocateError('');
     // One another subagent spawned is listed in its top-level ancestor's reply: bring that call in.
     const subagents = latestSession.current.subagents;
     const spawned = parentMap(subagents).get(toolCallId);
     const call = (spawned && mainCall(spawned, subagents)) ?? toolCallId;
-    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the header’s Subagents list.'); return; }
+    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the Subagents list on the status strip.'); return; }
     atBottom.current = false;
-    // The reply's subagent list opens on its own (its group and page too); this commits it now.
-    const ask = () => flushSync(() => setReveal((r) => ({ toolCallId, expand, n: (r?.n ?? 0) + 1 })));
-    ask();
+    // Its row (the live rows at the foot), else what folds the call: the reply's subagent chip, else the turn's activity, opened.
+    let fold: HTMLElement | undefined;
     if (!document.getElementById(`item-${toolCallId}`)) {
-      // Otherwise the call folds into its turn: open the subagent chip holding it, else the turn's activity; the list mounted there is asked again.
       const root = log.current;
       const folds = root ? [...root.querySelectorAll<HTMLElement>('[data-subagent-items]'), ...root.querySelectorAll<HTMLElement>('[data-history-items]')] : [];
-      const fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
+      fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
       const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
       if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
-      ask();
     }
-    if (!document.getElementById(`item-${toolCallId}`)) return;
+    if (!document.getElementById(`item-${toolCallId}`) && !fold) return;
     // The folds open over EXIT_MS; the row lands where it ends up.
     await settle(EXIT_MS);
-    const el = document.getElementById(`item-${toolCallId}`);
+    const el = document.getElementById(`item-${toolCallId}`) ?? (fold?.isConnected ? fold : null);
     if (!el) return;
     // A quarter of the view down, so the rows above it (the one that spawned it) stay in sight.
     land(el, Math.max(LAND_MARGIN, Math.round((scroller.current?.clientHeight ?? 0) / 4)));
-    const toggle = el.querySelector<HTMLElement>('[data-subagent-toggle]');
-    // Its transcript opens beside the row it landed on; else the row takes the focus.
-    if (expand) toggle?.click();
-    else toggle?.focus({ preventScroll: true });
+    (el.querySelector<HTMLElement>('[data-subagent-toggle]') ?? (el.matches('button') ? el : null))?.focus({ preventScroll: true });
   }
 
   /** Scroll to the reply a user message started ("start": the one before any) and flash its turn line. */
@@ -988,9 +922,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
     lastScrollAt.current = performance.now();
-    // The reader may scroll while a row is held: it is held where they left it.
-    const h = held.current;
-    if (h) held.current = { ...h, top: h.el?.getBoundingClientRect().top ?? h.top };
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     if (jumpShown.current === atBottom.current) {
@@ -1057,7 +988,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)}>
     <GitLabItemsContext.Provider value={gitlabItems}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
