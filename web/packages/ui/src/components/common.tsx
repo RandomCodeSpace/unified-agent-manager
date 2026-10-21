@@ -157,6 +157,11 @@ export function WorkingMark({ className }: Readonly<{ className?: string }>) {
   return <Spinner className={cn('size-3.5 border-current border-r-transparent text-accent', className)} />;
 }
 
+/** Model work on the strip's live line: a 7px ink dot that breathes (opacity and scale only); still under reduced motion. */
+export function BreathingDot() {
+  return <span aria-hidden="true" className="inline-block size-[7px] shrink-0 animate-breathe rounded-full bg-ink motion-reduce:animate-none" />;
+}
+
 function StateGlyph({ state }: Readonly<{ state: SessionState }>) {
   const tone = STATE_TONE[state];
   switch (state) {

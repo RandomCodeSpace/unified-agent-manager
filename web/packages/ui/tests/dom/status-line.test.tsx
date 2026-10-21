@@ -99,7 +99,7 @@ test('the line stays while a subagent outlives the turn', () => {
   for (const state of ['idle', 'completed'] as const) {
     const line = (subagents_running: number) => statusLine(task({ state, subagents_running, turn_timings: [{ ...timing, ended_at: new Date(start + 9000).toISOString(), state: 'completed' }] }), shownState({ state, subagents_running }) === 'working', false);
     expect(line(0)).toBeNull();
-    expect(line(1)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined });
+    expect(line(1)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined, live: null });
   }
 });
 
@@ -115,7 +115,7 @@ test('a turn starting says nothing of the last one: no line until its timing com
   expect(screen.queryByRole('button')).toBeNull();
   view.rerender(draw(task({ turn_timings: [before, next] })));
   expect(screen.queryByRole('button')).toBeNull();
-  expect(statusLine(task({ turn_timings: [before, next] }), true, false)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined });
+  expect(statusLine(task({ turn_timings: [before, next] }), true, false)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined, live: null });
 });
 
 test('a turn a restart or close cut off gives the next one no line while it starts; a dropped stream keeps the running turn\'s', () => {

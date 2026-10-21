@@ -1,11 +1,11 @@
-// When the LLM is engaged and when work runs locally: the open Thread's phase under the composer, and the counts of
-// model calls in flight across the service (the sidebar's Usage and AI button shows them: usage-ai.test.tsx). Mock: t1
-// runs a tool locally, t8 waits on the model with one subagent, t6 waits on you, t7 compacts, and t22's audits run on
-// after its turn ended.
-import { act, render, waitFor } from '@testing-library/react';
+// When the LLM is engaged and when work runs locally: the open Thread's phase as the strip's live line (r13 A), and
+// the counts of model calls in flight across the service (the sidebar's Usage and AI button shows them:
+// usage-ai.test.tsx). Mock: t1 runs a tool locally, t8 waits on the model with one subagent, t6 waits on you, t7
+// compacts, and t22's audits run on after its turn ended.
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { Phase, SnapshotData } from '../../src/api';
-import { PhaseBlock, phaseClock } from '../../src/components/ModelPhase';
+import type { Item, Phase, SessionDetail, SnapshotData } from '../../src/api';
+import { StatusLine, WAIT_STILL_MS, liveClock, liveLine, statusLine } from '../../src/components/StatusLine';
 import { initialState, reducer } from '../../src/state';
 import { openTask } from './render';
 
@@ -13,133 +13,101 @@ afterEach(() => vi.useRealTimers());
 
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
+const task = (phase: Phase | undefined, extra: Partial<SessionDetail> = {}) =>
+  ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_activity: { todos: { known: false }, phase }, ...extra }) as unknown as SessionDetail;
+const tool = (id: string, name: string, status = 'running', extra: Partial<Item['tool']> = {}) => ({ id, kind: 'tool', time: ago(3), tool: { name, status, ...extra } }) as unknown as Item;
 
-function block(phase: Phase | undefined) {
-  return render(<PhaseBlock phase={phase} />).container;
+/** The strip's live line as it draws: its words, and what moves (`breathe`, `spin` or nothing). */
+function strip(session: SessionDetail) {
+  const view = render(<StatusLine line={statusLine(session, session.state === 'working', !!session.compacting)} session={session} hidden={false} onJump={() => {}} />);
+  const moving = view.container.querySelectorAll('.animate-breathe, .animate-spin');
+  const shown = view.container.querySelector('button > span[aria-hidden]')?.textContent ?? '';
+  return { view, shown, moves: [...moving].map((n) => (n.className.includes('animate-breathe') ? 'breathe' : 'spin')) };
 }
 
-/** What assistive technology reads of el: its text without what is hidden from it. */
-function spoken(el: Element | null | undefined): string {
-  if (!el) return '';
-  const copy = el.cloneNode(true) as Element;
-  copy.querySelectorAll('[aria-hidden="true"], [aria-hidden=""]').forEach((n) => n.remove());
-  return copy.textContent ?? '';
-}
+describe('the live line at the strip', () => {
+  test('each phase in words, with one mark: model work breathes, local work turns, you and subagents are still', () => {
+    expect(liveLine(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [{ id: 'r', kind: 'reasoning', time: ago(10) } as Item] }), false)).toEqual({ mark: 'dot', phase: 'Thinking', since: ago(12) });
+    const writing = task({ kind: 'model', since: ago(5), calls: 1 }, { items: [{ id: 'a', kind: 'assistant', time: ago(2) } as Item], turn_timings: [{ id: 'x', state: 'working', started_at: ago(60), output_tokens: 520, generation_ms: 10_000 }] as SessionDetail['turn_timings'] });
+    expect(liveLine(writing, false)).toEqual({ mark: 'dot', phase: 'Writing the reply', detail: '52 tok/s' });
+    // A newest item from before this call began is the last call's: nothing back yet is a wait.
+    expect(liveLine(task({ kind: 'model', since: ago(64), calls: 1 }, { items: [{ id: 'a', kind: 'assistant', time: ago(90) } as Item] }), false)).toEqual({ mark: 'wait', phase: 'Waiting for the model', since: ago(64) });
+    const command = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./internal/vterm/...' }, { items: [tool('c', 'bash', 'running', { tail: [{ text: 'ok' }, { text: '=== RUN   TestRedrawReplaysFocusEvents' }, { text: '  ' }] })] });
+    expect(liveLine(command, false)).toEqual({ mark: 'ring', phase: 'Running go test ./internal/vterm/...', since: ago(41), tail: '=== RUN   TestRedrawReplaysFocusEvents' });
+    const reads = task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view'), tool('2', 'view'), tool('3', 'view', 'pending')] });
+    expect(liveLine(reads, false)?.phase).toBe('Reading 3 files');
+    expect(liveLine(task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view')] }), false)?.phase).toBe('Reading redraw_test.go');
+    const you = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission', interactions: [{ id: 'p', kind: 'permission', title: 'Run shell command', detail: 'rm -rf build/', state: 'pending', time: ago(72) }] as SessionDetail['interactions'] });
+    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs you', detail: 'allow rm -rf build/', since: ago(72) });
+    const agents = task({ kind: 'model', since: ago(5), calls: 3, subagents: 3 }, { subagents: [{ id: 'a', status: 'running' }, { id: 'b', status: 'running' }, { id: 'c', status: 'running' }, { id: 'd', status: 'completed' }] as SessionDetail['subagents'] });
+    expect(liveLine(agents, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents' });
+    expect(liveLine(task({ kind: 'model', by: 'compaction', since: ago(18), calls: 1 }), false)).toEqual({ mark: 'dot', phase: 'Compacting the conversation', since: ago(18) });
+    // Nothing holds: no live line, so the slot's "Now:" or the intent comes back.
+    expect(liveLine(task(undefined), false)).toBeNull();
+  });
 
-/** What the block shows: its glyph's word, whose work it is and the clock. */
-const shown = (el: Element | null | undefined) => el?.querySelector(CELL)?.querySelector(':scope > span[aria-hidden]')?.textContent ?? '';
-/** The block's cell (the detail carries a title too). */
-const CELL = '[title]:not([data-phase-detail])';
-
-describe('the phase under the composer', () => {
-  test('a local tool is one block with a clock that ticks each second, its tool and argument beside it', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+  test('the line draws [mark] phase · detail · elapsed with exactly one moving mark, or none', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    const box = block({ kind: 'local', since: ago(42), tool: 'bash', detail: 'go test ./internal/vterm/...' });
-    const phase = box.querySelector('[data-phase="local"]')!;
-    expect(spoken(phase)).toBe('bash go test ./internal/vterm/...Local · no model, 0:42');
-    expect(shown(phase)).toBe('Local 0:42');
+    const command = strip(task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { items: [tool('c', 'bash', 'running', { tail: [{ text: 'PASS' }] })] }));
+    expect(command.shown).toBe('Running go test ./...·41sPASS');
+    expect(command.moves).toEqual(['spin']);
     await act(async () => { vi.advanceTimersByTime(1000); });
-    expect(shown(phase)).toBe('Local 0:43');
-    expect(phase.querySelector('svg')!.getAttribute('class')).toContain('lucide-terminal');
-    // Nothing spins: the Working glyph and the running step keep the only rings.
-    expect(box.querySelector('.animate-spin, .animate-pulse')).toBeNull();
-  });
-
-  test('a model call is the Cpu block without the model’s name; waiting on you says what is asked; none shows nothing', () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    expect(command.view.container.textContent).toContain('42s');
+    // The output line is quieter and gives way first; a phone hides it.
+    expect(screen.getByText('PASS').className).toEqual(expect.stringContaining('max-sm:hidden'));
+    command.view.unmount();
     vi.setSystemTime(NOW);
-    const model = block({ kind: 'model', since: ago(65), model: 'gpt-6-luna', calls: 2, subagents: 1 }).querySelector('[data-phase="model"]')!;
-    expect(spoken(model)).toBe('Model, 1:05');
-    expect(model.textContent).not.toContain('gpt-6-luna');
-    expect(model.querySelector('[data-phase-detail]')).toBeNull();
-    expect(model.querySelector('svg')!.getAttribute('class')).toContain('lucide-cpu');
-    expect(model.querySelector(CELL)!.className).toContain('bg-accent-wash');
-    const waiting = block({ kind: 'waiting', since: ago(3725), detail: 'approve bash' }).querySelector('[data-phase="waiting"]')!;
-    expect(spoken(waiting)).toBe('approve bashWaiting on you, 1:02:05');
-    expect(shown(waiting)).toBe('You 1:02:05');
-    expect(waiting.querySelector(CELL)!.className).toContain('bg-attention-wash');
-    expect(block(undefined).childElementCount).toBe(0);
+    const thinking = strip(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [{ id: 'r', kind: 'reasoning', time: ago(10) } as Item] }));
+    expect(thinking.shown).toBe('Thinking·12s');
+    expect(thinking.moves).toEqual(['breathe']);
+    thinking.view.unmount();
+    const you = strip(task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' }));
+    expect(you.shown).toBe('Needs you·approve bash·1m 12s');
+    expect(you.moves).toEqual([]);
+    expect(screen.getByText('Needs you').closest('.text-attention')).not.toBeNull();
+    you.view.unmount();
   });
 
-  test('the detail is an item of the row that truncates first; a phone hides it and whose work it is', () => {
-    const phase = block({ kind: 'model', by: 'subagent', since: ago(5), detail: 'List the exported symbols of web/src/lib that nothing calls.' }).querySelector('[data-phase]')!;
-    // The wrapper takes no box, so the detail and the block shrink against the branch in the footer's own row.
-    expect(phase.className.split(' ')).toContain('contents');
-    const detail = phase.querySelector('[data-phase-detail]')!;
-    expect(detail.className.split(' ')).toEqual(expect.arrayContaining(['min-w-0', 'shrink-1000', 'truncate', 'max-sm:hidden']));
-    expect(detail.getAttribute('title')).toBe('List the exported symbols of web/src/lib that nothing calls.');
-    // The block never shrinks.
-    expect(phase.querySelector(CELL)!.parentElement!.className).toContain('shrink-0');
-    const by = [...phase.querySelectorAll('span')].find((s) => s.textContent === ' · subagent')!;
-    expect(by.className).toContain('max-sm:hidden');
+  test('a model call silent past the wait threshold stops breathing: a still clock in muted words', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+    const early = strip(task({ kind: 'model', since: ago(WAIT_STILL_MS / 1000 - 5), calls: 1 }));
+    expect(early.moves).toEqual(['breathe']);
+    early.view.unmount();
+    const late = strip(task({ kind: 'model', since: ago(64), calls: 1 }));
+    expect(late.shown).toBe('Waiting for the model·1m 04s');
+    expect(late.moves).toEqual([]);
+    expect(late.view.container.querySelector('.lucide-clock')).not.toBeNull();
+    expect(screen.getByText('Waiting for the model').className).toContain('text-muted');
   });
 
-  test('the hairline after the block shows only while the time split follows it', () => {
-    const phase = block({ kind: 'model', since: ago(5) }).querySelector('[data-phase]')!;
-    const rule = phase.querySelector('[data-phase-rule]')!;
-    expect(rule.className.split(' ')).toContain('hidden');
-    expect(phase.className).toContain('[&:has(+*)_[data-phase-rule]]:block');
-    // A phone shows the block alone: no hairline, and the open Thread's row hides the split after it.
-    expect(rule.className).toContain('max-sm:hidden!');
+  test('the clock reads seconds, then minutes and seconds, then hours and minutes', () => {
+    expect([liveClock(0), liveClock(41_999), liveClock(64_000), liveClock(605_000), liveClock(3_729_000), liveClock(-5)]).toEqual(['0s', '41s', '1m 04s', '10m 05s', '1h 02m', '0s']);
   });
 
-  test('the row under the composer: Files, the branch, the detail, the block, then the time split, which gives way on a phone', async () => {
+  test('the footer under the composer has no phase block any more: Files, the branch, then the time split', async () => {
     await openTask('t1');
-    await waitFor(() => expect(document.querySelector('[data-phase="local"]')).not.toBeNull());
-    const group = document.querySelector('[data-phase="local"]')!.parentElement!;
-    expect(group.className).toContain('max-sm:[&>[data-phase]~*]:hidden');
-    await waitFor(() => expect(group.lastElementChild?.getAttribute('aria-label')).toMatch(/^Time in this Thread/));
+    await waitFor(() => expect(document.querySelector('[data-composer-foot] [aria-label^="Time in this Thread"]')).not.toBeNull());
+    expect(document.querySelector('[data-phase]')).toBeNull();
     const foot = document.querySelector('[data-composer-foot]')!;
     expect(foot.textContent).not.toContain('Current branch');
-    // In order: Files, the place, then the right-hand group; the place never takes the free space itself.
+    expect(foot.textContent).not.toContain('Local');
     expect(foot.children[0].textContent).toBe('Files');
     const place = foot.querySelector('[data-place]')!;
     expect(place.className.split(' ')).not.toContain('flex-1');
     expect(place.className.split(' ')).toContain('min-w-0');
   });
 
-  test('the clock reads minutes and seconds, hours past the hour', () => {
-    expect([phaseClock(0), phaseClock(59_999), phaseClock(605_000), phaseClock(3_729_000), phaseClock(-5)]).toEqual(['0:00', '0:59', '10:05', '1:02:09', '0:00']);
-  });
-
-  test('the open Thread shows its own phase: local on t1, the model on t8', async () => {
-    await openTask('t1');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="local"]'))).toContain('bash go test ./internal/vterm/... -run Redraw -count=1Local · no model'));
-    expect(document.querySelector('[data-phase="model"]')).toBeNull();
-  });
-
-  test('t8 waits on the model, and the block leaves its name to the Model picker', async () => {
-    await openTask('t8');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toMatch(/^Model, \d+:\d\d$/));
-  });
-
-  test('between turns a subagent still running says so, with what it does', () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
-    vi.setSystemTime(NOW);
-    const model = block({ kind: 'model', by: 'subagent', since: ago(12), model: 'gpt-6-luna', detail: 'Survey the docs', calls: 1, subagents: 1 });
-    expect(spoken(model.querySelector('[data-phase="model"]'))).toBe('Survey the docsModel · subagent, 0:12');
-    expect(shown(model.querySelector('[data-phase="model"]'))).toBe('Model · subagent 0:12');
-    // Without a description it shows no detail: the model's name is the Model picker's.
-    expect(spoken(block({ kind: 'model', by: 'subagent', since: ago(3), model: 'gpt-6-luna', calls: 1, subagents: 1 }).querySelector('[data-phase]'))).toBe('Model · subagent, 0:03');
-    expect(spoken(block({ kind: 'local', by: 'subagent', since: ago(4), tool: 'bash', detail: 'go test ./...' }).querySelector('[data-phase="local"]'))).toBe('bash go test ./...Local · subagent, 0:04');
-    expect(model.querySelector('.animate-spin, .animate-pulse')).toBeNull();
-  });
-
-  test('compaction is the Thread’s own model call: it says compacting', () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
-    vi.setSystemTime(NOW);
-    expect(spoken(block({ kind: 'model', by: 'compaction', since: ago(20), model: 'gpt-6-luna', calls: 1 }).querySelector('[data-phase="model"]'))).toBe('Model · compacting, 0:20');
-  });
-
-  test('t22 shows its audits running after the turn', async () => {
-    await openTask('t22');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('List the exported symbols of web/src/lib that nothing calls.Model · subagent'));
-  });
-
-  test('t7 shows its compaction', async () => {
-    await openTask('t7');
-    await waitFor(() => expect(spoken(document.querySelector('[data-phase="model"]'))).toContain('Model · compacting'));
+  test.each([
+    ['t1', /^Running go test \.\/internal\/vterm\/\.\.\. -run Redraw -count=1, /],
+    ['t8', /^Waiting for the model, /],
+    ['t6', /^Needs you, allow chmod 0644/],
+    ['t7', /^Compacting the conversation, /],
+    ['t22', /^Waiting on 4 subagents, /],
+  ])('mock Thread %s says its own phase on the strip', async (id, words) => {
+    await openTask(id);
+    await waitFor(() => expect(screen.getByRole('button', { name: words })).toBeTruthy());
   });
 });
 
