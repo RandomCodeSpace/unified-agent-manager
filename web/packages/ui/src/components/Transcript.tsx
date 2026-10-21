@@ -10,7 +10,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { receipts, type Stamp } from '../lib/receipts';
@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -590,7 +590,8 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
   const running = live && isActive(t?.status);
   const words = callWords(full ?? item, live, approvals);
   const Icon = STEP_ICONS[words.icon];
-  const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
+  // Held still: the strip's live line has the pane's one moving mark.
+  const glyph = running ? <span className={cn('contents', STILL_STEP)}><ToolMark tone="running" /></span> : <Icon aria-hidden="true" />;
   const took = running ? null : itemTook(item);
   const ended = !live && isActive(t?.status);
   const title = ended ? 'The turn ended before this tool reported a result' : undefined;
