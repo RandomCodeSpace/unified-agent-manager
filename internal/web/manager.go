@@ -2320,7 +2320,7 @@ func (m *Manager) flush() (err error) {
 		}
 		timings := store.CloneTurnTimings(s.turnTimings)
 		if len(s.turnTodos) > 0 {
-			kept = append(kept, keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings})
+			kept = append(kept, keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings, live: s.turnActivity.Todos})
 		}
 		if len(s.turnChanges) > 0 {
 			keptChanges = append(keptChanges, keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings})

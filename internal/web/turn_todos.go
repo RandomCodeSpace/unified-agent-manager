@@ -21,6 +21,9 @@ import (
 // uploads, one TurnTodos a line, read when a reply's foot opens them.
 const (
 	turnTodosFile = "turn-todos.jsonl"
+	// todosFile keeps the whole live list as the last turn that changed it
+	// left it, for a Task whose conversation is closed.
+	todosFile = "todos.json"
 	// maxSnapshotTodos bounds the rows a snapshot keeps; its counts count
 	// all in scope.
 	maxSnapshotTodos      = 50
@@ -95,11 +98,14 @@ type keptTodos struct {
 	s       *webSession
 	records []TurnTodos
 	timings []TurnTiming
+	// live is the whole list as it stands, written beside the records.
+	live TodoView
 }
 
 // appendTurnTodos appends a Task's snapshots to its turn-todos.jsonl,
 // owner-only, synced once, and compacts the file once it passes
-// maxTurnTodosBytes. flush calls it outside mu, before it writes the turn's
+// maxTurnTodosBytes; the same write replaces todos.json with the live list
+// when it is known. flush calls it outside mu, before it writes the turn's
 // counts; the snapshots stay queued, and readable, until it has appended
 // them. A Task deleted meanwhile keeps nothing.
 func (m *Manager) appendTurnTodos(k keptTodos) {
@@ -116,6 +122,12 @@ func (m *Manager) appendTurnTodos(k keptTodos) {
 	size, err := appendPrivate(m.uploadRoot(), dir, path, data)
 	if err == nil && size > maxTurnTodosBytes {
 		err = compactTurnTodos(path, k.timings)
+	}
+	if err == nil && k.live.Known {
+		var live []byte
+		if live, err = json.Marshal(k.live); err == nil {
+			err = writeFileAtomic(filepath.Join(dir, todosFile), ".todos-*", live)
+		}
 	}
 	if err != nil {
 		log.Warn("keep the turn's todo list failed", "session", k.s.id, "error", err)
@@ -251,4 +263,69 @@ func (s *Server) handleTurnTodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, rec)
+}
+
+// TodoHistory returns every todo list kept for Task id: the live list, or
+// the last one written when the conversation is closed, and the last
+// record of each turn the Task still holds that changed the list, queued
+// ones included, in the turns' order. It reads settled and archived Tasks
+// alike, and changes nothing.
+func (m *Manager) TodoHistory(id string) (TodoHistory, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return TodoHistory{}, err
+	}
+	m.mu.Lock()
+	timings := slices.Clone(s.turnTimings)
+	queued := slices.Clone(s.turnTodos)
+	live := s.turnActivity.Todos
+	dir := m.taskUploadDir(s.id)
+	m.mu.Unlock()
+	last := readAllTurnTodos(filepath.Join(dir, turnTodosFile))
+	for _, r := range queued {
+		last[r.TimingID] = r
+	}
+	h := TodoHistory{Turns: []TurnTodos{}}
+	for _, t := range timings {
+		if r, ok := last[t.ID]; ok {
+			h.Turns = append(h.Turns, r)
+		}
+	}
+	if live.Known {
+		h.Live = &live
+	} else if data, err := os.ReadFile(filepath.Join(dir, todosFile)); err == nil { // #nosec G304 -- UAM's own file.
+		var v TodoView
+		if json.Unmarshal(data, &v) == nil && v.Known {
+			h.Live = &v
+		}
+	}
+	return h, nil
+}
+
+// readAllTurnTodos reads path's last whole record of each turn.
+func readAllTurnTodos(path string) map[string]TurnTodos {
+	last := map[string]TurnTodos{}
+	f, err := os.Open(path) // #nosec G304 -- UAM's own file.
+	if err != nil {
+		return last
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(nil, maxTurnTodosLine)
+	for sc.Scan() {
+		var r TurnTodos
+		if json.Unmarshal(sc.Bytes(), &r) == nil && r.TimingID != "" {
+			last[r.TimingID] = r
+		}
+	}
+	return last
+}
+
+func (s *Server) handleTodoHistory(w http.ResponseWriter, r *http.Request) {
+	h, err := s.m.TodoHistory(r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h)
 }
