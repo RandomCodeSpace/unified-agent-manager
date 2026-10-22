@@ -676,7 +676,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   numbers), or, while the turn has not touched the list yet, the same counts
   from the last turn; clicking it then opens the list, by sections In
   progress, Blocked, To do and Done, with the subagent that wrote each row
-  when uam could tell. Without a list, clicking it jumps to the end of the
+  when uam could tell. The list stays on the line while the Thread is idle
+  (a closed Thread shows the last list uam kept), beside a "3 turns" button
+  that opens the todo history: every row the turns ever kept, by stage, each
+  stamped with when its state changed and in which turn, the rows the agents
+  removed marked as such. Without a list, clicking it jumps to the end of the
   conversation. After a stop it says why until the next turn
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
@@ -785,6 +789,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   shows "1 open".
   `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
   settled or archived Thread, or 404 when none were kept.
+  `GET /api/sessions/{id}/todos/history` returns the last record of every
+  held turn, in order, and `live`: the open conversation's list or, when
+  none is open, the last list uam wrote to `todos.json` beside the records
+  at a turn's end (null when there is none).
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
   UAM, such as signing in again in Settings, and a link only when it is
   https) and its authentication, model, MCP and notification messages show
