@@ -40,7 +40,7 @@ function Table({ head, rows, numeric = (i) => i > 0 }: Readonly<{ head: readonly
 /** One folded breakdown: a chevron, its name and a muted count; closed by default. */
 function Fold({ label, meta, children }: Readonly<{ label: string; meta: ReactNode; children: ReactNode }>) {
   return <details className="group">
-    <summary className="flex h-7 cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+    <summary className="flex h-6 cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
       <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint group-open:rotate-90" />
       <span className="text-ui text-ink">{label}</span>
       <span className="min-w-0 truncate text-caption text-muted">{meta}</span>
