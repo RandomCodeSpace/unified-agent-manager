@@ -2,7 +2,7 @@
 // the counts of model calls in flight across the service (the sidebar's Usage and AI button shows them:
 // usage-ai.test.tsx). Mock: t1 runs a tool locally, t8 waits on the model with one subagent, t6 waits on you, t7
 // compacts, and t22's audits run on after its turn ended.
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Item, Phase, SessionDetail, SnapshotData } from '../../src/api';
 import { LIVE_HOLD_MS, StatusLine, WAIT_STILL_MS, liveClock, liveLine, statusLine } from '../../src/components/StatusLine';
@@ -19,21 +19,27 @@ const tool = (id: string, name: string, status = 'running', extra: Partial<Item[
 
 /** The strip's live line as it draws: its words, and what moves (`breathe`, `spin` or nothing). */
 function strip(session: SessionDetail) {
-  const view = render(<StatusLine line={statusLine(session, session.state === 'working', !!session.compacting)} session={session} hidden={false} onJump={() => {}} />);
+  const view = render(<StatusLine line={statusLine(session, session.state === 'working', !!session.compacting)} session={session} hidden={false} jump={false} onJump={() => {}} />);
   const moving = view.container.querySelectorAll('.animate-breathe, .animate-spin');
-  const shown = view.container.querySelector('button > span[aria-hidden]')?.textContent ?? '';
+  const shown = view.container.querySelector('.animate-fade-in')?.textContent ?? '';
   return { view, shown, moves: [...moving].map((n) => (n.className.includes('animate-breathe') ? 'breathe' : 'spin')) };
 }
 
+/** The progress line's words as drawn, or null with no line. */
+const shown = () => document.querySelector('.animate-fade-in')?.textContent ?? null;
+
 describe('the live line at the strip', () => {
   test('each phase in words, with one mark: model work breathes, local work turns, you and subagents are still', () => {
-    expect(liveLine(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [{ id: 'r', kind: 'reasoning', time: ago(10) } as Item] }), false)).toEqual({ mark: 'dot', phase: 'Thinking', since: ago(12) });
+    const thought = { id: 'r', kind: 'reasoning', time: ago(10) } as Item;
+    // The thought and a running command carry their item: the peek shows it.
+    expect(liveLine(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [thought] }), false)).toEqual({ mark: 'dot', phase: 'Thinking', since: ago(12), item: thought });
     const writing = task({ kind: 'model', since: ago(5), calls: 1 }, { items: [{ id: 'a', kind: 'assistant', time: ago(2) } as Item], turn_timings: [{ id: 'x', state: 'working', started_at: ago(60), output_tokens: 520, generation_ms: 10_000 }] as SessionDetail['turn_timings'] });
     expect(liveLine(writing, false)).toEqual({ mark: 'dot', phase: 'Writing the reply', detail: '52 tok/s' });
     // A newest item from before this call began is the last call's: nothing back yet is a wait.
     expect(liveLine(task({ kind: 'model', since: ago(64), calls: 1 }, { items: [{ id: 'a', kind: 'assistant', time: ago(90) } as Item] }), false)).toEqual({ mark: 'wait', phase: 'Waiting for the model', since: ago(64) });
-    const command = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./internal/vterm/...' }, { items: [tool('c', 'bash', 'running', { tail: [{ text: 'ok' }, { text: '=== RUN   TestRedrawReplaysFocusEvents' }, { text: '  ' }] })] });
-    expect(liveLine(command, false)).toEqual({ mark: 'ring', phase: 'Running go test ./internal/vterm/...', since: ago(41), tail: '=== RUN   TestRedrawReplaysFocusEvents' });
+    const call = tool('c', 'bash', 'running', { tail: [{ text: 'ok' }, { text: '=== RUN   TestRedrawReplaysFocusEvents' }] });
+    const command = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./internal/vterm/...' }, { items: [call] });
+    expect(liveLine(command, false)).toEqual({ mark: 'ring', phase: 'Running go test ./internal/vterm/...', since: ago(41), item: call });
     const reads = task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view'), tool('2', 'view'), tool('3', 'view', 'pending')] });
     expect(liveLine(reads, false)?.phase).toBe('Reading 3 files');
     expect(liveLine(task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view')] }), false)?.phase).toBe('Reading redraw_test.go');
@@ -50,12 +56,14 @@ describe('the live line at the strip', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
     const command = strip(task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { items: [tool('c', 'bash', 'running', { tail: [{ text: 'PASS' }] })] }));
-    expect(command.shown).toBe('Running go test ./...·41sPASS');
+    // The output line is not on the line any more: it is the peek's.
+    expect(command.shown).toBe('Running go test ./...·41s');
     expect(command.moves).toEqual(['spin']);
     await act(async () => { vi.advanceTimersByTime(1000); });
     expect(command.view.container.textContent).toContain('42s');
-    // The output line is quieter and gives way first; a phone hides it.
-    expect(screen.getByText('PASS').className).toEqual(expect.stringContaining('max-sm:hidden'));
+    expect(screen.queryByText('PASS')).toBeNull();
+    // A phone hides the elapsed.
+    expect(screen.getByText('42s').className).toEqual(expect.stringContaining('max-sm:hidden'));
     command.view.unmount();
     vi.setSystemTime(NOW);
     const thinking = strip(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [{ id: 'r', kind: 'reasoning', time: ago(10) } as Item] }));
@@ -90,43 +98,83 @@ describe('the live line at the strip', () => {
     expect(liveLine({ ...session, items: [...session.items, tool('m', 'bash')] }, false)?.phase).toBe('Running go test ./...');
   });
 
-  test('the output line is the oldest running command\'s, the one the phase names', () => {
+  test('the peek\'s command is the oldest running one, the one the phase names', () => {
     const session = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { items: [tool('old', 'bash', 'running', { tail: [{ text: 'ok  pkg/a' }] }), tool('new', 'bash', 'running', { tail: [{ text: 'newer' }] })] });
-    expect(liveLine(session, false)?.tail).toBe('ok  pkg/a');
+    expect(liveLine(session, false)?.item?.id).toBe('old');
+  });
+
+  test('a running command makes the line a button whose peek shows its newest lines; a wait for the model is plain words with no peek', async () => {
+    const lines = Array.from({ length: 8 }, (_, i) => ({ text: `line ${i + 1}`, err: i === 6 }));
+    const session = task({ kind: 'local', since: ago(41), tool: 'bash', detail: 'go test ./...' }, { items: [tool('c', 'bash', 'running', { tail: lines })] });
+    const view = render(<StatusLine line={statusLine(session, true, false)} session={session} hidden={false} jump={false} onJump={() => {}} />);
+    const line = screen.getByRole('button', { name: /^Running go test \.\/\.\.\., .*\. Show the output$/ });
+    expect(line.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(line.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(line);
+    const peek = await screen.findByRole('dialog', { name: 'The newest output' });
+    expect(line.getAttribute('aria-expanded')).toBe('true');
+    // Not modal: the page behind stays reachable.
+    expect(peek.getAttribute('aria-modal')).not.toBe('true');
+    expect(within(peek).getByText('Output')).toBeTruthy();
+    expect(within(peek).getByText('· 6 lines', { exact: false })).toBeTruthy();
+    expect(within(peek).getByText('Esc')).toBeTruthy();
+    // The newest six, oldest first, stderr marked in words.
+    const out = within(peek).getByRole('group', { name: 'Live output, last lines' });
+    expect([...out.children].map((l) => l.textContent)).toEqual(['line 3', 'line 4', 'line 5', 'line 6', 'errstderr: line 7', 'line 8']);
+    // Nothing in the peek moves: the line's mark is the one animation.
+    expect(peek.querySelector('.animate-spin, .animate-breathe')).toBeNull();
+    expect(view.container.querySelectorAll('.animate-spin').length).toBe(1);
+    fireEvent.keyDown(peek, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // The step ends: the line waits for the model, plain words.
+    view.rerender(<StatusLine line={statusLine(task({ kind: 'model', since: ago(2), calls: 1 }), true, false)} session={session} hidden={false} jump={false} onJump={() => {}} />);
+    expect(shown()).toMatch(/^Waiting for the model/);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  test('a streaming thought\'s peek is its text so far', async () => {
+    const thought = { id: 'r', kind: 'reasoning', time: ago(10), text: 'The first attach works, so the mode is applied once.' } as Item;
+    const session = task({ kind: 'model', since: ago(12), calls: 1 }, { items: [thought] });
+    render(<StatusLine line={statusLine(session, true, false)} session={session} hidden={false} jump={false} onJump={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking, .*\. Show the thought$/ }));
+    const peek = await screen.findByRole('dialog', { name: 'The thought so far' });
+    expect(within(peek).getByText('Thinking')).toBeTruthy();
+    expect(peek.textContent).toContain('The first attach works, so the mode is applied once.');
+    expect(within(peek).queryByRole('group')).toBeNull();
   });
 
   test('the strip\'s name counts the live line\'s own time, as it shows, not the outlived subagents\'', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
     const session = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' });
-    render(<StatusLine line={statusLine(session, false, false)} session={session} since={ago(540)} hidden={false} onJump={() => {}} />);
-    expect(screen.getByRole('button', { name: 'Needs you, approve bash, 1 minute. Jump to bottom' })).toBeTruthy();
+    render(<StatusLine line={statusLine(session, false, false)} session={session} since={ago(540)} hidden={false} jump={false} onJump={() => {}} />);
+    expect(screen.getByText('Needs you, approve bash, 1 minute')).toBeTruthy();
     expect(screen.getByText('1m 12s')).toBeTruthy();
   });
 
   test('between a tool\'s end and the next model call the last live line holds a moment, so the strip does not blink', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
-    const draw = (s: SessionDetail) => <StatusLine line={statusLine(s, true, false)} session={s} hidden={false} onJump={() => {}} />;
+    const draw = (s: SessionDetail) => <StatusLine line={statusLine(s, true, false)} session={s} hidden={false} jump={false} onJump={() => {}} />;
     const running = task({ kind: 'local', since: ago(5), tool: 'bash', detail: 'go test ./...' });
     const view = render(draw(running));
-    expect(screen.getByRole('button', { name: /^Running go test \.\/\.\.\., / })).toBeTruthy();
+    expect(shown()).toMatch(/^Running go test \.\/\.\.\./);
     // The tool ended; no model call yet: nothing is live, and the turn has nothing else to say.
     view.rerender(draw(task(undefined)));
-    expect(screen.getByRole('button', { name: /^Running go test \.\/\.\.\., / })).toBeTruthy();
+    expect(shown()).toMatch(/^Running go test \.\/\.\.\./);
     await act(async () => { vi.advanceTimersByTime(LIVE_HOLD_MS - 100); });
-    expect(screen.queryByRole('button')).not.toBeNull();
+    expect(shown()).not.toBeNull();
     // The next call comes within the hold: the line moves on without the strip leaving.
     view.rerender(draw(task({ kind: 'model', since: ago(0), calls: 1 })));
-    expect(screen.getByRole('button', { name: /^Waiting for the model, / })).toBeTruthy();
+    expect(shown()).toMatch(/^Waiting for the model/);
     // Nothing comes: once the hold passes, the bare strip goes.
     view.rerender(draw(task(undefined)));
     await act(async () => { vi.advanceTimersByTime(LIVE_HOLD_MS); });
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(shown()).toBeNull();
     // A turn that ended drops it at once.
     view.rerender(draw(running));
-    view.rerender(<StatusLine line={null} session={running} hidden={false} onJump={() => {}} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    view.rerender(<StatusLine line={null} session={running} hidden={false} jump={false} onJump={() => {}} />);
+    expect(shown()).toBeNull();
   });
 
   test('the clock reads seconds, then minutes and seconds, then hours and minutes', () => {
@@ -154,7 +202,7 @@ describe('the live line at the strip', () => {
     ['t22', /^Waiting on 4 subagents, /],
   ])('mock Thread %s says its own phase on the strip', async (id, words) => {
     await openTask(id);
-    await waitFor(() => expect(screen.getByRole('button', { name: words })).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(words, { selector: '.sr-only' })).toBeTruthy());
   });
 });
 

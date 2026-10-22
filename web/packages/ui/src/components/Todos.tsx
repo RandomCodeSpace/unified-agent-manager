@@ -1,15 +1,16 @@
-// The todo list the agents keep, read-only: the status strip reader's Todo tab (`TodoTab`, see
-// StatusLine), and the list as a turn left it, opened from its reply's foot (`TurnTodo`). The
-// reply's reader is an anchored reader: a modal popover beside what opened it, that lifted above
-// the dim, a compact head with the count and meter, eyebrow sections and a keycap foot. A phone
-// gets the subagents' sheet from the bottom. The owner changes the list by asking in the chat.
+// The todo list the agents keep, read-only: the live list, opened from the status strip's todo
+// button (see StatusLine), and the list as a turn left it, opened from its reply's foot
+// (`TurnTodo`). Both are the one anchored reader (`Reader`): a modal popover beside what opened
+// it, that lifted above the dim, a compact head with the count and meter, eyebrow sections by
+// stage and a keycap foot. A phone gets a sheet from the bottom. The owner changes the list by
+// asking in the chat.
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Ban, Check, Circle, CircleDot, ListChecks, X, type LucideIcon } from 'lucide-react';
 import { Fragment, useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, isStatus, type Subagent, type Todo, type TodoCounts, type TodoStatus, type TodoView, type TurnTiming, type TurnTodos } from '../api';
+import { describeError, isStatus, type Todo, type TodoCounts, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
 import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
@@ -117,8 +118,8 @@ function TodoRow({ todo, name, now = false, quietName = false }: Readonly<{ todo
   );
 }
 
-/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the foot's words and each row's subagent name. */
-interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; foot: string; name: (todo: Todo) => string | undefined }
+/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). */
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode }
 
 /** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
 function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; title: string }>) {
@@ -140,6 +141,7 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
         {parts.facts.length > 0 && <p className="pl-6 text-caption text-muted">{parts.facts.join(' · ')}</p>}
       </PanelHead>
       <div className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
+        {sheet && parts.blocks}
         {parts.sections.map((section) => (
           <PanelSection
             key={section.status}
@@ -153,7 +155,7 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
           >
             <ul>
               {section.todos.map((todo) => (
-                <TodoRow key={todo.id} todo={todo} name={todo.agent_id ? parts.name(todo) : undefined} />
+                <TodoRow key={todo.id} todo={todo} now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName />
               ))}
             </ul>
           </PanelSection>
@@ -178,33 +180,11 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
 const dim = cn(backdropClass, 'duration-160');
 
 /**
- * The status strip reader's Todo tab: the live list in plan order, the row the work is at marked
- * "now", a blocked row's reason under it and the subagent that wrote a row as its identity dot
- * (and its name when the title does not already say it). No count repeats the strip's blocks; the
- * phone's sheet, which covers the strip, repeats them on top (`blocks`).
- */
-export function TodoTab({ view, subagents, blocks }: Readonly<{ view: TodoView; subagents: readonly Subagent[]; blocks?: ReactNode }>) {
-  const names = new Map(subagents.map((s) => [s.id, s.name]));
-  const facts = [view.touched ? '' : 'Left by the last turn; this turn has not changed it yet', view.omitted ? `${view.omitted} more not shown` : ''].filter(Boolean);
-  return (
-    <>
-      {blocks}
-      {facts.length > 0 && <p className="text-caption text-muted">{facts.join(' · ')}</p>}
-      <ul>
-        {view.todos.map((todo) => (
-          <TodoRow key={todo.id} todo={todo} now={todo.id === view.now && todo.status === 'in_progress'} name={todo.agent_id ? names.get(todo.agent_id) : undefined} quietName />
-        ))}
-      </ul>
-    </>
-  );
-}
-
-/**
  * The reader beside `anchor` on its `side`, or on a phone (`phone`, chosen when it opened, so a
  * resize does not remount it) the sheet. It opens on its "Todo" heading and gives focus back to
  * `anchor` when it closes; Esc, its close button and a press outside close it.
  */
-function Reader({ id, open, phone, anchor, side, label, title = 'Todo', parts, onClose, onClosed }: Readonly<{
+export function Reader({ id, open, phone, anchor, side, label, title = 'Todo', parts, onClose, onClosed }: Readonly<{
   id: string;
   open: boolean;
   phone: boolean;

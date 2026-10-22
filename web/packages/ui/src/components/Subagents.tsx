@@ -518,7 +518,7 @@ function SubagentDetail({ id, order, phone, onList, onOpen }: Readonly<{ id: str
   const parentId = s.parent_tool_call_id;
   const spawnedAt = clock(s.runs?.[0]?.started_at || s.started_at);
   // ↑ ↓ step through the list and ← goes back to it, from anywhere but a text field or the transcript, which scrolls with them;
-  // → does nothing here, so it never switches to the Todo tab and drops the list's search, filters and open groups.
+  // → does nothing here, so it never leaves the detail and drops the list's search, filters and open groups.
   const onKeyDown = (e: ReactKeyboardEvent) => {
     const target = e.target as HTMLElement;
     if (e.altKey || e.ctrlKey || e.metaKey || target.closest('input, textarea, [contenteditable="true"], [role="region"]')) return;

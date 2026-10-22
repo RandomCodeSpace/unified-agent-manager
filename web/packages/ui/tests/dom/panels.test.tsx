@@ -131,8 +131,8 @@ describe('changes', () => {
 });
 
 describe('subagents', () => {
-  // The strip's sheet: one box for the Todo and Subagents tabs (named for the tabs it has).
-  const sheet = async () => within(await screen.findByRole('dialog', { name: /ubagents$/ }));
+  // The strip's sheet: one box for the subagents.
+  const sheet = async () => within(await screen.findByRole('dialog', { name: 'Subagents' }));
   const live = () => within(screen.getByRole('region', { name: 'Subagents at work' }));
   const flashed = () => document.querySelector<HTMLElement>('.animate-flash');
 
@@ -168,10 +168,10 @@ describe('subagents', () => {
     const { user } = await openTask('t8');
     const link = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
     const opened = async () => {
-      const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
-      // The strip's own sheet: its subagents button controls it, its Subagents tab is chosen.
+      const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
+      // The strip's own sheet: its subagents button controls it.
       expect(link.getAttribute('aria-controls')).toBe(dialog.id);
-      await waitFor(() => expect(within(dialog).getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true'));
+      expect(within(dialog).getByRole('heading', { name: 'Subagents' })).toBeTruthy();
       return dialog;
     };
     const closed = async () => {
@@ -203,35 +203,40 @@ describe('subagents', () => {
     expect(within(fromChip).queryByRole('button', { name: /^From / })).toBeNull();
   });
 
-  test('the strip ends with the subagents as a button of their own and opens one reader with Todo and Subagents tabs; ← and → switch them', async () => {
+  test('the strip is three sections, the list, the progress line and the subagents, whose button opens the sheet without a Todo tab', async () => {
     const { user } = await openTask('t8');
-    // Two buttons: the line opens the list, the subagents their own tab; each its own name.
+    // The todo list and the subagents are buttons of their own; the progress line between them waits on the model, plain words.
     const strip = screen.getByRole('button', { name: /Show the list$/ });
     const subagents = screen.getByRole('button', { name: 'Subagents: 5, 1 failed, 3 running, 1 done. Show the subagents' });
+    const progress = screen.getByText(/^Waiting for the model, /, { selector: '.sr-only' }).parentElement!;
+    expect(progress.tagName).toBe('SPAN');
+    expect(strip.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(progress.compareDocumentPosition(subagents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(strip).getByText('2 of 6')).toBeTruthy();
     // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
     expect([...subagents.querySelectorAll('[title]')].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')])).toEqual([
       ['1 failed', 'error', true],
       ['3 running', 'accent', true],
       ['1 done', 'success', true],
     ]);
-    // Pressed on its words, it opens on Todo.
-    await user.click(strip);
-    const reader = await screen.findByRole('dialog', { name: 'Todo and subagents' });
-    const tab = (name: string) => within(reader).getByRole('tab', { name });
-    await waitFor(() => expect(document.activeElement).toBe(tab('Todo')));
-    expect(within(reader).getByText('switch')).toBeTruthy();
-    // → from anywhere but a text field switches tabs.
+    // The subagents open the sheet: no tabs, the list under its head; ← and → do nothing there.
+    await user.click(subagents);
+    const reader = await screen.findByRole('dialog', { name: 'Subagents' });
+    expect(within(reader).queryByRole('tab')).toBeNull();
+    expect(within(reader).queryByText('Todo')).toBeNull();
+    const search = await within(reader).findByRole('searchbox', { name: 'Search subagents' });
     within(reader).getByRole('button', { name: 'Close' }).focus();
     await user.keyboard('{ArrowRight}');
-    await waitFor(() => expect(tab('Subagents').getAttribute('aria-selected')).toBe('true'));
-    const search = await within(reader).findByRole('searchbox', { name: 'Search subagents' });
-    // In the search box the arrows move the caret.
-    search.focus();
     await user.keyboard('{ArrowLeft}');
-    expect(tab('Subagents').getAttribute('aria-selected')).toBe('true');
-    tab('Subagents').focus();
-    await user.keyboard('{ArrowLeft}');
-    await waitFor(() => expect(tab('Todo').getAttribute('aria-selected')).toBe('true'));
+    expect(search.isConnected).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(subagents);
+    // The list opens its own reader, sections by state, with "now" at the row the work is at.
+    await user.click(strip);
+    const todo = await screen.findByRole('dialog', { name: 'Todo' });
+    expect(within(todo).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'To do', 'Done']);
+    expect(within(todo).getByText('now').parentElement!.textContent).toContain('Check contrast of the theme tokens');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.activeElement).toBe(strip);
@@ -243,7 +248,7 @@ describe('subagents', () => {
     const subagents = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
     expect(line.contains(subagents)).toBe(false);
     await user.click(subagents);
-    await screen.findByRole('dialog', { name: 'Todo and subagents' });
+    await screen.findByRole('dialog', { name: 'Subagents' });
     expect(subagents.getAttribute('aria-expanded')).toBe('true');
     expect(line.getAttribute('aria-expanded')).toBe('false');
   });
@@ -444,9 +449,8 @@ describe('subagents', () => {
     expect(document.activeElement).toBe(next);
     await user.click(next);
     expect(open.getByText('5 of 5')).toBeTruthy();
-    // → stays in the detail rather than switching to the Todo tab.
+    // → stays in the detail.
     await user.keyboard('{ArrowRight}');
-    expect(open.getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true');
     expect(open.getByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
     await user.keyboard('{ArrowUp}');
     expect(await open.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
@@ -511,7 +515,7 @@ describe('one working ring per place', () => {
     expect(pane.querySelectorAll('.animate-pulse-dot')).toHaveLength(0);
     // t8 waits on the model: the live line breathes (or, once the wait passes its threshold, holds a still clock), and nothing in the pane turns.
     expect(rings(pane)).toHaveLength(0);
-    expect(screen.getByRole('button', { name: /^Waiting for the model, / })).toBeTruthy();
+    expect(screen.getByText(/^Waiting for the model, /, { selector: '.sr-only' })).toBeTruthy();
     expect(pane.querySelectorAll('.animate-breathe').length).toBeLessThanOrEqual(1);
   });
 
@@ -519,7 +523,7 @@ describe('one working ring per place', () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
+    const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
     const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
     expect(within(dialog).getByText('Running')).toBeTruthy();
     // First its bash call is the step: its ring is the only one, held still (the strip's live line has the one moving mark).
@@ -535,7 +539,7 @@ describe('one working ring per place', () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Verify store callers, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Todo and subagents' });
+    const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
     await within(dialog).findByRole('region', { name: /^Transcript of / });
     expect(within(dialog).queryByText(/…$/, { ignore: '.sr-only, textarea, input' })).toBeNull();
     expect(rings(dialog)).toHaveLength(0);

@@ -1080,17 +1080,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
-          {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
+          {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} error={locateError} onJump={scrollToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} error={locateError} jump={jump && strip} onJump={jumpToBottom} />
             <Schedules snapshot={session.schedules} open={session.open} />
-            <Appear show={jump && strip} className="shrink-0">
-              <Tip label="Jump to bottom">
-                <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
-                  <ArrowDown />
-                </Button>
-              </Tip>
-            </Appear>
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
             <Appear show={jump && !strip} className="shrink-0">
