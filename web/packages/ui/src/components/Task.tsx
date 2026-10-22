@@ -39,7 +39,7 @@ import { RewindHold, RewindPanel } from './Rewind';
 import type { Editing } from './EditResend';
 import { CUT } from './Details';
 import { Schedules } from './Schedules';
-import { StatusLine, statusLine } from './StatusLine';
+import { StatusLine, statusLine, stripHasTodos } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { registerRealWorkdir } from '../lib/markdown';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -972,8 +972,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
   const line = statusLine(session, labelled, compacting, connected);
-  // The strip stays while the Thread has subagents, which it counts at its right end.
-  const strip = !!line || session.subagents.length > 0;
+  // The strip stays while the Thread has subagents, which it counts at its right end, or a todo list (live or kept) at its left.
+  const strip = !!line || session.subagents.length > 0 || stripHasTodos(session);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);

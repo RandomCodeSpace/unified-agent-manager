@@ -2,7 +2,7 @@
 // it, the reader's sections, and what the live region announces. The service counts the rows
 // and picks the one the work is at; this only words them.
 
-import type { Todo, TodoCounts, TodoStatus, TodoView, TurnTodos } from '../api';
+import type { Todo, TodoCounts, TodoHistory, TodoStatus, TodoView, TurnTiming, TurnTodos } from '../api';
 
 /** The meter draws one segment per row, up to this many rows; past them the words say it alone. */
 export const METER_ROWS = 12;
@@ -114,6 +114,53 @@ export function snapshotFacts(counts: TodoCounts, clock: string): string[] {
 
 /** The kept list's sections, as the live reader's: In progress, Blocked, To do and Done (newest first), each in the order uam kept them. */
 export const snapshotSections = (todos: readonly Todo[]) => stageSections(todos);
+
+/** A row of the history reader's ledger: its latest state, when its status last changed (`at`) and in which turn (`turn`, 1-based among the Thread's timings; none for the running turn's change), and whether the agents removed it from the live list. */
+export interface LedgerRow { todo: Todo & { agent?: string }; at?: string; turn?: number; removed: boolean }
+
+/**
+ * Every row the Thread's turns kept, merged by id: `turns` oldest to newest, each row keeping the
+ * latest status, title, note and agent, with `at` (the row's `changed_at`, else the record's end)
+ * and `turn` from the record that last changed its status or first saw it; then the live list,
+ * the newest state, whose rows no record holds stamp without a turn (the running turn has no
+ * record yet). `removed`: the live list is known, whole, and the row is not in it.
+ */
+export function todoLedger(history: TodoHistory, timings: readonly TurnTiming[] = []): LedgerRow[] {
+  const rows = new Map<string, LedgerRow>();
+  const take = (t: Todo & { agent?: string }, at?: string, turn?: number) => {
+    const was = rows.get(t.id);
+    if (was && was.todo.status === t.status) was.todo = { ...was.todo, ...t };
+    else rows.set(t.id, { todo: { ...was?.todo, ...t }, at, turn, removed: false });
+  };
+  for (const rec of history.turns) {
+    const turn = timings.findIndex((t) => t.id === rec.timing_id) + 1 || undefined;
+    for (const t of rec.todos) take(t, t.changed_at ?? rec.ended_at, turn);
+  }
+  const live = history.live;
+  if (live?.known) {
+    for (const t of live.todos) take(t, t.changed_at);
+    // The live list holds its first 100 rows: past them a row absent from it may still be there.
+    if (!live.omitted) {
+      const kept = new Set(live.todos.map((t) => t.id));
+      for (const row of rows.values()) row.removed = !kept.has(row.todo.id);
+    }
+  }
+  return [...rows.values()];
+}
+
+const STAMP: Record<TodoStatus, string> = { done: 'done', in_progress: 'in progress', blocked: 'blocked', pending: 'added' };
+
+/** A ledger row's stamp: "done 13:58 · turn 2", "in progress since 14:03", "added 13:40 · turn 1"; `clock` is `at` as a clock time, "" without one. */
+export function ledgerStamp(row: LedgerRow, clock: string): string {
+  const state = STAMP[row.todo.status];
+  return [clock ? `${state}${row.todo.status === 'in_progress' ? ' since' : ''} ${clock}` : state, row.turn ? `turn ${row.turn}` : ''].filter(Boolean).join(' · ');
+}
+
+/** The ledger's sections in the stages' order, each newest change first (a change without a time, the running turn's, first). */
+export function ledgerSections(rows: readonly LedgerRow[]): TodoSection[] {
+  const when = (r: LedgerRow) => (r.at ? Date.parse(r.at) : Number.MAX_SAFE_INTEGER);
+  return stageSections([...rows].sort((a, b) => when(b) - when(a)).map((r) => r.todo));
+}
 
 /** How many turn lists stay in memory: one never changes once its turn ended, and none is kept anywhere else. */
 export const KEPT_SNAPSHOTS = 8;

@@ -16,15 +16,16 @@
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
-import { forwardRef, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
-import { ATTENTION, LIVE, readOnly, type Item, type Retry, type SessionDetail, type Subagent } from '../api';
+import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, History, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
+import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type SessionDetail, type Subagent, type TodoHistory } from '../api';
+import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
-import { todoLine, todoSections, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
+import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
-import { BreathingDot, Markdown, WorkingMark } from './common';
+import { BreathingDot, Markdown, WorkingMark, clockTime } from './common';
 import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
 import { LiveOutput } from './LiveOutput';
@@ -186,6 +187,15 @@ function subagentSentence(subagents: readonly Subagent[], before?: string): stri
 
 const Sep = () => <span className="shrink-0 text-faint">·</span>;
 
+/** The timings of the turns that changed the todo list, in order: the history button's count. */
+const todoTurns = (session: SessionDetail) => (session.turn_timings ?? []).filter((t) => t.todo?.total);
+
+/** The strip draws a todo button, working or idle: a known list with rows, or turns that changed one (the history). Task.tsx keeps the jump arrow on the row then. */
+export function stripHasTodos(session: SessionDetail): boolean {
+  const todos = session.turn_activity?.todos;
+  return !!(todos?.known && todos.counts.total) || todoTurns(session).length > 0;
+}
+
 /** A strip button: lit (`tint-hover`) on its own while hovered or open. */
 const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
 
@@ -226,21 +236,51 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
   // The live region still says a turn started when the strip draws nothing for it.
   const spoken = hidden ? null : line;
   const cue = useCue(spoken, timing?.id ?? '');
-  const list = shownLine?.kind === 'working' ? shownLine.todo : undefined;
-  const view = list ? session.turn_activity?.todos : undefined;
+  const api = useApi();
+  const activity = session.turn_activity?.todos;
+  const known = activity?.known && activity.counts.total ? activity : undefined;
+  const turns = todoTurns(session);
+  // The history read: with the list unknown (a closed Thread) the last list uam wrote stands in for it, and the ledger reads the records afresh each time it opens.
+  const [history, setHistory] = useState<{ id: string; data?: TodoHistory; error?: string } | null>(null);
+  const kept = history?.id === session.id ? history : null;
+  const reading = useRef<AbortController | null>(null);
+  const read = useCallback((id: string) => {
+    reading.current?.abort();
+    const controller = new AbortController();
+    reading.current = controller;
+    api.todoHistory(id, controller.signal).then(
+      (data) => setHistory({ id, data }),
+      (err: unknown) => {
+        if (!controller.signal.aborted) setHistory({ id, error: describeError(err) });
+      },
+    );
+  }, [api]);
+  useEffect(() => () => reading.current?.abort(), []);
+  const wantLive = !known && turns.length > 0;
+  useEffect(() => {
+    if (wantLive) read(session.id);
+  }, [wantLive, turns.length, session.id, read]);
+  const view = known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
+  const working = line?.kind === 'working';
+  const list = line?.kind === 'working' ? line.todo : undefined;
+  // Idle, or working with a list the line says nothing of (untouched, all done), the counts alone draw the blocks.
+  const tally = view ? (list ?? todoTally(view.counts)) : undefined;
   const plan = shownLine?.kind === 'working' && shownLine.plan;
   const todoId = useId();
+  const historyId = useId();
   const readerId = useId();
   const row = useRef<HTMLDivElement>(null);
-  // Phone or not is chosen as a reader opens, so a resize does not remount it. The todo reader hangs off its button.
+  // Phone or not is chosen as a reader opens, so a resize does not remount it. The todo and history readers hang off their buttons.
   const [todoReader, setTodoReader] = useState<{ open: boolean; phone: boolean; anchor: HTMLElement } | null>(null);
+  const [historyReader, setHistoryReader] = useState<{ open: boolean; phone: boolean; anchor: HTMLElement } | null>(null);
   // The sheet: `opener` takes the focus back, `lift` is the strip button drawn above the dim, `to` where it opens;
   // `n` counts the openings, so a new one starts afresh; `leaving`: it closes for a jump into the conversation.
   const [reader, setReader] = useState<{ open: boolean; phone: boolean; opener: HTMLElement | null; lift: HTMLElement | null; to: SheetTo | null; n: number; leaving: boolean } | null>(null);
   const confirming = useStopConfirming();
   // With nothing left to show (the turn ended, the conversation closed), a reader goes too.
   if (reader && !any) setReader(null);
-  if (todoReader && !(list && view)) setTodoReader(null);
+  if (todoReader && !view) setTodoReader(null);
+  if (historyReader && !turns.length) setHistoryReader(null);
   const sheetMode = () => window.matchMedia(PHONE).matches || hidden;
   // A subagent row or chip in the conversation opens the same sheet, on the subagent or the reply's list; a jump closes it.
   const request = useSheetRequest();
@@ -256,7 +296,7 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     if (!confirming) setReader((r) => r && { ...r, open: false });
   };
   const closed = () => setReader(null);
-  const rowShown = !!(shownLine || subagents);
+  const rowShown = !!(shownLine || subagents || (!hidden && (view || turns.length)));
   const arrow = (
     <Appear show={jump} className={cn('shrink-0', !rowShown && 'ml-auto')}>
       <Tip label="Jump to bottom">
@@ -267,25 +307,51 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     </Appear>
   );
   const names = new Map(session.subagents.map((s) => [s.id, s.name]));
-  const parts: ReaderParts | null = list && view ? {
+  const lastTurn = turns.at(-1);
+  const parts: ReaderParts | null = view && tally ? {
     todos: view.todos,
     counts: view.counts,
-    facts: [view.touched ? '' : 'Left by the last turn; this turn has not changed it yet', view.omitted ? `${view.omitted} more not shown` : ''].filter(Boolean),
+    facts: [
+      working ? (view.touched ? '' : 'Left by the last turn; this turn has not changed it yet') : lastTurn?.ended_at ? `As the last turn left it, ${clockTime(lastTurn.ended_at)}` : '',
+      view.omitted ? `${view.omitted} more not shown` : '',
+    ].filter(Boolean),
     sections: todoSections(view),
-    now: view.now,
+    now: working ? view.now : undefined,
     foot: 'Read only · to change it, ask in the chat',
     name: (t) => names.get(t.agent_id ?? ''),
-    blocks: <Blocks items={todoBlocks(list)} className="self-start" />,
+    blocks: <Blocks items={todoBlocks(tally)} className="self-start" />,
   } : null;
+  // The ledger: every row the turns kept, the live list (this page's, when known) as its newest state.
+  const ledger = kept?.data ? todoLedger({ ...kept.data, live: known ?? kept.data.live }, session.turn_timings) : [];
+  const byId = new Map(ledger.map((r) => [r.todo.id, r]));
+  const ledgerParts: ReaderParts = {
+    todos: [],
+    counts: {},
+    glyph: History,
+    right: <span className="shrink-0 text-caption tabular-nums text-muted">{`${plural(ledger.length, 'row')} · ${plural(kept?.data?.turns.length ?? turns.length, 'turn')}`}</span>,
+    facts: [kept?.data ? 'Every row the agents kept, with when it changed; rows they removed stay here' : (kept?.error ?? '…')],
+    sections: ledgerSections(ledger),
+    foot: 'Kept by uam when each turn ended',
+    name: (t) => byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? ''),
+    stamp: (t) => {
+      const r = byId.get(t.id);
+      return r && (
+        <>
+          {ledgerStamp(r, r.at ? clockTime(r.at) : '')}
+          {r.removed && <span className="text-faint"> · removed from the list since</span>}
+        </>
+      );
+    },
+  };
   return (
     <>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {spoken ? cue : ''}
       </div>
       {rowShown ? (
-        // Three sections on one row: the list, the progress line, then the arrow and the subagents, each lit and lifted on its own.
+        // Three sections on one row: the list and its history, the progress line, then the arrow and the subagents, each lit and lifted on its own.
         <div ref={row} className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
-          {list && (
+          {view && tally && (
             <button
               type="button"
               onClick={(e) => setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget })}
@@ -294,16 +360,38 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
               aria-controls={todoReader?.open ? todoId : undefined}
               className={cn(STRIP, 'shrink-0 gap-2')}
             >
-              {/* The blocks dim while the list is the last turn's; a phone keeps the glyph and the count. */}
-              <span aria-hidden="true" className={cn('flex items-center gap-2', list.kind === 'carried' && 'opacity-55')}>
+              {/* The blocks dim while a working turn has not touched the last turn's list; a phone keeps the glyph and the count. */}
+              <span aria-hidden="true" className={cn('flex items-center gap-2', list?.kind === 'carried' && 'opacity-55')}>
                 <ListChecks className="size-3.5 shrink-0 text-muted" />
-                <Blocks items={todoBlocks(list)} className="max-sm:hidden" />
+                <Blocks items={todoBlocks(tally)} className="max-sm:hidden" />
                 <span className="shrink-0 tabular-nums">
-                  <span className="max-sm:hidden">{`${list.done} of ${list.total}`}</span>
-                  <span className="sm:hidden">{`${list.done}/${list.total}`}</span>
+                  <span className="max-sm:hidden">{`${tally.done} of ${tally.total}`}</span>
+                  <span className="sm:hidden">{`${tally.done}/${tally.total}`}</span>
                 </span>
               </span>
-              <span className="sr-only">{`${todoWords(list, plan)}. Show the list`}</span>
+              <span className="sr-only">{`${list ? todoWords(list, plan) : `Todo ${tallyWords(tally)}`}. Show the list`}</span>
+            </button>
+          )}
+          {turns.length > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                setHistoryReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
+                read(session.id);
+              }}
+              aria-haspopup="dialog"
+              aria-expanded={historyReader?.open === true}
+              aria-controls={historyReader?.open ? historyId : undefined}
+              className={cn(STRIP, 'shrink-0 gap-2')}
+            >
+              <span aria-hidden="true" className="flex items-center gap-2">
+                <History className="size-3.5 shrink-0 text-muted" />
+                <span className="shrink-0 tabular-nums">
+                  <span className="max-sm:hidden">{plural(turns.length, 'turn')}</span>
+                  <span className="sm:hidden">{turns.length}</span>
+                </span>
+              </span>
+              <span className="sr-only">{`Todo history: ${plural(turns.length, 'turn')} changed the list. Show the history`}</span>
             </button>
           )}
           <div className="flex min-w-0 flex-1 justify-center">{shownLine && <Progress line={shownLine} since={since} />}</div>
@@ -329,6 +417,9 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
       )}
       {todoReader && parts && (
         <Reader id={todoId} open={todoReader.open} phone={todoReader.phone} anchor={todoReader.anchor} side="top" label={plan ? 'Plan' : 'Todo'} title={plan ? 'Plan' : 'Todo'} parts={parts} onClose={() => setTodoReader((r) => r && { ...r, open: false })} onClosed={() => setTodoReader(null)} />
+      )}
+      {historyReader && (
+        <Reader id={historyId} open={historyReader.open} phone={historyReader.phone} anchor={historyReader.anchor} side="top" label="Todo history" title="Todo history" parts={ledgerParts} onClose={() => setHistoryReader((r) => r && { ...r, open: false })} onClosed={() => setHistoryReader(null)} />
       )}
       {reader && (
         <StripReader id={readerId} open={reader.open} phone={reader.phone} row={row} lift={reader.lift} back={reader.leaving ? null : reader.opener} body={<SubagentSheetBody key={reader.n} to={reader.to} error={error} phone={reader.phone} />} onClose={close} onClosed={closed} />

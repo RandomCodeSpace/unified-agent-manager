@@ -98,8 +98,8 @@ function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: str
 
 const sameWords = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** One row: its stage's glyph, its title ("now" after the row the work is at), the blocked reason under it and the subagent that first wrote it. */
-function TodoRow({ todo, name, now = false, quietName = false }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean }>) {
+/** One row: its stage's glyph, its title ("now" after the row the work is at), the blocked reason under it, the ledger's stamp under that, and the subagent that first wrote it. */
+function TodoRow({ todo, name, now = false, quietName = false, stamp }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean; stamp?: ReactNode }>) {
   return (
     <li className="flex min-h-7 items-start gap-2 py-1 pointer-coarse:min-h-9">
       <span className="flex h-5 w-4 shrink-0 items-center justify-center">
@@ -111,6 +111,7 @@ function TodoRow({ todo, name, now = false, quietName = false }: Readonly<{ todo
           {now && <span className="ml-1.5 text-caption font-normal text-accent">now</span>}
         </span>
         {todo.status === 'blocked' && todo.note && <span className="text-caption break-words text-warning">{todo.note}</span>}
+        {stamp && <span className="text-caption tabular-nums text-muted">{stamp}</span>}
       </span>
       {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} />}
       <span className="sr-only">, {todoWord(todo.status)}</span>
@@ -118,24 +119,29 @@ function TodoRow({ todo, name, now = false, quietName = false }: Readonly<{ todo
   );
 }
 
-/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). */
-export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode }
+/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. */
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
 
 /** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
 function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; title: string }>) {
   const { done = 0, total = 0 } = parts.counts;
+  const Glyph = parts.glyph ?? ListChecks;
   return (
     <div className="flex min-h-0 flex-col">
       <PanelHead className={cn('gap-1 pt-2 pb-2', sheet ? 'pr-2 pl-4' : 'pr-3 pl-4')}>
         <div className="flex min-h-7 min-w-0 items-center gap-2">
-          <ListChecks aria-hidden="true" className="size-4 shrink-0 text-muted" />
+          <Glyph aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">
             {title}
           </h2>
-          {total <= METER_ROWS && parts.todos.length === total && <TodoMeter statuses={parts.todos.map((t) => t.status)} />}
-          <span className="shrink-0 text-caption tabular-nums text-muted">
-            <span className="text-body">{done} done</span> of {total}
-          </span>
+          {parts.right ?? (
+            <>
+              {total <= METER_ROWS && parts.todos.length === total && <TodoMeter statuses={parts.todos.map((t) => t.status)} />}
+              <span className="shrink-0 text-caption tabular-nums text-muted">
+                <span className="text-body">{done} done</span> of {total}
+              </span>
+            </>
+          )}
           {close}
         </div>
         {parts.facts.length > 0 && <p className="pl-6 text-caption text-muted">{parts.facts.join(' · ')}</p>}
@@ -155,7 +161,7 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
           >
             <ul>
               {section.todos.map((todo) => (
-                <TodoRow key={todo.id} todo={todo} now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName />
+                <TodoRow key={todo.id} todo={todo} now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName stamp={parts.stamp?.(todo)} />
               ))}
             </ul>
           </PanelSection>
