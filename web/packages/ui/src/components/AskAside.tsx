@@ -11,7 +11,7 @@ import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { HelpTip } from './ui/tooltip';
 
@@ -256,10 +256,10 @@ export function AsideReader({ at, title, facts, rows, empty, newest = false, onC
   </BottomSheet>;
   return <BasePopover.Root open={at.open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
     <BasePopover.Portal>
-      <BasePopover.Backdrop className={`${backdropClass} duration-160`} />
-      {at.lift && at.open && at.lift.isConnected && <LiftedRow row={at.lift} />}
+      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
+      {at.lift?.isConnected && <LiftedRow row={at.lift} />}
       <BasePopover.Positioner anchor={at.anchor} side={at.lift ? 'bottom' : 'top'} align="start" sideOffset={8} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} data-popup="" aria-label={title} aria-modal="true" initialFocus={heading} finalFocus={finalFocus} className={cn('flex max-h-[min(70vh,var(--available-height))] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0', at.lift ? 'w-[560px]' : 'w-[min(640px,var(--anchor-width))]')}>
+        <BasePopover.Popup id={id} data-popup="" aria-label={title} aria-modal="true" initialFocus={heading} finalFocus={finalFocus} className={cn('flex max-h-[min(70vh,var(--available-height))] max-w-(--available-width)', readerPopupClass, at.lift ? 'w-[560px]' : 'w-[min(640px,var(--anchor-width))]')}>
           {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
         </BasePopover.Popup>
       </BasePopover.Positioner>

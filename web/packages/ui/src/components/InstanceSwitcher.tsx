@@ -11,6 +11,7 @@ import { Key } from './InlinePicker';
 import { BottomSheet } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
+import { readerPopupClass } from './ui/dialog';
 import { Tip } from './ui/tooltip';
 import { InstanceBadge } from './InstanceBadge';
 import { PanelFoot, PanelHead } from './ui/panel';
@@ -278,7 +279,7 @@ export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect 
               aria-label="Instances"
               initialFocus={currentRow}
               finalFocus={trigger}
-              className="flex max-h-[min(80vh,var(--available-height))] w-88 max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+              className={cn('flex max-h-[min(80vh,var(--available-height))] w-88 max-w-(--available-width)', readerPopupClass)}
             >
               {head()}
               {list}

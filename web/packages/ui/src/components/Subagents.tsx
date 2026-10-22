@@ -932,7 +932,7 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
       window.removeEventListener('resize', place);
     };
   }, [row]);
-  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:m-0 [&>*]:size-full', className)} />;
+  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float [&>*]:m-0 [&>*]:size-full', className)} />;
 }
 
 /**
@@ -958,7 +958,7 @@ export function BottomSheet({ open, onClose, onClosed, label, className, backdro
           aria-modal="true"
           initialFocus={initialFocus}
           finalFocus={finalFocus}
-          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full', className)}
+          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', className)}
         >
           <div
             aria-hidden="true"

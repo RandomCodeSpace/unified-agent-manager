@@ -19,7 +19,7 @@ import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { BottomSheet, LiftedRow, PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { PanelFoot, PanelHead } from './ui/panel';
 import { Segmented } from './ui/segmented';
@@ -556,10 +556,10 @@ export default function GoToFile({ session, project, anchor, phone, open, onClos
   return (
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
-        <BasePopover.Backdrop className={`${backdropClass} duration-160`} />
-        {open && anchor.isConnected && <LiftedRow row={anchor} />}
+        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
+        {anchor.isConnected && <LiftedRow row={anchor} />}
         <BasePopover.Positioner anchor={anchor} side={below ? 'bottom' : 'top'} align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup data-popup="" aria-label="Go to file" initialFocus={input} finalFocus={back} className="flex h-[min(620px,var(--available-height))] w-[min(980px,var(--available-width))] origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
+          <BasePopover.Popup data-popup="" aria-label="Go to file" initialFocus={input} finalFocus={back} className={cn('flex h-[min(620px,var(--available-height))] w-[min(980px,var(--available-width))]', readerPopupClass)}>
             {content(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
           </BasePopover.Popup>
         </BasePopover.Positioner>

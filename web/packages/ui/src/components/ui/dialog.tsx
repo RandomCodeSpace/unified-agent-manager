@@ -15,13 +15,18 @@ import { PanelHead } from './panel';
  * popup so app-level Esc handlers stand back while one is open.
  */
 
-export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0';
+// `starting:` (CSS @starting-style) repeats each `data-starting-style` value: Base UI sets that attribute only when a mounted Root opens, so a popup that mounts open enters through it.
+export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0 starting:opacity-0';
+
+/** An anchored reader's popup (DESIGN.md Floating panels): the modal surface scaling from 0.98 and fading (`base`); the caller gives its size. */
+export const readerPopupClass =
+  'origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0';
 
 const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 max-sm:items-end max-sm:p-0';
 
 // Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
-  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;
@@ -82,7 +87,7 @@ export function ViewerDialog({ open, onOpenChange, onClosed, title, description,
         <BaseDialog.Viewport className="fixed inset-0 z-50 grid place-items-center p-4">
           <BaseDialog.Popup
             data-popup=""
-            className="flex max-h-[calc(100dvh-32px)] max-w-[min(94vw,1400px)] min-w-0 flex-col gap-3 outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+            className="flex max-h-[calc(100dvh-32px)] max-w-[min(94vw,1400px)] min-w-0 flex-col gap-3 outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0"
           >
             <div className="flex min-w-0 items-start gap-3 text-on-primary">
               <div className="min-w-0 flex-1">
@@ -300,8 +305,8 @@ export function Sheet({
           className={cn(
             'fixed inset-y-0 z-50 flex w-drawer max-w-[calc(100vw-44px)] flex-col bg-rail pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-modal outline-hidden transition-transform duration-240 ease-app',
             side === 'left'
-              ? 'left-0 pl-[env(safe-area-inset-left)] data-starting-style:-translate-x-full data-ending-style:-translate-x-full'
-              : 'right-0 pr-[env(safe-area-inset-right)] data-starting-style:translate-x-full data-ending-style:translate-x-full',
+              ? 'left-0 pl-[env(safe-area-inset-left)] data-starting-style:-translate-x-full data-ending-style:-translate-x-full starting:-translate-x-full'
+              : 'right-0 pr-[env(safe-area-inset-right)] data-starting-style:translate-x-full data-ending-style:translate-x-full starting:translate-x-full',
             keepMounted && !present && cn('shadow-none', side === 'left' ? '-translate-x-full' : 'translate-x-full', '[content-visibility:hidden]'),
             className,
           )}
