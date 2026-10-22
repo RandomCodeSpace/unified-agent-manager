@@ -59,10 +59,10 @@ test('native usage reads on open, on pushed usage changes and on Refresh, preser
   vi.useRealTimers();
   await userEvent.click(screen.getByText('By agent'));
   expect(read).toHaveBeenCalledTimes(2);
-  await userEvent.click(screen.getByRole('button', { name: 'Refresh', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await screen.findByText('Current model: native-current');
   expect(read).toHaveBeenCalledTimes(3);
-  await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(screen.queryByText('Current model: native-current')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools/ })));
   await openUsage();
@@ -156,7 +156,7 @@ test('native optional counters remain unknown and failures never become zero tot
   expect(tile('AI credits')).toBe('AI creditsNot reported yet1 request');
   expect(screen.queryByText('0')).toBeNull();
   expect(screen.getByText(/Some breakdown rows are not shown/)).toBeTruthy();
-  await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   read.mockRejectedValue(new Error('Native metrics unavailable'));
   await openUsage();
   expect(await screen.findByText('Native metrics unavailable')).toBeTruthy();
@@ -178,7 +178,7 @@ test('Task selection and close abort native reads and ignore late snapshots', as
   await openUsage();
   await screen.findByText('Current model: native-current');
   const secondSignal = read.mock.calls[1][1]!;
-  await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(secondSignal.aborted).toBe(true);
 });
 
@@ -232,7 +232,7 @@ test('oversized connected errors are bounded and closing disposes the reader err
   expect(screen.getByRole('status').textContent?.length).toBe(512);
   expect(read).toHaveBeenCalledTimes(1);
   const signal = read.mock.calls[0][1]!;
-  await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(signal.aborted).toBe(true);
   expect(screen.queryByRole('status')).toBeNull();
   await openUsage();
