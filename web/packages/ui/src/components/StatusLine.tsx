@@ -1,37 +1,42 @@
-// The status strip (DESIGN.md Status line): one quiet line over the composer. While the Thread
-// works it gives the todo list as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do), then
-// the live line, what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs you · allow
-// …"), the one place that says so; with nothing live, "Now:" and the row the work is at (without a
-// list, what the agent says it is doing, `assistant.intent`), for how long, a model call being retried and automatic compaction running
-// beside the turn ("Compacting in background", words only); after a stop it says why, until the
-// next turn. Its right end holds the Thread's subagents as blocks (✗ failed, ● running, ✓ done,
-// ○ stopped), there whenever the Thread has any. Pressing it opens one fixed sheet off the strip's
-// right end with a Todo and a Subagents tab (a bottom sheet on a phone), the one home of subagents.
+// The status strip (DESIGN.md Status line): one quiet line over the composer, in three sections.
+// Left, the todo list the agents keep as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do)
+// and "2 of 6", a button that opens the list as a reader of its own. Centre, the progress line,
+// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs you · allow …"), the one
+// place that says so; with nothing live, "Now:" and the row the work is at (without a list, what
+// the agent says it is doing, `assistant.intent`), a model call being retried and automatic
+// compaction running beside the turn ("Compacting in background", words only); after a stop it
+// says why, until the next turn. While it is a running command or a streaming thought it is a
+// button whose peek lifts the newest output lines, or the thought so far, above it. Then the
+// jump arrow, while the reader is away from the bottom. Right, the Thread's subagents as blocks
+// (✗ failed, ● running, ✓ done, ○ stopped), there whenever the Thread has any; pressing them opens
+// one fixed sheet off the strip's right end (a bottom sheet on a phone), the one home of subagents.
 // It sits in the dock's overlap, outside the scroller, so coming and going never moves the composer
-// or the transcript. The live line's mark is the pane's one animated element; everything else on
-// the strip is still. A subagent's retry stands under its row instead
-// (`SubagentRetry`).
+// or the transcript. The progress line's mark is the pane's one animated element; everything else
+// on the strip is still. A subagent's retry stands under its row instead (`SubagentRetry`).
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Tabs } from '@base-ui/react/tabs';
-import { Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
-import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { ATTENTION, LIVE, readOnly, type Retry, type SessionDetail, type Subagent, type TodoView } from '../api';
+import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
+import { forwardRef, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
+import { ATTENTION, LIVE, readOnly, type Item, type Retry, type SessionDetail, type Subagent } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
-import { todoLine, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
+import { todoLine, todoSections, todoSentence, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
-import { BreathingDot, WorkingMark } from './common';
+import { BreathingDot, Markdown, WorkingMark } from './common';
+import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
+import { LiveOutput } from './LiveOutput';
 import { BottomSheet, LiftedRow, SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
-import { PHONE, TodoTab } from './Todos';
+import { PHONE, Reader, type ReaderParts } from './Todos';
+import { Appear } from './ui/appear';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
-import { PanelFoot, PanelHead } from './ui/panel';
-import { HelpTip } from './ui/tooltip';
+import { popupClass } from './ui/menu';
+import { PanelHead } from './ui/panel';
+import { Tip } from './ui/tooltip';
 
 /** What the line says. */
 export type Line =
@@ -72,14 +77,20 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
  */
 export type LiveMark = 'dot' | 'ring' | 'wait' | 'you' | 'subagents';
 
-/** What the turn does now, as the strip's one live line: [mark] phase · detail · elapsed (since `since`), then a running command's newest output line (`tail`). */
-export interface Live { mark: LiveMark; phase: string; detail?: string; since?: string; tail?: string }
+/** What the turn does now, as the strip's one live line: [mark] phase · detail · elapsed (since `since`); `item` is the running command or the streaming thought the peek shows. */
+export interface Live { mark: LiveMark; phase: string; detail?: string; since?: string; item?: Item }
 
 /** A model call silent this long reads as a wait, not work: its mark stops. */
 export const WAIT_STILL_MS = 60_000;
 
 /** How long the last live line stays once nothing is live while the turn still works. */
 export const LIVE_HOLD_MS = 1500;
+
+/** The peek opens this long after the pointer comes to rest on the progress line. */
+export const PEEK_DELAY_MS = 250;
+
+/** How many of a running command's newest output lines the peek shows. */
+export const PEEK_LINES = 6;
 
 const READS = new Set(['view', 'read', 'list']);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -114,14 +125,14 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
       : kind === 'search' ? `Searching ${arg}`
       : kind === 'command' ? `Running ${arg}`
       : `Running ${[tool, phase.detail].filter(Boolean).join(' ')}`;
-    // The phase names the oldest running tool, so the output line is the oldest running command's.
-    const tail = kind === 'command' ? calls.find((i) => toolKind(i.tool?.name ?? '') === 'command')?.tool?.tail?.filter((l) => l.text.trim()).at(-1)?.text.trim() : undefined;
-    return { mark: 'ring', phase: words, since: phase.since, ...(tail ? { tail } : {}) };
+    // The phase names the oldest running tool, so the peek's output is the oldest running command's.
+    const item = kind === 'command' ? calls.find((i) => toolKind(i.tool?.name ?? '') === 'command') : undefined;
+    return { mark: 'ring', phase: words, since: phase.since, ...(item ? { item } : {}) };
   }
   // The model: what its newest item since the call began is says whether it thinks or writes; nothing yet is a wait.
   const last = items.at(-1);
   const fresh = last && !(Date.parse(last.time) < Date.parse(phase.since)) ? last.kind : undefined;
-  if (fresh === 'reasoning') return { mark: 'dot', phase: 'Thinking', since: phase.since };
+  if (fresh === 'reasoning') return { mark: 'dot', phase: 'Thinking', since: phase.since, item: last };
   if (fresh === 'assistant') {
     const t = session.turn_timings?.at(-1);
     const rate = t?.output_tokens && t.generation_ms ? Math.round(t.output_tokens / (t.generation_ms / 1000)) : 0;
@@ -175,26 +186,30 @@ function subagentSentence(subagents: readonly Subagent[], before?: string): stri
 
 const Sep = () => <span className="shrink-0 text-faint">·</span>;
 
-type Tab = 'todo' | 'subagents';
+/** A strip button: lit (`tint-hover`) on its own while hovered or open. */
+const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
 
 /**
- * The strip as two buttons on one row: the line, and the subagents at its end. Each one's name is a
- * sentence (sr-only), the words on screen are hidden from assistive tech, and a polite live region
- * beside them speaks only what `useCue` lets through. The line opens the sheet on its Todo tab, or
- * without a list shows the end of the conversation, where the work is; the subagents open it on
- * their tab, and so does a subagent row or chip in the conversation (`useSheetRequest`), on that
- * subagent or that reply's list. Each lights and lifts alone, so the subagents never light the line.
- * `hidden` gives its place to another strip (the sheet then opens from the bottom). `error`: why the
- * last jump to a subagent did not land, said in the Subagents tab.
+ * The strip in three sections on one row: the todo list, the progress line and the subagents,
+ * with the jump arrow before the subagents while `jump` (the reader is away from the bottom).
+ * Each button's name is a sentence (sr-only), the words on screen are hidden from assistive
+ * tech, and a polite live region beside them speaks only what `useCue` lets through. The todo
+ * list opens a reader of its own beside its button; the subagents open the sheet, and so does a
+ * subagent row or chip in the conversation (`useSheetRequest`), on that subagent or that reply's
+ * list. Each lights and lifts alone. `hidden` gives its place to another strip (the sheet then
+ * opens from the bottom, and the arrow stands alone). `error`: why the last jump to a subagent
+ * did not land, said in the sheet.
  */
-export function StatusLine({ line: given, session, since, hidden, error, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, error, jump, onJump }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
   since?: string;
   hidden: boolean;
   error?: string;
-  onJump: () => void;
+  /** The reader is away from the bottom: the arrow shows. */
+  jump: boolean;
+  onJump: MouseEventHandler<HTMLButtonElement>;
 }>) {
   // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) would only
   // repeat the turn card's head, "Working 18s": the strip says nothing then. Subagents that outlived the
@@ -213,26 +228,27 @@ export function StatusLine({ line: given, session, since, hidden, error, onJump 
   const cue = useCue(spoken, timing?.id ?? '');
   const list = shownLine?.kind === 'working' ? shownLine.todo : undefined;
   const view = list ? session.turn_activity?.todos : undefined;
-  const tabs: Tab[] = [...(view ? ['todo' as const] : []), ...(any ? ['subagents' as const] : [])];
+  const plan = shownLine?.kind === 'working' && shownLine.plan;
+  const todoId = useId();
   const readerId = useId();
   const row = useRef<HTMLDivElement>(null);
-  // Phone or not is chosen as it opens, so a resize does not remount it. `opener` takes the focus back,
-  // `lift` is the strip button drawn above the dim, `to` where the Subagents tab opens; `n` counts the
-  // openings, so a new one starts the tab afresh; `leaving`: it closes for a jump into the conversation.
-  const [reader, setReader] = useState<{ open: boolean; phone: boolean; tab: Tab; opener: HTMLElement | null; lift: HTMLElement | null; to: SheetTo | null; n: number; leaving: boolean } | null>(null);
+  // Phone or not is chosen as a reader opens, so a resize does not remount it. The todo reader hangs off its button.
+  const [todoReader, setTodoReader] = useState<{ open: boolean; phone: boolean; anchor: HTMLElement } | null>(null);
+  // The sheet: `opener` takes the focus back, `lift` is the strip button drawn above the dim, `to` where it opens;
+  // `n` counts the openings, so a new one starts afresh; `leaving`: it closes for a jump into the conversation.
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean; opener: HTMLElement | null; lift: HTMLElement | null; to: SheetTo | null; n: number; leaving: boolean } | null>(null);
   const confirming = useStopConfirming();
-  // With nothing left to show (the turn ended, the conversation closed), the reader goes too.
-  if (reader && !tabs.length) setReader(null);
-  const tab = reader && tabs.includes(reader.tab) ? reader.tab : tabs[0];
+  // With nothing left to show (the turn ended, the conversation closed), a reader goes too.
+  if (reader && !any) setReader(null);
+  if (todoReader && !(list && view)) setTodoReader(null);
   const sheetMode = () => window.matchMedia(PHONE).matches || hidden;
-  const show = (on: Tab, opener: HTMLElement) => setReader({ open: true, phone: sheetMode(), tab: on, opener, lift: opener, to: null, n: (reader?.n ?? 0) + 1, leaving: false });
   // A subagent row or chip in the conversation opens the same sheet, on the subagent or the reply's list; a jump closes it.
   const request = useSheetRequest();
   const [seen, setSeen] = useState(request?.n);
   if (request && request.n !== seen) {
     setSeen(request.n);
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (request.to) setReader({ open: true, phone: sheetMode(), tab: 'subagents', opener, lift: document.getElementById('subagents-link'), to: request.to, n: (reader?.n ?? 0) + 1, leaving: false });
+    if (request.to) setReader({ open: true, phone: sheetMode(), opener, lift: document.getElementById('subagents-link'), to: request.to, n: (reader?.n ?? 0) + 1, leaving: false });
     else if (reader?.open) setReader({ ...reader, open: false, leaving: true });
   }
   // A stop's confirmation sits outside the sheet: a press there is not a press away from it.
@@ -240,55 +256,67 @@ export function StatusLine({ line: given, session, since, hidden, error, onJump 
     if (!confirming) setReader((r) => r && { ...r, open: false });
   };
   const closed = () => setReader(null);
-  const plan = shownLine?.kind === 'working' && shownLine.plan;
-  const listed = tabs.includes('todo');
-  const strip = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
+  const rowShown = !!(shownLine || subagents);
+  const arrow = (
+    <Appear show={jump} className={cn('shrink-0', !rowShown && 'ml-auto')}>
+      <Tip label="Jump to bottom">
+        <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={onJump}>
+          <ArrowDown />
+        </Button>
+      </Tip>
+    </Appear>
+  );
+  const names = new Map(session.subagents.map((s) => [s.id, s.name]));
+  const parts: ReaderParts | null = list && view ? {
+    todos: view.todos,
+    counts: view.counts,
+    facts: [view.touched ? '' : 'Left by the last turn; this turn has not changed it yet', view.omitted ? `${view.omitted} more not shown` : ''].filter(Boolean),
+    sections: todoSections(view),
+    now: view.now,
+    foot: 'Read only · to change it, ask in the chat',
+    name: (t) => names.get(t.agent_id ?? ''),
+    blocks: <Blocks items={todoBlocks(list)} className="self-start" />,
+  } : null;
   return (
     <>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {spoken ? cue : ''}
       </div>
-      {(shownLine || subagents) && (
-        // Two buttons on one row: the line (its todo list, or the jump to the end) and the subagents, each lit and lifted on its own.
+      {rowShown ? (
+        // Three sections on one row: the list, the progress line, then the arrow and the subagents, each lit and lifted on its own.
         <div ref={row} className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
-          {shownLine ? (
+          {list && (
             <button
               type="button"
-              onClick={(e) => (listed ? show('todo', e.currentTarget) : onJump())}
-              aria-haspopup={listed ? 'dialog' : undefined}
-              aria-expanded={listed ? reader?.open === true && reader.tab === 'todo' : undefined}
-              aria-controls={listed && reader?.open && reader.tab === 'todo' ? readerId : undefined}
-              className={cn(strip, 'min-w-0 flex-1 gap-2.5')}
+              onClick={(e) => setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget })}
+              aria-haspopup="dialog"
+              aria-expanded={todoReader?.open === true}
+              aria-controls={todoReader?.open ? todoId : undefined}
+              className={cn(STRIP, 'shrink-0 gap-2')}
             >
-              <span key={shownLine.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
-                {shownLine.kind === 'working' ? <Working line={shownLine} since={since} /> : shownLine.kind === 'stopped' ? <Stopped line={shownLine} /> : <Paused text={shownLine.text} />}
+              {/* The blocks dim while the list is the last turn's; a phone keeps the glyph and the count. */}
+              <span aria-hidden="true" className={cn('flex items-center gap-2', list.kind === 'carried' && 'opacity-55')}>
+                <ListChecks className="size-3.5 shrink-0 text-muted" />
+                <Blocks items={todoBlocks(list)} className="max-sm:hidden" />
+                <span className="shrink-0 tabular-nums">
+                  <span className="max-sm:hidden">{`${list.done} of ${list.total}`}</span>
+                  <span className="sm:hidden">{`${list.done}/${list.total}`}</span>
+                </span>
               </span>
-              <span className="sr-only">
-                {shownLine.kind === 'working' ? (
-                  <>
-                    {slotWords(shownLine, !!since)}
-                    <ClockWords since={shownLine.live?.since ?? since} />
-                    {shownLine.todo && todoWords(shownLine.todo, shownLine.plan)}
-                    {shownLine.retry && retrySentence(shownLine.retry)}
-                    {shownLine.background && '. Compacting in background'}
-                    {'. '}
-                  </>
-                ) : shownLine.kind === 'stopped' ? `${shownLine.long.replaceAll(' · ', ', ')}. ` : `${shownLine.text}. `}
-                {listed ? 'Show the list' : 'Jump to bottom'}
-              </span>
+              <span className="sr-only">{`${todoWords(list, plan)}. Show the list`}</span>
             </button>
-          ) : (
-            <span className="flex-1" />
           )}
+          <div className="flex min-w-0 flex-1 justify-center">{shownLine && <Progress line={shownLine} since={since} />}</div>
+          {arrow}
           {subagents && (
             <button
               id="subagents-link"
               type="button"
-              onClick={(e) => show('subagents', e.currentTarget)}
+              onClick={(e) => setReader({ open: true, phone: sheetMode(), opener: e.currentTarget, lift: e.currentTarget, to: null, n: (reader?.n ?? 0) + 1, leaving: false })}
               aria-haspopup="dialog"
-              aria-expanded={reader?.open === true && reader.tab === 'subagents'}
-              aria-controls={reader?.open && reader.tab === 'subagents' ? readerId : undefined}
-              className={cn(strip, 'shrink-0 gap-2')}
+              aria-expanded={reader?.open === true}
+              aria-controls={reader?.open ? readerId : undefined}
+              className={cn(STRIP, 'shrink-0 gap-2')}
             >
               <Workflow aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
               <Blocks aria-hidden="true" items={subagentBlocks(subagents)} />
@@ -296,17 +324,20 @@ export function StatusLine({ line: given, session, since, hidden, error, onJump 
             </button>
           )}
         </div>
+      ) : (
+        arrow
       )}
-      {reader && tab && (
-        <StripReader id={readerId} open={reader.open} phone={reader.phone} row={row} lift={reader.lift} back={reader.leaving ? null : reader.opener} tabs={tabs} tab={tab} onTab={(t) => setReader((r) => r && { ...r, tab: t })} todoLabel={plan ? 'Plan' : 'Todo'} todo={view && list ? { view, blocks: todoBlocks(list) } : undefined} subagents={session.subagents} body={<SubagentSheetBody key={reader.n} to={reader.to} error={error} phone={reader.phone} />} onClose={close} onClosed={closed} />
+      {todoReader && parts && (
+        <Reader id={todoId} open={todoReader.open} phone={todoReader.phone} anchor={todoReader.anchor} side="top" label={plan ? 'Plan' : 'Todo'} title={plan ? 'Plan' : 'Todo'} parts={parts} onClose={() => setTodoReader((r) => r && { ...r, open: false })} onClosed={() => setTodoReader(null)} />
+      )}
+      {reader && (
+        <StripReader id={readerId} open={reader.open} phone={reader.phone} row={row} lift={reader.lift} back={reader.leaving ? null : reader.opener} body={<SubagentSheetBody key={reader.n} to={reader.to} error={error} phone={reader.phone} />} onClose={close} onClosed={closed} />
       )}
     </>
   );
 }
 
-const TAB_ICON: Record<Tab, typeof ListChecks> = { todo: ListChecks, subagents: Workflow };
-
-/** Where the sheet hangs: the strip's own right end (inside its padding), not the subagents button, which "Jump to bottom" pushes aside. */
+/** Where the sheet hangs: the strip's own right end (inside its padding), not the subagents button. */
 function stripEnd(row: RefObject<HTMLDivElement | null>) {
   return () => {
     const strip = row.current?.parentElement;
@@ -324,12 +355,11 @@ function stripEnd(row: RefObject<HTMLDivElement | null>) {
  * The strip's sheet (DESIGN.md Status line, sheet): one box of fixed place and size hung off the
  * strip's right end, its right edge flush with it, 10px above it and 560px wide (the strip button
  * that opened it lifted above a 160ms dim), or on a phone (`phone`, chosen as it opened) a bottom
- * sheet of 70% of the screen, with a tab per thing the strip counts: Todo (or Plan), the list in
- * plan order, and Subagents (`body`, list and detail in turn). It opens with focus on the chosen tab
- * (on a subagent's detail, its way back to the list); ← and → switch tabs from anywhere but a text
- * field; Esc, the close button or a press outside close it and give focus back to `back`.
+ * sheet of 70% of the screen: the subagents (`body`, list and detail in turn) under a compact head.
+ * It opens with focus on the list (on a subagent's detail, its way back to the list); Esc, the
+ * close button or a press outside close it and give focus back to `back`.
  */
-function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoLabel, todo, subagents, body, onClose, onClosed }: Readonly<{
+function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed }: Readonly<{
   id: string;
   open: boolean;
   phone: boolean;
@@ -337,83 +367,30 @@ function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoL
   row: RefObject<HTMLDivElement | null>;
   lift: HTMLElement | null;
   back: HTMLElement | null;
-  tabs: Tab[];
-  tab: Tab;
-  onTab: (tab: Tab) => void;
-  todoLabel: 'Todo' | 'Plan';
-  todo?: { view: TodoView; blocks: Block[] };
-  subagents: readonly Subagent[];
   body: ReactNode;
   onClose: () => void;
   onClosed: () => void;
 }>) {
-  const activeTab = useRef<HTMLButtonElement>(null);
-  const names: Record<Tab, string> = { todo: todoLabel, subagents: 'Subagents' };
-  const label = tabs.map((t, i) => (i ? names[t].toLowerCase() : names[t])).join(' and ');
+  const heading = useRef<HTMLHeadingElement>(null);
   const finalFocus = () => (back?.isConnected ? back : false);
-  const initialFocus = () => document.getElementById(id)?.querySelector<HTMLElement>('[data-sheet-focus]') ?? activeTab.current;
-  const onArrows = (e: ReactKeyboardEvent) => {
-    if (e.defaultPrevented || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || tabs.length < 2 || e.altKey || e.ctrlKey || e.metaKey) return;
-    const target = e.target as HTMLElement;
-    // The tabs move themselves, and a text field keeps its caret.
-    if (target.closest('[role="tablist"], input, textarea, [contenteditable="true"]')) return;
-    e.preventDefault();
-    const next = tabs[(tabs.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
-    onTab(next);
-    requestAnimationFrame(() => activeTab.current?.focus());
-  };
+  const initialFocus = () => document.getElementById(id)?.querySelector<HTMLElement>('[data-sheet-focus]') ?? heading.current;
   const content = (closeButton: ReactNode) => (
-    <Tabs.Root value={tab} onValueChange={(v) => onTab(v as Tab)} className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <PanelHead className="pt-2 pr-2 pb-1.5 pl-2.5">
         <div className="flex min-h-7 min-w-0 items-center gap-1">
-          <Tabs.List activateOnFocus loopFocus aria-label="Show" className="flex min-w-0 flex-1 gap-1">
-            {tabs.map((t) => {
-              const Icon = TAB_ICON[t];
-              return (
-                <Tabs.Tab key={t} value={t} ref={t === tab ? activeTab : undefined} className="flex h-7 items-center gap-1.5 rounded-sm px-2.5 text-ui font-medium whitespace-nowrap text-muted outline-hidden hover:text-ink focus-visible:shadow-focus data-active:bg-tint-selected data-active:text-ink pointer-coarse:h-9">
-                  <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-                  {names[t]}
-                </Tabs.Tab>
-              );
-            })}
-          </Tabs.List>
+          <h2 ref={heading} tabIndex={-1} className="flex h-7 min-w-0 flex-1 items-center gap-1.5 px-2.5 text-ui font-medium text-ink outline-hidden">
+            <Workflow aria-hidden="true" className="size-3.5 shrink-0" />
+            Subagents
+          </h2>
           {closeButton}
         </div>
       </PanelHead>
-      {todo && (
-        <Tabs.Panel value="todo" className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3 outline-hidden">
-          {tab === 'todo' && <TodoTab view={todo.view} subagents={subagents} blocks={phone ? <Blocks items={todo.blocks} className="self-start" /> : undefined} />}
-        </Tabs.Panel>
-      )}
-      {tabs.includes('subagents') && (
-        <Tabs.Panel value="subagents" className="flex min-h-0 flex-1 flex-col outline-hidden">
-          {tab === 'subagents' && body}
-        </Tabs.Panel>
-      )}
-      {/* The Subagents tab keeps its own foot: the list's keys, or the detail's with Stop. */}
-      {!phone && tab === 'todo' && (
-        <PanelFoot>
-          <span className="flex items-center gap-1.5">
-            <Key>Esc</Key>close
-          </span>
-          {tabs.length > 1 && (
-            <span className="flex items-center gap-1.5">
-              <Key>←</Key>
-              <Key>→</Key>switch
-            </span>
-          )}
-          <span className="flex-1" />
-          <span className="flex items-center gap-0.5">
-            Read only
-            <HelpTip label="Read only">To change it, ask in the chat</HelpTip>
-          </span>
-        </PanelFoot>
-      )}
-    </Tabs.Root>
+      <div className="flex min-h-0 flex-1 flex-col">{body}</div>
+    </div>
   );
   if (phone) {
     return (
-      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className="h-[70dvh] duration-160" backdropClassName="duration-160" initialFocus={initialFocus} finalFocus={finalFocus}>
+      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="Subagents" className="h-[70dvh] duration-160" backdropClassName="duration-160" initialFocus={initialFocus} finalFocus={finalFocus}>
         {content(
           <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
             <X />
@@ -432,11 +409,10 @@ function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoL
           <BasePopover.Popup
             id={id}
             data-popup=""
-            aria-label={label}
+            aria-label="Subagents"
             aria-modal="true"
             initialFocus={initialFocus}
             finalFocus={finalFocus}
-            onKeyDown={onArrows}
             className="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0"
           >
             {content(
@@ -451,10 +427,10 @@ function StripReader({ id, open, phone, row, lift, back, tabs, tab, onTab, todoL
   );
 }
 
-/** The list's counts in the strip's name; the row the work is at is already its slot. */
+/** The list's counts as the todo button's name: "Todo 2 of 7 done, 1 in progress, 1 blocked" (the row the work is at is the reader's). */
 function todoWords(todo: TodoLine, plan?: boolean): string {
-  const words = todoSentence(todo.kind === 'list' ? { ...todo, now: undefined } : todo);
-  return plan ? words.replace('. Todo ', '. Plan ') : words;
+  const words = todoSentence(todo.kind === 'list' ? { ...todo, now: undefined } : todo).replace(/^\. /, '');
+  return plan ? words.replace(/^Todo /, 'Plan ') : words;
 }
 
 function retrySentence(retry: Retry): string {
@@ -462,13 +438,7 @@ function retrySentence(retry: Retry): string {
   return `. ${lead}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }
 
-/**
- * The working line: the todo list's stage blocks (dimmed while it is the last turn's), then one
- * slot: "Compacting the conversation", "From the last turn", "Now:" and the row the work is at, or
- * what the agent says it is doing (nothing when it says nothing); then a retry and compaction in
- * the background. How long the turn has worked is the turn card's head's, never repeated here.
- */
-/** The working line's one slot in words, as the strip's name starts. */
+/** The working line's one slot in words, as the progress line's name starts. */
 function slotWords(line: Extract<Line, { kind: 'working' }>, outlived: boolean): string {
   const now = line.todo?.kind === 'list' ? line.todo.now : undefined;
   if (line.live) return [line.live.phase, line.live.detail].filter(Boolean).join(', ');
@@ -477,18 +447,94 @@ function slotWords(line: Extract<Line, { kind: 'working' }>, outlived: boolean):
   return line.lead || (outlived ? 'Working' : '');
 }
 
+/**
+ * The progress line, centred: what happens now, in words (`Working`, `Stopped`, `Paused`). While
+ * it is a running command or a streaming thought (`live.item`) it is a button with a peek (B2):
+ * the pointer resting on it (PEEK_DELAY_MS), a tap, a click, Enter or Space lift the peek above
+ * it; the pointer leaving, Esc, a press outside or the step ending close it. Other phases are
+ * plain words, not a button.
+ */
+function Progress({ line, since }: Readonly<{ line: Line; since?: string }>) {
+  const live = line.kind === 'working' ? line.live : null;
+  const item = live?.item;
+  const words = (
+    <>
+      <span key={line.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
+        {line.kind === 'working' ? <Working line={line} since={since} /> : line.kind === 'stopped' ? <Stopped line={line} /> : <Paused text={line.text} />}
+      </span>
+      <span className="sr-only">
+        {line.kind === 'working' ? (
+          <>
+            {slotWords(line, !!since)}
+            <ClockWords since={line.live?.since ?? since} />
+            {line.retry && retrySentence(line.retry)}
+            {line.background && '. Compacting in background'}
+          </>
+        ) : line.kind === 'stopped' ? line.long.replaceAll(' · ', ', ') : line.text}
+        {item && (item.kind === 'reasoning' ? '. Show the thought' : '. Show the output')}
+      </span>
+    </>
+  );
+  if (!item || !live) return <span className="flex h-8 min-w-0 items-center px-2 text-caption text-muted pointer-coarse:h-11">{words}</span>;
+  return (
+    // A new step starts the popover afresh: a peek open on the step that ended closes with it.
+    <BasePopover.Root key={item.id}>
+      <BasePopover.Trigger openOnHover delay={PEEK_DELAY_MS} render={<button type="button" className={cn(STRIP, 'min-w-0')} />}>
+        {words}
+      </BasePopover.Trigger>
+      <Peek live={live} item={item} />
+    </BasePopover.Root>
+  );
+}
+
+/**
+ * The peek (DESIGN.md Status line, peek): a non-modal popover above the progress line, the level 2
+ * floating surface, at most 36rem wide. A running command's newest PEEK_LINES output lines in mono
+ * (stderr in the error tone, marked "err") under "OUTPUT · 6 lines · 41s"; a streaming thought's
+ * text so far (`md-quiet`), its newest lines, under "THINKING · 12s". Nothing in it moves.
+ */
+function Peek({ live, item }: Readonly<{ live: Live; item: Item }>) {
+  const thought = item.kind === 'reasoning';
+  const { item: full, attach } = useItemBody(item, thought);
+  const now = useNow(live.since);
+  const elapsed = live.since ? liveClock(now - Date.parse(live.since)) : '';
+  const lines = item.tool?.tail?.slice(-PEEK_LINES) ?? [];
+  const facts = [thought ? '' : plural(lines.length, 'line'), elapsed].filter(Boolean);
+  return (
+    <BasePopover.Portal>
+      <BasePopover.Positioner side="top" align="center" sideOffset={6} collisionPadding={12} className="z-50 outline-hidden">
+        <BasePopover.Popup data-popup="" aria-label={thought ? 'The thought so far' : 'The newest output'} className={cn(popupClass, 'flex w-[min(36rem,var(--available-width))] flex-col p-0 pb-2')}>
+          <div className="flex h-8 shrink-0 items-center gap-2 px-3 text-caption text-muted">
+            <span className="shrink-0 text-eyebrow uppercase">{thought ? 'Thinking' : 'Output'}</span>
+            <span className="min-w-0 truncate tabular-nums">{facts.map((f) => `· ${f}`).join(' ')}</span>
+            <span className="flex-1" />
+            <Key>Esc</Key>
+          </div>
+          {thought ? (
+            <div ref={attach} className="flex max-h-40 flex-col justify-end overflow-hidden px-3">
+              <Markdown text={full?.text ?? ''} className="md-quiet shrink-0 text-ui text-muted" streaming />
+            </div>
+          ) : (
+            <LiveOutput lines={lines} className="mx-2" />
+          )}
+        </BasePopover.Popup>
+      </BasePopover.Positioner>
+    </BasePopover.Portal>
+  );
+}
+
+/**
+ * The working line's slot: "Compacting the conversation", "From the last turn", "Now:" and the
+ * row the work is at, or what the agent says it is doing (nothing when it says nothing); then a
+ * retry and compaction in the background. How long the turn has worked is the turn card's head's,
+ * never repeated here.
+ */
 function Working({ line, since }: Readonly<{ line: Extract<Line, { kind: 'working' }>; since?: string }>) {
   const retry = line.retry && retryWords(line.retry);
   const todo = line.todo;
   const now = todo?.kind === 'list' ? todo.now : undefined;
   return (
     <>
-      {todo && (
-        <span className={cn('flex shrink-0 items-center gap-2', todo.kind === 'carried' && 'opacity-55')}>
-          <ListChecks className="size-3.5 shrink-0 text-muted" />
-          <Blocks items={todoBlocks(todo)} />
-        </span>
-      )}
       {/* The slot gives way before the clock does. Live, the line says what happens now; "Now:" stays in the reader. */}
       {line.live ? (
         <LiveSlot live={since && !line.live.since ? { ...line.live, since } : line.live} />
@@ -610,10 +656,10 @@ function useOffScreen(el: HTMLElement | null): boolean {
 }
 
 /**
- * The live line (DESIGN.md Status line, live line): [mark] phase · detail · elapsed, then a running command's newest
- * output line, quieter, which gives way first (hidden on a phone). Its mark is the one animated element in the pane
- * besides the sidebar's glyph: model work breathes, local work turns, a wait past WAIT_STILL_MS is a still clock in
- * muted words, "Needs you" is a still amber shield, subagents a still glyph. Paused off screen; still under reduced motion.
+ * The live line (DESIGN.md Status line, live line): [mark] phase · detail · elapsed (the elapsed hidden on a phone).
+ * Its mark is the one animated element in the pane besides the sidebar's glyph: model work breathes, local work
+ * turns, a wait past WAIT_STILL_MS is a still clock in muted words, "Needs you" is a still amber shield, subagents
+ * a still glyph. Paused off screen; still under reduced motion.
  */
 function LiveSlot({ live }: Readonly<{ live: Live }>) {
   const [el, setEl] = useState<HTMLSpanElement | null>(null);
@@ -638,14 +684,13 @@ function LiveSlot({ live }: Readonly<{ live: Live }>) {
           <span className={cn('min-w-0 shrink-1000 truncate', waited && 'text-muted')}>{live.detail}</span>
         </>
       )}
-      {/* The output line gives way first, then the detail, then the phase; the clock stays whole (the line clips past it). */}
+      {/* The detail gives way first, then the phase; the clock stays whole (the line clips past it). */}
       {elapsed && (
-        <span className={cn('shrink-0 tabular-nums', !you && 'text-muted')}>
+        <span className={cn('shrink-0 tabular-nums max-sm:hidden', !you && 'text-muted')}>
           <span className="pr-2 text-faint">·</span>
           {elapsed}
         </span>
       )}
-      {live.tail && <span className="min-w-0 shrink-1000 truncate pl-1.5 font-mono text-code-sm text-faint max-sm:hidden">{live.tail}</span>}
     </span>
   );
 }

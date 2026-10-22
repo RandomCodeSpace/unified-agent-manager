@@ -493,7 +493,19 @@ export function seed(): MockState {
 The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the upstream tracker has the [original report](https://example.com/issue/56.png).`,
         },
         tool('fuse-i6', 2, { name: 'web_fetch', title: 'Fetch reference documentation', status: 'failed', input: '{"url":"https://example.com/docs/reference"}', output: 'uam fuse: example.com/docs refused 403 at 14:02 UTC; reopens 20:02 UTC' }),
-        tool('i7', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1' }),
+        tool('i7', 1, {
+          name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1',
+          // The newest output lines, as the service keeps them for a running command: the strip's peek shows them.
+          tail: [
+            { text: '=== RUN   TestRedrawReplaysPrivateModes' },
+            { text: '--- PASS: TestRedrawReplaysPrivateModes (0.02s)' },
+            { text: '=== RUN   TestRedrawReplaysFocusEvents' },
+            { text: '    redraw_test.go:88: attach #2: want ESC[?1004h after reset', err: true },
+            { text: '--- FAIL: TestRedrawReplaysFocusEvents (0.01s)' },
+            { text: '=== RUN   TestRedrawKeepsSavedCursor' },
+            { text: 'ok  \tinternal/vterm/term\t0.41s' },
+          ],
+        }),
         tool('i8', 1, {
           name: 'bash', title: 'go test ./internal/attach/...', status: 'failed',
           display_arg: 'go test ./internal/attach/...', has_input: true, has_output: true,
