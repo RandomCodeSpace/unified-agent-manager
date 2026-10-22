@@ -358,3 +358,102 @@ func TestTurnTodosCompactionKeepsHeldTimingsNewestFirst(t *testing.T) {
 		t.Fatalf("compacted to %d bytes: %.40q", len(data), data)
 	}
 }
+
+func TestTodoHistoryMergesTurnsAndKeepsTheLastList(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv := createSession(t, ts.m, ts.prov)
+	at := func(sec int64) time.Time { return time.Unix(sec, 0) }
+	auth := withCookie(ts)
+	get := func(id string) (int, TodoHistory) {
+		t.Helper()
+		w := ts.do(http.MethodGet, "/api/sessions/"+id+"/todos/history", "", auth)
+		var h TodoHistory
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &h); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return w.Code, h
+	}
+	turnIDs := func(h TodoHistory) string {
+		ids := make([]string, len(h.Turns))
+		for i, r := range h.Turns {
+			ids[i] = r.TimingID + ":" + snapshotIDs(r)
+		}
+		return strings.Join(ids, " ")
+	}
+	// A Task without a list: nothing kept, no live list.
+	if code, h := get(sum.ID); code != http.StatusOK || h.Live != nil || len(h.Turns) != 0 {
+		t.Fatalf("empty = %d %+v", code, h)
+	}
+	// Turn 1 keeps its record on disk, with the whole list beside it.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone, ChangedAt: at(10)}, agentapi.Todo{ID: "b", Title: "Build", Status: agentapi.TodoPending}))
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	first := lastTiming(t, ts.m, sum.ID)
+	if err := ts.m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	livePath := filepath.Join(ts.m.taskUploadDir(sum.ID), todosFile)
+	written, err := os.Stat(livePath)
+	if err != nil || written.Mode().Perm() != 0o600 {
+		t.Fatalf("todos.json = %v, %v", written, err)
+	}
+	// Turn 2's record stays queued; turn 3 does not touch the list.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone, ChangedAt: at(10)}, agentapi.Todo{ID: "b", Title: "Build", Status: agentapi.TodoInProgress, ChangedAt: at(20)}))
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	second := lastTiming(t, ts.m, sum.ID)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	// A record of a turn the Task no longer holds is left out.
+	f, err := os.OpenFile(turnTodosPath(ts.m, sum.ID), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, _ := json.Marshal(TurnTodos{TimingID: "gone", Todos: []snapshotTodo{{Todo: agentapi.Todo{ID: "x", Title: "Lost", Status: agentapi.TodoDone}}}})
+	_, _ = f.Write(append(gone, '\n'))
+	_ = f.Close()
+	code, h := get(sum.ID)
+	if code != http.StatusOK || turnIDs(h) != first.ID+":b,a "+second.ID+":b" {
+		t.Fatalf("history = %d %s %+v", code, turnIDs(h), h)
+	}
+	if h.Live == nil || !h.Live.Known || len(h.Live.Todos) != 2 || h.Live.Todos[1].Status != agentapi.TodoInProgress {
+		t.Fatalf("live = %+v", h.Live)
+	}
+	// The flush of turn 2 replaces todos.json; the flush of turn 3 leaves it.
+	if err := ts.m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := os.Stat(livePath)
+	if err != nil || os.SameFile(written, replaced) {
+		t.Fatalf("todos.json after turn 2: %v, %v", replaced, err)
+	}
+	if err := ts.m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := os.Stat(livePath); err != nil || !os.SameFile(replaced, again) {
+		t.Fatalf("todos.json rewritten without a change: %v, %v", again, err)
+	}
+	// With the list unknown the last list written stands in; without the file, nothing.
+	conv.Emit(todosEvent(false))
+	if _, h := get(sum.ID); h.Live == nil || !h.Live.Known || len(h.Live.Todos) != 2 || h.Live.Todos[1].Status != agentapi.TodoInProgress || h.Live.Counts != (TodoCounts{Total: 2, Done: 1, InProgress: 1, Open: 1}) {
+		t.Fatalf("live from todos.json = %+v", h.Live)
+	}
+	if err := os.Remove(livePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, h := get(sum.ID); h.Live != nil || len(h.Turns) != 2 {
+		t.Fatalf("live without todos.json = %+v", h)
+	}
+	// An archived Task still reads it; an unknown Task is not found.
+	if _, err := ts.m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, h := get(sum.ID); code != http.StatusOK || len(h.Turns) != 2 {
+		t.Fatalf("archived = %d %+v", code, h)
+	}
+	if code, _ := get("missing"); code != http.StatusNotFound {
+		t.Fatalf("missing Task = %d", code)
+	}
+}

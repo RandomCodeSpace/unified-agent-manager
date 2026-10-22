@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
-import { StatusLine, statusLine } from '../../src/components/StatusLine';
-import type { Item, SessionDetail, Subagent, Todo, TodoView, TurnTiming } from '../../src/api';
+import { StatusLine, statusLine, stripHasTodos } from '../../src/components/StatusLine';
+import { ApiContext } from '../../src/ApiContext';
+import { api, type Item, type SessionDetail, type Subagent, type Todo, type TodoHistory, type TodoView, type TurnTiming } from '../../src/api';
 import { shownState } from '../../src/lib/tasks';
 
 afterEach(() => vi.useRealTimers());
@@ -314,4 +315,111 @@ test('the live region says a row done or newly blocked, at most one every 5s', (
   expect(region()).toBe('');
   act(() => vi.advanceTimersByTime(1000));
   expect(region()).toBe('Blocked: Sign in to the registry');
+});
+
+const clock = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+const at = (m: number) => new Date(start - m * 60_000).toISOString();
+const ended = { id: 'done-turn', user_item_id: 'u0', state: 'completed', started_at: at(10), ended_at: at(5), todo: { done: 1, total: 4, in_progress: 2, blocked: 1, open: 2 } } as TurnTiming;
+/** The names of the strip's buttons, in order. */
+const names = () => screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.querySelector(':scope > .sr-only')!.textContent);
+
+test('idle, the list and its history stay on the strip as two buttons alone; the list opens as the last turn left it; hidden, the arrow stands alone', async () => {
+  const user = userEvent.setup();
+  const idle = task({ state: 'completed', turn_timings: [ended], turn_activity: { todos: listOf(rows(), { touched: false }) } });
+  expect(stripHasTodos(idle)).toBe(true);
+  expect(stripHasTodos(task({ state: 'completed' }))).toBe(false);
+  const view = render(draw(idle));
+  expect(names()).toEqual(['Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list', 'Todo history: 1 turn changed the list. Show the history']);
+  // No progress line, and the blocks undimmed: the list is the Thread's, not a running turn's carry-over.
+  expect(said()).toBeNull();
+  const todo = screen.getByRole('button', { name: /Show the list$/ });
+  expect(todo.querySelector('.opacity-55')).toBeNull();
+  expect(blocks(todo)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
+  // "1 turn" on a wide screen, "1" on a phone, behind the History glyph.
+  const history = screen.getByRole('button', { name: /Show the history$/ });
+  expect(history.getAttribute('aria-haspopup')).toBe('dialog');
+  expect(within(history).getByText('1 turn').className).toContain('max-sm:hidden');
+  expect(within(history).getByText('1').className).toContain('sm:hidden');
+  // Away from the bottom the arrow joins the row.
+  view.rerender(draw(idle, { jump: true }));
+  expect(names()).toEqual(['Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list', 'Todo history: 1 turn changed the list. Show the history', 'Jump to bottom']);
+  // The live reader: the same sections, its facts line says when the last turn left it, and no row is "now".
+  await user.click(todo);
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  expect(within(reader).getByText(`As the last turn left it, ${clock(ended.ended_at!)}`)).toBeTruthy();
+  expect(within(reader).queryByText('now')).toBeNull();
+  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'Done']);
+  expect(within(reader).getByText('Read only · to change it, ask in the chat')).toBeTruthy();
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  // Hidden (editing a message), both buttons go with the rest; the arrow stays.
+  view.rerender(<StatusLine line={null} session={idle} hidden jump onJump={() => {}} />);
+  expect(names()).toEqual(['Jump to bottom']);
+});
+
+test('a closed Thread shows the last list uam kept; the history button opens the ledger: every row with its stamp, the removed ones marked', async () => {
+  const user = userEvent.setup();
+  const t1 = { id: 'turn-1', user_item_id: 'u1', state: 'completed', started_at: at(60), ended_at: at(50), todo: { done: 1, total: 2, pending: 1, open: 1 } } as TurnTiming;
+  const t2 = { id: 'turn-2', user_item_id: 'u2', state: 'completed', started_at: at(40), ended_at: at(30), todo: { done: 1, total: 3, in_progress: 1, blocked: 1, open: 1 } } as TurnTiming;
+  const live = listOf(
+    [
+      { id: 'a', title: 'Plan the pages', status: 'done', changed_at: at(55) },
+      { id: 'b', title: 'Build the index page', status: 'in_progress', agent_id: 'sub-1', changed_at: at(35) },
+      { id: 'd', title: 'Sign in to the registry', status: 'blocked', note: 'No token on this machine', changed_at: at(33) },
+    ],
+    { touched: false, now: undefined },
+  );
+  const history: TodoHistory = {
+    live,
+    turns: [
+      { timing_id: 'turn-1', ended_at: at(50), counts: t1.todo!, todos: [{ id: 'a', title: 'Plan the pages', status: 'done', changed_at: at(55) }, { id: 'b', title: 'Build the index page', status: 'pending' }] },
+      {
+        timing_id: 'turn-2',
+        ended_at: at(30),
+        counts: t2.todo!,
+        todos: [
+          { id: 'd', title: 'Sign in to the registry', status: 'blocked', note: 'No token on this machine', changed_at: at(33) },
+          { id: 'b', title: 'Build the index page', status: 'in_progress', agent_id: 'sub-1', agent: 'Index page writer', changed_at: at(35) },
+          { id: 'c', title: 'Write the README', status: 'done', changed_at: at(34) },
+        ],
+      },
+    ],
+  };
+  const todoHistory = vi.fn(async () => history);
+  const closed = task({ state: 'completed', turn_timings: [t1, t2], turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} } } });
+  render(<ApiContext.Provider value={{ ...api, todoHistory }}>{draw(closed)}</ApiContext.Provider>);
+  // With no conversation open the list is not known: the strip reads the last one uam kept, once.
+  await screen.findByRole('button', { name: 'Todo 1 of 3 done, 1 in progress, 1 blocked. Show the list' });
+  expect(todoHistory).toHaveBeenCalledWith('t', expect.any(AbortSignal));
+  expect(todoHistory).toHaveBeenCalledTimes(1);
+  const button = screen.getByRole('button', { name: 'Todo history: 2 turns changed the list. Show the history' });
+  await user.click(button);
+  const reader = await screen.findByRole('dialog', { name: 'Todo history' });
+  expect(button.getAttribute('aria-expanded')).toBe('true');
+  expect(button.getAttribute('aria-controls')).toBe(reader.id);
+  const heading = within(reader).getByRole('heading', { name: 'Todo history' });
+  await waitFor(() => expect(document.activeElement).toBe(heading));
+  // Opening reads the records afresh; the head counts the rows and turns.
+  expect(todoHistory).toHaveBeenCalledTimes(2);
+  expect(await within(reader).findByText('4 rows · 2 turns')).toBeTruthy();
+  expect(within(reader).getByText('Every row the agents kept, with when it changed; rows they removed stay here')).toBeTruthy();
+  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'Done']);
+  // Each row's stamp under it: its state, when, which turn; newest change first in a section; a row the live list lacks says so.
+  expect(within(reader).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    `Build the index pagein progress since ${clock(at(35))} · turn 2, by Index page writer, In progress`,
+    `Sign in to the registryNo token on this machineblocked ${clock(at(33))} · turn 2, Blocked`,
+    `Write the READMEdone ${clock(at(34))} · turn 2 · removed from the list since, Done`,
+    `Plan the pagesdone ${clock(at(55))} · turn 1, Done`,
+  ]);
+  expect(within(reader).getByText('· removed from the list since').className).toContain('text-faint');
+  expect(within(reader).getByText('Kept by uam when each turn ended')).toBeTruthy();
+  expect(within(reader).getByText('Esc')).toBeTruthy();
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(document.activeElement).toBe(button);
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  // A read that fails says why in the facts line.
+  todoHistory.mockRejectedValueOnce(new Error('the service is away'));
+  await user.click(button);
+  expect(await screen.findByText('the service is away')).toBeTruthy();
 });

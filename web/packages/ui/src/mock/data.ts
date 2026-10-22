@@ -35,7 +35,7 @@ export interface MockState {
   previous: Record<string, PreviousSession[]>;
   /** Whole texts of `clipped` items by item ID, for the item route; the items hold the shortened part. */
   wholeTexts: Record<string, string>;
-  /** The todo lists uam kept when turns ended, by timing ID, for the turn route. */
+  /** The todo lists uam kept when turns ended, by timing ID, for the turn route and the history route. */
   turnTodos: Record<string, TurnTodos>;
 }
 
@@ -684,6 +684,13 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: '',
       state: 'working',
       subagents_running: 2,
+      // Three earlier turns changed the list (their records are in `turnTodos`); the fourth runs.
+      turn_timings: [
+        { id: 'tt-t8-1', user_item_id: 'h1', started_at: ago(45), ended_at: ago(40), state: 'completed', todo: { done: 1, total: 3, pending: 2, open: 2 } },
+        { id: 'tt-t8-2', user_item_id: 'h2', started_at: ago(35), ended_at: ago(28), state: 'completed', todo: { done: 2, total: 6, blocked: 1, in_progress: 1, pending: 2, open: 3 } },
+        { id: 'tt-t8-3', user_item_id: 'h3', started_at: ago(22), ended_at: ago(16), state: 'completed', todo: { total: 4, blocked: 1, in_progress: 2, pending: 1, open: 3 } },
+        { id: 'tt-t8-4', user_item_id: 'i1', started_at: ago(12), state: 'working' },
+      ],
       // The agents' todo list in all four stages: two subagents' rows in progress, one blocked, one to do.
       // The main agent and one subagent wait on the model.
       turn_activity: {
@@ -1419,6 +1426,44 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           { id: 'test', title: 'Test the new doctor line', status: 'done', changed_at: ago(50) },
           { id: 'edit', title: 'Print the terminal and glyph set in uam doctor', status: 'done', changed_at: ago(55) },
           { id: 'probe', title: 'Find where the terminal probe is exposed', status: 'done', agent_id: 'a1', agent: 'explore', changed_at: ago(57) },
+        ],
+      },
+      // t8's three turns: the first wrote the list, the second blocked one row, finished two (one the agents later removed) and started one, the third started another.
+      'tt-t8-1': {
+        timing_id: 'tt-t8-1',
+        ended_at: ago(40),
+        intent: 'Planning the audit',
+        counts: { done: 1, total: 3, pending: 2, open: 2 },
+        todos: [
+          { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'pending', changed_at: ago(42) },
+          { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending', changed_at: ago(42) },
+          { id: 'plan', title: 'Split the audit into markup and contrast', status: 'done', changed_at: ago(41) },
+        ],
+      },
+      'tt-t8-2': {
+        timing_id: 'tt-t8-2',
+        ended_at: ago(28),
+        intent: 'Fixing the markup',
+        counts: { done: 2, total: 6, blocked: 1, in_progress: 1, pending: 2, open: 3 },
+        todos: [
+          { id: 'lint', title: 'Run the accessibility linter', status: 'blocked', note: 'axe-core is not installed in this project.', agent_id: 'a3', agent: 'Run the accessibility linter', changed_at: ago(30) },
+          { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'in_progress', agent_id: 'a1', agent: 'Survey templates for missing alt text and labels', changed_at: ago(31) },
+          { id: 'contrast', title: 'Check contrast of the theme tokens', status: 'pending', changed_at: ago(32) },
+          { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending', changed_at: ago(42) },
+          { id: 'headings', title: 'Fix the heading order', status: 'done', agent_id: 'a4', agent: 'Check the heading order', changed_at: ago(29) },
+          { id: 'rerun', title: 'Re-run the linter once axe-core is installed', status: 'done', changed_at: ago(30) },
+        ],
+      },
+      'tt-t8-3': {
+        timing_id: 'tt-t8-3',
+        ended_at: ago(16),
+        intent: 'Checking the contrast',
+        counts: { total: 4, blocked: 1, in_progress: 2, pending: 1, open: 3 },
+        todos: [
+          { id: 'lint', title: 'Run the accessibility linter', status: 'blocked', note: 'axe-core is not installed in this project.', agent_id: 'a3', agent: 'Run the accessibility linter', changed_at: ago(30) },
+          { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'in_progress', agent_id: 'a1', agent: 'Survey templates for missing alt text and labels', changed_at: ago(31) },
+          { id: 'contrast', title: 'Check contrast of the theme tokens', status: 'in_progress', agent_id: 'a2', agent: 'Check contrast of the theme tokens', changed_at: ago(17) },
+          { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending', changed_at: ago(42) },
         ],
       },
     } };

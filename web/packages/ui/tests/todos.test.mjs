@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { KEPT_SNAPSHOTS, METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoLine, todoSections, todoSentence, todoTally, todoWord, turnTodoName } from '../src/lib/todos.ts';
+import { KEPT_SNAPSHOTS, METER_ROWS, keepSnapshot, ledgerSections, ledgerStamp, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoLedger, todoLine, todoSections, todoSentence, todoTally, todoWord, turnTodoName } from '../src/lib/todos.ts';
 
 const row = (id, status, extra = {}) => ({ id, title: `Row ${id}`, status, ...extra });
 const view = (todos, extra = {}) => {
@@ -105,4 +105,50 @@ test('kept lists stay in memory up to a few, the least recently read going first
   assert.equal(recallSnapshot('task', 'new')?.timing_id, 'new');
   // Keyed by Task too.
   assert.equal(recallSnapshot('other', 'new'), undefined);
+});
+
+test('the ledger merges every row the turns kept by id: the latest state wins, the stamp is the turn that changed its status, the live list is newest, and its missing rows read as removed', () => {
+  const at = (m) => `2026-10-22T13:${String(m).padStart(2, '0')}:00Z`;
+  const timings = [{ id: 'tt1' }, { id: 'tt2' }, { id: 'tt3' }];
+  const rec = (timing_id, ended_at, todos) => ({ timing_id, ended_at, todos, counts: {} });
+  const turns = [
+    // A row without a time stamps the turn's end.
+    rec('tt1', at(41), [row('a', 'pending', { changed_at: at(40) }), row('b', 'done')]),
+    rec('tt2', at(58), [row('a', 'in_progress', { title: 'Row a, renamed', changed_at: at(52) }), row('c', 'blocked', { note: 'no token', changed_at: at(53) }), row('d', 'done', { changed_at: at(57) })]),
+  ];
+  // The live list confirms a, b and c (their stamps stay), lacks d (removed) and adds e (the running turn's, no turn yet).
+  const live = view([row('a', 'in_progress', { title: 'Row a, renamed', changed_at: at(52) }), row('b', 'done'), row('c', 'blocked', { note: 'no token' }), row('e', 'in_progress', { changed_at: at(63) })]);
+  const flat = (rows) => rows.map((r) => [r.todo.id, r.todo.status, r.todo.title, r.at, r.turn, r.removed]);
+  assert.deepEqual(flat(todoLedger({ live, turns }, timings)), [
+    ['a', 'in_progress', 'Row a, renamed', at(52), 2, false],
+    ['b', 'done', 'Row b', at(41), 1, false],
+    ['c', 'blocked', 'Row c', at(53), 2, false],
+    ['d', 'done', 'Row d', at(57), 2, true],
+    ['e', 'in_progress', 'Row e', at(63), undefined, false],
+  ]);
+  assert.equal(todoLedger({ live, turns }, timings)[2].todo.note, 'no token');
+  // The live list changing a kept row's status stamps its time without a turn.
+  const moved = view([row('b', 'in_progress', { changed_at: at(64) })]);
+  assert.deepEqual(flat(todoLedger({ live: moved, turns }, timings)).find((r) => r[0] === 'b'), ['b', 'in_progress', 'Row b', at(64), undefined, false]);
+  // No live list, or one not known or cut short: no row reads as removed.
+  for (const live of [null, { ...view([]), known: false }, { ...view([row('a', 'in_progress')]), omitted: 3 }]) {
+    assert.ok(todoLedger({ live, turns }, timings).every((r) => !r.removed), JSON.stringify(live));
+  }
+  // A record of a turn the Thread no longer holds stamps no turn; the held turns count from one.
+  assert.deepEqual(todoLedger({ live: null, turns }, [{ id: 'tt2' }]).map((r) => r.turn), [1, undefined, 1, 1]);
+  assert.deepEqual(todoLedger({ live: null, turns: [] }), []);
+});
+
+test('a ledger row\'s stamp: its state and time, the turn that changed it; the sections by stage, newest change first', () => {
+  const stamp = (status, at, turn) => ledgerStamp({ todo: row('a', status), at, turn, removed: false }, at ? '13:58' : '');
+  assert.equal(stamp('done', 'x', 2), 'done 13:58 · turn 2');
+  assert.equal(stamp('in_progress', 'x', 3), 'in progress since 13:58 · turn 3');
+  assert.equal(stamp('blocked', 'x', 2), 'blocked 13:58 · turn 2');
+  assert.equal(stamp('pending', 'x', 1), 'added 13:58 · turn 1');
+  assert.equal(stamp('in_progress', 'x'), 'in progress since 13:58');
+  assert.equal(stamp('pending'), 'added');
+  const at = (m) => `2026-10-22T13:${String(m).padStart(2, '0')}:00Z`;
+  const ledger = (id, status, at, turn) => ({ todo: row(id, status), at, turn, removed: false });
+  const sections = ledgerSections([ledger('a', 'done', at(41), 1), ledger('b', 'done', at(58), 2), ledger('c', 'in_progress', at(52), 2), ledger('d', 'in_progress', undefined), ledger('e', 'pending', at(40), 1)]);
+  assert.deepEqual(sections.map((s) => [s.label, s.todos.map((t) => t.id)]), [['In progress', ['d', 'c']], ['To do', ['e']], ['Done', ['b', 'a']]]);
 });

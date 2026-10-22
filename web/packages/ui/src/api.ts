@@ -1102,6 +1102,9 @@ export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omi
 /** A turn's todo list as uam kept it when the turn ended: the rows it changed and those still open, at most 50 (`counts.omitted` past them), each with the name its subagent had then. */
 export interface TurnTodos { timing_id: string; ended_at: string; intent?: string; todos: (Todo & { agent?: string })[]; counts: TodoCounts }
 
+/** Every todo list uam kept for a Thread: `live`, the open conversation's list, else the last one uam wrote when a turn ended, else null; `turns`, the last record of each held turn that changed the list, in the turns' order. */
+export interface TodoHistory { live: TodoView | null; turns: TurnTodos[] }
+
 /** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, the todo list and the phase; never persisted. */
 export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView; phase?: Phase }
 
@@ -2386,6 +2389,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
     turnChanges: (id: string, timingId: string, signal?: AbortSignal) => call<TurnChanges>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/changes`, undefined, false, signal),
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
+    todoHistory: (id: string, signal?: AbortSignal) => call<TodoHistory>('GET', `/api/sessions/${enc(id)}/todos/history`, undefined, false, signal),
     contextBreakdown: (id: string, attribution = false, signal?: AbortSignal) => call<ContextBreakdown>('GET', `/api/sessions/${enc(id)}/context${attribution ? '?attribution=true' : ''}`, undefined, false, signal),
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
       call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),

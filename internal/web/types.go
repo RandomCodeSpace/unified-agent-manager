@@ -509,6 +509,15 @@ type snapshotTodo struct {
 	Agent string `json:"agent,omitempty"`
 }
 
+// TodoHistory is every todo list uam kept for a Task: Live, the open
+// conversation's list, else the last one uam wrote when a turn ended, else
+// nil; Turns, the last record of each turn the Task still holds that
+// changed the list, in the turns' order.
+type TodoHistory struct {
+	Live  *TodoView   `json:"live"`
+	Turns []TurnTodos `json:"turns"`
+}
+
 // DiffStat totals a list of changed files.
 type DiffStat struct {
 	Files     int `json:"files"`

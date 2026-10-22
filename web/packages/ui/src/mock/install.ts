@@ -1481,6 +1481,15 @@ export function install(): { received: Received[] } {
       const kept = find(decodeURIComponent(r[1])) && st.turnTodos[decodeURIComponent(r[2])];
       return kept ? json(200, kept) : fail(404, 'no todo list was kept for that turn');
     }
+    // Every list kept for a Task: the records of its turns in order, and the live list, which for a closed Task is the last one kept (the service's todos.json).
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/todos\/history$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const turns = (t.turn_timings ?? []).flatMap((tt) => st.turnTodos[tt.id] ?? []);
+      const last = turns.at(-1);
+      const live = t.turn_activity?.todos ?? (last ? { known: true, touched: false, todos: last.todos, counts: last.counts } : null);
+      return json(200, { live, turns });
+    }
     // An item's body: whole, a clipped item's from `wholeTexts`.
     if ((r = m(/^\/api\/sessions\/([^/]+)\/items\/([^/]+)$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));
