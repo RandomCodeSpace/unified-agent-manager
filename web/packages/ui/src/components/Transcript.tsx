@@ -219,7 +219,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
   const step = working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
-  const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
+  // A streaming thought is the strip's "Thinking" and its peek: the foot shows only a running call.
+  const current = step?.item?.kind === 'tool' && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
@@ -881,39 +882,28 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
  */
 function WorkingTail({ working, turnId, current }: Readonly<{ working: boolean; turnId: string; /** Compact: the step in progress, unfolded (`LiveStep`). */ current?: ReactNode }>) {
   const { mounted, onClosed } = usePresence(working);
-  // Once a turn showed a step unfolded, the foot keeps that room until the turn ends: a step
-  // folding into the turn line never pulls the transcript up, and the next one lands in the same room.
+  // Once a turn showed a step unfolded, the foot keeps that room (a step row's height) until the turn ends:
+  // a step folding into the turn line never pulls the transcript up, and the next one lands in the same room.
   const [roomFor, setRoomFor] = useState<string | null>(null);
   if (current && roomFor !== turnId) setRoomFor(turnId);
   if (!mounted) return null;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
-      <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>{current}</div>
+      <div className={cn(roomFor === turnId && 'min-h-6 pointer-coarse:min-h-11')}>{current}</div>
     </Collapse>
   );
 }
 
 /**
- * Compact (DESIGN.md live step): the step in progress at the turn's foot, unfolded. A thought
- * streaming is its text as it arrives, in a box at most 80px tall that shows its newest lines,
- * the older ones clipped above, so it never grows into a block and nothing scrolls; a call
- * running is its tool row (name, argument) over its newest output lines (`LiveOutput`). Neither
- * has a mark that moves: the strip's live line holds the one animated mark, so the running row's
- * own ring is held still here (`STILL_STEP`). It rises in; once the step ends it is gone from here and counted on the turn line.
+ * Compact (DESIGN.md live step): the call in progress at the turn's foot, its tool row (name,
+ * argument) alone; its output, and a streaming thought's text, are the strip's peek. It has no
+ * mark that moves: the strip's live line holds the one animated mark, so the running row's own
+ * ring is held still here (`STILL_STEP`). It rises in; once the step ends it is gone from here and counted on the turn line.
  */
 function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
-  const thought = item.kind === 'reasoning';
-  const { item: full, attach } = useItemBody(item, thought);
-  const text = thought ? full?.text ?? '' : '';
   return (
-    <div ref={attach} className="flex animate-rise flex-col gap-1">
-      {!thought && <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step className={STILL_STEP} />}
-      {text.trim() && (
-        <div className="relative flex max-h-20 flex-col justify-end overflow-hidden pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
-          <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
-        </div>
-      )}
-      {!thought && <LiveOutput lines={item.tool?.tail} className="ml-6" />}
+    <div className="flex animate-rise flex-col gap-1">
+      <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step className={STILL_STEP} />
     </div>
   );
 }
