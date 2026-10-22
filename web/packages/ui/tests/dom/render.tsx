@@ -45,8 +45,8 @@ export const log = () => within(screen.getByRole('log'));
 /** Opens the status strip's reader on its Subagents tab (the subagent index) and returns the reader. */
 export async function openSubagentIndex(user: User) {
   await user.click(await screen.findByRole('button', { name: /^Subagents: \d+.*Show the subagents$/ }));
-  const reader = within(await screen.findByRole('dialog', { name: /ubagents$/ }));
-  await waitFor(() => expect(reader.getByRole('tab', { name: 'Subagents' }).getAttribute('aria-selected')).toBe('true'));
+  const reader = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+  await reader.findByRole('searchbox', { name: 'Search subagents' });
   return reader;
 }
 

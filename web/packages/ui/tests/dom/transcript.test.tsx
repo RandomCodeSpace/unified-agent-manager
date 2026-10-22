@@ -434,17 +434,17 @@ describe('activity', () => {
     const earlier = heads().length;
     await user.type(composer(), 'Run the tests please');
     await user.keyboard('{Enter}');
-    // The thought streams at the foot; the new turn's line has nothing counted yet, so it draws no bare chevron.
-    await waitFor(() => expect(conversation().textContent).toContain('a small, safe change'), { timeout: 5000 });
-    expect(heads()).toHaveLength(earlier);
     const head = () => heads().at(-1)!;
-    // The running call is its tool row with the tail of its output; the finished thought is counted.
-    const running = await log().findByRole('button', { name: /^bash.*go test \.\/\.\.\. -count=1.*running$/ }, { timeout: 5000 });
-    // The finished thought is the first count: the line appears, closed.
+    // The running call is its tool row alone at the foot (its output is the strip's peek); the finished thought is counted.
+    const running = await log().findByRole('button', { name: /^bash.*go test \.\/\.\.\. -count=1.*running$/ }, { timeout: 8000 });
+    // The streaming thought never stood at the foot; finished, it is the first count: the line appears, closed.
+    expect(conversation().textContent).not.toContain('a small, safe change');
     expect(heads()).toHaveLength(earlier + 1);
     expect(head().getAttribute('aria-expanded')).toBe('false');
     expect(head().textContent).toMatch(/^1 thought/);
-    await waitFor(() => expect(running.closest('.animate-rise')?.textContent).toContain('internal/agentapi'), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(running.closest('.animate-rise')?.textContent).not.toContain('internal/agentapi');
+    expect(log().queryByRole('group', { name: 'Live output, last lines' })).toBeNull();
     // Once it completes it leaves the foot and the turn line counts it; nothing of it stays outside.
     await waitFor(() => expect(head().textContent).toMatch(/1 thought · 1 command/), { timeout: 6000 });
     expect(log().queryByRole('button', { name: /^bash.*go test \.\/\.\.\. -count=1/ })).toBeNull();
@@ -633,14 +633,14 @@ describe('activity', () => {
     expect(log().queryByRole('button', { name: 'Open' })).toBeNull();
     expect(log().queryByRole('button', { name: /activity of this turn/ })).toBeNull();
     await user.click(rows[0]);
-    let sheet = within(await screen.findByRole('dialog', { name: 'Todo and subagents' }));
+    let sheet = within(await screen.findByRole('dialog', { name: 'Subagents' }));
     expect(await sheet.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeTruthy();
     // Nothing to type: subagents take no follow-up.
     expect(sheet.queryByRole('textbox')).toBeNull();
     await user.click(sheet.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await user.click(rows[1]);
-    sheet = within(await screen.findByRole('dialog', { name: 'Todo and subagents' }));
+    sheet = within(await screen.findByRole('dialog', { name: 'Subagents' }));
     expect(await sheet.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeNull();
   });
