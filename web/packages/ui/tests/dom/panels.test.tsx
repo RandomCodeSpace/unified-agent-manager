@@ -128,6 +128,25 @@ describe('changes', () => {
     await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
     expect(await screen.findByText(/is not in a Git repository/)).toBeTruthy();
   });
+
+  test('inline, a panel replaced by another leaves at once; a plain close still slides it out first', async () => {
+    const original = window.matchMedia.bind(window);
+    const wide = vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === '(min-width: 1280px)' ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
+    const aside = (label: string) => document.querySelector(`aside[aria-label="${label}"]`);
+    try {
+      const { user } = await openTask('t-chart');
+      await user.click(await screen.findByRole('button', { name: 'Pinned charts, 2' }));
+      await waitFor(() => expect(aside('Pinned charts')).toBeTruthy());
+      await user.click(screen.getByRole('button', { name: /^Open changes/ }));
+      expect(aside('Pinned charts')).toBeNull();
+      await waitFor(() => expect(aside('Changes')).toBeTruthy());
+      await user.click(screen.getByRole('button', { name: 'Close changes' }));
+      expect(aside('Changes')).toBeTruthy();
+      await waitFor(() => expect(aside('Changes')).toBeNull());
+    } finally {
+      wide.mockRestore();
+    }
+  });
 });
 
 describe('subagents', () => {

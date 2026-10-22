@@ -638,6 +638,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
   const outputView = output ?? lastOutput;
+  // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step.
+  if (sidePanelInline && (sheetOpen || filesOpen || gitlabOpen || chartsOpen || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output]] as const) if (presence.mounted && !open) presence.onClosed();
   // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it on the default scope.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const openChanges = useCallback(() => {
