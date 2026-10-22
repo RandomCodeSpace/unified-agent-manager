@@ -474,9 +474,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
   **Tools** (the context ring and "Tools") opens one panel with a tab for
-  each tool the Thread has: Context (see **Context usage**), Usage (the time
-  split, see **Time split**, the AI units recorded for the Thread and
-  Copilot's own usage metrics for the conversation) and Agent (see **Agent**; shown only when the Project has a
+  each tool the Thread has: Context (see **Context usage**), Usage (the
+  Thread's budget first, then six figures: the AI units recorded for the
+  Thread, the time split, see **Time split**, tokens and code from Copilot's
+  own usage metrics, with the breakdowns by model, agent, tool and token
+  type folded under them) and Agent (see **Agent**; shown only when the Project has a
   custom agent or the Thread names one). The open panel reads its counts again
   whenever the Thread reports new usage or context. The arrow keys move
   between tabs and Esc closes it; on a phone it is a bottom sheet, and so is
@@ -866,9 +868,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   of the account. Autopilot between its turns is stopped at the limit, with
   no wrap-up. The agent reads it with `uam` `sense`. Connected instances
   advertise `thread-budget-v1`.
-- **Time split**: Tools → Usage opens with "Time in this Thread": a bar and
-  the shares of time spent in the model and running local tools and scripts,
-  then each tool's own local time (the top five, the rest folded). The row
+- **Time split**: Tools → Usage shows it as the Model time and Local time
+  tiles (each with its calls or runs and its share; the waiting on you in the
+  section's line), and each tool's own local time folded under "Local time by
+  tool" (the top five, the rest folded). The row
   under the composer ends with the same split ("38% model · 62% local", both
   times added once the Thread is idle; the whole sentence in its tip), shown
   once anything is recorded. Both read `GET /api/sessions/{id}/time-split`,
