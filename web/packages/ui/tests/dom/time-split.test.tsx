@@ -20,30 +20,29 @@ function summary(current: SessionSummary) {
   return <ApiContext.Provider value={api}><TimeSplitSummary session={current} /></ApiContext.Provider>;
 }
 
-test('the Usage tab leads with the time split, its counts and each tool, the rest folded', async () => {
+/** A tile's whole text: its label, figure and sub line. */
+const tile = (label: string) => screen.getByText(label, { selector: 'p' }).parentElement!.textContent;
+
+test('the Usage tab shows the split as the model and local tiles, the waiting in the section line, and each tool folded', async () => {
   const read = vi.spyOn(api, 'taskTimeSplit').mockResolvedValue(split);
   vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   render(<ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={session} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>);
   await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
   await userEvent.click(await screen.findByRole('tab', { name: 'Usage' }));
-  const time = await screen.findByRole('region', { name: 'Time in this Thread' });
-  await within(time).findByText('4m 12s · 47 calls');
+  const time = await screen.findByRole('region', { name: 'This Thread' });
+  await waitFor(() => expect(tile('Model time')).toBe('Model time4m 12s47 calls · 38%'));
   expect(read).toHaveBeenCalledWith('task-1', expect.any(AbortSignal));
-  expect(time.textContent).toContain('38% model');
-  expect(time.textContent).toContain('62% local');
-  expect(time.textContent).toContain('waiting on you, not counted');
-  expect(within(time).getByText('6m 51s · 112 runs')).toBeTruthy();
-  expect(within(time).getByText('2m 58s · 3 requests')).toBeTruthy();
-  // It comes before the existing report and the native metrics.
-  const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'));
-  expect(regions.indexOf('Time in this Thread')).toBeLessThan(regions.indexOf('Recorded Thread report'));
-  const tools = screen.getByRole('region', { name: 'Local time by tool' });
+  expect(tile('Local time')).toBe('Local time6m 51s112 runs · 62%');
+  expect(time.textContent).toContain('2m 58s waiting on you (3 requests), not counted');
+  const tools = screen.getByText('Local time by tool').closest('details')!;
+  expect(tools.open).toBe(false);
+  expect(tools.querySelector('summary')!.textContent).toBe('Local time by tool6 tools');
   expect(within(tools).getByText('bash')).toBeTruthy();
   expect(within(tools).getByText('5m 40s')).toBeTruthy();
   expect(within(tools).getByText('38 runs')).toBeTruthy();
   expect(within(tools).getByText('1 more tool')).toBeTruthy();
-  expect(within(tools).getByText('web_fetch').closest('details')).toBeTruthy();
-  expect(within(tools).getByText('glob').closest('details')).toBeNull();
+  expect(within(tools).getByText('web_fetch').closest('details')).not.toBe(tools);
+  expect(within(tools).getByText('glob').closest('details')).toBe(tools);
 });
 
 test('a journal without model call records still shows local time and says model time is not recorded', async () => {
@@ -52,12 +51,12 @@ test('a journal without model call records still shows local time and says model
   render(<ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={session} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>);
   await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
   await userEvent.click(await screen.findByRole('tab', { name: 'Usage' }));
-  const time = await screen.findByRole('region', { name: 'Time in this Thread' });
-  await within(time).findByText("Model time not recorded for this Thread's CLI version.");
-  expect(within(time).getByText('Not recorded')).toBeTruthy();
-  expect(within(time).getByText('6m 51s · 112 runs')).toBeTruthy();
-  expect(time.textContent).not.toContain('% model');
-  expect(screen.queryByRole('region', { name: 'Local time by tool' })).toBeNull();
+  const time = await screen.findByRole('region', { name: 'This Thread' });
+  await waitFor(() => expect(tile('Model time')).toBe('Model timeNot recorded0 calls'));
+  expect(tile('Local time')).toBe('Local time6m 51s112 runs');
+  expect(time.textContent).not.toContain('%');
+  expect(time.textContent).not.toContain('waiting on you');
+  expect(screen.queryByText('Local time by tool')).toBeNull();
 });
 
 test('the composer summary shows the shares, both times once idle, the whole sentence in its name, and reads again on a state change', async () => {
@@ -88,9 +87,10 @@ test('a connected instance without the split shows neither the section nor the s
   render(<ApiContext.Provider value={client}><AppContext.Provider value={app}><ComposerTools session={session} onAgent={() => {}} /><TimeSplitSummary session={session} /></AppContext.Provider></ApiContext.Provider>);
   await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
   await userEvent.click(await screen.findByRole('tab', { name: 'Usage' }));
-  await screen.findByRole('region', { name: 'Recorded Thread report' });
-  expect(screen.queryByRole('region', { name: 'Time in this Thread' })).toBeNull();
-  expect(screen.queryByText('Reading the session journal…')).toBeNull();
+  await screen.findByRole('region', { name: 'This Thread' });
+  expect(tile('Model time')).toBe('Model timeNot available');
+  expect(tile('Local time')).toBe('Local timeNot available');
+  expect(screen.queryByText('Local time by tool')).toBeNull();
   expect(screen.queryByRole('button', { name: /^Time in this Thread/ })).toBeNull();
   expect(read).not.toHaveBeenCalled();
 });
