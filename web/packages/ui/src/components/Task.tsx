@@ -367,8 +367,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, []);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
+  // The turn's timing ends a moment before the state flips: once the timing this page saw running ends, the transcript
+  // folds the turn then, not twice. Keyed, since at a turn's start the last timing is the previous turn's, already ended.
+  const lastTiming = session.turn_timings?.at(-1);
+  const [runningTiming, setRunningTiming] = useState<string>();
+  if (!working && runningTiming) setRunningTiming(undefined);
+  else if (working && lastTiming && !lastTiming.ended_at && lastTiming.id !== runningTiming) setRunningTiming(lastTiming.id);
   const compactWindow = session.representation === 'compact-v1';
   const liveItems = session.recent_items ?? session.items;
+  // A prompt begun since its end starts the next turn: the queue's next is sent with the state never seen turning.
+  const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming && !liveItems.some((item) => item.kind === 'user' && !item.delivery && !(Date.parse(item.time) < Date.parse(lastTiming.ended_at!)));
   // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
   const [opened] = useState(() => new Date().toISOString());
   const [sinceMark, setSinceMark] = useState(since);
@@ -1051,7 +1059,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               subagents={session.subagents}
               liveCard={!session.history_after}
               live={live && !session.history_after}
-              working={working && !session.history_after}
+              working={working && !turnOver && !session.history_after}
               connected={connected}
               provider={session.provider}
               workdir={session.workdir}
