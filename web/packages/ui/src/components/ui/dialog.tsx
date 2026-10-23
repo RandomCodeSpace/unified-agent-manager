@@ -22,11 +22,12 @@ export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity 
 export const readerPopupClass =
   'origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0';
 
-const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 max-sm:items-end max-sm:p-0';
+// On a phone the bottom sheet rests on the on-screen keyboard (`--app-bottom`, lib/viewport), not behind it.
+const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 max-sm:items-end max-sm:p-0 max-sm:pb-[var(--app-bottom,0px)]';
 
-// Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
+// Capped at the visible viewport (the keyboard's room left out) less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
-  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative flex max-h-[calc(var(--app-height,100dvh)-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;

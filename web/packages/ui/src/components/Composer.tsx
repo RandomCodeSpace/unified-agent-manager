@@ -1655,7 +1655,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         }}
         disabled={!!busy || locked}
         {...combo}
-        className={cn('max-h-[40dvh] min-h-14 w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-chat text-ink outline-hidden [field-sizing:content] disabled:text-muted max-sm:text-chat-lg', locked && 'min-h-0 h-2 pt-0')}
+        className={cn('max-h-[40dvh] min-h-14 in-data-keyboard:max-h-[calc(var(--app-height)*0.3)] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-chat text-ink outline-hidden [field-sizing:content] disabled:text-muted max-sm:text-chat-lg', locked && 'min-h-0 h-2 pt-0')}
       />
       {suggestion && <SuggestionGhost text={suggestion} onUse={takeSuggestion} />}
       </div>

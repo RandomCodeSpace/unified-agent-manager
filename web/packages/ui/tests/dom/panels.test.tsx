@@ -341,11 +341,15 @@ describe('subagents', () => {
     expect(progress.compareDocumentPosition(subagents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(strip).getByText('2 of 6')).toBeTruthy();
     // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
-    expect([...subagents.querySelectorAll('[title]')].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')])).toEqual([
+    const cells = (blocks: string) => [...subagents.querySelectorAll(`${blocks} [title]`)].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')]);
+    expect(cells('.max-sm\\:hidden')).toEqual([
       ['1 failed', 'error', true],
       ['3 running', 'accent', true],
       ['1 done', 'success', true],
     ]);
+    // A phone keeps the failed cell and "3/5", running of all, so the progress line keeps its room.
+    expect(cells('.sm\\:hidden')).toEqual([['1 failed', 'error', true]]);
+    expect(within(subagents).getByText('3/5').classList.contains('sm:hidden')).toBe(true);
     // The subagents open the sheet: no tabs, the list under its head; ← and → do nothing there.
     await user.click(subagents);
     const reader = await screen.findByRole('dialog', { name: 'Subagents' });

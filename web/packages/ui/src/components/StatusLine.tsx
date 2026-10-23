@@ -407,7 +407,10 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
               className={cn(STRIP, 'shrink-0 gap-2')}
             >
               <Workflow aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
-              <Blocks aria-hidden="true" items={subagentBlocks(subagents)} />
+              {/* A phone keeps the glyph, a failed cell and "3/5" (running of all), so the live line keeps its room. */}
+              <Blocks aria-hidden="true" items={subagentBlocks(subagents)} className="max-sm:hidden" />
+              <Blocks aria-hidden="true" items={subagentBlocks(subagents).filter((b) => b.key === 'failed')} className="sm:hidden" />
+              <span aria-hidden="true" className="shrink-0 tabular-nums sm:hidden">{`${countSubagents(subagents).running}/${subagents.length}`}</span>
               <span className="sr-only">{`${subagentSentence(subagents, index?.before)}. Show the subagents`}</span>
             </button>
           )}

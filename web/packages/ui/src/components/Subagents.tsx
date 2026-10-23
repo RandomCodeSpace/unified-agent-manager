@@ -938,7 +938,8 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
 /**
  * A sheet from the bottom over a dimmed page, at most 85% of the screen, under a grab handle:
  * dragging the handle down closes it, as do Esc and a close button inside. A phone opens a
- * subagent and the todo list in it.
+ * subagent and the todo list in it. While the on-screen keyboard is open the sheet rests on it,
+ * within what it leaves visible (lib/viewport).
  */
 export function BottomSheet({ open, onClose, onClosed, label, className, backdropClassName, initialFocus, finalFocus, id, children }: Readonly<{ open: boolean; onClose: () => void; onClosed: () => void; label: string; className?: string; backdropClassName?: string; children: ReactNode } & Pick<ComponentProps<typeof BaseDialog.Popup>, 'initialFocus' | 'finalFocus' | 'id'>>) {
   const popup = useRef<HTMLDivElement>(null);
@@ -958,7 +959,7 @@ export function BottomSheet({ open, onClose, onClosed, label, className, backdro
           aria-modal="true"
           initialFocus={initialFocus}
           finalFocus={finalFocus}
-          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', className)}
+          className={cn('fixed inset-x-0 bottom-[var(--app-bottom,0px)] z-50 flex max-h-[min(85dvh,var(--app-height,100dvh))] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', className)}
         >
           <div
             aria-hidden="true"
