@@ -18,6 +18,24 @@ test('without WebGL the terminal dock says why instead of a shell', async () => 
   expect(document.activeElement).toBe(toggle);
 });
 
+test('closing hands the header and focus back at once while the dock slides out; a Terminal press meanwhile opens a new dock', async () => {
+  const { user } = await openTask('t3');
+  const toggle = screen.getByRole('button', { name: 'Terminal' });
+  await user.click(toggle);
+  const dock = await screen.findByRole('region', { name: 'Terminal' });
+  await within(dock).findByRole('alert');
+  await user.click(within(dock).getByRole('button', { name: 'Close terminal' }));
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  expect(document.activeElement).toBe(toggle);
+  expect(dock.isConnected).toBe(true);
+  expect(dock.querySelector('[inert]')).not.toBeNull();
+  await user.click(toggle);
+  const next = await screen.findByRole('region', { name: 'Terminal' });
+  expect(next).not.toBe(dock);
+  expect(dock.isConnected).toBe(false);
+  expect(next.querySelector('[inert]')).toBeNull();
+});
+
 test("without a shell, the Terminal button in another Project's Task moves the dock there at once", async () => {
   const { user } = await openTask('t3');
   await user.click(screen.getByRole('button', { name: 'Terminal' }));

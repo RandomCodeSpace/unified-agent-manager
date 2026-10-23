@@ -3,7 +3,7 @@ import { decodeEntity, encodeEntity } from './lib/instanceIdentity';
 import { scopedMachine, useFederation, type Machine } from './FederationContext';
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
-import { X } from 'lucide-react';
+import { SquareTerminal, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type Ref } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
@@ -33,6 +33,7 @@ import { TryModelDialog } from './components/Assist';
 import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
+import { EXIT_MS, usePresence } from './components/ui/collapse';
 import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -189,6 +190,8 @@ export default function App() {
   // The worktree Thread whose folder the shell started in instead of the Project's, or null.
   const [terminalTask, setTerminalTask] = useState<string | null>(null);
   const nextTerminalTask = useRef<string | null>(null);
+  // Each opening is a dock of its own: one reopened while the last slides out starts a new shell.
+  const [terminalOpens, setTerminalOpens] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Once opened, the drawer keeps its Thread list while closed (Sheet keepMounted): opening it again renders nothing new.
   const [drawerKept, setDrawerKept] = useState(false);
@@ -729,6 +732,7 @@ export default function App() {
     // A panel still loading has no shell to confirm for.
     if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
     else {
+      if (!terminalId) setTerminalOpens((n) => n + 1);
       setTerminalId(to === null ? null : projectId);
       setTerminalTask(to === null ? null : task);
     }
@@ -1330,6 +1334,13 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', badge);
   }, [attention, shownName, loggedOut]);
 
+  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
+  const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
+  // The dock slides out showing the shell it ended, then unmounts (DESIGN.md Terminal).
+  const terminalDock = usePresence(!!terminalProject);
+  const [docked, setDocked] = useState<{ project: Project; task: string | null }>();
+  if (terminalProject && (terminalProject !== docked?.project || terminalTask !== docked.task)) setDocked({ project: terminalProject, task: terminalTask });
+
   if (auth === 'checking') {
     return (
       <main className="grid h-dvh place-items-center text-caption text-muted" aria-busy="true">
@@ -1345,8 +1356,6 @@ export default function App() {
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous ?? held.detail;
   const stale = !settingsOpen && !mismatched && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
-  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
-  const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
   if (terminalId && !terminalProject) setTerminalId(null);
   const dialogMachine = taskDialog?.owner !== undefined ? machines?.find((m) => m.id === taskDialog.owner) : undefined;
   const dialogTask = taskDialog ? (dialogMachine ? dialogMachine.state.sessions : state.sessions).find((s) => s.id === taskDialog.id) : undefined;
@@ -1593,7 +1602,7 @@ export default function App() {
                 {/* Settings, routines and a new Task do not wait on the stream; the skeleton's own loading line is its one ring. */}
                 <LoadingVeil show={loading && !skeletonPane && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>
-              {terminalProject && <TerminalDock key={`${terminalProject.id}:${terminalTask ?? ''}`} project={terminalProject} thread={terminalTask ? { id: terminalTask, dir: state.sessions.find((s) => s.id === terminalTask)?.workdir ?? terminalProject.dir } : undefined} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} />}
+              {terminalDock.mounted && docked && <TerminalDock key={`${terminalOpens}:${docked.project.id}:${docked.task ?? ''}`} project={docked.project} thread={docked.task ? { id: docked.task, dir: state.sessions.find((s) => s.id === docked.task)?.workdir ?? docked.project.dir } : undefined} open={!!terminalProject} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} onClosed={terminalDock.onClosed} />}
             </main>
 
             <NewTaskPalette
@@ -1730,17 +1739,46 @@ function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.
  * Settings → Terminal's shell, docked under the Task view as part of the layout (DESIGN.md Terminal):
  * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
  * across Task switches, hides (its shell running) while another view fills the pane, and ends with Close, which ends the shell.
+ * Its content slides up over the band once mounted and back down when `open` turns false, then `onClosed` lets the owner unmount it; the edge stays put.
  */
-function TerminalDock({ project, thread, hidden, panel, onClose }: Readonly<{ project: Project; thread?: { id: string; dir: string }; hidden: boolean; panel: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
+function TerminalDock({ project, thread, open, hidden, panel, onClose, onClosed }: Readonly<{ project: Project; thread?: { id: string; dir: string }; open: boolean; hidden: boolean; panel: Ref<TerminalHandle>; onClose: (to: Project | null) => void; onClosed: () => void }>) {
   const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
+  // The slide starts one frame after mount, so the first paint is below the band; hiding for another view never replays it.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const closed = useEffectEvent(onClosed);
+  useEffect(() => {
+    if (open) return;
+    const timer = window.setTimeout(closed, EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  const dir = thread?.dir ?? project.dir;
   return (
     <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
-      <div {...handleProps} className="absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
-        <div className="fade-rule w-full" />
+      <div {...handleProps} className="group/handle absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
+        <div className="fade-rule w-full transition-[background-color,scale] duration-100 group-hover/handle:scale-y-200 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:scale-y-200 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
       </div>
-      <Suspense fallback={null}>
-        <TerminalPanel ref={panel} project={project} thread={thread} onClose={onClose} />
-      </Suspense>
+      {/* Clips the slide to the band, so the page never gains a scrollable overflow below it. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-clip">
+        <div className={cn('flex min-h-0 flex-1 flex-col transition-transform duration-240 ease-app', shown && open ? 'translate-y-0' : 'translate-y-full')} inert={!open}>
+          {/* Until the chunk lands, the panel's header as it first reads. */}
+          <Suspense
+            fallback={
+              <div className="flex h-9 shrink-0 items-center gap-1.5 pr-1.5 pl-3">
+                <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
+                <span className="text-title text-ink">Terminal</span>
+                <span className="min-w-0 flex-1 truncate text-meta text-muted" title={dir}>{dir}</span>
+                <output className="shrink-0 text-meta text-muted">Connecting…</output>
+              </div>
+            }
+          >
+            <TerminalPanel ref={panel} project={project} thread={thread} onClose={onClose} />
+          </Suspense>
+        </div>
+      </div>
     </section>
   );
 }
