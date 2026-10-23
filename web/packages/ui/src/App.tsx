@@ -555,7 +555,7 @@ export default function App() {
       recentTasks.confirm(data);
       // Asides kept while the stream was down come with the next read.
       rereadAsides(api);
-      // Open the Task as soon as its snapshot arrives; a view transition delays readiness.
+      // Open the Task as soon as its snapshot arrives; a transition would delay readiness.
       onEvent?.({ type: 'snapshot', data });
       dispatch({ type: 'snapshot', data });
       setFilter((current) => {
@@ -638,7 +638,7 @@ export default function App() {
           return;
         }
         flush();
-        // Task rows enter, leave and reorder with a view transition; everything else commits at once.
+        // Task row changes render in a transition; everything else commits at once.
         if (data.name === 'session' || data.name === 'session_removed') sessionsUpdate(() => dispatch({ type: 'update', data }));
         else dispatch({ type: 'update', data });
         if (data.name === 'project_removed') {
@@ -1424,7 +1424,7 @@ export default function App() {
     />
   );
 
-  // The sidebar's column, animated between its width and the rail's.
+  // The sidebar's column steps between its width and the rail's; the track never animates.
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
   // Settings and Routines are a layer over the pane: the Thread beneath stays mounted (scroll, open rows, side panels) and comes back as it was.

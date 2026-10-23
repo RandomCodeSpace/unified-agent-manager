@@ -624,7 +624,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all,
           {label} <span className="tabular-nums text-muted">{rows.length}</span>
         </span>
         <span className="fade-rule flex-1" aria-hidden="true" />
-        <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
+        <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
       </button>
       <Collapse open={open} onClosed={list.onClosed}>
         <div className="max-h-[40dvh] overflow-y-auto overscroll-contain">

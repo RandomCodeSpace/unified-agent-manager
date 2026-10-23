@@ -82,7 +82,7 @@ function fileName(file: Pick<ConfigurationFile, 'name' | 'path'>): string {
 /** A disclosure's summary with the chevron Settings uses elsewhere (Background AI's log), not the native marker. Its `details` carries `group`. */
 function Summary({ children }: Readonly<{ children: ReactNode }>) {
   return <summary className="flex cursor-pointer list-none items-center gap-1.5 text-ui font-medium [&::-webkit-details-marker]:hidden">
-    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted transition-transform duration-160 group-open:rotate-90" />
+    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted transition-transform duration-160 group-open:rotate-z-90" />
     {children}
   </summary>;
 }

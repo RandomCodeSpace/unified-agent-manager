@@ -19,14 +19,7 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
     <BaseTooltip.Root
       disabled={disabled}
       open={openOnClick ? open : undefined}
-      onOpenChange={(open, details) => {
-        // A view transition puts a snapshot over the page, so the browser reports the pointer leaving a
-        // hovered trigger and Base UI closes on its hover path, which flushes synchronously and cancels
-        // the transition (the pane and the Task list would snap). A tip that is not open has nothing to close.
-        if (!open && !shown.current && details.reason === 'trigger-hover') {
-          details.cancel();
-          return;
-        }
+      onOpenChange={(open) => {
         shown.current = open;
         if (openOnClick) setOpen(open);
       }}

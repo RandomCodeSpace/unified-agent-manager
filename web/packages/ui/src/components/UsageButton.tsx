@@ -39,7 +39,7 @@ const CHIP_PACE: Record<string, string> = { 'Ahead of pace': 'ahead', 'Allowance
 function Meter({ remaining, tone, className }: Readonly<{ remaining: number; tone: keyof typeof QUOTA_FILLS; className?: string }>) {
   return (
     <span aria-hidden="true" className={cn('relative block h-1 overflow-hidden rounded-full bg-hairline', className)}>
-      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-300', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${remaining / 100})` }} />
+      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-240', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${remaining / 100})` }} />
     </span>
   );
 }
