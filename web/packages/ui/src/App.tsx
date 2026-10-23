@@ -706,14 +706,15 @@ export default function App() {
     [meta, metaError, state.loaded, narrow, ownerSettings, state.usage, refreshMeta, openUsage],
   );
 
-  // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
+  // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into,
+  // and a rename the choosing double-click started keeps its input.
   const detailId = arrivedId === mountedId ? arrivedId : undefined;
   const detailLocked = !!state.detail && readOnly(state.detail);
   useEffect(() => {
     if (!detailId || detailId !== focusTask.current) return;
     focusTask.current = null;
-    if (!detailLocked) document.getElementById('composer-text')?.focus();
-  }, [detailId, detailLocked, selectTick]);
+    if (!detailLocked && !renaming) document.getElementById('composer-text')?.focus();
+  }, [detailId, detailLocked, selectTick, renaming]);
 
   const logout = useCallback(() => {
     recentTasks.clear();
