@@ -745,7 +745,7 @@ describe('turn card', () => {
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
   });
 
-  test("a turn's end folds once: its timing ending before the state flips brings no Working row under its Took, and the next start keeps its own", async () => {
+  test("a turn's end folds once: its timing ending before the state flips brings no Working row under its Took, and the next start, the queue's included, keeps its own", async () => {
     renderApp('#task=t3');
     const Source = window.EventSource;
     onTestFinished(() => { window.EventSource = Source; });
@@ -781,10 +781,15 @@ describe('turn card', () => {
     send('working', [...prior, running], [prompt, reply]);
     await waitFor(() => expect(working()).toBe(1));
     // The end: the timing ends while the state still says working. The head says Took and nothing under it works.
-    send('working', [...prior, { ...running, ended_at: ago(0), state: 'completed' }], [prompt, reply]);
+    const ended: TurnTiming = { ...running, ended_at: ago(0), state: 'completed' };
+    send('working', [...prior, ended], [prompt, reply]);
     await waitFor(() => expect(log().getAllByText('Took')).toHaveLength(prior.length + 1));
     expect(working()).toBe(0);
-    send('completed', [...prior, { ...running, ended_at: ago(0), state: 'completed' }], [prompt, reply]);
+    // The queue's next prompt, its turn begun with the state never seen turning: its Working row holds the slot until its timing comes.
+    const queued: Item = { id: 'u-queued', kind: 'user', time: ago(0), text: 'And run the linter.' };
+    send('working', [...prior, ended], [prompt, reply, queued]);
+    await waitFor(() => expect(working()).toBe(1));
+    send('completed', [...prior, ended], [prompt, reply, queued]);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop turn' })).toBeNull());
     expect(working()).toBe(0);
   });

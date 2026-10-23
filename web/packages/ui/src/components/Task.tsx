@@ -373,9 +373,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [runningTiming, setRunningTiming] = useState<string>();
   if (!working && runningTiming) setRunningTiming(undefined);
   else if (working && lastTiming && !lastTiming.ended_at && lastTiming.id !== runningTiming) setRunningTiming(lastTiming.id);
-  const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming;
   const compactWindow = session.representation === 'compact-v1';
   const liveItems = session.recent_items ?? session.items;
+  // A prompt begun since its end starts the next turn: the queue's next is sent with the state never seen turning.
+  const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming && !liveItems.some((item) => item.kind === 'user' && !item.delivery && !(Date.parse(item.time) < Date.parse(lastTiming.ended_at!)));
   // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
   const [opened] = useState(() => new Date().toISOString());
   const [sinceMark, setSinceMark] = useState(since);
