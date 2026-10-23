@@ -2,13 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { ApiError, api, type Item, type TurnTiming, type TurnTodos } from '../../src/api';
+import { ApiError, api, type Item, type SessionDetail, type SnapshotData, type TurnTiming, type TurnTodos } from '../../src/api';
 import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
-import { composer, log, openMenu, openSubagentIndex, openTask } from './render';
+import { composer, log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
 
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 /** The head of the turn `el` is in: its card's first row. */
@@ -743,6 +743,50 @@ describe('turn card', () => {
     expect(head.textContent).not.toContain('go test');
     // One ring: the running step's, at the foot.
     expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+  });
+
+  test("a turn's end folds once: its timing ending before the state flips brings no Working row under its Took, and the next start keeps its own", async () => {
+    renderApp('#task=t3');
+    const Source = window.EventSource;
+    onTestFinished(() => { window.EventSource = Source; });
+    let stream: EventSource | undefined;
+    let original: SnapshotData | undefined;
+    window.EventSource = class extends Source {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        if (String(url).startsWith('/api/events?')) this.addEventListener('snapshot', (event) => {
+          stream = event.target as EventSource;
+          original ??= JSON.parse((event as MessageEvent).data) as SnapshotData;
+        });
+      }
+    };
+    await waitFor(() => expect(original?.session?.id).toBe('t3'));
+    const base = original!.session!;
+    let seq = 1_000_000;
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+    const prompt: Item = { id: 'u-next', kind: 'user', time: ago(5), text: 'Run the tests once more.' };
+    const reply: Item = { id: 'a-next', kind: 'assistant', time: ago(1), text: 'Tests pass.' };
+    // As the service sends them: the state and the turn's timing come apart, at the start and at the end.
+    const send = (state: SessionDetail['state'], timings: TurnTiming[], items: Item[]) => act(() => stream!.dispatchEvent(new MessageEvent('snapshot', { data: JSON.stringify({
+      ...original!, seq: ++seq,
+      sessions: original!.sessions.map((s) => (s.id === 't3' ? { ...s, state } : s)),
+      session: { ...base, state, items: [...base.items, ...items], turn_timings: timings },
+    }) })));
+    const working = () => log().queryAllByText('Working').length;
+    const prior = base.turn_timings ?? [];
+    // The start: working before its timing comes, the last timing still the previous turn's, ended. The Working row holds the slot.
+    send('working', prior, [prompt]);
+    await waitFor(() => expect(working()).toBe(1));
+    const running: TurnTiming = { id: 'tt-next', user_item_id: 'u-next', started_at: ago(5), state: 'working' };
+    send('working', [...prior, running], [prompt, reply]);
+    await waitFor(() => expect(working()).toBe(1));
+    // The end: the timing ends while the state still says working. The head says Took and nothing under it works.
+    send('working', [...prior, { ...running, ended_at: ago(0), state: 'completed' }], [prompt, reply]);
+    await waitFor(() => expect(log().getAllByText('Took')).toHaveLength(prior.length + 1));
+    expect(working()).toBe(0);
+    send('completed', [...prior, { ...running, ended_at: ago(0), state: 'completed' }], [prompt, reply]);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop turn' })).toBeNull());
+    expect(working()).toBe(0);
   });
 
   test("a running turn's clock, on its card alone, leaves out approval and question waits, also after a remount", () => {
