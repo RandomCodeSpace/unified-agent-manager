@@ -12,7 +12,7 @@ import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTi
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
-import { Collapse } from './ui/collapse';
+import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, useLazyContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './UsageButton';
@@ -582,8 +582,10 @@ function shelfKeys(label: string, rows: ListRow[], open: boolean, selectedKey: s
 
 /** Settled, under the Task list's scroller: its open rows scroll on their own within 40% of the screen, so the Task list keeps the rest. */
 function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all, onAll }: Readonly<{ label: string; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; /** Every row, not only the latest SHELF_CAP. */ all: boolean; onAll: () => void; render: (row: ListRow, compact: boolean) => ReactNode }>) {
+  // The selected row moves to its pinned copy once the closing list has stepped away, not while it fades.
+  const list = usePresence(open);
   if (rows.length === 0) return null;
-  const pinned = !open ? rows.find((r) => r.key === selectedKey) : undefined;
+  const pinned = !list.mounted ? rows.find((r) => r.key === selectedKey) : undefined;
   const shown = capRows(rows, all, selectedKey);
   return (
     <>
@@ -601,7 +603,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all,
         <span className="fade-rule flex-1" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
-      <Collapse open={open}>
+      <Collapse open={open} onClosed={list.onClosed}>
         <div className="max-h-[40dvh] overflow-y-auto overscroll-contain">
           <ul className="flex flex-col gap-px pt-px">
             {/* The pinned copy below owns the selected row while the shelf is closed. */}
