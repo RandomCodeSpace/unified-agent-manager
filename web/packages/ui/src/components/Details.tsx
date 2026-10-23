@@ -6,6 +6,7 @@ import { describeError } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { EditDiffCache } from '../lib/edit-diff-cache';
 import { openEventStream } from '../lib/eventStream';
+import { EXIT_MS } from './ui/collapse';
 
 /** Mounted children of a collapsing group retain their preference, but no interest. */
 const Visible = createContext(true);
@@ -262,7 +263,10 @@ export function useItemBody(item: Item, open: boolean) {
   const body = useSyncExternalStore(context?.store.subscribe ?? NO_SUBSCRIBE, get, get);
   useEffect(() => {
     if (!deferred || !open || !parentVisible) return;
-    return context!.register({ agentId: item.agent_id ?? '', itemId: item.id }, element.current);
+    const win = element.current?.ownerDocument.defaultView ?? window;
+    const release = context!.register({ agentId: item.agent_id ?? '', itemId: item.id }, element.current);
+    // A closing disclosure shows its body through its fade (Collapse), so the body goes only once it has stepped away.
+    return () => { win.setTimeout(release, EXIT_MS); };
   }, [context, deferred, open, parentVisible, item.agent_id, item.id]);
   return { item: deferred ? body.item : item, body: deferred ? body : undefined, attach: ref, retry: context?.retry };
 }
