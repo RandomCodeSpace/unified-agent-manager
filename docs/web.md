@@ -1004,11 +1004,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   place when a tool in the Thread edits the open file; **Reload** reads it
   again after other changes. Use **Open in new tab** or **Download** for the
   full file. HTML reports stay interactive inside an isolated frame. The
-  **Close preview** button remains available; Escape closes the preview when
-  focus is in the app, but does not cross into the app from a focused HTML
-  frame. Closing returns focus to the opening control. Opening another
-  preview or switching Threads discards the old preview and cancels its
-  pending read.
+  **Close preview** button remains available; Escape closes the preview from
+  inside it or with nothing focused, as it closes the other side panels, but
+  does not cross into the app from a focused HTML frame. Closing slides it
+  out as the other side panels do and returns focus to the opening control.
+  Opening another preview or switching Threads discards the old preview and
+  cancels its pending read.
 - **Declared files**: `uam_show_file` records a file reference and optional
   title. Its tool call folds into the turn's activity in both layouts;
   the conversation's inline file link opens the preview without a separate

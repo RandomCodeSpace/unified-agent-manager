@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from 'vitest';
 import type { Item } from '../../src/api';
 import { FileReferencesProvider } from '../../src/components/FileReferences';
 import { PlainText, SessionContext, WorkdirContext } from '../../src/components/common';
@@ -22,7 +22,7 @@ function Conversation({ entries = items }: { entries?: Item[] }) {
   return <FileReferencesProvider sessionId="task" workdir="/repo" generation="history" active items={entries}>
     <PreviewContext.Provider value={preview.open}>
       <Transcript sessionId="task" workdir="/repo" items={entries} interactions={[]} subagents={[]} live={false} working={false} />
-      {preview.selection && <FilePreview selection={preview.selection} sessionId="task" workdir="/repo" inline onClose={preview.close} onReload={preview.reload} />}
+      {preview.selection && <FilePreview selection={preview.selection} open sessionId="task" workdir="/repo" inline onClose={preview.close} onClosed={() => {}} onReload={preview.reload} />}
     </PreviewContext.Provider>
   </FileReferencesProvider>;
 }
@@ -53,6 +53,21 @@ test('keeps the inline file preview without a declaration card', async () => {
   fireEvent.click(link);
   expect(await screen.findByText('The report contents are available.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Close preview' }));
+  await waitFor(() => expect(screen.queryByText('The report contents are available.')).toBeNull());
+});
+
+test('Esc closes the inline preview from inside it, not from a field outside it', async () => {
+  render(<Conversation />);
+  fireEvent.click(await screen.findByRole('link', { name: `Open ${path}` }));
+  expect(await screen.findByText('The report contents are available.')).toBeTruthy();
+  const field = document.body.appendChild(document.createElement('textarea'));
+  onTestFinished(() => field.remove());
+  field.focus();
+  fireEvent.keyDown(field, { key: 'Escape' });
+  expect(screen.getByText('The report contents are available.')).toBeTruthy();
+  const close = screen.getByRole('button', { name: 'Close preview' });
+  close.focus();
+  fireEvent.keyDown(close, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByText('The report contents are available.')).toBeNull());
 });
 

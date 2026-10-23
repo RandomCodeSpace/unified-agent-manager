@@ -640,8 +640,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
   const outputView = output ?? lastOutput;
+  // The preview holds its last file through its exit and lets go of it after; the Changes sheet or leaving the Thread ends it at once.
+  const previewPresence = usePresence(!!preview.selection);
+  const [lastPreview, setLastPreview] = useState(preview.selection);
+  if (preview.selection && preview.selection !== lastPreview) setLastPreview(preview.selection);
+  const previewView = preview.selection ?? lastPreview;
+  const previewClosed = () => { previewPresence.onClosed(); setLastPreview(null); };
+  if (!preview.selection && lastPreview && (!active || sheetOpen)) previewClosed();
   // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step; not while the incoming one's first render suspends, which would widen the column to full.
-  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (filesOpen && goToFileModule) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output]] as const) if (presence.mounted && !open) presence.onClosed();
+  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (filesOpen && goToFileModule) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
   // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it on the default scope.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const openChanges = useCallback(() => {
@@ -1131,7 +1138,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
-      {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onReload={preview.reload} />}
+      {previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} />}
     </div>
     </GitLabItemsContext.Provider>
     </SubagentScope>
