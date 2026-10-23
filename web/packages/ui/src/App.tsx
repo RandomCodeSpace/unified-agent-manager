@@ -674,6 +674,11 @@ export default function App() {
   useEffect(() => {
     if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
   }, [arrivedId, mountedId]);
+  // The snapshot and the detail drop the Thread select() froze as they land; the pane keeps it until the new Thread has rendered.
+  // Keyed to the selection, so one made from Home or a draft holds nothing; let go once the Thread is on screen.
+  const [held, setHeld] = useState<{ id: string | null; detail: SessionDetail | null }>({ id: null, detail: null });
+  if (held.id !== state.selectedId || (state.previous && state.previous !== held.detail)) setHeld({ id: state.selectedId, detail: state.previous });
+  else if (held.detail && arrivedId && arrivedId === mountedId) setHeld({ id: held.id, detail: null });
 
   const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
 
@@ -1314,7 +1319,7 @@ export default function App() {
   // A cached selected task stays visible through a slow refresh. An unrelated previous task yields to the skeleton after the quiet period.
   let shown: SessionDetail | null = null;
   if (state.detail && selected && state.detail.id === mountedId) shown = state.detail;
-  else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
+  else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous ?? held.detail;
   const stale = !settingsOpen && !mismatched && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
@@ -1392,6 +1397,7 @@ export default function App() {
   let pane: React.ReactNode;
   // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
   let taskPane = false;
+  let skeletonPane = false;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} threadProject={selected?.project_id} />;
   } else if (mismatched) {
@@ -1454,6 +1460,7 @@ export default function App() {
     );
   } else if (state.selectedId || !state.loaded) {
     // The Task's detail, or the first snapshot, is on its way: a skeleton, never the placeholder that says there is nothing.
+    skeletonPane = true;
     pane = <LoadingPane leading={leading} />;
   } else {
     pane = (
@@ -1553,8 +1560,8 @@ export default function App() {
                 <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
                   <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
                 </div>
-                {/* Settings, routines and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !mismatched && !routinesShown && !newTask} />
+                {/* Settings, routines and a new Task do not wait on the stream; the skeleton's own loading line is its one ring. */}
+                <LoadingVeil show={loading && !skeletonPane && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={`${terminalProject.id}:${terminalTask ?? ''}`} project={terminalProject} thread={terminalTask ? { id: terminalTask, dir: state.sessions.find((s) => s.id === terminalTask)?.workdir ?? terminalProject.dir } : undefined} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} />}
             </main>

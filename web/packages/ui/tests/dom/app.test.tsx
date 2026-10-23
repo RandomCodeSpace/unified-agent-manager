@@ -6,6 +6,21 @@ import { renderApp, sidebar } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
+/** Watches the page from now on; the returned check says whether an element matching `match` was ever added. */
+function seen(match: (el: Element) => boolean) {
+  let found = false;
+  const check = (records: MutationRecord[]) => {
+    for (const r of records) for (const n of r.addedNodes) if (n instanceof Element && [n, ...n.querySelectorAll('*')].some(match)) found = true;
+  };
+  const observer = new MutationObserver(check);
+  observer.observe(document.body, { childList: true, subtree: true });
+  onTestFinished(() => observer.disconnect());
+  return () => {
+    check(observer.takeRecords());
+    return found;
+  };
+}
+
 describe('app shell', () => {
   test('lists the projects and tasks, with the Home launcher in the main pane', async () => {
     renderApp();
@@ -44,6 +59,24 @@ describe('app shell', () => {
     history.pushState(null, '', '/#task=t10');
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await waitFor(() => expect(header().textContent).toBe('Bump dependencies'));
+  });
+
+  test('switching Threads keeps the old one on screen until the new one renders: no skeleton between them', async () => {
+    const { user } = renderApp('#task=t3');
+    const side = await sidebar();
+    await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
+    const skeleton = seen((el) => el.matches('[aria-label="Loading conversation"]'));
+    await user.click(side.getByRole('button', { name: /unified-agent-manager.*Remove unused exports across packages/ }));
+    await waitFor(() => expect(header().textContent).toBe('Remove unused exports across packages'));
+    expect(skeleton()).toBe(false);
+  });
+
+  test('a slow first load shows the skeleton with its own loading line, never the veil over it', async () => {
+    renderApp('?slow=1000#task=t3');
+    const veil = seen((el) => el.matches('[class~="bg-canvas/70"]'));
+    expect(await screen.findByText('Loading the conversation…')).toBeTruthy();
+    await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
+    expect(veil()).toBe(false);
   });
 
   test('a stream the service refuses shows the reconnecting banner once it lasts', async () => {
