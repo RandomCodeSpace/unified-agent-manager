@@ -1,7 +1,7 @@
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { AtSign, ChevronRight, Copy, CornerDownLeft, Download, Ellipsis, ExternalLink, FileCode2, FileDiff, FileImage, FileText, Folder, FolderGit2, FolderOpen, GitBranch, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { useFileVersion } from './FileReferences';
 import { describeError, type ChangeFile, type FileDiff as FileDiffData, type FileEntry, type Project, type SessionSummary } from '../api';
@@ -12,7 +12,7 @@ import { cn } from '../lib/cn';
 import { downloadUrl, type PreviewMetadata, type TextPreview } from '../lib/preview';
 import { PreviewContext, type OpenPreview } from '../lib/previewContext';
 import { statusLetter } from '../lib/review';
-import { FileView as DiffView } from './Changes';
+import { FileView as DiffView, restoreScroll } from './Changes';
 import { FileMedia, Highlighted, Note, Skeleton } from './common';
 import { Key } from './InlinePicker';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
@@ -588,12 +588,15 @@ function PlaceLine({ place, changed }: Readonly<{ place: Place; changed: number 
 
 /* ---------- The file panel ---------- */
 
+/** Where the file panel was left in a Thread: reopened on the same file, it shows it as it was. */
+export interface FilePlace { path: string; mode: string; scrollTop: number }
+
 /**
  * One file in the side panel, the panel's full width: its head (where it is, its status, Mention and
  * the menu) and its body. A changed file switches between the File and its Diff against HEAD. A
  * link in a rendered Markdown file opens its target here.
  */
-export function FilePanel({ session, project, path, inline, open, onClose, onClosed, actions }: Readonly<{
+export function FilePanel({ session, project, path, inline, open, onClose, onClosed, actions, memory }: Readonly<{
   session: SessionSummary;
   project: Project | undefined;
   path: string;
@@ -603,16 +606,33 @@ export function FilePanel({ session, project, path, inline, open, onClose, onClo
   onClose: () => void;
   onClosed: () => void;
   actions: FileActions;
+  /** This Thread's last place in the panel, written as it leaves. */
+  memory?: RefObject<FilePlace | null>;
 }>) {
   const api = useApi();
   const place = placeOf(session, project);
   const changed = useChanged(session.id);
   const change = changed.byPath.get(path);
-  const [view, setView] = useState<{ path: string; mode: string }>({ path, mode: 'file' });
+  const [left] = useState(() => (memory?.current?.path === path ? memory.current : null));
+  const [view, setView] = useState<{ path: string; mode: string }>({ path, mode: left?.mode ?? 'file' });
   const mode = view.path === path && change ? view.mode : 'file';
   const opened = useFile(session.id, path);
   const [diff, setDiff] = useState<{ path: string; file?: FileDiffData; error?: string } | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  // The place is written as the panel leaves; its scroll comes back once the same file shows in the same view.
+  const body = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(0);
+  const restore = useRef(left);
+  useEffect(() => () => { if (memory) memory.current = { path, mode, scrollTop: scrolled.current }; }, [memory, path, mode]);
+  const loaded = mode === 'diff' ? diff?.path === path && !!diff.file : !!opened?.file;
+  useLayoutEffect(() => {
+    const at = restore.current;
+    if (at?.path !== path) restore.current = null;
+    else if (loaded && at.mode === mode && body.current) {
+      restore.current = null;
+      return restoreScroll(body.current, at.scrollTop);
+    }
+  }, [loaded, mode, path]);
 
   useEffect(() => {
     if (mode !== 'diff') return;
@@ -654,7 +674,7 @@ export function FilePanel({ session, project, path, inline, open, onClose, onClo
       <FileHead sessionId={session.id} path={path} root={place.name} change={change} size={opened?.file?.size} actions={actions}>
         {change && <Segmented size="sm" aria-label="Show" className="w-32" value={mode} onValueChange={(m) => setView({ path, mode: m })} items={[{ value: 'file', label: 'File' }, { value: 'diff', label: 'Diff' }]} />}
       </FileHead>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={body} className="min-h-0 flex-1 overflow-auto" onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
         {mode === 'diff'
           ? <DiffView path={path} file={shownDiff?.file ?? null} error={shownDiff?.error ?? null} />
           : opened && <PreviewContext.Provider value={links}><FileBody sessionId={session.id} workdir={session.workdir} opened={opened} /></PreviewContext.Provider>}

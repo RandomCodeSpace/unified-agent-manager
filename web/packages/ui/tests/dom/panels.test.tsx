@@ -1,9 +1,9 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
-import { log, openMenu, openSubagentIndex, openTask, renderApp, sidebar, type User } from './render';
+import { composer, log, openMenu, openSubagentIndex, openTask, renderApp, sidebar, type User } from './render';
 
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
@@ -69,6 +69,77 @@ describe('changes', () => {
     await user.click(sheet.getByRole('button', { name: 'Close changes' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(latest));
+  });
+
+  test('reopened in the same Thread, Changes is back on its scope and file; a turn\'s chip still opens on that turn', async () => {
+    const { user } = await openTask('t1');
+    const checked = (radio: HTMLElement) => radio.getAttribute('aria-checked') ?? String((radio as HTMLInputElement).checked);
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+    let sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    await user.click(await sheet.findByRole('radio', { name: 'All changes · 4' }));
+    await user.click(await sheet.findByTitle('internal/vterm/redraw_test.go'));
+    expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
+    await user.click(sheet.getByRole('button', { name: 'Close changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
+    await user.click(screen.getByRole('button', { name: /^Open changes/ }));
+    sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    expect(checked(sheet.getByRole('radio', { name: /^All changes/ }))).toBe('true');
+    expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
+    expect(sheet.getByTitle('internal/vterm/redraw_test.go').getAttribute('aria-pressed')).toBe('true');
+    await user.click(sheet.getByRole('button', { name: 'Close changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
+    await user.click(screen.getAllByRole('button', { name: /^Changed \d+ files?$/ }).at(-1)!);
+    sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    expect(checked(sheet.getByRole('radio', { name: /^Last turn/ }))).toBe('true');
+  });
+
+  test('with no files in its default scope, Changes opens on All changes when that has some', async () => {
+    const { user } = await openTask('t3');
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    const all = await sheet.findByRole('radio', { name: 'All changes · 4' });
+    await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
+  });
+
+  test('a Thread with its own change record opens on All changes when that record is empty and the folder is not', async () => {
+    const original = mockData.seed;
+    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
+      const state = original();
+      const task = state.tasks.find(t => t.id === 't3')!;
+      task.capabilities = { ...task.capabilities, session_diff: true };
+      return state;
+    });
+    // The service's own-record list carries no counts.
+    const changes = api.changes.bind(api);
+    const list = vi.spyOn(api, 'changes').mockImplementation((id, scope, signal) => scope === 'session'
+      ? Promise.resolve({ scope, label: 'Files this thread changed', supported: true, files: [] })
+      : changes(id, scope, signal));
+    try {
+      const { user } = await openTask('t3');
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+      const all = await sheet.findByRole('radio', { name: 'All changes' });
+      await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
+    } finally {
+      list.mockRestore();
+      seed.mockRestore();
+    }
+  });
+
+  test('inline, Changes stays open for presses on the composer and the conversation\'s controls; a press on empty canvas closes it', async () => {
+    const width = window.innerWidth;
+    onTestFinished(() => { window.innerWidth = width; });
+    window.innerWidth = 1440;
+    const { user } = await openTask('t1');
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+    const panel = () => document.querySelector('aside[aria-label="Changes"]:not([inert]) > :not([inert])');
+    await waitFor(() => expect(panel()).not.toBeNull());
+    await user.click(composer());
+    const conversation = screen.getByRole('region', { name: 'Conversation' });
+    await user.click(conversation.querySelector('button[aria-expanded="false"]')!);
+    expect(panel()).not.toBeNull();
+    await user.click(conversation);
+    await waitFor(() => expect(panel()).toBeNull());
   });
 
   test('a Viewed mark made while comments send survives the send', async () => {

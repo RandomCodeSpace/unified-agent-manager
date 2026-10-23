@@ -1922,7 +1922,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   its sidebar row, so a folder holding only new, untracked files reads 0, as
   its tip says; an older service without that count makes it the
   default scope's file count) and opens the changes beside the conversation with the diff (a
-  full-screen sheet on a narrow window). The scopes at the top depend on
+  full-screen sheet on a narrow window). Closed and opened again in the same
+  Thread, it comes back on the scope, file and scroll you left; a turn's
+  View changes opens on that turn instead. When the default scope has no
+  files and All changes has some, it opens on All changes. The scopes at the top depend on
   the Thread. A Copilot Thread whose conversation records its own file
   changes (every Thread created since that record exists) has two:
   **This thread** (the default) is Copilot's record of the files this
@@ -2030,9 +2033,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   panel, with a File | Diff switch when it has uncommitted changes, Mention,
   and a "…" menu: Mention in the message, Open in Changes, Copy path, Open in
   a new tab, Download. A link in a rendered Markdown file opens its target in
-  the same panel. Only one of Changes, the file, Subagents and a file preview
-  is open at a time. On a wide window, a click in the conversation or the
-  composer closes whichever of them is open. When the header runs short of
+  the same panel; opening the same file again in the same Thread brings back
+  its File or Diff view and its scroll. Only one of Changes, the file,
+  Subagents and a file preview is open at a time. On a wide window, a click
+  on the conversation's empty background closes whichever of them is open;
+  the composer, everything under it, the conversation's buttons, links,
+  fields and options, and a click that selects text leave it open. When the header runs short of
   room (side panels open beside the sidebar), the Thread's title keeps its
   width (up to about 400 px) first: the buttons drop their labels, then
   Charts and Terminal move into the header's "…" menu.
