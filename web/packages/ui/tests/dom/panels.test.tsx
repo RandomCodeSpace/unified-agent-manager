@@ -135,7 +135,12 @@ describe('changes', () => {
     const aside = (label: string) => document.querySelector(`aside[aria-label="${label}"]`);
     try {
       const { user } = await openTask('t-chart');
-      await user.click(await screen.findByRole('button', { name: 'Pinned charts, 2' }));
+      // A lazy panel's first opening lets the outgoing one slide out while it loads: Changes has opened once first.
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      await waitFor(() => expect(aside('Changes')).toBeTruthy());
+      await user.click(screen.getByRole('button', { name: 'Close changes' }));
+      await waitFor(() => expect(aside('Changes')).toBeNull());
+      await user.click(screen.getByRole('button', { name: 'Pinned charts, 2' }));
       await waitFor(() => expect(aside('Pinned charts')).toBeTruthy());
       await user.click(screen.getByRole('button', { name: /^Open changes/ }));
       expect(aside('Pinned charts')).toBeNull();

@@ -55,14 +55,16 @@ let goToFileModule: typeof import('./GoToFile') | null = null;
 const loadGoToFile = () => import('./GoToFile').then((m) => { goToFileModule = m; return m; });
 const GoToFileLazy = lazy(loadGoToFile);
 const FilePanelLazy = lazy(() => loadGoToFile().then((m) => ({ default: m.FilePanel })));
-const GitLabSheet = lazy(() => import('./GitLabSheet'));
+/** The lazy side panels that have rendered once: a lazy wrapper's first render suspends, to an empty fallback. */
+const lazyShown = new Set<'gitlab' | 'changes' | 'charts'>();
+const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.add('gitlab'); return m; }));
 import type { GitLabOpenItem } from './GitLabSheet';
 import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
 import type { GitLabRef } from '../lib/gitlabRefs';
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
-const ChangesSheet = lazy(() => import('./Changes').then((m) => ({ default: m.ChangesSheet })));
+const ChangesSheet = lazy(() => import('./Changes').then((m) => { lazyShown.add('changes'); return { default: m.ChangesSheet }; }));
 /** The pinned charts load with their first opening, never with the Task. */
-const PinnedChartsPanel = lazy(() => import('./Chart').then((m) => ({ default: m.PinnedChartsPanel })));
+const PinnedChartsPanel = lazy(() => import('./Chart').then((m) => { lazyShown.add('charts'); return { default: m.PinnedChartsPanel }; }));
 
 interface Props {
   session: SessionDetail;
@@ -638,8 +640,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
   const outputView = output ?? lastOutput;
-  // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step.
-  if (sidePanelInline && (sheetOpen || filesOpen || gitlabOpen || chartsOpen || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output]] as const) if (presence.mounted && !open) presence.onClosed();
+  // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step; not while the incoming one's first render suspends, which would widen the column to full.
+  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (filesOpen && goToFileModule) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output]] as const) if (presence.mounted && !open) presence.onClosed();
   // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it on the default scope.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const openChanges = useCallback(() => {
