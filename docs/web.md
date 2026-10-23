@@ -2134,7 +2134,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   folder's), and how long ago the Thread changed. Hovering the row shows the full title,
   the Project, the full request or outcome, the branch, and `+N −M` line
   counts when known. Hovering an
-  active row that can settle shows Settle.
+  active row that can settle shows Settle. On touch, a tap anywhere on a row
+  opens the Thread; Settle is in the long-press menu and the Thread header
+  menu. Settling a Thread while the Settled section is closed flashes its
+  header.
   - **Alt+J / Alt+K** open the next / previous Thread needing attention, wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
@@ -2161,7 +2164,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and Archive. Delete is offered only for archived Threads, in Settings →
   Archived.
   Arrow keys move between rows,
-  Enter opens a Thread and F2 renames it. There are no Project headings: the
+  Enter opens a Thread and F2 renames it; when a rename ends, or a row you
+  settle with Right and Enter leaves, focus stays in the list. There are no Project headings: the
   filter below shows one Project's Threads.
   - **Filter**: the badge button beside Search shows the chosen Project's
     badge, or a stacked-layers icon for all Projects. It opens a list with a

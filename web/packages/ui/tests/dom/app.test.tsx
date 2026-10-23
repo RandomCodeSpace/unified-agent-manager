@@ -213,18 +213,40 @@ describe('sidebar list keyboard', () => {
     expect(document.activeElement).toBe(row);
   });
 
-  test('touching a status reveals Settle before a second tap settles without opening the task', async () => {
+  test('settling from the keyboard hands focus to the row now in its place and flashes the closed Settled header', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const settle = side.getByRole('button', { name: 'Settle Doctor: add terminal line' });
-    const tap = () => user.pointer([{ target: settle, keys: '[TouchA>]' }, { keys: '[/TouchA]' }]);
-    await tap();
-    expect(document.activeElement).toBe(settle);
-    expect(side.getByRole('button', { name: 'Settle Doctor: add terminal line' })).toBe(settle);
-    expect(window.location.hash).toBe('');
-    await tap();
-    await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
-    expect(window.location.hash).toBe('');
+    const row = document.querySelector<HTMLElement>('[data-task-row="t9"] [data-nav]')!;
+    const next = row.closest('li')!.nextElementSibling!.querySelector<HTMLElement>('[data-nav]')!;
+    row.focus();
+    await user.keyboard('{ArrowRight}{Enter}');
+    await waitFor(() => expect(document.querySelector('ul[aria-label="Unsettled threads"] [data-task-row="t9"]')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(next));
+    expect(side.getByRole('button', { name: /^Settled/ }).classList.contains('animate-flash')).toBe(true);
+  });
+
+  test('F2 renames a row in place, and Enter or Esc hands focus back to the row', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const row = () => document.querySelector<HTMLElement>('[data-task-row="t3"] [data-nav]')!;
+    row().focus();
+    await user.keyboard('{F2}');
+    expect(document.activeElement).toBe(await side.findByRole('textbox', { name: 'Thread name' }));
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(document.activeElement).toBe(row()));
+    await user.keyboard('{F2}');
+    await side.findByRole('textbox', { name: 'Thread name' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.activeElement).toBe(row()));
+  });
+
+  test('a double-click on a row that is not open keeps its rename once the Thread opens', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    await user.dblClick(document.querySelector<HTMLElement>('[data-task-row="t9"] [data-nav]')!);
+    await waitFor(() => expect(header().textContent).toBe('Draft release notes'));
+    await screen.findByRole('textbox', { name: 'Message' });
+    expect(document.activeElement).toBe(side.getByRole('textbox', { name: 'Thread name' }));
   });
 
   test('search counts its matches in words, and a search with none offers to clear it', async () => {

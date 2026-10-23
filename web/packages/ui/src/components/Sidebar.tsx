@@ -1,6 +1,6 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
 import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { createContext, memo, startTransition, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { createContext, memo, startTransition, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
@@ -274,6 +274,8 @@ export function Brand({ className, markOnly = false }: Readonly<{ className?: st
 /* ---------- Keyboard navigation ---------- */
 
 const NAV = '[data-nav]:not([disabled])';
+/** The list's rows on screen: a closed shelf's rows are inert. */
+const navRows = (root: Element) => Array.from(root.querySelectorAll<HTMLElement>(NAV)).filter((el) => el.offsetParent !== null && !el.closest('[inert]'));
 
 /**
  * The list is one tab stop (roving `tabIndex`). Arrow keys move between the Task and shelf rows on screen (a
@@ -282,7 +284,7 @@ const NAV = '[data-nav]:not([disabled])';
 function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT') return;
-  const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(NAV)).filter((el) => el.offsetParent !== null && !el.closest('[inert]'));
+  const rows = navRows(e.currentTarget);
   // From a row's hover action (Settle), move relative to that row.
   const current = target.closest('[data-task-row]')?.querySelector<HTMLElement>('[data-nav]') ?? target.closest<HTMLElement>('[data-nav]');
   const i = rows.indexOf(current as HTMLElement);
@@ -400,7 +402,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
           </span>
         )}
         <span className="flex-1" />
-        <span className={cn('flex shrink-0 items-center justify-end gap-1 font-normal', statusTone, settleable && 'min-w-14 group-hover/row:opacity-0 group-focus-within/row:opacity-0')}>
+        <span className={cn('flex shrink-0 items-center justify-end gap-1 font-normal', statusTone, settleable && 'min-w-14 group-hover/row:opacity-0 group-has-focus-visible/row:opacity-0')}>
           <StatusIcon aria-hidden="true" className="size-3.5 shrink-0" />
           {status.label}
         </span>
@@ -433,12 +435,34 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
   const context = useLazyContextMenu((open) => { contextOpen.current = open; });
-  const revealSettleOnTouch = useRef(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
   // The menu's own Settle item, shown on hover only while its rules allow it.
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
+  // Enter or Esc ends a rename with its input focused: focus goes back to the row once the input is gone.
+  const refocus = useRef(false);
+  const endRename = () => { refocus.current = !!rowRef.current?.contains(document.activeElement); };
+  useEffect(() => {
+    if (renaming || !refocus.current) return;
+    refocus.current = false;
+    rowRef.current?.querySelector<HTMLElement>(NAV)?.focus();
+  }, [renaming]);
+  // A row leaving the list (settled, archived) with keyboard focus inside hands it to the row now in its place.
+  useLayoutEffect(() => {
+    const node = rowRef.current;
+    return () => {
+      const nav = node?.closest('nav');
+      if (!nav || !node?.querySelector(':focus-visible')) return;
+      const at = navRows(nav).indexOf(node.querySelector<HTMLElement>(NAV)!);
+      queueMicrotask(() => { const rows = navRows(nav); (rows[at] ?? rows.at(-1))?.focus(); });
+    };
+  }, []);
+  // Settle leaving under keyboard focus (its row went busy settling) hands focus to the row first.
+  const settleRef = useCallback((el: HTMLButtonElement) => () => {
+    if (el.matches(':focus-visible')) queueMicrotask(() => rowRef.current?.querySelector<HTMLElement>(NAV)?.focus());
+  }, []);
   const status = taskStatus(s, unread);
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
   // A machine linked to another Copilot account keeps its rows, faded; opening one shows why it is blocked.
@@ -465,14 +489,16 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
 
   const row = (
     <div
+      ref={rowRef}
       data-task-row={rowKey}
       className={compact ? undefined : 'lift group/row rounded-md'}
     >
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
-        <div className={rowClass}>
+        // py-1: the name line and the 28px input fit the card's 56px, so the rows below stay put.
+        <div className={cn(rowClass, !compact && 'py-1')}>
           {!compact && <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption">{project.name}</span></span>}
-          <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Thread name" />
+          <InlineName initial={s.name} onSave={(v) => { endRename(); void a.rename(s.id, v); }} onCancel={() => { endRename(); a.cancelRename(); }} className="h-7 w-full" label="Thread name" />
         </div>
       ) : (
         <Tip label={<>{machine && !unavailable && <TipMachine label={machine.label} />}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
@@ -510,23 +536,20 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
       )}
       {settle && !renaming && (
         // A sibling of the row button, so Settle replaces the status without selecting the Task.
-        // A first touch on the status reveals Settle; a second tap activates it.
+        // No touch target of its own: a tap on the status opens the Thread; touch Settle is in the long-press and header menus.
         // Not a tab stop of its own: Right from the row reaches it (onListKeyDown), and the row's menu has it too.
         <Tip label={settle.label}>
           <Button
+            ref={settleRef}
             size="sm"
             tabIndex={-1}
             data-settle=""
             aria-label={`Settle ${taskName(s) || 'New thread'}`}
             className={cn(
-              'pointer-events-none absolute top-1.5 right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:after:inset-0 [&_svg]:size-3.5',
+              'pointer-events-none absolute top-1.5 right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-has-focus-visible/row:pointer-events-auto group-has-focus-visible/row:opacity-100 pointer-coarse:after:inset-0 [&_svg]:size-3.5',
               selected ? 'bg-tint-selected' : 'bg-raised',
             )}
-            onPointerDown={(event) => { revealSettleOnTouch.current = event.pointerType === 'touch' && document.activeElement !== event.currentTarget; }}
-            onClick={(event) => {
-              if (event.detail && revealSettleOnTouch.current) { revealSettleOnTouch.current = false; return; }
-              settle.onSelect();
-            }}
+            onClick={() => settle.onSelect()}
           >
             <CircleCheck aria-hidden="true" />
             {settle.label}
@@ -760,6 +783,16 @@ export const Sidebar = memo(function Sidebar({
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const [settledAll, setSettledAll] = useState(false);
+  // A row settling out of the list flashes the closed shelf's header: where it went.
+  const wasActive = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const moved = !settledOpen && settled.some((r) => wasActive.current.has(r.key));
+    wasActive.current = new Set(active.map((r) => r.key));
+    const header = moved && list.current?.querySelector<HTMLElement>('[data-nav="shelf:Settled"]');
+    if (!header) return;
+    header.classList.add('animate-flash');
+    window.setTimeout(() => header.classList.remove('animate-flash'), 1400);
+  });
   // A progressive list first mounts the rows that fill the drawer, then a batch per frame while it is on screen: each
   // row's menu and tip set themselves up as it mounts, and the whole list at once is a long task on a phone. Rows
   // mounted in the closed drawer would all be styled and laid out at once when it first opens. Mounted rows stay.
