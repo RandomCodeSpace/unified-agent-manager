@@ -10,7 +10,7 @@ import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, w
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
-import type { ChangesTurn } from './Changes';
+import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
 import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext, type Tone } from './common';
 import { byCodeUnit } from '../lib/order';
@@ -21,7 +21,7 @@ import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
 import { Composer, mentionFile, type Answering, type FirstMessage } from './Composer';
-import type { FileActions } from './GoToFile';
+import type { FileActions, FilePlace } from './GoToFile';
 import { keysTaken, threadCovered } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
@@ -657,8 +657,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (!preview.selection && lastPreview && (!active || sheetOpen)) previewClosed();
   // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step; not while the incoming one's first render suspends, which would widen the column to full.
   if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (filesOpen && goToFileModule) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
-  // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it on the default scope.
+  // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it where this Thread left it.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
+  const changesPlace = useRef<ChangesPlace | null>(null);
+  const filePlace = useRef<FilePlace | null>(null);
   const openChanges = useCallback(() => {
     setChangesTurn(null);
     closePreview(false);
@@ -783,26 +785,27 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
   // Closes every right side panel without returning focus to its opener.
-  const closeSidePanels = useCallback((keepOutput = false) => {
+  const closeSidePanels = useCallback(() => {
     closePreview(false);
     setFilePath(null);
     setChartsOpen(false);
-    if (!keepOutput) setOutput(null);
+    setOutput(null);
     onSheet(false, false);
   }, [closePreview, onSheet]);
   // GitLab stays beside the conversation while the user reviews or approves its work.
-  // A primary press in the conversation, outside any popup (a hover tooltip does not count), closes the
-  // other inline side panels. It is judged on pointerdown, before the press can open a popup, and applied on
+  // A primary press on the conversation's empty canvas, outside any popup (a hover tooltip does not count),
+  // closes the other inline side panels; a control in it, the dock and a press that selects text leave them open.
+  // It is judged on pointerdown, before the press can open a popup, and applied on
   // click (capture): closing mid-press would widen the column under the pointer and lose the click, and
   // a click that opens a panel batches after it.
   const conversationPress = useRef(false);
   const onConversationPointerDown = (e: PointerEvent) => {
-    conversationPress.current = sidePanelInline && e.button === 0 && e.currentTarget.contains(e.target as Node) && !document.querySelector('[data-popup]:not([data-popup="tooltip"])');
+    conversationPress.current = sidePanelInline && e.button === 0 && e.currentTarget.contains(e.target as Node) && !(e.target as Element).closest('button, a, input, textarea, select, label, [role=button], [aria-expanded]') && !document.querySelector('[data-popup]:not([data-popup="tooltip"])');
   };
-  const onConversationClick = (e: MouseEvent, keepOutput = false) => {
+  const onConversationClick = (e: MouseEvent) => {
     if (!conversationPress.current || e.detail === 0) return;
     conversationPress.current = false;
-    closeSidePanels(keepOutput);
+    if (!getSelection()?.toString()) closeSidePanels();
   };
 
   /** Page the transcript until item `id` is in the window, synchronously so it is in the DOM at once; false when the history held does not reach it. */
@@ -1097,8 +1100,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </section>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
-        {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
-        <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
+        {/* A press here leaves the side panels open: the next message or command about them is typed here. */}
+        <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
             <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} error={locateError} jump={jump && strip} onJump={jumpToBottom} />
@@ -1140,9 +1143,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
+      {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} memory={changesPlace} /></Suspense>}
       {goToFile && <Suspense fallback={null}><GoToFile session={session} project={project} anchor={goToFile.anchor} phone={phone} open={goToFile.open} onClose={closeGoToFile} onClosed={() => setGoToFile(null)} actions={fileActions} /></Suspense>}
-      {filesPresence.mounted && fileView && <Suspense fallback={null}><FilePanel session={session} project={project} path={fileView} inline={sidePanelInline} open={filesOpen} onClose={closeFile} onClosed={filesPresence.onClosed} actions={fileActions} /></Suspense>}
+      {filesPresence.mounted && fileView && <Suspense fallback={null}><FilePanel session={session} project={project} path={fileView} inline={sidePanelInline} open={filesOpen} onClose={closeFile} onClosed={filesPresence.onClosed} actions={fileActions} memory={filePlace} /></Suspense>}
       {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}

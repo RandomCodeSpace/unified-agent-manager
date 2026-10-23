@@ -25,6 +25,7 @@ async function components(api, environment = {}) {
       if (old && deps.length === old.deps.length && deps.every((value, i) => Object.is(value, old.deps[i]))) return;
       owner.effects.push(() => { old?.cleanup?.(); owner.slots[index] = { deps, cleanup: effect() }; });
     },
+    useLayoutEffect(effect, deps) { return hooks.useEffect(effect, deps); },
     useMemo(fn) { return fn(); },
     useCallback(fn) { return fn; },
     useId() { return 'glyph'; },

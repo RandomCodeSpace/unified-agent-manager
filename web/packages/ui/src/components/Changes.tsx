@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { memo, startTransition, useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, startTransition, useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, defaultScope, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -21,6 +21,22 @@ export interface ChangesTurn {
   at: number;
   /** Explicit full workspace reader from a reply menu. */
   scope?: 'workspace';
+}
+
+/** Where Changes was left in a Thread: the next open from the header goes back to it. */
+export interface ChangesPlace { scope: Scope; path: string | null; scrollTop: number }
+
+/** Scrolls `el` back to `top` while its content grows in over the next frames (diff slices, a late image), until it holds or the reader scrolls. */
+export function restoreScroll(el: HTMLElement, top: number): () => void {
+  let frame = 0, tries = 0, last = -1;
+  const apply = () => {
+    if (last >= 0 && el.scrollTop !== last) return;
+    el.scrollTop = top;
+    last = el.scrollTop;
+    if (last < top && tries++ < 30) frame = requestAnimationFrame(apply);
+  };
+  apply();
+  return () => cancelAnimationFrame(frame);
 }
 
 const STATUS_TONE: Record<string, string> = { A: 'text-success', U: 'text-success', D: 'text-error', '!': 'text-error' };
@@ -68,6 +84,7 @@ export function ChangesSheet({
   onChanges,
   onClose,
   onClosed,
+  memory,
 }: Readonly<{
   /** Open on this turn's edits: the Last turn scope for the latest turn, else the default scope with its first file shown. */
   turn?: ChangesTurn | null;
@@ -86,13 +103,24 @@ export function ChangesSheet({
   onChanges: (changes: ChangesData) => void;
   onClose: () => void;
   onClosed: () => void;
+  /** This Thread's last place in Changes, written as the sheet leaves; a turn's ask opens on the turn instead. */
+  memory?: RefObject<ChangesPlace | null>;
 }>) {
   const api = useApi();
   const canSession = session.capabilities.session_diff;
   // Only the latest turn has a scope of its own ("Last turn"); providers with their own diff have none.
   const turnScope = (t: ChangesTurn | null): Scope => (t?.scope ?? (t?.latest && !canSession ? 'turn' : defaultScope(session)));
-  const [scope, setScope] = useState<Scope>(() => turnScope(turn));
-  const [turnPaths, setTurnPaths] = useState(turn?.files ?? []);
+  const [left] = useState(() => (turn ? null : memory?.current ?? null));
+  const [scope, setScope] = useState<Scope>(() => left?.scope ?? turnScope(turn));
+  // A plain open on an empty default scope moves to All changes when that has files, once the default list is known,
+  // so the first glance matches the header's count.
+  const [opening, setOpening] = useState(!turn && !left);
+  if (opening && changes) {
+    setOpening(false);
+    if (scope === defaultScope(session) && changes.supported && !changes.files.length && changes.counts?.workspace) setScope('workspace');
+  }
+  // The remembered file is preferred as a turn's edited files are: shown once its scope lists it.
+  const [turnPaths, setTurnPaths] = useState(turn?.files ?? (left?.path ? [left.path] : []));
   const [askedTurn, setAskedTurn] = useState(turn);
   const [view, setView] = useState<{
     sessionId: string; scope: Scope; list: ChangesData | null; path: string | null;
@@ -119,6 +147,7 @@ export function ChangesSheet({
   if (turn !== askedTurn) {
     setAskedTurn(turn);
     if (turn) {
+      setOpening(false);
       const next = turnScope(turn);
       setScope(next);
       setTurnPaths(turn.files);
@@ -273,6 +302,18 @@ export function ChangesSheet({
     stop();
     refresh('selection');
   }, [path]);
+  // The place is written as the sheet leaves; its scroll comes back once the remembered file's diff is in.
+  const body = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(0);
+  const restore = useRef(left);
+  useEffect(() => () => { if (memory) memory.current = { scope, path: shownPath, scrollTop: scrolled.current }; }, [memory, scope, shownPath]);
+  const shownLoaded = current?.path === shownPath && !!current.file;
+  useLayoutEffect(() => {
+    const at = restore.current;
+    if (!at || !shownLoaded || !body.current) return;
+    restore.current = null;
+    if (at.path === shownPath) return restoreScroll(body.current, at.scrollTop);
+  }, [shownLoaded, shownPath]);
 
   return (
     <SidePanel id="changes" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Changes" defaultWidth={440}>
@@ -359,7 +400,7 @@ export function ChangesSheet({
       </ul>
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
       {/* The diff keeps some height while the commit form is open. */}
-      <div className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden">
+      <div ref={body} className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden" onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
         {shownPath && (
           <FileView
             key={shownPath}
