@@ -503,6 +503,16 @@ describe('composer menus and notices', () => {
     expect(document.activeElement?.hasAttribute('data-highlighted')).toBe(true);
   });
 
+  test('a model choice closes the menu and leaves focus on the same picker while it saves', async () => {
+    const { user } = await openTask('t3');
+    const model = await screen.findByRole('button', { name: 'Model: Auto' });
+    await user.click(model);
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitemradio', { name: /GPT-5 mini/ }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(await screen.findByRole('button', { name: 'Model: GPT-5 mini' })).toBe(model);
+    expect(document.activeElement).toBe(model);
+  });
+
   test('on a phone the model choices are a bottom sheet, as the other toolbar readers, opened on the current choice', async () => {
     const width = window.innerWidth;
     onTestFinished(() => { window.innerWidth = width; });

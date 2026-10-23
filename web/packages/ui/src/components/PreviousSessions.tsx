@@ -9,7 +9,7 @@ import { Dialog } from './ui/dialog';
 /** An available provider can import its recorded conversations; Edit project offers Previous sessions only then. */
 export const canImport = (meta: Meta | null): boolean => !!meta?.providers.some((p) => p.available && p.capabilities.import);
 
-export function PreviousSessionsDialog({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
+export function PreviousSessionsDialog({ open, project, onClose, onClosed }: Readonly<{ open: boolean; project: Project; onClose: () => void; onClosed: () => void }>) {
   const api = useApi();
   const { meta, dispatch } = useApp();
   const actions = useTaskActions();
@@ -85,7 +85,7 @@ export function PreviousSessionsDialog({ project, onClose }: Readonly<{ project:
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title={`Previous sessions in ${project.name}`} description="Import a recorded conversation as a thread. Importing reads its history without sending a message."
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }} onClosed={onClosed} title={`Previous sessions in ${project.name}`} description="Import a recorded conversation as a thread. Importing reads its history without sending a message."
       footer={<>
         {progress && <Note role="status" className="mr-auto">Importing {progress.done + 1} of {progress.total}…</Note>}
         {progress && <Button variant="secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); }}>Cancel</Button>}

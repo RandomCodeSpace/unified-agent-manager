@@ -63,7 +63,7 @@ export function InlinePicker({
     <div
       ref={popupRef}
       data-popup=""
-      className="absolute bottom-full left-0 z-40 mb-1.5 flex w-full origin-bottom-left flex-col overflow-hidden rounded-md bg-raised text-ink shadow-float animate-rise sm:w-[440px]"
+      className="absolute bottom-full left-0 z-40 mb-1.5 flex w-full origin-bottom-left flex-col overflow-hidden rounded-md bg-raised text-ink shadow-float transition-[opacity,scale] duration-100 ease-app starting:scale-[0.97] starting:opacity-0 sm:w-[440px]"
     >
       <div className="flex h-7 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <span className="font-medium">{title}</span>
@@ -74,7 +74,8 @@ export function InlinePicker({
           <Key>esc</Key>
         </span>
       </div>
-      <div ref={list} id={id} role="listbox" aria-label={title} className="max-h-[min(300px,40dvh)] overflow-y-auto overflow-x-hidden p-1 pt-0">
+      {/* The first page's wait holds the list's full height, so the popup does not grow while it scales in. */}
+      <div ref={list} id={id} role="listbox" aria-label={title} className={cn('max-h-[min(300px,40dvh)] overflow-y-auto overflow-x-hidden p-1 pt-0', loading && items.length === 0 && 'min-h-[min(300px,40dvh)]')}>
         {loading && items.length === 0 && <Loading className="px-2" />}
         {!loading && items.length === 0 && empty && <div className="px-2 py-2 text-caption text-muted">{empty}</div>}
         {rows.map(({ item, label }, i) => {

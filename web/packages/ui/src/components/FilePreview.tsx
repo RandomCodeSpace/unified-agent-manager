@@ -90,7 +90,7 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
   return { open, close, reload, selection: active && selection?.owner === owner ? selection : null };
 }
 
-export function FilePreview({ selection, sessionId, workdir, inline, onClose, onReload }: Readonly<{ selection: Selection; sessionId: string; workdir: string; inline: boolean; onClose: () => void; onReload?: () => void }>) {
+export function FilePreview({ selection, open, sessionId, workdir, inline, onClose, onClosed, onReload }: Readonly<{ selection: Selection; /** False while it leaves; `onClosed` follows, and the owner unmounts it. */ open: boolean; sessionId: string; workdir: string; inline: boolean; onClose: () => void; onClosed: () => void; onReload?: () => void }>) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const { target, file, error } = selection;
   // The agent changed the open file: read it again.
@@ -101,14 +101,19 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose, on
     else if (opened.current.version !== version) { opened.current.version = version; onReload?.(); }
   }, [target, version, onReload]);
   useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
+  // Inline, Esc closes it from inside it or with nothing focused, unless a popup owns the key.
   useEffect(() => {
-    if (!inline || target.image || file?.kind === 'image') return;
+    if (!inline || !open || target.image || file?.kind === 'image') return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen() && !threadCovered()) { event.preventDefault(); onClose(); }
+      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen() || threadCovered()) return;
+      const at = document.activeElement;
+      if (at && at !== document.body && !closeButton.current?.closest('aside')?.contains(at)) return;
+      event.preventDefault();
+      onClose();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [inline, target.image, file?.kind, onClose]);
+  }, [inline, open, target.image, file?.kind, onClose]);
   const image = target.image || file?.kind === 'image';
   const temporary = target.temporary || target.tempPath !== undefined;
   const limitation = "This file's contents can change. Temporary-file access expires after five minutes or when this preview closes, including in a new tab. Sibling assets are unavailable.";
@@ -119,7 +124,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose, on
     <a href={downloadUrl(target.url)} download={target.name} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Download />Download</a>
   </>;
   if (image && target.url) {
-    return <Lightbox open onOpenChange={open => !open && onClose()} title={target.name} description={target.description} src={target.url} alt={target.name} size={target.size} footer={<div className="flex max-w-prose flex-col gap-2">
+    return <Lightbox open={open} onOpenChange={next => !next && onClose()} onClosed={onClosed} title={target.name} description={target.description} src={target.url} alt={target.name} size={target.size} footer={<div className="flex max-w-prose flex-col gap-2">
       {temporary && <p className="text-caption text-on-primary/70">{limitation}</p>}
       {actions && <div className="flex flex-wrap justify-end gap-2">{actions}</div>}
     </div>} />;
@@ -151,7 +156,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose, on
     body = <FileMedia key={`${target.url}#${selection.revision ?? 0}`} kind={file.kind} url={target.url} name={target.name} />;
   } else body = <Note>Not shown here. Open it in a new tab or download it.</Note>;
   return (
-    <SidePanel id="file-preview" inline={inline} open onClose={onClose} onClosed={() => {}} label={`Preview ${target.name}`}>
+    <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${target.name}`}>
       <PanelHeader>
         <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={target.name}>{target.name}</h2>
         <Button ref={closeButton} size="icon" className="text-muted" aria-label="Close preview" onClick={onClose}><X /></Button>

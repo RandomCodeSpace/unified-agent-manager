@@ -9,6 +9,7 @@ import { cleanPath } from '../lib/folders';
 import { PreviousSessionsDialog, canImport } from './PreviousSessions';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
+import { usePresence } from './ui/collapse';
 import { AlertDialog, Dialog } from './ui/dialog';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
@@ -240,6 +241,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previous, setPrevious] = useState(false);
+  const previousPresence = usePresence(previous);
   const [removing, setRemoving] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
 
@@ -323,7 +325,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
           </Button>
         </div>
       </form>
-      {previous && <PreviousSessionsDialog project={project} onClose={() => setPrevious(false)} />}
+      {previousPresence.mounted && <PreviousSessionsDialog open={previous} project={project} onClose={() => setPrevious(false)} onClosed={previousPresence.onClosed} />}
       {removing && (
         <RemoveProjectDialog
           open={removeOpen}
