@@ -138,7 +138,7 @@ export default function Federation() {
       if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
       const before = registryRef.current;
       registryRef.current = next;
-      // A disabled or replaced machine's rows leave the Task list through the "sessions" view transition.
+      // A disabled or replaced machine's rows leave the Task list in the same transition as this instance's rows.
       sessionsUpdate(() => {
       // The connection on screen: disabled or removed, its view falls back to this instance's Home in the same render that drops its rows; re-paired, its view carries on at the new generation.
       const viewing = activeRef.current;
@@ -267,7 +267,7 @@ export default function Federation() {
   }, [registryRead, routeError]);
   const onState = useCallback((id: string, owner: ConnectedInstance | null, value: SourceState) => {
     if (!authRef.current || (owner && !registryRef.current?.connections.some(connection => connection.enabled && connection.id === owner.id && connection.instance_id === owner.instance_id && connection.generation === owner.generation))) return;
-    // Another machine's rows enter, change and leave the Task list with the same view transition as this one's.
+    // Another machine's rows enter, change and leave the Task list in the same transition as this one's.
     sessionsUpdate(() => setSourceStates(previous => {
       const before = previous[id];
       const state = value.state.loaded ? value.state : before?.state ?? value.state;

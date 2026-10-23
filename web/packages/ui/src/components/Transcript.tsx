@@ -397,7 +397,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
               ))}
             </span>
             <span className="sr-only">{failures.map((p) => ` · ${p.text}`).join('')} activity of this turn</span>
-            <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
+            <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
           </button>
         )}
         {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
@@ -483,7 +483,7 @@ function StepButton({ label, result, open, onClick, fold = false, intent = false
       <span className="flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
         {lead}
         <span className={cn('min-w-0 truncate', intent && 'text-muted italic', ink && 'text-ink')}>{label}</span>
-        {fold && <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
+        {fold && <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />}
       </span>
       {result.length > 0 && (
         <span className="max-w-full min-w-0 truncate max-sm:text-meta">
@@ -1519,7 +1519,7 @@ function SettledQuestion({ id, asked }: Readonly<{ id: string; asked: AskedQuest
             </span>
           </span>
         )}
-        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
       </button>
       {opened && (
         <Collapse open={open} appear>
@@ -1622,7 +1622,7 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
   return (
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
-        {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
+        {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-z-90')} />}
         <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>

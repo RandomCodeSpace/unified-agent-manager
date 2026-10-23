@@ -415,7 +415,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
                 tabIndex={-1}
                 disabled={variant === 'project' && loading}
                 className={cn(
-                  'flex h-8 w-full cursor-default items-center gap-2 rounded-sm pr-0 pl-2 text-left outline-hidden transition-[background-color,color,box-shadow] duration-100 select-none pointer-coarse:h-11',
+                  'flex h-8 w-full cursor-default items-center gap-2 rounded-sm pr-0 pl-2 text-left outline-hidden transition-[background-color,color] duration-100 select-none pointer-coarse:h-11',
                   sel ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-surface',
                   e.hidden && !sel && 'text-muted',
                   loading && 'opacity-60',

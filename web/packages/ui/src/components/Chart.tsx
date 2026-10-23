@@ -254,7 +254,7 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
         <div ref={box} className="relative -mx-1 px-1 pt-1">
           <ChartImage chart={chart} look={expanded ? { width, height: 320 } : chart.kind === 'echarts' ? { width, height: 180 } : { width: 300, height: 64, spark: true }} zoomControls={expanded} />
           <button type="button" aria-expanded={expanded} aria-label={expanded ? `Show ${chart.title} small` : `Show ${chart.title} large`} className={cn('group/spark absolute rounded-sm outline-hidden focus-visible:outline-2 focus-visible:outline-focus', expanded ? 'right-0 bottom-0 grid size-7 place-items-center bg-raised pointer-coarse:size-11' : 'inset-0')} onClick={() => setExpanded((e) => !e)}>
-            <ChevronDown aria-hidden="true" className={cn('size-3.5 text-faint transition-[opacity,transform]', expanded ? 'rotate-180' : 'absolute right-0 bottom-0 opacity-0 group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100')} />
+            <ChevronDown aria-hidden="true" className={cn('size-3.5 text-faint transition-[opacity,transform] duration-160', expanded ? 'rotate-z-180' : 'absolute right-0 bottom-0 opacity-0 group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100')} />
           </button>
         </div>
       )}

@@ -290,7 +290,7 @@ function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit,
           </Button>
           {r.runs.length > 0 && (
             <Button variant="subtle" className="ml-auto text-muted" aria-expanded={history} aria-controls={`routine-${r.id}-history`} onClick={() => setHistory((o) => !o)}>
-              <ChevronRight className={cn('transition-transform duration-160', history && 'rotate-90')} />
+              <ChevronRight className={cn('transition-transform duration-160', history && 'rotate-z-90')} />
               History · {r.runs.length}
             </Button>
           )}

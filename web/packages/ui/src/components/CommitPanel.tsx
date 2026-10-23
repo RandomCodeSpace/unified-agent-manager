@@ -213,7 +213,7 @@ export function CommitPanel({
         >
           <GitCommitHorizontal />
           {files.length === 0 ? 'Nothing to commit' : 'Commit'}
-          {files.length > 0 && <ChevronDown className={cn('transition-transform duration-160', open && 'rotate-180')} />}
+          {files.length > 0 && <ChevronDown className={cn('transition-transform duration-160', open && 'rotate-z-180')} />}
         </Button>
         <span className="flex min-w-0 flex-1 items-center gap-1 text-meta text-muted" title={git.upstream ? `${git.branch ?? 'HEAD'} tracks ${git.upstream}` : undefined}>
           <GitBranch aria-hidden="true" className="size-3 shrink-0" />

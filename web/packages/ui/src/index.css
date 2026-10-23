@@ -163,7 +163,6 @@
   --animate-spin: spin 1s linear infinite;
   --animate-rise: rise 240ms var(--ease-app);
   --animate-fade-in: fade-in 160ms var(--ease-app);
-  --animate-slide-in: slide-in 240ms var(--ease-app);
   --animate-breathe: breathe 2.4s ease-in-out infinite;
 
   @keyframes spin {
@@ -200,23 +199,11 @@
       transform: none;
     }
   }
-  @keyframes slide-in {
-    from {
-      opacity: 0;
-      transform: translateX(24px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
 }
 
 @layer base {
   :root {
     color-scheme: light;
-    /* View transitions (React <ViewTransition>): the page itself never snapshots (see the view transition rules below). */
-    view-transition-name: none;
     --elevation-raised: 0 0 0 1px rgba(17, 17, 17, 0.05), 0 2px 6px rgba(17, 17, 17, 0.07);
     --elevation-float: 0 0 0 1px rgba(17, 17, 17, 0.06), 0 6px 20px rgba(17, 17, 17, 0.1);
     --elevation-modal: 0 0 0 1px rgba(17, 17, 17, 0.06), 0 20px 48px rgba(17, 17, 17, 0.18);
@@ -413,29 +400,6 @@
       animation: none !important;
       transition: none !important;
       scroll-behavior: auto !important;
-    }
-  }
-
-  /* View transitions (React <ViewTransition>): only the parts React names take part; the page itself
-     never snapshots (`:root` above), so streamed text keeps painting live during one. The classes are React's
-     `view-transition-class` values; the keyframes are the theme's. */
-  ::view-transition-group(.vt-row) {
-    animation-duration: 240ms;
-    animation-timing-function: var(--ease-app);
-  }
-  ::view-transition-old(.vt-row),
-  ::view-transition-new(.vt-row) {
-    animation-duration: 100ms;
-  }
-  ::view-transition-new(.vt-row-enter) {
-    animation: rise 240ms var(--ease-app);
-  }
-  ::view-transition-old(.vt-row-exit) {
-    animation: fade-out 160ms var(--ease-app);
-  }
-  @keyframes fade-out {
-    to {
-      opacity: 0;
     }
   }
 }

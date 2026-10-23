@@ -157,7 +157,7 @@ test('disabling the selected owner falls back to this instance with the sidebar 
   expect(window.location.hash).toBe('');
   const list = await taskRows();
   expect(list.getByRole('button', { name: /Doctor: add terminal line/, description: 'Main Server' })).toBeTruthy();
-  // The machine's rows leave through the list's view transition, after Home is on screen.
+  // The machine's rows leave in the list's transition, after Home is on screen.
   await waitFor(() => expect(list.queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' })).toBeNull());
   await waitFor(() => expect(streams.filter(entry => entry.owner === 'b').every(entry => entry.stream.readyState === 2)).toBe(true));
 });
