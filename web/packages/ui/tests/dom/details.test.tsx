@@ -82,6 +82,36 @@ test('a registered running body stays loaded across a provider re-render after a
   }
 });
 
+// A closing row fades its body in place (Collapse): the body must not turn into a loading notice before the box steps away.
+test('a closing compact tool row keeps its body through the fade, then lets it go', async () => {
+  const saved = window.EventSource;
+  window.EventSource = FakeEventSource as unknown as typeof EventSource;
+  FakeEventSource.opened = [];
+  sessionStorage.clear();
+  try {
+    const done: Item = { ...row, tool: { ...row.tool!, status: 'completed' } };
+    const { container } = render(
+      <ApiContext.Provider value={fakeApi}>
+        <DetailsProvider session={session} active generation={0} versions={versions} onAuthLost={() => {}}>
+          <ToolRow item={done} live={false} />
+        </DetailsProvider>
+      </ApiContext.Provider>,
+    );
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+    act(() => toggle.click());
+    await waitFor(() => expect(FakeEventSource.opened.length).toBe(1));
+    FakeEventSource.opened[0].emit('body', { epoch: 'e1', session_id: 's1', agent_id: '', seq: 5, item: { ...done, compact: undefined, tool: { name: 'bash', status: 'completed', input: 'echo kept', output: 'kept-output' } } });
+    expect(container.textContent).toContain('kept-output');
+    act(() => toggle.click());
+    expect(container.textContent).toContain('kept-output');
+    expect(container.textContent).not.toContain('Details load as you scroll here…');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(container.textContent).not.toContain('kept-output');
+  } finally {
+    window.EventSource = saved;
+  }
+});
+
 // A closed thought reads nothing, so it says nothing about loading: the notice belongs to a body
 // on its way, as for a subagent's Result.
 test('a closed compact thought shows no loading notice and opens no detail stream', async () => {
