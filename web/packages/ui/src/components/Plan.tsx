@@ -11,7 +11,7 @@ import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 
 export const PLAN_ACTION_LABEL: Record<PlanAction, string> = {
@@ -88,9 +88,9 @@ function PlanReader({ id, open, phone, anchor, plan, error, current, draft, draf
   return <BasePopover.Root open={open} modal onOpenChange={(value) => !value && onClose()} onOpenChangeComplete={(value) => !value && onClosed()}>
     <BasePopover.Portal>
       <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-      {open && anchor.isConnected && <LiftedRow row={anchor} />}
+      {anchor.isConnected && <LiftedRow row={anchor} />}
       <BasePopover.Positioner anchor={anchor} side="top" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} aria-label="Plan" aria-modal="true" initialFocus={heading} finalFocus={back} className="flex max-h-[min(80vh,var(--available-height))] w-[600px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
+        <BasePopover.Popup id={id} aria-label="Plan" aria-modal="true" initialFocus={heading} finalFocus={back} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[600px] max-w-(--available-width)', readerPopupClass)}>
           {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
         </BasePopover.Popup>
       </BasePopover.Positioner>

@@ -10,7 +10,7 @@ import { clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
 
 const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`;
@@ -78,10 +78,10 @@ export function TurnWaybill({ timing, anchor, phone, open, onClose, onClosed }: 
   </BottomSheet>;
   return <BasePopover.Root open={open} modal onOpenChange={o => !o && onClose()} onOpenChangeComplete={o => !o && onClosed()}>
     <BasePopover.Portal>
-      <BasePopover.Backdrop className={`${backdropClass} duration-160`} />
-      {open && anchor.isConnected && <LiftedRow row={anchor} />}
+      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
+      {anchor.isConnected && <LiftedRow row={anchor} />}
       <BasePopover.Positioner anchor={anchor} side="bottom" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} data-popup="" aria-label="This turn's waybill" aria-modal="true" initialFocus={heading} finalFocus={back} className="flex max-h-[min(80vh,var(--available-height))] w-[420px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
+        <BasePopover.Popup id={id} data-popup="" aria-label="This turn's waybill" aria-modal="true" initialFocus={heading} finalFocus={back} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[420px] max-w-(--available-width)', readerPopupClass)}>
           {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
         </BasePopover.Popup>
       </BasePopover.Positioner>

@@ -18,7 +18,7 @@ import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 
 /** The narrow layout, where the reader is a sheet (as the subagents' is). */
@@ -225,7 +225,7 @@ export function Reader({ id, open, phone, anchor, side, label, title = 'Todo', p
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
         <BasePopover.Backdrop className={dim} />
-        {open && anchor.isConnected && <LiftedRow row={anchor} />}
+        {anchor.isConnected && <LiftedRow row={anchor} />}
         <BasePopover.Positioner anchor={anchor} side={side} align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup
             id={id}
@@ -234,7 +234,7 @@ export function Reader({ id, open, phone, anchor, side, label, title = 'Todo', p
             aria-modal="true"
             initialFocus={heading}
             finalFocus={back}
-            className="flex max-h-[min(80vh,var(--available-height))] w-[440px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+            className={cn('flex max-h-[min(80vh,var(--available-height))] w-[440px] max-w-(--available-width)', readerPopupClass)}
           >
             <TodoBody
               title={title}

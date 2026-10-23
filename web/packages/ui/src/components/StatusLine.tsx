@@ -494,7 +494,7 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
         <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-        {open && lift?.isConnected && <LiftedRow row={lift} />}
+        {lift?.isConnected && <LiftedRow row={lift} />}
         {/* The same place and size whoever opened it: never beside a row in the conversation. */}
         <BasePopover.Positioner anchor={stripEnd(row)} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup
@@ -504,7 +504,7 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
             aria-modal="true"
             initialFocus={initialFocus}
             finalFocus={finalFocus}
-            className="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0"
+            className="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 starting:translate-y-2 starting:opacity-0"
           >
             {content(
               <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>

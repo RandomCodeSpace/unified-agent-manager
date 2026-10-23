@@ -7,7 +7,7 @@ import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
 
 /**
@@ -162,9 +162,9 @@ export function ItemReader({ reader, id, label, title, facts, actions, onClose, 
   return (
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
-        <BasePopover.Backdrop className={`${backdropClass} duration-160`} />
+        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
         {/* The copy loses a switch's state attributes, so its switch is left out rather than shown wrong. */}
-        {open && card.isConnected && <LiftedRow row={card} className="[&_.card-aside]:invisible" />}
+        {card.isConnected && <LiftedRow row={card} className="[&_.card-aside]:invisible" />}
         <BasePopover.Positioner anchor={card} side="bottom" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup
             id={id}
@@ -173,7 +173,7 @@ export function ItemReader({ reader, id, label, title, facts, actions, onClose, 
             aria-modal="true"
             initialFocus={heading}
             finalFocus={back}
-            className="flex max-h-[min(80vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+            className={cn('flex max-h-[min(80vh,var(--available-height))] w-[560px] max-w-(--available-width)', readerPopupClass)}
           >
             {body(
               <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
