@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
-import { log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
+import { log, openMenu, openSubagentIndex, openTask, renderApp, sidebar, type User } from './render';
 
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
@@ -148,6 +148,38 @@ describe('changes', () => {
       await user.click(screen.getByRole('button', { name: 'Close changes' }));
       expect(aside('Changes')).toBeTruthy();
       await waitFor(() => expect(aside('Changes')).toBeNull());
+    } finally {
+      wide.mockRestore();
+    }
+  });
+
+  test('inline, a side panel stands back from Esc while Settings covers the Thread; the next Esc closes it', async () => {
+    const original = window.matchMedia.bind(window);
+    const wide = vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === '(min-width: 1280px)' ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
+    const aside = (label: string) => document.querySelector(`aside[aria-label="${label}"]`);
+    const overSettings = async (user: User, label: string) => {
+      await user.click((await sidebar()).getByRole('button', { name: 'Settings' }));
+      await screen.findByRole('heading', { level: 1, name: 'Settings' });
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('heading', { level: 1, name: 'Settings' })).toBeNull());
+      expect(aside(label)).toBeTruthy();
+      // Focus came back to the sidebar's Settings; a panel takes Esc from the page, not from another region.
+      (document.activeElement as HTMLElement).blur();
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(aside(label)).toBeNull());
+    };
+    try {
+      const { user } = await openTask('t-chart');
+      await user.click(await screen.findByRole('button', { name: 'Pinned charts, 2' }));
+      await waitFor(() => expect(aside('Pinned charts')).toBeTruthy());
+      await overSettings(user, 'Pinned charts');
+      await user.keyboard('{Alt>}p{/Alt}');
+      const box = within(await screen.findByRole('dialog', { name: 'Go to file' })).getByRole('combobox', { name: 'Go to file' });
+      await user.type(box, 'dctr');
+      await screen.findByRole('option', { name: 'cmd/doctor.go' });
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(aside('File doctor.go')).toBeTruthy());
+      await overSettings(user, 'File doctor.go');
     } finally {
       wide.mockRestore();
     }
