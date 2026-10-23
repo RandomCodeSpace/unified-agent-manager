@@ -2042,7 +2042,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Git and on settled and archived Threads. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
   the bottom of the window under the conversation (drag its top edge to
-  resize; the keys go back to the shell when the drag ends). It stays open, with its shell, while you switch Threads. Anyone signed in can
+  resize; the keys go back to the shell when the drag ends). It slides up
+  from the bottom when it opens, reading "Connecting…" until the shell is
+  ready, and slides back down when it closes. It stays open, with its shell, while you switch Threads. Anyone signed in can
   then run commands on the machine without the agent's permission prompts;
   agents do not use it. The panel's header shows the folder and whether the
   shell is connecting, connected, exited (with its exit code) or

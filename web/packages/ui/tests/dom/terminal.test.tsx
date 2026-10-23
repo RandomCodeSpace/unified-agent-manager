@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { composer, openTask } from './render';
 
 test('without WebGL the terminal dock says why instead of a shell', async () => {
@@ -16,6 +17,39 @@ test('without WebGL the terminal dock says why instead of a shell', async () => 
   await user.click(dock.getByRole('button', { name: 'Close terminal' }));
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Terminal' })).toBeNull());
   expect(document.activeElement).toBe(toggle);
+});
+
+test('closing hands the header and focus back at once while the dock slides out; a Terminal press meanwhile opens a new dock', async () => {
+  const { user } = await openTask('t3');
+  const toggle = screen.getByRole('button', { name: 'Terminal' });
+  await user.click(toggle);
+  const dock = await screen.findByRole('region', { name: 'Terminal' });
+  await within(dock).findByRole('alert');
+  await user.click(within(dock).getByRole('button', { name: 'Close terminal' }));
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  expect(document.activeElement).toBe(toggle);
+  expect(dock.isConnected).toBe(true);
+  expect(dock.querySelector('[inert]')).not.toBeNull();
+  await user.click(toggle);
+  const next = await screen.findByRole('region', { name: 'Terminal' });
+  expect(next).not.toBe(dock);
+  expect(dock.isConnected).toBe(false);
+  expect(next.querySelector('[inert]')).toBeNull();
+});
+
+test('after Log out, signing in again in the same page brings back no dock for the old shell', async () => {
+  const spies = [vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true }), vi.spyOn(api, 'logout').mockResolvedValue(undefined), vi.spyOn(api, 'login').mockResolvedValue(undefined)];
+  try {
+    const { user } = await openTask('t3');
+    await user.click(screen.getByRole('button', { name: 'Terminal' }));
+    await screen.findByRole('region', { name: 'Terminal' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(within(await screen.findByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'UAM and access', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Log out' }));
+    await user.type(await screen.findByLabelText('Access token'), 'token{Enter}');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Sign in to UAM' })).toBeNull());
+    expect(document.querySelector('section[aria-label="Terminal"]')).toBeNull();
+  } finally { for (const spy of spies) spy.mockRestore(); }
 });
 
 test("without a shell, the Terminal button in another Project's Task moves the dock there at once", async () => {
