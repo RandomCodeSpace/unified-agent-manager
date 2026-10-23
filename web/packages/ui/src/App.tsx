@@ -96,6 +96,8 @@ const increment = (n: number) => n + 1;
 export const popupOpen = () => !!document.querySelector('[data-popup]');
 /** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
 export const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
+/** Settings or Routines cover the Thread, which stays mounted beneath: its own keys (Alt+P, a side panel's Esc) stand back. */
+export const threadCovered = () => !!document.querySelector('[data-view]');
 
 /** Task streams render concurrently, without snapshot animations. Open overlays keep their immediate updates. */
 export function sessionsUpdate(update: () => void) {
@@ -103,8 +105,11 @@ export function sessionsUpdate(update: () => void) {
   startTransition(update);
 }
 
-/** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane. */
-const conversation = () => document.querySelector<HTMLElement>('main section[aria-label="Conversation"]') ?? document.querySelector<HTMLElement>('main');
+/** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane (also while a view covers the Thread). */
+const conversation = () => {
+  const section = document.querySelector<HTMLElement>('main section[aria-label="Conversation"]');
+  return section && !section.closest('[inert]') ? section : document.querySelector<HTMLElement>('main');
+};
 
 function readJSON<T>(key: string, fallback: T): T {
   try {
@@ -392,7 +397,7 @@ export default function App() {
   useEffect(() => {
     if (!sheetOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || popupOpen()) return;
+      if (e.key !== 'Escape' || popupOpen() || threadCovered()) return;
       const at = document.activeElement;
       if (at && at !== document.body && !at.closest('[aria-label="Changes"]')) return;
       setSheetOpen(false);
@@ -655,9 +660,9 @@ export default function App() {
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
   // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.
-  // Coming back from Settings is a visit too: the look ended when Settings opened.
-  const [opened, setOpened] = useState<{ id: string | null; covered: boolean; mark?: string }>({ id: null, covered: false });
-  if (opened.id !== state.selectedId || opened.covered !== viewOpen) setOpened({ id: state.selectedId, covered: viewOpen, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
+  // A Settings or Routines visit is not leaving: the Thread stays mounted under it and comes back as it was.
+  const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
+  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
@@ -792,13 +797,15 @@ export default function App() {
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
     noteOpener();
-    setTokenPricesRequest(0);
-    setAccountFocus(null);
-    setSettingsOpen(true);
-    setRoutinesFor(null);
-    setNewTask(null);
     setDrawerOpen(false);
-    setSheetOpen(false);
+    // In a transition, like a Thread switch: what is on screen stays until the view (and its code, on the first open) is ready.
+    startTransition(() => {
+      setTokenPricesRequest(0);
+      setAccountFocus(null);
+      setSettingsOpen(true);
+      setRoutinesFor(null);
+      setNewTask(null);
+    });
   }, [noteOpener]);
   // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
   const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
@@ -814,21 +821,35 @@ export default function App() {
   /** Routines in the main pane, one Project's or `all` (like Settings, it keeps the selected Task behind it). */
   const showRoutines = useCallback((projectId: string) => {
     noteOpener();
-    setRoutinesFor(projectId);
-    setSettingsOpen(false);
-    setNewTask(null);
     setDrawerOpen(false);
-    setSheetOpen(false);
+    startTransition(() => {
+      setRoutinesFor(projectId);
+      setSettingsOpen(false);
+      setNewTask(null);
+    });
   }, [noteOpener]);
+  // What gets focus back once a closed view has left the screen (undefined: no close pending).
+  const restoreTo = useRef<HTMLElement | null | undefined>(undefined);
   /** Closes Settings or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
   const closeView = useCallback(() => {
     pushView.current = true;
-    setSettingsOpen(false);
-    setRoutinesFor(null);
-    const back = opener.current;
+    // A second Esc before the close commits keeps the first one's target.
+    restoreTo.current ??= opener.current;
     opener.current = null;
-    requestAnimationFrame(() => (back?.isConnected && !back.closest('[inert]') && back.getClientRects().length ? back : conversation())?.focus());
+    startTransition(() => {
+      setSettingsOpen(false);
+      setRoutinesFor(null);
+    });
   }, []);
+  // After the close commits: until then the Thread is still inert under the view.
+  useEffect(() => {
+    if (viewOpen || restoreTo.current === undefined) return;
+    const back = restoreTo.current;
+    restoreTo.current = undefined;
+    back?.focus();
+    // An opener that cannot take focus (gone, inert, in the closed drawer) gives way to the conversation.
+    if (!back || document.activeElement !== back) conversation()?.focus();
+  }, [viewOpen]);
   // Esc closes Settings or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
   useEffect(() => {
     if (!viewOpen) return;
@@ -1254,7 +1275,7 @@ export default function App() {
       routinesOpen: !!routinesFor && !settingsOpen,
       onAllRoutines: () => {
         pushView.current = true;
-        if (routinesFor && !settingsOpen) setRoutinesFor(null);
+        if (routinesFor && !settingsOpen) startTransition(() => setRoutinesFor(null));
         else showRoutines(ALL_ROUTINES);
       },
       filter,
@@ -1264,13 +1285,15 @@ export default function App() {
       settingsOpen,
       onSettings: (target) => {
         noteOpener();
-        setTokenPricesRequest((request) => target === 'token-prices' ? request + 1 : 0);
-        setConnectionsRequest((request) => target === 'connections' ? request + 1 : 0);
-        setAccountFocus(null);
-        setSettingsOpen((o) => target ? true : !o);
-        setRoutinesFor(null);
         setDrawerOpen(false);
-        setNewTask(null);
+        startTransition(() => {
+          setTokenPricesRequest((request) => target === 'token-prices' ? request + 1 : 0);
+          setConnectionsRequest((request) => target === 'connections' ? request + 1 : 0);
+          setAccountFocus(null);
+          setSettingsOpen((o) => target ? true : !o);
+          setRoutinesFor(null);
+          setNewTask(null);
+        });
       },
     }),
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter],
@@ -1394,13 +1417,18 @@ export default function App() {
   // The sidebar's column, animated between its width and the rail's.
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
+  // Settings and Routines are a layer over the pane: the Thread beneath stays mounted (scroll, open rows, side panels) and comes back as it was.
+  let view: React.ReactNode = null;
+  if (settingsOpen) {
+    view = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} threadProject={selected?.project_id} />;
+  } else if (routinesShown && !mismatched) {
+    view = <RoutinesView leading={leading} projects={state.projects} scope={routinesFor === ALL_ROUTINES ? null : routinesFor} onScope={(id) => setRoutinesFor(id ?? ALL_ROUTINES)} sessions={state.sessions} onOpenTask={openTask} onClose={closeView} />;
+  }
   let pane: React.ReactNode;
-  // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
+  // The terminal dock shows under a Task only; elsewhere (and under a view) it is hidden, its shell kept.
   let taskPane = false;
   let skeletonPane = false;
-  if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} threadProject={selected?.project_id} />;
-  } else if (mismatched) {
+  if (mismatched) {
     // Every view but Settings lands here until the account is fixed there; the next meta read lifts it.
     pane = (
       <EmptyPane leading={leading} connection={connection}>
@@ -1411,12 +1439,10 @@ export default function App() {
         </Button>
       </EmptyPane>
     );
-  } else if (routinesShown) {
-    pane = <RoutinesView leading={leading} projects={state.projects} scope={routinesFor === ALL_ROUTINES ? null : routinesFor} onScope={(id) => setRoutinesFor(id ?? ALL_ROUTINES)} sessions={state.sessions} onOpenTask={openTask} onClose={closeView} />;
   } else if (newTask && newTaskProject) {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
-    taskPane = true;
+    taskPane = !view;
     pane = (
       <DetailsProvider key={shown.id} session={shown} active={!stale && state.connection === 'connected'} generation={state.detailGeneration} versions={state.bodyVersions} onAuthLost={() => { recentTasks.clear(); confirmedDetail.current = null; dispatch({ type: 'reset' }); setAuth('out'); }}>
       <Task
@@ -1556,10 +1582,14 @@ export default function App() {
                 </output>
               )}
               <div className="relative flex min-h-0 flex-1 flex-col">
-                {/* A cached page is presentation only; actions and typing wait for confirmation. */}
-                <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
+                {/* A cached page is presentation only; actions and typing wait for confirmation. Under a view the pane is skipped, not unmounted: content-visibility keeps its scroll, display:none would not. */}
+                <div className={cn('flex min-h-0 flex-1 flex-col', !!view && '[content-visibility:hidden]')} inert={stale || !!view} aria-hidden={!!view || undefined} aria-busy={stale || undefined}>
                   <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
                 </div>
+                {/* Always mounted, so a view that opens in a transition waits here for its code instead of showing the fallback. */}
+                <Suspense fallback={<div className="absolute inset-0 flex flex-col bg-canvas"><ViewLoading leading={leading} /></div>}>
+                  {view && <div data-view="" className="absolute inset-0 flex flex-col bg-canvas">{view}</div>}
+                </Suspense>
                 {/* Settings, routines and a new Task do not wait on the stream; the skeleton's own loading line is its one ring. */}
                 <LoadingVeil show={loading && !skeletonPane && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>

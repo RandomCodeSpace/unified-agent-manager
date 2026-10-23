@@ -283,7 +283,11 @@ export function useScrolled(): [boolean, (el: HTMLElement | null) => void] {
   const [scrolled, setScrolled] = useState(false);
   const ref = useCallback((el: HTMLElement | null) => {
     if (!el?.parentElement) return;
-    const observer = new IntersectionObserver(([entry]) => startTransition(() => setScrolled(!entry.isIntersecting)), { root: el.parentElement });
+    const observer = new IntersectionObserver(([entry]) => {
+      // A pane skipped under Settings (content-visibility: hidden) reads as scrolled away; keep its last state, or the fade flashes on the way back.
+      if (el.checkVisibility?.() === false) return;
+      startTransition(() => setScrolled(!entry.isIntersecting));
+    }, { root: el.parentElement });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);

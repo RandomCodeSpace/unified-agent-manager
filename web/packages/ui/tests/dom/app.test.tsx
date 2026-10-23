@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as data from '../../src/mock/data';
-import { renderApp, sidebar } from './render';
+import { openTask, renderApp, sidebar } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -157,6 +157,24 @@ describe('app shell', () => {
     await user.click(screen.getByRole('button', { name: /^Close/ }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Routines' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(routines));
+  });
+
+  test('Settings covers the Thread, which stays mounted and comes back as it was; its Alt+P stands back meanwhile', async () => {
+    const { user } = await openTask('t3');
+    const section = screen.getByRole('region', { name: 'Conversation' });
+    const fold = within(section).getByRole('button', { expanded: false, name: /activity of this turn/ });
+    await user.click(fold);
+    await waitFor(() => expect(fold.getAttribute('aria-expanded')).toBe('true'));
+    await user.click((await sidebar()).getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(header().textContent).toBe('Settings'));
+    expect(section.closest('[inert][aria-hidden="true"]')).not.toBeNull();
+    await user.keyboard('{Alt>}p{/Alt}');
+    await act(() => new Promise((r) => setTimeout(r, 200)));
+    expect(screen.queryByRole('dialog', { name: 'Go to file' })).toBeNull();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
+    expect(screen.getByRole('region', { name: 'Conversation' })).toBe(section);
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
   });
 });
 

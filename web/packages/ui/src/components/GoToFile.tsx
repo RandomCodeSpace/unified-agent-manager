@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Keyboard
 import { useApi } from '../ApiContext';
 import { useFileVersion } from './FileReferences';
 import { describeError, type ChangeFile, type FileDiff as FileDiffData, type FileEntry, type Project, type SessionSummary } from '../api';
-import { popupOpen } from '../App';
+import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
 import { copyText, useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -629,7 +629,7 @@ export function FilePanel({ session, project, path, inline, open, onClose, onClo
   useEffect(() => {
     if (!inline || !open) return;
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen()) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen() || threadCovered()) return;
       const at = document.activeElement;
       if (at && at !== document.body && !closeRef.current?.closest('aside')?.contains(at)) return;
       onClose();

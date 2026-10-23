@@ -1,6 +1,6 @@
 import { ExternalLink, GitPullRequest, X } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
-import { popupOpen } from '../App';
+import { popupOpen, threadCovered } from '../App';
 import type { SessionDetail } from '../api';
 import type { GitLabRef } from '../lib/gitlabRefs';
 import { InstanceName } from './common';
@@ -33,7 +33,7 @@ export default function GitLabSheet({ session, item, onItem, inline, open, onClo
   useEffect(() => {
     if (!inline || !open) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen()) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen() || threadCovered()) return;
       const at = document.activeElement;
       if (at && at !== document.body && !closeRef.current?.closest('aside')?.contains(at)) return;
       close();

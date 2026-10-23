@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { Download, ExternalLink, RotateCw, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { describeError, subscribeAuthLoss } from '../api';
-import { popupOpen } from '../App';
+import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
 import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type TextPreview } from '../lib/preview';
 import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
@@ -104,7 +104,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose, on
   useEffect(() => {
     if (!inline || target.image || file?.kind === 'image') return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen()) { event.preventDefault(); onClose(); }
+      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen() && !threadCovered()) { event.preventDefault(); onClose(); }
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
