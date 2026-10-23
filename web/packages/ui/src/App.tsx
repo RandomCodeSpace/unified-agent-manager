@@ -1755,7 +1755,10 @@ function TerminalDock({ project, thread, open, hidden, panel, onClose, onClosed 
     const timer = window.setTimeout(closed, EXIT_MS);
     return () => window.clearTimeout(timer);
   }, [open]);
+  // A dock that first renders closed lost its exit (the sign-in screen replaced it): it only reports closed and starts no shell.
+  const [opened] = useState(open);
   const dir = thread?.dir ?? project.dir;
+  if (!opened) return null;
   return (
     <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
       <div {...handleProps} className="group/handle absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
