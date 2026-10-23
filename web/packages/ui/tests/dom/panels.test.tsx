@@ -101,6 +101,31 @@ describe('changes', () => {
     await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
   });
 
+  test('a Thread with its own change record opens on All changes when that record is empty and the folder is not', async () => {
+    const original = mockData.seed;
+    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
+      const state = original();
+      const task = state.tasks.find(t => t.id === 't3')!;
+      task.capabilities = { ...task.capabilities, session_diff: true };
+      return state;
+    });
+    // The service's own-record list carries no counts.
+    const changes = api.changes.bind(api);
+    const list = vi.spyOn(api, 'changes').mockImplementation((id, scope, signal) => scope === 'session'
+      ? Promise.resolve({ scope, label: 'Files this thread changed', supported: true, files: [] })
+      : changes(id, scope, signal));
+    try {
+      const { user } = await openTask('t3');
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+      const all = await sheet.findByRole('radio', { name: 'All changes' });
+      await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
+    } finally {
+      list.mockRestore();
+      seed.mockRestore();
+    }
+  });
+
   test('inline, Changes stays open for presses on the composer and the conversation\'s controls; a press on empty canvas closes it', async () => {
     const width = window.innerWidth;
     onTestFinished(() => { window.innerWidth = width; });

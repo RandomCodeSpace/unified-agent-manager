@@ -113,11 +113,11 @@ export function ChangesSheet({
   const [left] = useState(() => (turn ? null : memory?.current ?? null));
   const [scope, setScope] = useState<Scope>(() => left?.scope ?? turnScope(turn));
   // A plain open on an empty default scope moves to All changes when that has files, once the default list is known,
-  // so the first glance matches the header's count.
+  // so the first glance matches the header's count. The session scope's list has no counts: the folder's, as on the header, stands in.
   const [opening, setOpening] = useState(!turn && !left);
   if (opening && changes) {
     setOpening(false);
-    if (scope === defaultScope(session) && changes.supported && !changes.files.length && changes.counts?.workspace) setScope('workspace');
+    if (scope === defaultScope(session) && changes.supported && !changes.files.length && (changes.counts?.workspace ?? session.git_pending?.uncommitted)) setScope('workspace');
   }
   // The remembered file is preferred as a turn's edited files are: shown once its scope lists it.
   const [turnPaths, setTurnPaths] = useState(turn?.files ?? (left?.path ? [left.path] : []));
