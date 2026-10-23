@@ -167,7 +167,8 @@ function Picker({
     </>
   );
   const item = (c: Choice) => (
-    <Menu.RadioItem key={c.value} value={c.value} description={c.description}>
+    // A choice closes the menu, as it closes the phone's sheet.
+    <Menu.RadioItem key={c.value} value={c.value} description={c.description} closeOnClick>
       {c.label}
     </Menu.RadioItem>
   );
@@ -180,18 +181,10 @@ function Picker({
   const [sheet, setSheet] = useState<boolean | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const radios = useRef<HTMLDivElement>(null);
-  if (disabled) {
-    // A choice locks the picker while it saves, as it closes the menu.
-    if (sheet !== null) setSheet(null);
-    const hintSuffix = hint ? ` ${hint}.` : '';
-    return (
-      <Tip label={tip(reason ?? `${label} cannot change now`)}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hintSuffix}`} className={cn(SHRINK, 'text-muted', className)}>
-          {face}
-        </Button>
-      </Tip>
-    );
-  }
+  // A choice locks the picker while it saves: the same trigger stays, so the menu or sheet runs its exit and focus returns to it.
+  const why = disabled ? reason ?? `${label} cannot change now` : undefined;
+  const name = disabled ? `${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}` : `${label}: ${display}`;
+  const tone = disabled ? 'text-muted' : 'text-body';
   if (phone || sheet !== null) {
     const radio = (c: Choice) => (
       <Radio.Root key={c.value} value={c.value} disabled={c.disabled} className="group/choice flex min-h-11 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover data-disabled:opacity-45">
@@ -204,8 +197,8 @@ function Picker({
     );
     return (
       <>
-        <Tip label={tip()}>
-          <Button ref={trigger} id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} aria-haspopup="dialog" aria-expanded={!!sheet} className={cn(SHRINK, 'text-body', className)} onClick={() => setSheet(true)}>{face}</Button>
+        <Tip label={tip(why)}>
+          <Button ref={trigger} id={id} size="sm" variant="subtle" aria-disabled={disabled || undefined} aria-label={name} aria-haspopup="dialog" aria-expanded={!!sheet} className={cn(SHRINK, tone, className)} onClick={() => !disabled && setSheet(true)}>{face}</Button>
         </Tip>
         {sheet !== null && (
           <BottomSheet open={sheet} onClose={() => setSheet(false)} onClosed={() => setSheet(null)} label={label} initialFocus={() => radios.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? true} finalFocus={trigger}>
@@ -232,9 +225,10 @@ function Picker({
     );
   }
   return (
-    <Menu.Root modal={false}>
-      <Tip label={tip()}>
-        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn(SHRINK, 'text-body', className)} />}>{face}</Menu.Trigger>
+    // Not `disabled` on the trigger: a native disabled button drops focus and its reason's tooltip.
+    <Menu.Root modal={false} onOpenChange={(open, details) => { if (open && disabled) details.cancel(); }}>
+      <Tip label={tip(why)}>
+        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-disabled={disabled || undefined} aria-label={name} className={cn(SHRINK, tone, className)} />}>{face}</Menu.Trigger>
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className={cn('min-w-52', PHONE_PICKER)}>
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
