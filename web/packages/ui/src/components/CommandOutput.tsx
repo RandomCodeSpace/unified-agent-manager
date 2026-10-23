@@ -1,7 +1,7 @@
 import { SquareSlash, SquareTerminal, X } from 'lucide-react';
 import { useEffect } from 'react';
 import type { CommandResult } from '../api';
-import { popupOpen } from '../App';
+import { popupOpen, threadCovered } from '../App';
 import { Markdown } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -46,7 +46,7 @@ export function CommandOutputPanel({ output, inline, open, onClose, onClosed }: 
   useEffect(() => {
     if (!inline || !open) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen()) onClose();
+      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen() && !threadCovered()) onClose();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);

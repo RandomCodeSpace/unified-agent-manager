@@ -1143,7 +1143,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   view. The header's Project filter narrows the list to one Project,
   `#routines=<project id>`; the clock beside a Project in the sidebar's
   Project filter and Edit project → Routines open that filtered view. The
-  view replaces the Thread pane like Settings, and a `#routines` link opened
+  view covers the Thread pane like Settings, and a `#routines` link opened
   while the page is open shows it. With no routines yet it says what a
   routine is and offers New routine, which asks for the Project when there
   are several. `GET /api/routines` lists every Project's routines, oldest
@@ -1514,7 +1514,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   with its generated summary line. When the record cannot be read, the file
   holds what the service keeps and says what is missing.
 - **Settings**: the gear at the bottom of the sidebar opens the Settings view
-  in the main pane (`#settings` in the address bar). UAM keeps the web
+  over the main pane (`#settings` in the address bar). The Thread stays
+  open beneath it: closing Settings with × or Esc brings the Thread back
+  where you left it, with its scroll position, open rows and side panels.
+  Routines covers the Thread the same way. UAM keeps the web
   interface's settings in `sessions.json`, so they apply in every browser.
   The first is what Enter does while a turn runs: **Send now** (steer, the
   default) or **After this turn** (queue). A change is saved as you make
@@ -1708,7 +1711,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   It does not come back until the Thread changes again while you are away.
   The last look is kept per browser: the moment you last had the Thread on
   screen, marked while it is open and again as you leave it, hide the page
-  or close it.
+  or close it. A visit to Settings or Routines is not leaving: the Thread
+  comes back as you left it, without the line.
 - **Receipts**: under the last reply of an ended turn, its claims are
   stamped against the main agent's tool calls in that turn. Fixed rules
   in the browser do this; no model is used. Three kinds of claim count:

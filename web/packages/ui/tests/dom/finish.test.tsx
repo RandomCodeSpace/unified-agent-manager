@@ -60,7 +60,7 @@ describe('since you left', () => {
     expect(screen.queryByText(/^Since you left/)).toBeNull();
   });
 
-  test('leaving for Settings counts as leaving: what the Task does meanwhile is unseen, and the strip shows on the way back', async () => {
+  test('a Settings visit is not leaving: what the Task does meanwhile is unseen, and no strip shows on the way back', async () => {
     seen(500);
     const { user } = await openTask('t20');
     await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
@@ -76,8 +76,10 @@ describe('since you left', () => {
     await act(() => new Promise((r) => setTimeout(r, 100)));
     expect(looked()).toBe(left);
     await user.click(screen.getByRole('button', { name: 'Close settings' }));
-    const strip = await screen.findByText(/^Since you left/);
-    expect(strip.closest('p')?.textContent).toMatch(/^Since you left \(<1 min\)/);
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
+    // Kept under Settings, the Thread was not opened again.
+    await act(() => new Promise((r) => setTimeout(r, 300)));
+    expect(screen.queryByText(/^Since you left/)).toBeNull();
   });
 });
 

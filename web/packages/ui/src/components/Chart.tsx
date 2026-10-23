@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { BarChart3, Check, ChevronDown, Copy, Ellipsis, LineChart, Pin, RefreshCw, Table2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
-import { popupOpen } from '../App';
+import { popupOpen, threadCovered } from '../App';
 import { chartCsv, chartHeight, chartOption, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
 import { chartTable, type ChartTable } from '../lib/chart-table';
 import { DataTable, useRovingFocus } from './DataTable';
@@ -321,7 +321,7 @@ export function PinnedChartsPanel({ project, inline, open, onClose, onClosed }: 
   useEffect(() => {
     if (!inline || !open) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen()) onClose();
+      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen() && !threadCovered()) onClose();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);

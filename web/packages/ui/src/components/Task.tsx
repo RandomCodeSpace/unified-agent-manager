@@ -22,7 +22,7 @@ import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
 import { Composer, mentionFile, type Answering, type FirstMessage } from './Composer';
 import type { FileActions } from './GoToFile';
-import { keysTaken } from '../App';
+import { keysTaken, threadCovered } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentScope } from './Subagents';
@@ -702,7 +702,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!active || !goToFileAvailable) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyP' || e.defaultPrevented) return;
-      if (keysTaken() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
+      if (keysTaken() || threadCovered() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
       e.preventDefault();
       openGoToFile();
     };
