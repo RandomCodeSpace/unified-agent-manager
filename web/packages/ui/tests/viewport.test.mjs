@@ -6,7 +6,7 @@ function fakeWindow() {
   const props = new Map();
   const dataset = {};
   const style = { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) };
-  const vv = Object.assign(new EventTarget(), { height: 800, pageTop: 0, scale: 1 });
+  const vv = Object.assign(new EventTarget(), { height: 800, pageTop: 0, offsetTop: 0, scale: 1 });
   const win = Object.assign(new EventTarget(), {
     innerHeight: 800,
     scrollX: 0,
@@ -29,11 +29,13 @@ test('the shell follows what the keyboard leaves visible, and lets go once it cl
   const { win, props, dataset, move } = fakeWindow();
   const stop = trackViewport(win);
   assert.equal(props.size, 0);
-  move({ height: 420, pageTop: 150 });
+  move({ height: 420, pageTop: 150, offsetTop: 30 });
   assert.equal(props.get('--app-height'), '420px');
   assert.equal(props.get('--app-top'), '150px');
+  // Fixed overlays rest on the keyboard: the 800px layout viewport less the 420px shown, 30px down from its top.
+  assert.equal(props.get('--app-bottom'), '350px');
   assert.ok('keyboard' in dataset);
-  move({ height: 800, pageTop: 0 });
+  move({ height: 800, pageTop: 0, offsetTop: 0 });
   assert.equal(props.size, 0);
   assert.ok(!('keyboard' in dataset));
   stop();
