@@ -1315,6 +1315,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Stop remains available between autopilot turns, disables continuation and
   pauses queued follow-ups through the existing cancellation operation. Partial
   cancellation failures remain errors rather than a claimed stopped state.
+  With Copilot CLI 1.0.103 or later, an autopilot turn ends when Copilot
+  reports the run stopped (completed, stopped, timed out on background work
+  or failed), even while a shell it started is still attached; older CLIs
+  end it at the task's completion or when the attached shell shows in the
+  task list.
 - **Background tasks**: a chip in the composer's toolbar counts the Thread's
   running provider shells (once none runs, it shows its glyph alone while
   the finished ones stay listed); click it to see each shell's status and command
