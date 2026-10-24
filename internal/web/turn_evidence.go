@@ -514,6 +514,8 @@ type turnFacts struct {
 	// with when each was last touched, in that order.
 	edits  []turnEdit
 	failed int
+	// commands counts the turn's main-agent shell commands.
+	commands int
 }
 
 type turnEdit struct {
@@ -552,6 +554,7 @@ func (s *webSession) turnFacts() (f turnFacts, ok bool) {
 		if !a.shell {
 			continue
 		}
+		f.commands++
 		if a.status == agentapi.ToolFailed || a.exit != nil && *a.exit != 0 {
 			f.failed++
 		}

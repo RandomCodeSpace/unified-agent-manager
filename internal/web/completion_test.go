@@ -174,8 +174,10 @@ func TestCompletionPreviousUserCannotShortcutLatestTiming(t *testing.T) {
 		t.Fatalf("first outcome=%q", got)
 	}
 	finish("message-2", "Second reply", old)
-	waitUntil(t, "the latest timing's Utility fallback", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Answered Second reply" })
-	if calls := utilityCalls(prov, "outcome"); calls != 1 {
+	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
+		t.Fatalf("latest outcome=%q", got)
+	}
+	if calls := utilityCalls(prov, "outcome"); calls != 0 {
 		t.Fatalf("latest fallback calls=%d", calls)
 	}
 }

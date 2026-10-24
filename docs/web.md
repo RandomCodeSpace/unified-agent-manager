@@ -1448,7 +1448,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
   exited non-zero. The phrase arriving after the turn does not mark the
-  Thread unread again. The opening phrase comes from one
+  Thread unread again. A turn with no edits or commands reads "Answered"
+  without a model call. Otherwise the opening phrase comes from one
   Utility model call, told to describe only what the agent's final answer
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
