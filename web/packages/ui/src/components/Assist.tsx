@@ -17,8 +17,9 @@ const suggested = new Map<string, { key: string; replies: string[] }>();
 
 /**
  * The reply the owner would likely send next, once a turn has completed with an answer: the first of the
- * replies the service suggests, or '' while there is none. The service asks the Utility model once per
- * finished turn, only when a composer would show it (`hidden` false); Settings → Composer turns it off.
+ * replies the service suggests, or '' while there is none. The service picks it from what the turn did, asking
+ * the Utility model only when more than one reply fits, once per finished turn and only when a composer would
+ * show it (`hidden` false); Settings → Composer turns it off.
  */
 export function useSuggestion(session: SessionDetail, hidden: boolean): string {
   const api = useApi();

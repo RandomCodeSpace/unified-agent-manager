@@ -1,55 +1,10 @@
 package web
 
 import (
-	"context"
-	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
-
-// A suggestion's retry is not made once its Thread settled or its folder
-// went away during the first attempt, as a worktree Thread's does.
-func TestSuggestionRetryStopsForASettledThreadOrAMissingFolder(t *testing.T) {
-	for name, gone := range map[string]func(m *Manager, id, workdir string){
-		"settled": func(m *Manager, id, _ string) {
-			if _, err := m.Settle(id); err != nil {
-				t.Error(err)
-			}
-		},
-		"folder removed": func(_ *Manager, _, workdir string) {
-			if err := os.RemoveAll(workdir); err != nil {
-				t.Error(err)
-			}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			prov := newAssistProvider()
-			m, project := assistManager(t, openTestStore(t), prov)
-			sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			finishTurn(prov.Last(), "make the test pass", "Fixed it.")
-			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-				if req.Purpose != purposeSuggestReplies {
-					return "", errors.New("not here")
-				}
-				gone(m, sum.ID, sum.Workdir)
-				return "not\na valid answer", nil
-			})
-			if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || len(got.Replies) != 0 {
-				t.Fatalf("suggestions = %+v, %v", got, err)
-			}
-			if n := utilityCalls(prov, purposeSuggestReplies); n != 1 {
-				t.Fatalf("%d suggestion calls, want the first only", n)
-			}
-		})
-	}
-}
 
 func TestUtilityAnswerShapes(t *testing.T) {
 	for _, tc := range []struct {
@@ -73,72 +28,6 @@ func TestUtilityAnswerShapes(t *testing.T) {
 			err := parseAnswer(tc.reply, &answer)
 			if (err == nil) != tc.valid || tc.valid && answer.Verb != "Fixed" {
 				t.Fatalf("valid=%v, error=%v", tc.valid, err)
-			}
-		})
-	}
-	for _, reply := range []string{"Run tests\nCommit this", "<think>" + strings.Repeat("x", 321) + "</think>Commit this", "Open https://example.com", "Visit www.example.com", "Visit example.com", "Send mailto:dev@example.com", "foo | bar", strings.Repeat("a", 81), "I fixed the test.", "Run tests. Commit this."} {
-		if _, err := validateSuggestion(reply, "I fixed the test."); err == nil {
-			t.Errorf("accepted %q", reply)
-		}
-	}
-	if got, err := validateSuggestion("Commit this", "I fixed the test."); err != nil || got != "Commit this" {
-		t.Fatalf("valid suggestion = %q, %v", got, err)
-	}
-	prompt := "<user_message>\nfix the login test\n</user_message>\n<agent_reply>\nFixed the flaky test in auth_test.go. Want me to commit this?\n</agent_reply>"
-	for _, reply := range []string{"Commit this", "Yes, commit this", "Update README.md too", "Run go test ./...", "Bump to v1.2", "Note: also check logout", "Now fix the signup test"} {
-		if got, err := validateSuggestion(reply, prompt); err != nil || got != reply {
-			t.Errorf("refused %q: %v", reply, err)
-		}
-	}
-	for _, reply := range []string{"Fixed the flaky test in auth_test.go", "want me to commit this", "See github.com/x/y", "Open file:///etc/passwd", "Run javascript:alert(1)"} {
-		if _, err := validateSuggestion(reply, prompt); err == nil {
-			t.Errorf("accepted %q", reply)
-		}
-	}
-}
-
-func TestUtilityJobRetryAndFallback(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		replies []string
-		failure bool
-		want    string
-		calls   int
-	}{
-		{"retry valid", []string{"wrong", "ok"}, false, "ok", 2},
-		{"retry invalid", []string{"wrong", "wrong again"}, false, "", 2},
-		{"runner error", nil, true, "", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			prov := newAssistProvider()
-			m, _ := assistManager(t, openTestStore(t), prov)
-			n := 0
-			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-				n++
-				if n == 2 && (req.Timeout != 20*time.Second || !strings.Contains(req.System, "previous answer")) {
-					t.Error("retry did not strengthen request")
-				}
-				if tc.failure {
-					return "", errors.New("runner failed")
-				}
-				return tc.replies[n-1], nil
-			})
-			job := utilityJob{purpose: "test-job", system: "Reply ok.", retryHint: "Reply ok.", validate: func(reply, _ string) (string, error) {
-				if reply != "ok" {
-					return "", errors.New("not ok")
-				}
-				return reply, nil
-			}}
-			got, err := m.runJob(context.Background(), job, UtilityCall{Provider: "fake"}, prov, agentapi.UtilityRequest{Model: "a", Prompt: "Fixed the test"})
-			if got != tc.want || n != tc.calls || (err != nil) != tc.failure {
-				t.Fatalf("got %q, %v, %d calls", got, err, n)
-			}
-			log := m.UtilityLog(0, 10)
-			if log.Today.Calls != n || len(log.Calls) != n || log.Calls[0].Fallback != (tc.want == "") {
-				t.Fatalf("log=%+v", log)
-			}
-			if n == 2 && !log.Calls[0].Retry {
-				t.Fatal("retry not logged")
 			}
 		})
 	}
@@ -169,10 +58,10 @@ func TestUtilityInvalidStreakCountsTurnsNotAttempts(t *testing.T) {
 	l := utilityLog{}
 	answer := func(valid, final bool) {
 		t.Helper()
-		if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeSuggestReplies, Outcome: utilityOK, Valid: new(valid), Fallback: final && !valid})
+		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(valid), Fallback: final && !valid})
 	}
 	// Four turns whose first answer was invalid and whose retry was valid.
 	for range 4 {
@@ -184,12 +73,12 @@ func TestUtilityInvalidStreakCountsTurnsNotAttempts(t *testing.T) {
 		answer(false, false)
 		answer(false, true)
 	}
-	if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != "" {
+	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
 		t.Fatalf("paused after 3 failed turns: %q", reason)
 	}
 	answer(false, false)
 	answer(false, true)
-	if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != skippedInvalid {
+	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
 		t.Fatalf("4 failed turns: reason=%q", reason)
 	}
 }

@@ -127,7 +127,7 @@ func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
 	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		return "Run the focused check", nil
+		return `{"choice":"yes"}`, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -136,12 +136,12 @@ func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 	conv := prov.Last()
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.EmitItem(agentapi.Item{ID: "u", Kind: agentapi.ItemUser, Text: "fix it"})
-	conv.EmitItem(agentapi.Item{ID: "a", Kind: agentapi.ItemAssistant, Text: "Fixed it."})
+	conv.EmitItem(agentapi.Item{ID: "a", Kind: agentapi.ItemAssistant, Text: "Fixed it. Commit it?"})
 	c := &agentapi.TaskCompletion{Decision: agentapi.CompletionAccepted, UserItemID: "u", Summary: "Fixed it"}
 	conv.EmitItem(agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Completion accepted: Fixed it", Completion: c})
 	conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Completion: c}})
 	got, err := m.SuggestReplies(context.Background(), sum.ID)
-	if err != nil || got.ItemID != "a" || len(got.Replies) != 1 || got.Replies[0] != "Run the focused check" {
+	if err != nil || got.ItemID != "a" || len(got.Replies) != 1 || got.Replies[0] != "Yes, go ahead" {
 		t.Fatalf("completion hid suggestions: %+v %v", got, err)
 	}
 }

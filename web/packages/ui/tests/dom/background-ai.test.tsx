@@ -117,7 +117,7 @@ describe('Background AI', () => {
       const res = await mocked(input, init);
       if (new URL(String(input instanceof Request ? input.url : input), location.href).pathname !== '/api/utility') return res;
       const page = (await res.json()) as UtilityLog;
-      return new Response(JSON.stringify({ ...page, today: { ...page.today, paused_purposes: ['suggest-replies'] } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ ...page, today: { ...page.today, paused_purposes: ['decision-suggest-reply'] } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
     await openLog(card, user);
     expect(card.getByText(/^Paused until tomorrow \(midnight on the server, .+ here\) after repeated unusable answers: Suggested replies\./)).toBeTruthy();

@@ -10,6 +10,8 @@ const PURPOSES: Record<string, string> = {
   'commit-message': 'Commit message',
   'configuration-draft': 'Configuration draft',
   'mr-description': 'Merge request description',
+  'decision-suggest-reply': 'Suggested replies',
+  // Made only by older versions; their calls stay in the 30-day log.
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
   'decision-ci-failure-kind': 'CI failure kind',
