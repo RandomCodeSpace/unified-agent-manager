@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
-const decisionTimeout = 10 * time.Second
+const decisionTimeout = assistTimeout
 
 var (
 	decisionPurposeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
@@ -103,7 +102,7 @@ func parseDecision(reply string, options []DecisionOption) (DecisionResult, erro
 
 // Decide makes one tool-free call to the configured Utility model, with no
 // retry or fallback model. It shares Utility slots, budget and logging,
-// and bounds queueing plus inference to ten seconds (or the caller's deadline).
+// and bounds queueing plus inference to assistTimeout (or the caller's deadline).
 // Provider cleanup may extend beyond that deadline. Empty evidence is an input
 // error: callers that know there is no evidence should abstain locally.
 // Errors remain unwrap-compatible, including ErrInvalidDecision and ctx.Err().
