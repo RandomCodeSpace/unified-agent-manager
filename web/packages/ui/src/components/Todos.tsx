@@ -8,11 +8,11 @@
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Ban, Check, Circle, CircleDot, ListChecks, X, type LucideIcon } from 'lucide-react';
-import { Fragment, useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Todo, type TodoCounts, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
+import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
@@ -49,39 +49,6 @@ export function TodoMeter({ statuses, className }: Readonly<{ statuses: readonly
 function TodoMark({ status, className }: Readonly<{ status: TodoStatus; className?: string }>) {
   const Glyph = GLYPH[status];
   return <Glyph aria-hidden="true" className={cn('size-3.5 shrink-0', TONE[status].text, className)} strokeWidth={status === 'done' ? 2.5 : undefined} />;
-}
-
-/**
- * The open stages' counts after "2/7", each behind `sep`, its glyph and number in its colour, then
- * its words: "◉ 2 in progress · ⊘ 1 blocked · ○ 3 to do"; counts kept before the split add "1 open".
- * A phone drops the words, never the glyphs (the names say them all), so no count is colour alone.
- * `stopped`: nothing works on the list any more (a turn that ended), so its rows in progress read in words only,
- * without the stage's glyph or colour, on a phone too: only the running step turns.
- */
-export function TodoStages({ tally, sep, stopped = false }: Readonly<{ tally: TodoTally; sep: ReactNode; stopped?: boolean }>) {
-  return (
-    <>
-      {tally.stages.map(({ status, n }) => {
-        const still = stopped && status === 'in_progress';
-        return (
-          <Fragment key={status}>
-            {sep}
-            <span className={cn('flex shrink-0 items-center gap-1 tabular-nums', !still && TONE[status].text)}>
-              {!still && <TodoMark status={status} className="size-3" />}
-              {n}
-              <span className={still ? undefined : 'max-sm:hidden'}> {todoWord(status).toLowerCase()}</span>
-            </span>
-          </Fragment>
-        );
-      })}
-      {tally.open > 0 && (
-        <>
-          {sep}
-          <span className="shrink-0 tabular-nums">{tally.open} open</span>
-        </>
-      )}
-    </>
-  );
 }
 
 /** The subagent that first wrote a row: its identity dot, as on its row, and its name. */

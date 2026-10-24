@@ -8,7 +8,6 @@ import (
 )
 
 var providerNameRE = regexp.MustCompile(`^[a-z0-9]+$`)
-var profileNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 var prohibitedProfileFields = map[string]struct{}{
 	"allow_heuristic_resume": {},
@@ -45,13 +44,6 @@ var knownSessionOverrideFields = map[string]struct{}{
 }
 
 type sessionProfileOverridesAlias SessionProfileOverrides
-
-func ValidateProfileName(name string) error {
-	if !profileNameRE.MatchString(name) || name == "none" {
-		return fmt.Errorf("invalid profile name %q", name)
-	}
-	return nil
-}
 
 func (o SessionProfileOverrides) MarshalJSON() ([]byte, error) {
 	return marshalUnknownJSON(sessionProfileOverridesAlias(o), o.unknown, knownSessionOverrideFields)
@@ -96,25 +88,6 @@ func ValidateProfile(profile Profile) error {
 		return fmt.Errorf("invalid profile scrollback lines %d", *profile.ScrollbackLines)
 	}
 	return nil
-}
-
-func ValidateSessionProfileOverrides(overrides SessionProfileOverrides) error {
-	for field := range overrides.unknown {
-		if strings.EqualFold(field, "provider") {
-			return fmt.Errorf("session profile override field %q is prohibited", field)
-		}
-		if _, prohibited := prohibitedProfileFields[strings.ToLower(field)]; prohibited {
-			return fmt.Errorf("session profile override field %q is prohibited", field)
-		}
-	}
-	return ValidateProfile(Profile{
-		Mode:            overrides.Mode,
-		CommandAlias:    overrides.CommandAlias,
-		Mouse:           overrides.Mouse,
-		ControlPrefix:   overrides.ControlPrefix,
-		BackDetach:      overrides.BackDetach,
-		ScrollbackLines: overrides.ScrollbackLines,
-	})
 }
 
 func validMousePolicy(policy MousePolicy) bool {

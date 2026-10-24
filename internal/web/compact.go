@@ -390,9 +390,6 @@ func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, erro
 		return d, nil
 	}
 }
-func (m *Manager) CompactOlderHistory(id, agent, before string) (compactHistoryPage, error) {
-	return m.CompactHistoryPage(id, agent, before, "")
-}
 
 // CompactHistoryPage returns the page before (or after) the item a cursor
 // names. Past the retained items it reads the provider's record without

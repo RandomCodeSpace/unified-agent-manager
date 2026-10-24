@@ -91,15 +91,6 @@ export function mainCall(s: Subagent, subagents: readonly Subagent[]): string | 
   return at && !at.parent_agent_id ? at.parent_tool_call_id : undefined;
 }
 
-/** The subagents one of `items` spawned (a reused one keeps its first `task` call), in spawn order. */
-export function spawnedBy(items: readonly Item[], subagents: readonly Subagent[]): Subagent[] {
-  const byParent = parentMap(subagents);
-  return items.flatMap((item) => {
-    const s = item.kind === 'tool' ? byParent.get(item.id) : undefined;
-    return s ? [s] : [];
-  });
-}
-
 /**
  * The outline the replies are read from: the server's (`outline`, the whole transcript it holds)
  * with what is loaded here and not in it, by time: older pages read from the record before it,
@@ -209,13 +200,6 @@ export const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN);
 
 /** The service keeps a subagent's first run and its newest 49: at this many, runs in between may be gone. */
 export const RUNS_KEPT = 50;
-
-/** "3 runs", "50+ runs" once the record may have dropped some; empty for one run or none. */
-export function runCount(s: Subagent): string {
-  const n = s.runs?.length ?? 0;
-  if (n < 2) return '';
-  return n >= RUNS_KEPT ? `${RUNS_KEPT}+ runs` : `${n} runs`;
-}
 
 export type Run = NonNullable<Subagent['runs']>[number];
 const TRIGGER: Record<Run['trigger'], string> = { spawn: 'started by the agent', user: 'your follow-up', agent: 'resumed by the agent' };
