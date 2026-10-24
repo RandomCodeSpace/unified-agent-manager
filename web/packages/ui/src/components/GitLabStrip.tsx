@@ -296,7 +296,7 @@ export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
 const BLOCK_TONE: Record<NonNullable<ChipProps['tone']>, BlockTone> = { success: 'success', error: 'error', accent: 'accent', warning: 'warning', attention: 'warning', muted: 'none' };
 const blockTone = (status: string): BlockTone => BLOCK_TONE[statusTone(status) ?? 'muted'];
 
-/** An item's state as blocks: its state word, an open merge request's pipeline (a glyph and "pipeline", its state in words) and "stale" while GitLab rate limits reads. */
+/** An item's state as blocks: its state word, an open merge request's pipeline (a glyph and "pipeline", its state in words), a failed job's failure kind and "stale" while GitLab rate limits reads. */
 export function stateBlocks(item?: GitLabItemSummary): Block[] {
   const word = stateWord(item);
   if (!item || !word) return [];
@@ -305,6 +305,10 @@ export function stateBlocks(item?: GitLabItemSummary): Block[] {
   if (item.pipeline_state && item.state === 'opened') {
     const pipeline = item.pipeline_state;
     out.push({ key: 'pipeline', tone: blockTone(pipeline), Icon: pipeline === 'success' ? Check : pipeline === 'failed' ? X : CircleDashed, label: 'pipeline', title: `pipeline ${statusLabel(pipeline).toLowerCase()}` });
+  }
+  if (item.failure_kind) {
+    const failure = item.failure_detail ? `${item.failure_kind} · ${item.failure_detail}` : item.failure_kind;
+    out.push({ key: 'failure', tone: 'none', label: failure, title: failure });
   }
   if (item.stale) out.push({ key: 'stale', tone: 'none', label: 'stale', title: 'stale' });
   return out;

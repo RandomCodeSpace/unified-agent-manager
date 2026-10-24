@@ -2343,7 +2343,15 @@ signed in to, each reply that ends a turn which touched GitLab items carries
 them in its outcome bar: one chip per item, in the order the turn touched
 them, each with its state as blocks (`!2` draft, pipeline; `Pipeline #91`
 failed; `#14` open); an open merge request also shows its head pipeline's
-state as a block. Links in the reply itself stay plain links. An item counts when
+state as a block. A failed job's chip also says what failed: **Tests
+failed · 2 tests**, **Build failed**, **Lint failed**, **Type check
+failed**, **Timed out**, **Auth failed**, or **Runner failure · not your
+change**. GitLab's own runner failure reasons name the last two without a
+log read; the rest come from patterns in the end of the job log, read once
+per job (a commit UAM tracks keeps the result across restarts). Only the
+kind and the number of failed tests are shown, never log text. A job
+nothing recognises gets no label, and a pipeline chip keeps its state
+word only. Links in the reply itself stay plain links. An item counts when
 the turn named it on the Thread's own project:
 
 - a GitLab link to a merge request, issue, work item, pipeline or job of the
