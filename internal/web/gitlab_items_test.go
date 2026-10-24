@@ -17,9 +17,10 @@ import (
 )
 
 type gitLabItemsFixture struct {
-	m   *Manager
-	id  string
-	bin string
+	m    *Manager
+	prov *agenttest.Provider
+	id   string
+	bin  string
 }
 
 // newGitLabItemsFixture serves REST GETs by endpoint and the fixed GraphQL
@@ -67,7 +68,7 @@ func newGitLabItemsFixture(t *testing.T, auth int, responses map[string]gitLabFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	return gitLabItemsFixture{m: m, id: source.ID, bin: bin}
+	return gitLabItemsFixture{m: m, prov: prov, id: source.ID, bin: bin}
 }
 
 func (f gitLabItemsFixture) calls(t *testing.T) []string {

@@ -224,7 +224,7 @@ func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) ([]
 			summary.Error = gitLabReviewError(readErr).Error()
 		} else {
 			if summary.job != nil && summary.State == "failed" {
-				m.gitLabJobFailure(ctx, gate, projectID, &summary, cached.summary.failure)
+				m.gitLabJobFailure(ctx, gate, projectID, key, &summary, cached.summary.failure)
 			}
 			m.rememberGitLabItem(key, now, summary)
 		}
