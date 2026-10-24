@@ -210,8 +210,11 @@ func TestGitLabAutoInvestigationSkipsRunnerFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := f.m.gitLabState(t.Context(), f.source.ID, true)
-	if err != nil || state.InvestigationTaskID != "" || !state.CanInvestigate || len(state.Jobs) != 1 || state.Jobs[0].FailureReason != "runner_system_failure" {
+	if err != nil || state.InvestigationTaskID != "" || !state.CanInvestigate || state.AutoInvestigate || len(state.Jobs) != 1 || state.Jobs[0].FailureReason != "runner_system_failure" {
 		t.Fatalf("runner failure opened an investigation or lost the manual one: %+v, %v", state, err)
+	}
+	if cached, err := f.m.gitLabState(t.Context(), f.source.ID, false); err != nil || cached.AutoInvestigate || !cached.CanInvestigate {
+		t.Fatalf("cached read of a runner failure hides Investigate: %+v, %v", cached, err)
 	}
 	if len(f.prov.Opens()) != 1 {
 		t.Fatalf("runner failure reached the provider: %+v", f.prov.Opens())

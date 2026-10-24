@@ -2379,7 +2379,8 @@ GitLab**. The views:
   investigation** on, a failed pipeline opens its investigation Thread by
   itself, unless every failed job (allowed failures aside) failed on the
   runner or GitLab: a runner system failure, stuck or timed out, an API,
-  scheduler or data integrity failure. Those open no Thread.
+  scheduler or data integrity failure. Those open no Thread by themselves
+  and offer **Investigate** instead.
 
 Discussion notes, work item descriptions and agent reply drafts render as
 Markdown, the same safe renderer replies use (no raw HTML, no image from
