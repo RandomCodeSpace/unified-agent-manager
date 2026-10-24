@@ -124,7 +124,13 @@ func TestNoFinishedNoticeWhileTheQueueDrains(t *testing.T) {
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	mustSubmit(t, m, sum.ID, "next", mustUUID(t), ModeQueue, SubmissionQueued)
 	conv.EmitTurn(agentapi.TurnCompleted, "")
-	waitUntil(t, "the queued prompt to be sent", func() bool { return len(conv.Sends()) == 1 })
+	// Sends records entry into the provider, before it acknowledges the send.
+	// Finish the simulated turn only after the queue's dispatch has returned.
+	waitUntil(t, "the queued prompt dispatch to finish", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(conv.Sends()) == 1 && m.sessions[sum.ID].queueSending == ""
+	})
 	if got := notices(t, sub); len(got) != 0 {
 		t.Fatalf("notices while the queue drains = %+v", got)
 	}
