@@ -402,8 +402,9 @@ func outcomeLine(verb string, ev turnOutcome) string {
 
 // outcomeTurnLocked updates s's outcome line for a turn transition: a turn
 // that starts clears it, and one that completes gets the line its evidence
-// shows at once. A matching accepted native summary supplies the phrase;
-// otherwise a Utility call supplies it when a model can run. The caller holds mu.
+// shows at once. A matching accepted native summary supplies the phrase; a
+// turn with no edits or commands reads "Answered"; otherwise a Utility call
+// supplies it when a model can run. The caller holds mu.
 func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, completion *agentapi.TaskCompletion) {
 	if state == agentapi.TurnWorking && s.outcome == "" && s.outcomeRun == 0 {
 		return
@@ -429,6 +430,11 @@ func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, com
 	}
 	last := s.lastMainItem()
 	if !ok || last < 0 || s.items[last].Kind != agentapi.ItemAssistant || strings.TrimSpace(s.items[last].Text) == "" {
+		return
+	}
+	// A turn that changed nothing visible needs no model to name it.
+	if len(facts.edits) == 0 && facts.commands == 0 {
+		s.outcome = outcomeLine("Answered", ev)
 		return
 	}
 	runner, model := m.assistRunnerLocked(s)

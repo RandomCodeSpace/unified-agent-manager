@@ -436,11 +436,12 @@ func TestOutcomePhraseDoesNotMarkTheTaskUnread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "fix", "Fixed it.")
+	finishTurn(prov.Last(), "fix", "Fixed it.",
+		agentapi.Item{ID: "e1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Input: `{"path":"a.go"}`, Status: agentapi.ToolCompleted}})
 	before := summaryOf(t, m, sum.ID).UpdatedAt
 	time.Sleep(5 * time.Millisecond)
 	verb <- `{"verb":"Fixed","object":"it"}`
-	waitUntil(t, "the verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Fixed it" })
+	waitUntil(t, "the verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Fixed it; 1 file changed" })
 	if after := summaryOf(t, m, sum.ID).UpdatedAt; !after.Equal(before) {
 		t.Fatalf("updated_at moved from %v to %v", before, after)
 	}

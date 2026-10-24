@@ -244,7 +244,8 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 		return summaryOf(t, m, sum.ID).Outcome == "Fixed the flaky test; 2 files changed; tests pass; 2 commands failed"
 	})
 
-	// A new turn clears it; one without tools or a model says only the verb.
+	// A new turn clears it; one without edits or commands reads "Answered"
+	// at once, with no Utility call.
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "" {
 		t.Fatalf("outcome while working = %q", got)
@@ -255,13 +256,41 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	// Copilot can record an empty thought after the answer.
 	conv.EmitItem(agentapi.Item{ID: "r-why", Kind: agentapi.ItemReasoning})
 	conv.EmitTurn(agentapi.TurnCompleted, "")
-	if got := summaryOf(t, m, sum.ID).Outcome; got != "" {
-		t.Fatalf("outcome before the verb = %q", got)
+	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
+		t.Fatalf("outcome of a turn without tools = %q", got)
 	}
-	verb <- `{"verb":"Explained","object":"cause"}`
-	waitUntil(t, "the second verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Explained cause" })
-	if n := utilityCalls(prov, "outcome"); n != 2 {
+	if n := utilityCalls(prov, "outcome"); n != 1 {
 		t.Fatalf("outcome calls = %d", n)
+	}
+}
+
+func TestOutcomeGateSkipsTurnsWithoutEditsOrCommands(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		if req.Purpose != "outcome" {
+			return "", fmt.Errorf("no %s here", req.Purpose)
+		}
+		return `{"verb":"Reviewed","object":"files"}`, nil
+	})
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	finishTurn(conv, "what is 2+2", "4.",
+		agentapi.Item{ID: "r1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "view", Input: `{"path":"a.go"}`, Status: agentapi.ToolCompleted}})
+	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
+		t.Fatalf("outcome of a read-only turn = %q", got)
+	}
+	if n := utilityCalls(prov, "outcome"); n != 0 {
+		t.Fatalf("read-only turn made %d outcome calls", n)
+	}
+	finishTurn(conv, "list files", "Two files.",
+		agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"ls"}`, Status: agentapi.ToolCompleted, ExitCode: codeOf(0)}})
+	waitUntil(t, "the shell turn's verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Reviewed files" })
+	if n := utilityCalls(prov, "outcome"); n != 1 {
+		t.Fatalf("shell turn outcome calls = %d", n)
 	}
 }
 
