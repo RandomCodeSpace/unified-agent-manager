@@ -15,6 +15,10 @@ import (
 // maxAssistedReason bounds the reviewer's reason a permission request shows.
 const maxAssistedReason = 1000
 
+// assistedRules are uam's restrictions, appended to the Assisted reviewer's
+// system prompt.
+const assistedRules = "Deny: reading files outside the working directory that hold credentials (~/.ssh, ~/.config/uam, ~/.copilot, .env, *.pem, *token*); git push to main or master and any force push; deleting files outside the working directory; sending repository contents to a network host not named in the user's request."
+
 type permissionModeSession interface {
 	SetPermissionMode(ctx context.Context, req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	GetPermissionMode(ctx context.Context) (*rpc.PermissionsGetModeResult, error)
