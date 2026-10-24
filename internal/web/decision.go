@@ -31,6 +31,9 @@ type DecisionRequest struct {
 	Instructions string
 	Input        string
 	Options      []DecisionOption
+	// TaskID, when set, is the Thread the decision is for, named in its
+	// Utility log entry.
+	TaskID string
 }
 
 type DecisionOption struct {
@@ -126,6 +129,10 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 	}
 	m.mu.Lock()
 	runner, model, err := m.startUtilityLocked()
+	call := UtilityCall{Provider: model.Provider, Model: model.Model}
+	if s := m.sessions[input.TaskID]; s != nil {
+		call.TaskID, call.ProjectID = s.id, s.projectID
+	}
 	m.mu.Unlock()
 	if err != nil {
 		return DecisionResult{}, err
@@ -156,7 +163,8 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 	if err := ctx.Err(); err != nil {
 		return DecisionResult{}, err
 	}
-	_, err = m.runUtilityChecked(ctx, UtilityCall{Purpose: req.Purpose, Provider: model.Provider, Model: model.Model}, req.System+req.Prompt,
+	call.Purpose = req.Purpose
+	_, err = m.runUtilityChecked(ctx, call, req.System+req.Prompt,
 		func(ctx context.Context, usage func(agentapi.UtilityUsage)) (string, error) {
 			req.OnUsage = usage
 			reply, err := runner.RunUtility(ctx, req)

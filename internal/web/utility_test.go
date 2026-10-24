@@ -121,14 +121,14 @@ func TestUtilityPromptSizeIsSystemAndPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "fix the test", "Fixed it.")
+	finishTurn(prov.Last(), "fix the test", "Fixed it. Commit it?")
 	if _, err := m.SuggestReplies(context.Background(), sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the suggested replies call", func() bool { return utilityCalls(prov, purposeSuggestReplies) == 1 })
+	waitUntil(t, "the suggested reply call", func() bool { return utilityCalls(prov, suggestReplyLog) == 1 })
 	var req agentapi.UtilityRequest
 	for _, r := range prov.UtilityRequests() {
-		if r.Purpose == purposeSuggestReplies {
+		if r.Purpose == suggestReplyLog {
 			req = r
 		}
 	}
@@ -138,7 +138,7 @@ func TestUtilityPromptSizeIsSystemAndPrompt(t *testing.T) {
 	want := utf8.RuneCountInString(req.System + req.Prompt)
 	waitUntil(t, "the logged call", func() bool {
 		for _, c := range m.UtilityLog(0, utilityPage).Calls {
-			if c.Purpose == purposeSuggestReplies && c.TaskID == sum.ID {
+			if c.Purpose == suggestReplyLog && c.TaskID == sum.ID {
 				return c.PromptChars == want
 			}
 		}
@@ -326,12 +326,12 @@ func TestUtilityInvalidPauseShownAndLoggedOnce(t *testing.T) {
 	m := startManager(t, st)
 	now := time.Now()
 	for i := 0; i < 4; i++ {
-		m.utility.reserve(now, purposeSuggestReplies, 400, false)
-		m.utility.add(UtilityCall{At: now, Purpose: purposeSuggestReplies, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		m.utility.reserve(now, purposeCommitMessage, 400, false)
+		m.utility.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	run := func(m *Manager) {
 		t.Helper()
-		_, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeSuggestReplies}, "p", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
+		_, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeCommitMessage}, "p", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
 			t.Fatal("a paused purpose ran")
 			return "", nil
 		})
@@ -355,7 +355,7 @@ func TestUtilityInvalidPauseShownAndLoggedOnce(t *testing.T) {
 	if n := skipped(m); n != 1 {
 		t.Fatalf("skipped entries = %d, want 1", n)
 	}
-	if got := log.Today.PausedPurposes; len(got) != 1 || got[0] != purposeSuggestReplies || log.Today.Paused {
+	if got := log.Today.PausedPurposes; len(got) != 1 || got[0] != purposeCommitMessage || log.Today.Paused {
 		t.Fatalf("today=%+v", log.Today)
 	}
 	if err := m.Shutdown(context.Background()); err != nil {

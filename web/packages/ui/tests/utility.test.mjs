@@ -8,6 +8,7 @@ test('purposes and outcomes read as words', () => {
   assert.equal(purposeLabel('title'), 'Thread title');
   assert.equal(purposeLabel('commit-message'), 'Commit message');
   assert.equal(purposeLabel('done-check'), 'Thread done check');
+  assert.equal(purposeLabel('decision-suggest-reply'), 'Suggested replies');
   assert.equal(purposeLabel('some-new-job'), 'some new job');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'daily_limit' }), 'Skipped: daily limit');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'off' }), 'Skipped: Background AI off');

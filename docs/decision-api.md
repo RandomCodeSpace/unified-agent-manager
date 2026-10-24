@@ -23,12 +23,15 @@ Provider and context errors retain their identity through error wrapping.
 Utility unavailability and budget/purpose pauses retain UAM's existing error
 codes. The function is an internal Go API with no HTTP route.
 
-Callers: `ci-failure-kind` (`gitlab_failure.go`) labels a failed GitLab job
-whose log the failure patterns miss. It runs once per job, in the
-background, with the job name, stage and the last 8 KB of the log as input
-and the options tests, build, lint, typecheck, timeout, infra, auth and
-other. An abstention or `other` shows no label. The answer is kept per job
-ID on the commit's receipt; a failed call is not saved.
+Callers:
+- `suggest-reply` (`assist.go`) picks the suggested reply when more than one
+  reply fits a turn.
+- `ci-failure-kind` (`gitlab_failure.go`) labels a failed GitLab job
+  whose log the failure patterns miss. It runs once per job, in the
+  background, with the job name, stage and the last 8 KB of the log as input
+  and the options tests, build, lint, typecheck, timeout, infra, auth and
+  other. An abstention or `other` shows no label. The answer is kept per job
+  ID on the commit's receipt; a failed call is not saved.
 
 ## Contract
 
@@ -38,6 +41,8 @@ ID on the commit's receipt; a failed call is not saved.
   Input is untrusted evidence, limited to 16,384 UTF-8 bytes. Both must be
   nonempty. When a caller knows evidence is absent, it should abstain locally
   without inference. Empty evidence passed to `Decide` is an input error.
+- `TaskID`, when it names a Thread, puts that Thread and its Project on the
+  call's Utility log entry, as other Thread jobs have.
 - Supply 2 to 32 options. IDs are unique, 1 to 64 ASCII letters, digits,
   underscores or hyphens, starting with a letter or digit. Descriptions are
   nonempty UTF-8 text of at most 512 bytes. Purposes are 1 to 48 lowercase
