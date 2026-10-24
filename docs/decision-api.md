@@ -1,8 +1,8 @@
 # Internal decision API
 
 `Manager.Decide(ctx, DecisionRequest)` selects one caller-supplied option or
-returns an explicit abstention. It uses the configured Utility model through
-an Eino Workflow. It does not require a specialized decision model.
+returns an explicit abstention. It makes one call to the configured Utility
+model. It does not require a specialized decision model.
 
 ```go
 result, err := manager.Decide(ctx, web.DecisionRequest{
@@ -36,10 +36,12 @@ automatic consumer.
   underscores or hyphens, starting with a letter or digit. Descriptions are
   nonempty UTF-8 text of at most 512 bytes. Purposes are 1 to 48 lowercase
   letters, digits or hyphens, starting with a letter.
-- The model must return exactly `{"choice":"allowed-id"}` or
-  `{"choice":null}`. The decoder rejects duplicate or unknown keys, case
-  variants, extra output, code fences, reasoning text, invalid UTF-8, and
-  answers exceeding 2,048 bytes. A valid abstention is a successful answer.
+- The model is asked for exactly `{"choice":"allowed-id"}` or
+  `{"choice":null}`. The answer is read like other Utility jobs: `<think>`
+  blocks, a preamble or a code fence are tolerated; unknown keys, a second
+  object, trailing prose, refusals, invalid UTF-8, and answers exceeding 2,048
+  bytes are rejected. Only an allowed ID or null is accepted. A valid
+  abstention is a successful answer.
 - The API calls the selected Utility provider at most once. It adds no retry
   or alternate-model fallback. The existing Utility model selection and
   explicit opt-out remain authoritative. Compatibility means models runnable
@@ -52,9 +54,8 @@ automatic consumer.
   inference does not become a successful decision, even if a provider returns
   a valid-looking answer after cancellation.
 
-The Workflow has an inference Lambda followed by a validation Lambda. One
-`runUtilityChecked` call surrounds Workflow invocation, so validation finishes
-before logging. Invalid output records `Outcome=error`, `Valid=false`,
+One `runUtilityChecked` call surrounds inference and validation, so validation
+finishes before logging. Invalid output records `Outcome=error`, `Valid=false`,
 `Fallback=true` and `Reason=invalid_answer`. Here `Fallback` marks a failed
 terminal job for the existing pause counter; callers still receive an error,
 not a fabricated fallback choice. Four final invalid answers in the last ten
@@ -66,17 +67,9 @@ correctness. Callers own eligibility checks, deterministic fallbacks, duplicate
 request sharing, and stale-result rejection. Permissions, pending interactions,
 test evidence, queue state, and task completion remain authoritative code state.
 
-Eino core is pinned to v0.9.22. Its [Workflow API](https://www.cloudwego.io/docs/eino/core_modules/chain_and_graph_orchestration/workflow_orchestration_framework/)
-and [Lambda API](https://www.cloudwego.io/docs/eino/core_modules/components/lambda_guide/)
-support wrapping existing functions without introducing a second provider or
-credential implementation. Eino uses [Apache-2.0](https://github.com/cloudwego/eino/blob/v0.9.22/LICENSE-APACHE).
-Its transitive `github.com/buger/jsonparser` dependency is pinned to v1.1.2 to
-fix [GHSA-6g7g-w4f8-9c9x](https://github.com/advisories/GHSA-6g7g-w4f8-9c9x).
-Eino's default transitive version, v1.1.1, is affected by that advisory.
-
 ## Researched adoption opportunities
 
-Three parallel read-only investigations covered existing flows, Workflow
+Three parallel read-only investigations covered existing flows, Utility
 integration, and accuracy/lifecycle contracts. Existing flows are unchanged.
 
 | Priority | Opportunity | Smallest useful follow-up | Contract to preserve |
