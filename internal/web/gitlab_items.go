@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // GitLab items a Thread's conversation names (merge requests, work items,
@@ -47,6 +48,12 @@ type GitLabItemSummary struct {
 	Error         string `json:"error,omitempty"`
 	// Stale marks the last known state, kept while GitLab rate limits reads.
 	Stale bool `json:"stale,omitempty"`
+	// FailureKind and FailureDetail say what a failed job failed on
+	// ("Tests failed", "2 tests"); see gitlab_failure.go.
+	FailureKind   string `json:"failure_kind,omitempty"`
+	FailureDetail string `json:"failure_detail,omitempty"`
+	job           *gitLabProjectJob
+	failure       *store.WebGitLabFailure
 }
 
 // GitLabWorkItemLink is a parent or child of a work item. Ref is set when
@@ -201,7 +208,8 @@ func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) ([]
 			continue
 		}
 		key := gitLabItemKey(gate, ref)
-		if cached, found := m.gitlab.items[key]; found && now.Sub(cached.at) < gitLabItemTTL {
+		cached, found := m.gitlab.items[key]
+		if found && now.Sub(cached.at) < gitLabItemTTL {
 			cached.summary.Ref = raw
 			out = append(out, cached.summary)
 			continue
@@ -215,6 +223,9 @@ func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) ([]
 		if readErr != nil {
 			summary.Error = gitLabReviewError(readErr).Error()
 		} else {
+			if summary.job != nil && summary.State == "failed" {
+				m.gitLabJobFailure(ctx, gate, projectID, &summary, cached.summary.failure)
+			}
 			m.rememberGitLabItem(key, now, summary)
 		}
 		out = append(out, summary)
@@ -302,7 +313,7 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 		if err != nil {
 			return out, err
 		}
-		out.Title, out.State, out.PipelineID, out.WebURL = job.Name, job.Status, job.pipelineID, job.WebURL
+		out.Title, out.State, out.PipelineID, out.WebURL, out.job = job.Name, job.Status, job.pipelineID, job.WebURL, &job
 	default:
 		item, err := readGitLabWorkItem(ctx, gate, projectID, ref)
 		if err != nil {
@@ -316,6 +327,7 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 type gitLabProjectJob struct {
 	GitLabJob
 	pipelineID int64
+	sha        string
 }
 
 func readGitLabJob(ctx context.Context, gate glabGate, projectID, jobID int64) (gitLabProjectJob, error) {
@@ -331,7 +343,7 @@ func readGitLabJob(ctx context.Context, gate glabGate, projectID, jobID int64) (
 	}
 	job.Name, job.Stage, job.Status = displaytext.Sanitize(job.Name), displaytext.Sanitize(job.Stage), displaytext.Sanitize(job.Status)
 	job.WebURL = gitLabSafeURL(gate.Host, job.WebURL)
-	return gitLabProjectJob{GitLabJob: job.GitLabJob, pipelineID: job.Pipeline.ID}, nil
+	return gitLabProjectJob{GitLabJob: job.GitLabJob, pipelineID: job.Pipeline.ID, sha: job.Pipeline.SHA}, nil
 }
 
 // readGitLabWorkItem reads an issue through REST. Epics, tasks and items the

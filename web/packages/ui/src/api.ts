@@ -1980,6 +1980,9 @@ export interface GitLabItemSummary {
   error?: string;
   /** The last known state, kept while GitLab rate limits reads. */
   stale?: boolean;
+  /** A failed job's failure kind ("Tests failed") and its detail ("2 tests"), read from the job log. */
+  failure_kind?: string;
+  failure_detail?: string;
 }
 export interface GitLabWorkItemLink { ref?: string; iid: number; kind: string; title: string; state: string; web_url?: string }
 export interface GitLabWorkItem {

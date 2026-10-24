@@ -119,6 +119,17 @@ type WebGitLabCommit struct {
 	Branch         string                            `json:"branch"`
 	CreatedAt      time.Time                         `json:"created_at"`
 	Investigations map[string]WebGitLabInvestigation `json:"investigations,omitempty"`
+	// Failures holds what each failed job of the commit's pipelines failed
+	// on, keyed by job ID, so each job log is read once. An empty Kind means
+	// the log was read and nothing was recognised.
+	Failures map[int64]WebGitLabFailure `json:"failures,omitempty"`
+}
+
+// WebGitLabFailure is a failed job's failure kind ("tests", "infra") and
+// a short detail such as "2 tests". It never holds job log text.
+type WebGitLabFailure struct {
+	Kind   string `json:"kind,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // WebGitLabInvestigation reserves one Task for a numeric project ID and

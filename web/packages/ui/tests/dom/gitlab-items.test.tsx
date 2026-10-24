@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
 import { api, type GitLabPipelineState, type GitLabReview as Review, type Item, type TurnTiming } from '../../src/api';
 import { GitLabItemView } from '../../src/components/GitLabItems';
-import { GitLabItemsContext, type GitLabItems } from '../../src/components/GitLabStrip';
+import { GitLabItemsContext, stateBlocks, type GitLabItems } from '../../src/components/GitLabStrip';
 import { Transcript } from '../../src/components/Transcript';
 import { SessionContext } from '../../src/components/common';
 import { DetailVisibility } from '../../src/components/Details';
@@ -184,4 +184,10 @@ test('discussion notes render as full Markdown in the list; uploads load from Gi
   expect(shot.closest('a')?.getAttribute('href')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
   expect(within(screen.getAllByLabelText('Discussions').at(-1)!).getByRole('article')).toBe(note);
   expect(note.closest('button')).toBeNull();
+});
+
+test('a failed job chip names what failed; a pipeline chip keeps its state word only', () => {
+  expect(stateBlocks({ ref: 'job:7', kind: 'job', title: 'test', state: 'failed', failure_kind: 'Tests failed', failure_detail: '2 tests' }).map((b) => b.label)).toEqual(['failed', 'Tests failed · 2 tests']);
+  expect(stateBlocks({ ref: 'job:8', kind: 'job', title: 'build', state: 'failed', failure_kind: 'Build failed' }).map((b) => b.label)).toEqual(['failed', 'Build failed']);
+  expect(stateBlocks({ ref: 'pipeline:91', kind: 'pipeline', state: 'failed' }).map((b) => b.label)).toEqual(['failed']);
 });
