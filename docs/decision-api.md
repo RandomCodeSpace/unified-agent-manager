@@ -21,8 +21,14 @@ allowed ID, or `result.Abstained` is true. Errors return an empty result.
 `errors.Is(err, web.ErrInvalidDecision)` identifies unusable model output.
 Provider and context errors retain their identity through error wrapping.
 Utility unavailability and budget/purpose pauses retain UAM's existing error
-codes. The function is an internal Go API; this change adds no HTTP route or
-automatic consumer.
+codes. The function is an internal Go API with no HTTP route.
+
+Callers: `ci-failure-kind` (`gitlab_failure.go`) labels a failed GitLab job
+whose log the failure patterns miss. It runs once per job, in the
+background, with the job name, stage and the last 8 KB of the log as input
+and the options tests, build, lint, typecheck, timeout, infra, auth and
+other. An abstention or `other` shows no label. The answer is kept per job
+ID on the commit's receipt; a failed call is not saved.
 
 ## Contract
 

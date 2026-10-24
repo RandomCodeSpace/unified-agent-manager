@@ -12,6 +12,7 @@ const PURPOSES: Record<string, string> = {
   'mr-description': 'Merge request description',
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
+  'decision-ci-failure-kind': 'CI failure kind',
   // Made only by older versions; their calls stay in the 30-day log.
   'done-check': 'Thread done check',
 };

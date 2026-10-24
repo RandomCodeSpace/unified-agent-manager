@@ -1,12 +1,81 @@
 package web
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
+
+func TestGitLabFailureTheRegexesMissIsDecidedOnce(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	job := func(id, name, reason string) gitLabFixtureResponse {
+		return gitLabFixtureResponse{body: `{"id":` + id + `,"name":"` + name + `","stage":"verify","status":"failed","failure_reason":"` + reason + `","pipeline":{"id":91,"project_id":42,"sha":"` + sha + `"}}`}
+	}
+	responses := gitLabItemResponses()
+	responses["projects/42/jobs/1"] = job("1", "odd", "script_failure")
+	responses["projects/42/jobs/1/trace"] = gitLabFixtureResponse{body: "EARLY-MARKER\n" + strings.Repeat("noise line\n", 2000) + "mypy: 3 problems in src/app.py\n"}
+	responses["projects/42/jobs/5"] = job("5", "vague", "script_failure")
+	responses["projects/42/jobs/5/trace"] = gitLabFixtureResponse{body: "something odd happened\n"}
+	responses["projects/42/jobs/3"] = job("3", "build", "runner_system_failure")
+	f := newGitLabItemsFixture(t, 0, responses)
+	if _, err := f.m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.recordGitLabCommit(t.Context(), f.id, sha, "main"); err != nil {
+		t.Fatal(err)
+	}
+	f.prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		if strings.Contains(req.Prompt, "Job: odd") {
+			return `{"choice":"typecheck"}`, nil
+		}
+		return `{"choice":null}`, nil
+	})
+	at := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+	f.m.now = func() time.Time { return at }
+	refs := []string{"job:1", "job:5", "job:3"}
+	items, err := f.m.gitLabItems(t.Context(), f.id, refs)
+	if err != nil || items[0].FailureKind != "" || items[1].FailureKind != "" || items[2].FailureKind != "Runner failure" {
+		t.Fatalf("first read = %+v, %v", items, err)
+	}
+	f.m.titles.Wait()
+	reqs := f.prov.UtilityRequests()
+	if len(reqs) != 2 {
+		t.Fatalf("utility calls = %d, want one per job the patterns missed", len(reqs))
+	}
+	for _, req := range reqs {
+		if req.Purpose != "decision-ci-failure-kind" || !strings.Contains(req.Prompt, `Stage: verify`) || strings.Contains(req.Prompt, "EARLY-MARKER") || len(req.Prompt) > 12<<10 {
+			t.Fatalf("decision request = %q, %d prompt bytes", req.Purpose, len(req.Prompt))
+		}
+	}
+	// The cached read shows the decision at once; an abstention shows nothing.
+	items, err = f.m.gitLabItems(t.Context(), f.id, refs)
+	if err != nil || items[0].FailureKind != "Type check failed" || items[0].FailureDetail != "" || items[1].FailureKind != "" {
+		t.Fatalf("decided labels = %+v, %v", items[:2], err)
+	}
+	cfg, err := f.m.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failures := cfg.WebGitLab[gitLabCommitKey("gitlab.example.com", "group/sub/repo", sha)].Failures
+	if failures[1] != (store.WebGitLabFailure{Kind: "typecheck"}) || len(failures) != 3 {
+		t.Fatalf("receipt failures = %+v", failures)
+	}
+	if _, found := failures[5]; !found {
+		t.Fatal("the abstention was not kept, so the job would be asked about again")
+	}
+	// A restart asks nothing again.
+	f.m.gitlab.items = nil
+	at = at.Add(gitLabItemTTL)
+	items, err = f.m.gitLabItems(t.Context(), f.id, refs)
+	f.m.titles.Wait()
+	if err != nil || items[0].FailureKind != "Type check failed" || len(f.prov.UtilityRequests()) != 2 {
+		t.Fatalf("after restart = %+v, %v, %d calls", items[0], err, len(f.prov.UtilityRequests()))
+	}
+}
 
 func TestGitLabFailureOfTraceTails(t *testing.T) {
 	for _, tc := range []struct{ name, tail, kind, detail string }{

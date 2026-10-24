@@ -2348,10 +2348,13 @@ failed · 2 tests**, **Build failed**, **Lint failed**, **Type check
 failed**, **Timed out**, **Auth failed**, or **Runner failure · not your
 change**. GitLab's own runner failure reasons name the last two without a
 log read; the rest come from patterns in the end of the job log, read once
-per job (a commit UAM tracks keeps the result across restarts). Only the
-kind and the number of failed tests are shown, never log text. A job
-nothing recognises gets no label, and a pipeline chip keeps its state
-word only. Links in the reply itself stay plain links. An item counts when
+per job (a commit UAM tracks keeps the result across restarts). A log the
+patterns miss goes once, in the background, to the Utility model (job name,
+stage and the last 8 KB of the log; Utility log purpose **CI failure
+kind**), which picks one of those kinds or abstains; the chip gains the
+label on its next read. Only the kind and the number of failed tests are
+shown, never log text. A job neither recognises gets no label, and a
+pipeline chip keeps its state word only. Links in the reply itself stay plain links. An item counts when
 the turn named it on the Thread's own project:
 
 - a GitLab link to a merge request, issue, work item, pipeline or job of the
