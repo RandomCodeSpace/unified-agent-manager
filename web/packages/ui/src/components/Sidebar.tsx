@@ -8,7 +8,7 @@ import { encodeEntity } from '../lib/instanceIdentity';
 import { filteredProject, groupTasks, needsYouNow, pendingWork, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import { pendingWords } from '../lib/worktrees';
 import type { Connection } from '../state';
-import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { BADGE_TEXT, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
@@ -392,7 +392,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} />}
-        <span className="min-w-0 truncate font-normal text-muted">{project?.name ?? 'Project'}</span>
+        <span className={cn('min-w-0 truncate font-medium', project ? BADGE_TEXT[project.badge.color] : 'text-muted')}>{project?.name ?? 'Project'}</span>
         {/* The folder's unsaved git work, after its name: shared by every Thread there. Glyph and count, the words for screen readers. */}
         {pending && (
           <span className="flex shrink-0 items-center gap-1.5 text-meta font-normal text-warning tabular-nums">

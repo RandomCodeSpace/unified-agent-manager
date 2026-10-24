@@ -1,5 +1,6 @@
 /* Tailwind v4 theme built from DESIGN.md. Two schemes on one token set: Light, the neutral near-white
-   Mono theme (owner's pick, 2026-10-18), and Dark, the same monochrome ladder on pure black
+   Mono theme (owner's pick, 2026-10-18) with colour on labels (2026-10-24: a blue accent, Project
+   names in their badge tone), and Dark, the same monochrome ladder on pure black
    (`:root[data-theme='dark']` below, lib/theme.ts). Every colour, size, radius and shadow in the
    app is one of these tokens; the light values are here, the dark ones override them. */
 
@@ -33,9 +34,10 @@
   --color-hairline-strong: #c7c7c7;
   --color-primary: #111111;
   --color-on-primary: #ffffff;
-  --color-accent: #111111;
+  /* In motion (working words, spinners, meters, switches on): blue, so labels carry colour while buttons stay ink. */
+  --color-accent: #2f5fd0;
   --color-on-accent: #ffffff;
-  --color-accent-wash: #e8e8e8;
+  --color-accent-wash: #e3eafb;
   /* Web links and file references in prose: the only hues in running text, so they read apart from it and from each other. */
   --color-link: #3a5ec4;
   --color-file-link: #0f6c62;
@@ -64,13 +66,14 @@
   --color-tint-selected: #e6e6e6;
   --color-tint-well: #f3f3f3;
 
-  /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, every pair at least 4.5:1. */
+  /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, and the Project name's text on a
+     Thread row (rail, raised, tint-hover, tint-selected); every pair at least 4.5:1. */
   --color-badge-red: #b42d2d;
-  --color-badge-orange: #ad4f0f;
+  --color-badge-orange: #a74c0e;
   --color-badge-amber: #866100;
-  --color-badge-lime: #4d7312;
-  --color-badge-green: #22783f;
-  --color-badge-teal: #11766b;
+  --color-badge-lime: #4c7111;
+  --color-badge-green: #21763e;
+  --color-badge-teal: #107469;
   --color-badge-cyan: #0d6f88;
   --color-badge-blue: #3a5ec4;
   --color-badge-violet: #6b4fc2;
@@ -212,7 +215,7 @@
     --elevation-focus-float: 0 0 0 1px rgba(17, 17, 17, 0.1), 0 10px 28px rgba(17, 17, 17, 0.14);
   }
   /* Dark (DESIGN.md Colors): pure black canvas and rail, near-black raised controls, the ink ladder
-     inverted, the accent the ink itself, no added colour. Every text pair keeps its light value's AA
+     inverted, a light blue accent and the badge tones on labels, no other added colour. Every text pair keeps its light value's AA
      contrast. Shadows do not show on black, so each level's edge is a white 1px ring. */
   :root[data-theme='dark'] {
     color-scheme: dark;
@@ -230,9 +233,9 @@
     --color-hairline-strong: #3a3a3a;
     --color-primary: #f5f5f5;
     --color-on-primary: #000000;
-    --color-accent: #f5f5f5;
+    --color-accent: #86a6ff;
     --color-on-accent: #000000;
-    --color-accent-wash: #262626;
+    --color-accent-wash: #1a2340;
     --color-link: #86a6ff;
     --color-file-link: #4fd1bf;
     --color-focus: #f5f5f5;

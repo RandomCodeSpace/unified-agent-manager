@@ -1775,7 +1775,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         ) : (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label={<>{`Permissions and execution: ${runLabel}${objectiveSuffix}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
-              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="max-sm:hidden in-data-[fold~=more]:hidden" />}>
+              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className={cn('max-sm:hidden in-data-[fold~=more]:hidden', risk.tone)} />}>
                 {runIcon}
                 {runFace}
                 <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
