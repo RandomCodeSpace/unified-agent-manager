@@ -2094,6 +2094,10 @@ type conversation struct {
 	turnRunning bool
 	// compaction is the main conversation's compaction in progress.
 	compaction compactionState
+	// views holds the hash of each view result an agent has in its context
+	// (readOnceLocked); viewRepeats counts the turn's replaced repeats.
+	views       map[readKey][sha256.Size]byte
+	viewRepeats int
 	// turnAt is when the running turn started. sending counts prompts on
 	// their way to the CLI, which Stop treats as a running turn.
 	turnAt  time.Time
@@ -3710,6 +3714,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
 		if sa, ok := c.subs.apply(ev); ok {
+			if sa.Status.Terminal() {
+				c.forgetViewsLocked(sa.ID)
+			}
 			if sa.Status == agentapi.SubagentCancelled {
 				c.expireSubagentLocked(sa.ID)
 			}
@@ -3753,6 +3760,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	case *rpc.SessionCompactionStartData:
 		// Manual (/compact) and automatic compaction both report here.
+		c.forgetViewsLocked(agentID)
 		if agentID == "" {
 			c.compaction = compactionBlocking
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
@@ -3760,6 +3768,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.SessionCompactionCompleteData:
 		// Its notice item follows.
+		c.forgetViewsLocked(agentID)
 		if agentID == "" {
 			c.compaction = compactionNone
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
@@ -4028,6 +4037,10 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
 	c.endBackgroundCompactionLocked()
+	if c.viewRepeats > 0 {
+		log.Info("copilot read-once: repeat views not re-sent", "session", c.id, "count", c.viewRepeats)
+		c.viewRepeats = 0
+	}
 	// Subagents still running go on between turns: their phase follows the
 	// turn's end (emitTurnEndLocked).
 	c.endTurnPhaseLocked()

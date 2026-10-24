@@ -934,7 +934,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (the shell command, URL, file path, search pattern or query), a
   mark for running, done or failed, and, in yolo mode, "auto" where UAM
   allowed it; a call you allowed or denied yourself says so on the same
-  line. Click a line for the full input and output. A run of more than eight
+  line. Click a line for the full input and output. When an agent views a
+  file again and the text is identical to its last view of the same file and
+  line range in that conversation, uam gives the model a one-line
+  `uam read-once:` note instead of the text again. Changed text, another
+  range, another subagent, or the first view after a compaction gets the full
+  text. A run of more than eight
   calls keeps the first two and the last three and folds the rest behind
   "Show N more". Skill loads are not shown or counted in the conversation,
   a subagent's included; Tools → Agent lists them (see Agent). When the
