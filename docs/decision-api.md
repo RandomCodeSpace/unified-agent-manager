@@ -49,10 +49,10 @@ automatic consumer.
 - Calls are tool-free and use the provider's restricted throwaway conversation.
   UAM retains ownership of credentials, two shared Utility slots, daily budgets,
   usage accounting, invalid-answer pauses, cancellation, and shutdown cleanup.
-- A ten-second deadline covers slot waiting and inference, shortened by the
-  caller's deadline. Provider cleanup can extend past it. Cancellation before
-  inference does not become a successful decision, even if a provider returns
-  a valid-looking answer after cancellation.
+- A 45-second deadline (assistTimeout) covers slot waiting and inference,
+  shortened by the caller's deadline. Provider cleanup can extend past it.
+  Cancellation before inference does not become a successful decision, even
+  if a provider returns a valid-looking answer after cancellation.
 
 One `runUtilityChecked` call surrounds inference and validation, so validation
 finishes before logging. Invalid output records `Outcome=error`, `Valid=false`,
