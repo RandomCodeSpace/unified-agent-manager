@@ -197,6 +197,30 @@ func TestGitLabInvestigationConcurrentAutoManualAndRestart(t *testing.T) {
 	}
 }
 
+func TestGitLabAutoInvestigationSkipsRunnerFailures(t *testing.T) {
+	f := newGitLabWorkflowFixture(t, func(responses map[string]gitLabFixtureResponse) {
+		const jobs = "projects/42/pipelines/91/jobs?include_retried=false&per_page=100&page=1"
+		r := responses[jobs]
+		r.body = strings.ReplaceAll(r.body, "script_failure", "runner_system_failure")
+		responses[jobs] = r
+	})
+	f.record(t)
+	on := true
+	if _, err := f.m.UpdateSettings(SettingsPatch{GitLabAutoInvestigate: &on, TaskDefaults: &TaskDefaults{Provider: "fake", Model: "a", Mode: "yolo"}}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.m.gitLabState(t.Context(), f.source.ID, true)
+	if err != nil || state.InvestigationTaskID != "" || !state.CanInvestigate || len(state.Jobs) != 1 || state.Jobs[0].FailureReason != "runner_system_failure" {
+		t.Fatalf("runner failure opened an investigation or lost the manual one: %+v, %v", state, err)
+	}
+	if len(f.prov.Opens()) != 1 {
+		t.Fatalf("runner failure reached the provider: %+v", f.prov.Opens())
+	}
+	if id, err := f.m.investigateGitLab(t.Context(), f.source.ID, f.sha, 91); err != nil || id == "" {
+		t.Fatalf("manual investigation of a runner failure: %q, %v", id, err)
+	}
+}
+
 func TestGitLabInvestigationReservationSurvivesFailedOpen(t *testing.T) {
 	f := newGitLabWorkflowFixture(t)
 	f.record(t)

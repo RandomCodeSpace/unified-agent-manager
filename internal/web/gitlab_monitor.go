@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -277,7 +278,9 @@ func (m *Manager) gitLabState(ctx context.Context, id string, refresh bool) (Git
 	out.AutoInvestigate = m.Settings().GitLabAutoInvestigate
 	m.gitLabEligibility(rec, &out)
 	if refresh && out.AutoInvestigate && out.CanInvestigate && !m.gitlab.retryAt[key].After(m.now()) {
-		if taskID, err := m.createGitLabInvestigation(ctx, key, rec, gate, out); err != nil {
+		if gitLabInfraOnly(out.Jobs) {
+			log.Info("gitlab pipeline failed on runner infrastructure; not investigating", "pipeline", out.Pipeline.ID)
+		} else if taskID, err := m.createGitLabInvestigation(ctx, key, rec, gate, out); err != nil {
 			out.Error = err.Error()
 			if m.gitlab.retryAt == nil {
 				m.gitlab.retryAt = make(map[string]time.Time)
@@ -293,6 +296,26 @@ func (m *Manager) gitLabState(ctx context.Context, id string, refresh bool) (Git
 		m.gitlab.mu.Unlock()
 	}
 	return out, nil
+}
+
+// gitLabInfraReasons are GitLab failure reasons that blame the runner or
+// GitLab itself, not the commit.
+var gitLabInfraReasons = []string{"runner_system_failure", "stuck_or_timeout_failure", "api_failure", "scheduler_failure", "data_integrity_failure"}
+
+// gitLabInfraOnly reports whether every failed job that fails the pipeline
+// failed on infrastructure, so there is nothing in the commit to investigate.
+func gitLabInfraOnly(jobs []GitLabJob) bool {
+	infra := false
+	for _, job := range jobs {
+		if job.Status != "failed" || job.AllowFailure {
+			continue
+		}
+		if !slices.Contains(gitLabInfraReasons, job.FailureReason) {
+			return false
+		}
+		infra = true
+	}
+	return infra
 }
 
 func gitLabEventKey(projectID, pipelineID int64) string {
