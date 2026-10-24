@@ -277,10 +277,15 @@ func (m *Manager) gitLabState(ctx context.Context, id string, refresh bool) (Git
 	}
 	out.AutoInvestigate = m.Settings().GitLabAutoInvestigate
 	m.gitLabEligibility(rec, &out)
-	if refresh && out.AutoInvestigate && out.CanInvestigate && !m.gitlab.retryAt[key].After(m.now()) {
-		if gitLabInfraOnly(out.Jobs) {
+	if out.AutoInvestigate && gitLabInfraOnly(out.Jobs) {
+		// Nothing starts by itself for a runner-only failure, so the view offers the manual Investigate.
+		out.AutoInvestigate = false
+		if refresh && out.CanInvestigate {
 			log.Info("gitlab pipeline failed on runner infrastructure; not investigating", "pipeline", out.Pipeline.ID)
-		} else if taskID, err := m.createGitLabInvestigation(ctx, key, rec, gate, out); err != nil {
+		}
+	}
+	if refresh && out.AutoInvestigate && out.CanInvestigate && !m.gitlab.retryAt[key].After(m.now()) {
+		if taskID, err := m.createGitLabInvestigation(ctx, key, rec, gate, out); err != nil {
 			out.Error = err.Error()
 			if m.gitlab.retryAt == nil {
 				m.gitlab.retryAt = make(map[string]time.Time)

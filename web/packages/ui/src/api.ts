@@ -1950,6 +1950,7 @@ export interface GitLabStatus {
 export interface GitLabPipelineState {
   supported: boolean;
   message?: string;
+  /** The failed pipeline opens its investigation by itself; false for a runner-only failure, which offers Investigate. */
   auto_investigate: boolean;
   commit?: { sha: string; branch: string; task_id: string; task_name: string; created_at: string };
   pipeline?: { id: number; status: string; sha: string; ref: string; web_url: string; duration?: number; created_at?: string; updated_at?: string };
