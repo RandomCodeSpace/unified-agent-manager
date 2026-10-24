@@ -200,6 +200,20 @@ const BADGE_BG: Record<BadgeColor, string> = {
   pink: 'bg-badge-pink',
 };
 
+/** A badge tone as text: a Project's name on its Thread row, a subagent's name in its identity tone. */
+export const BADGE_TEXT: Record<BadgeColor, string> = {
+  red: 'text-badge-red',
+  orange: 'text-badge-orange',
+  amber: 'text-badge-amber',
+  lime: 'text-badge-lime',
+  green: 'text-badge-green',
+  teal: 'text-badge-teal',
+  cyan: 'text-badge-cyan',
+  blue: 'text-badge-blue',
+  violet: 'text-badge-violet',
+  pink: 'text-badge-pink',
+};
+
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
 export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; className?: string }>) {
   return (

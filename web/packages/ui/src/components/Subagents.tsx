@@ -16,7 +16,7 @@ import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilt
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Dot, Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, clockTime, useApp } from './common';
+import { BADGE_TEXT, Dot, Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, clockTime, useApp } from './common';
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
@@ -459,7 +459,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
           <SubagentMark status={s.status} />
         </span>
         {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
-        <span className={cn('min-w-0 truncate', text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
+        <span className={cn('min-w-0 truncate', tone && BADGE_TEXT[tone], text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
         {text && (
           <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', s.status === 'failed' ? 'text-error' : 'text-muted')} title={text}>
             {text}

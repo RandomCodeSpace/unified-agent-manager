@@ -1,7 +1,7 @@
 ---
 version: 8
 name: uam-web-workbench
-description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One neutral near-white canvas with a pure-black dark scheme on the same tokens, one ink ladder for every piece of chrome, elevation instead of drawn borders (surfaces float on soft ink shadows, seams fade out at their ends), a single restrained accent (the ink itself) for focus, motion and links, colour only for state, and one warm "needs you" colour (orange) that is the only thing allowed to shout. Figtree everywhere in the app; JetBrains Mono only for code in the conversation (code blocks, inline code, tool rows, commands in requests) and diffs. No serif, no gradients but the fades at seams and scroll edges; the only pills are the activity and tool rows. Everything is a row or a column of text; surfaces step by one shade and one shadow level, never by borders inside borders. Built with Tailwind v4 (this file's tokens are the `@theme`) and Base UI primitives (menus, context menus, dialogs, tooltips, selects) under a strict CSP.
+description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One neutral near-white canvas with a pure-black dark scheme on the same tokens, one ink ladder for every piece of chrome, elevation instead of drawn borders (surfaces float on soft ink shadows, seams fade out at their ends), a single blue accent for motion, colour only for state and identity labels (Project and subagent names in their tone), and one warm "needs you" colour (orange) that is the only thing allowed to shout. Figtree everywhere in the app; JetBrains Mono only for code in the conversation (code blocks, inline code, tool rows, commands in requests) and diffs. No serif, no gradients but the fades at seams and scroll edges; the only pills are the activity and tool rows. Everything is a row or a column of text; surfaces step by one shade and one shadow level, never by borders inside borders. Built with Tailwind v4 (this file's tokens are the `@theme`) and Base UI primitives (menus, context menus, dialogs, tooltips, selects) under a strict CSP.
 
 colors:
   rail: "#f5f5f5"
@@ -18,9 +18,9 @@ colors:
   hairline-strong: "#c7c7c7"
   primary: "#111111"
   on-primary: "#ffffff"
-  accent: "#111111"
+  accent: "#2f5fd0"
   on-accent: "#ffffff"
-  accent-wash: "#e8e8e8"
+  accent-wash: "#e3eafb"
   focus: "#111111"
   selection: "#d9d9d9"
   attention: "#ad3a0b"
@@ -44,11 +44,11 @@ colors:
   tint-selected: "#e6e6e6"
   tint-well: "#f3f3f3"
   badge-red: "#b42d2d"
-  badge-orange: "#ad4f0f"
+  badge-orange: "#a74c0e"
   badge-amber: "#866100"
-  badge-lime: "#4d7312"
-  badge-green: "#22783f"
-  badge-teal: "#11766b"
+  badge-lime: "#4c7111"
+  badge-green: "#21763e"
+  badge-teal: "#107469"
   badge-cyan: "#0d6f88"
   badge-blue: "#3a5ec4"
   badge-violet: "#6b4fc2"
@@ -519,7 +519,7 @@ Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one
 **Key characteristics**
 - Two ladders carry the whole UI: surfaces (`rail` → `canvas` → `surface` → `raised`, plus `sunken` for wells) and text (`ink` → `body` → `muted` → `faint`). Chrome never uses a colour outside these ladders except the four semantic tones, the accent and the attention colour.
 - Borderless. Nothing in the chrome draws a line: a surface that floats or is interactive gets an elevation level (a soft cool shadow with a 1px ring), a field is a filled `sunken` surface, and a seam that must still read as one is a rule that fades out at both ends. Nothing inside a card gets another edge; nested structure uses a `sunken` well or an indent.
-- Colour is reserved for act-now (`attention`), in-motion (`accent`) and broken (`error`, `warning`). Ready is unlabelled: a finished row shows its relative time, not a colour. The one exception is the Project badge, a 20px square in one of ten tones that identifies a Project wherever it appears.
+- Colour is reserved for act-now (`attention`), in-motion (`accent`) and broken (`error`, `warning`). Ready is unlabelled: a finished row shows its relative time, not a colour. The one exception is identity: the Project badge, a 20px square in one of ten tones that identifies a Project wherever it appears, and the Project name on a Thread row and a subagent's name, which take that tone as text (owner, 2026-10-24: more colour on labels). The permissions label takes its risk tone, like its shield.
 - The assistant does not get a bubble. The user does.
 - Density is a row: 32px sidebar rows, 28px shelf headers, 24px ledger rows, 44px headers, 28px composer pickers. A coarse pointer grows every target to 44px by padding, not by scaling type.
 - Motion is functional, short and consistent (see Motion); every animation is off under `prefers-reduced-motion` once Settings → Motion is "Match system", the default on a touch-first device; on a desktop the default, "Always on", runs it even then.
@@ -528,7 +528,7 @@ Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one
 
 1. **Stable data only.** Rows show state the server knows (thread state, stage, time, branch, model), never heuristics or previews.
 2. **Typographic hierarchy before boxes.** Weight (400/500/600), then colour step (`ink`/`body`/`muted`), then indent, then a fading rule. A raised card is the last resort, and a drawn border never.
-3. **One accent, one alarm.** `accent` is the ink itself (Mono · Signal, 2026-10-18): the chrome is greyscale, and colour appears only for state. `attention` is the only warm one and the only one that may fill (a chip wash). The badge tones are identity, not state: they never mean anything but "this Project".
+3. **One accent, one alarm.** `accent` is blue (2026-10-24; the ink itself from 2026-10-18): the chrome stays greyscale and buttons stay ink, and colour appears on labels, for state and identity. `attention` is the only warm one and the only one that may fill (a chip wash). The badge tones are identity, not state: they never mean anything but "this Project".
 4. **Surfaces step and float, they do not stack.** Depth = one shade lighter and one level up the elevation ladder; the ladder's 1px ring is the only edge a surface has. Shadows are ink (`rgba(17,17,17,α)`) on this neutral canvas, two layers at most, and are never animated: a hover lift fades a pre-drawn shadow in through opacity.
 5. **Code is code, and only in the conversation.** Code blocks, inline code, tool rows, the commands in permission requests, native command output and diffs are JetBrains Mono at 11–13px. Everything else in the app, identifiers included (model, branch, path, version, keys), is Figtree.
 6. **Every action has three doors.** Anything in a context menu is also on a hover "…" button (always visible on touch) and reachable by keyboard.
@@ -537,7 +537,7 @@ Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one
 ## Colors
 
 ### Theme
-Two schemes on one token set. **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, the ink as accent, colour only for state. **Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, the accent the inverted ink, no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`. Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them). Semantic status colors retain their meaning in both. The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`). It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas. Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
+Two schemes on one token set. **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, a blue accent, colour on labels only (state and identity). **Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, a light blue accent (#86a6ff), no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`. Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them). Semantic status colors retain their meaning in both. The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`). It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas. Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
 
 In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), used as `bg-raised`, `text-muted`, `border-hairline` and so on. Tailwind's own palette is removed (`--color-*: initial`), so nothing outside this table can be written by accident.
 
@@ -559,7 +559,7 @@ In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), u
 ### Text
 | Role | Value | Use |
 |---|---|---|
-| `ink` | #111111 | Titles, selected and needs-you rows, user bubble text, code, project names |
+| `ink` | #111111 | Titles, selected and needs-you rows, user bubble text, code |
 | `body` | #3b3b3b | Assistant prose, default UI text, rows at rest |
 | `muted` | #626262 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
 | `faint` | #838383 | Glyphs only: chevrons, idle and closed marks, diff line numbers, version (≥3:1) |
@@ -576,10 +576,10 @@ No chrome draws a full-width or full-height line. Where a seam still needs a rul
 | Role | Value | Use |
 |---|---|---|
 | `primary` / `on-primary` | #111111 / #ffffff | Primary button and tooltip fill. There is no coloured primary button. |
-| `accent` / `on-accent` | #111111 / #ffffff | Focus ring, working dot and word, selected radio check, panel handle when active, caret |
+| `accent` / `on-accent` | #2f5fd0 / #ffffff (dark #86a6ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
 | `link` | #3a5ec4 (dark #86a6ff) | Web links in prose (owner, 2026-10-18: links and file references must read apart from the text and from each other) |
 | `file-link` | #0f6c62 (dark #4fd1bf) | A resolved file reference in prose: the file chip's name and glyph, on its `tint-well` chip |
-| `accent-wash` | #e8e8e8 | Locate flash in the transcript, the Settled shelf header's flash |
+| `accent-wash` | #e3eafb (dark #1a2340) | Locate flash in the transcript, the Settled shelf header's flash |
 | `attention` / `attention-wash` | #ad3a0b / #fbe5d6 | "Needs you": permission and question states, the Approval/Input row words, the chip on a pending card, the yolo mode icon |
 | `success` / `success-wash` | #137739 / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
 | `warning` / `warning-wash` | #8f5d00 / #fbefc6 | Interrupted state, reconnecting banner, context meter at ≥90% |
@@ -592,16 +592,16 @@ No chrome draws a full-width or full-height line. Where a seam still needs a rul
 | `diff-del-bg` / `diff-del-text` | #fde0e0 / #7f1d1d |
 
 ### Badges
-Each Project has a badge: two uppercase characters the service chooses from the name (unique among Projects, kept across renames) on one of ten tones, stored as the palette key. The tones are fills under `on-primary` text, tuned to the same depth as the semantic tones so they sit quietly on paper. They appear in sidebar Thread metadata, the Project filter, the Thread header and the Edit and Remove project dialogs; the Add project dialog says the badge is assigned when added, since available letters and colours can change before creation.
+Each Project has a badge: two uppercase characters the service chooses from the name (unique among Projects, kept across renames) on one of ten tones, stored as the palette key. The tones are fills under `on-primary` text, tuned to the same depth as the semantic tones so they sit quietly on paper. They appear in sidebar Thread metadata (where the Project name beside the badge takes the tone as text), the Project filter, the Thread header and the Edit and Remove project dialogs; the Add project dialog says the badge is assigned when added, since available letters and colours can change before creation.
 
 | Token | Value | On `on-primary` text | Against `rail` | Against `canvas` |
 |---|---|---|---|---|
 | `badge-red` | #b42d2d | 6.26 | 5.74 | 6.00 |
-| `badge-orange` | #ad4f0f | 5.38 | 4.94 | 5.16 |
+| `badge-orange` | #a74c0e | 5.70 | 5.23 | 5.46 |
 | `badge-amber` | #866100 | 5.64 | 5.17 | 5.40 |
-| `badge-lime` | #4d7312 | 5.56 | 5.10 | 5.33 |
-| `badge-green` | #22783f | 5.49 | 5.03 | 5.26 |
-| `badge-teal` | #11766b | 5.49 | 5.03 | 5.26 |
+| `badge-lime` | #4c7111 | 5.71 | 5.24 | 5.47 |
+| `badge-green` | #21763e | 5.64 | 5.17 | 5.40 |
+| `badge-teal` | #107469 | 5.64 | 5.17 | 5.40 |
 | `badge-cyan` | #0d6f88 | 5.76 | 5.28 | 5.52 |
 | `badge-blue` | #3a5ec4 | 5.87 | 5.38 | 5.62 |
 | `badge-violet` | #6b4fc2 | 5.96 | 5.47 | 5.71 |
