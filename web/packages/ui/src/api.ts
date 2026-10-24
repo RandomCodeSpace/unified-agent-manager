@@ -2467,11 +2467,6 @@ export function newRequestId(): string {
 /** This tab's name for its event streams, so what it reports showing (`api.viewing`) applies to them. */
 export const PAGE_ID = newRequestId();
 
-export function basename(path: string): string {
-  const parts = path.replace(/(?<!\/)\/+$/, '').split('/');
-  return parts.at(-1) || path;
-}
-
 /** Display name of a Task: the user's name, else the provider title, else a placeholder. */
 export function taskName(s: Pick<SessionSummary, 'name' | 'title'>): string {
   return s.name || s.title || '';

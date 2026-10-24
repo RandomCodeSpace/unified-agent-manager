@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, parentMap, replyIndex, runCount, runLines, spawnedBy, totalTokens } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, parentMap, replyIndex, runLines, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
 const call = (id, m) => ({ id, kind: 'tool', time: at(m), tool: { name: 'task', status: 'completed' } });
-const prose = (id, m) => ({ id, kind: 'assistant', time: at(m), text: 'Done.' });
 const agent = (id, parent, status = 'completed', extra = {}) => ({ id, name: `Agent ${id}`, parent_tool_call_id: parent, status, ...extra });
 
 test('a reply counts its subagents: done is completed or idle, stopped is cancelled, only the parts that are not zero', () => {
@@ -15,11 +14,7 @@ test('a reply counts its subagents: done is completed or idle, stopped is cancel
   assert.deepEqual(countParts(countSubagents([agent('a', 'c1')])), [{ text: '1 done', tone: 'success' }]);
 });
 
-test('a reply\'s subagents are the ones its calls spawned, in spawn order; one call shared by two records keeps the later', () => {
-  const reply = [user('u1', 0), call('c2', 2), prose('m', 3), call('c1', 4)];
-  const subagents = [agent('first', 'c1'), agent('second', 'c2'), agent('elsewhere', 'c9'), agent('orphan', undefined)];
-  assert.deepEqual(spawnedBy(reply, subagents).map((s) => s.id), ['second', 'first']);
-  assert.deepEqual(spawnedBy([user('u2', 5), prose('m2', 6)], subagents), []);
+test('one call shared by two subagent records keeps the later', () => {
   const twice = [agent('old', 'c1'), agent('new', 'c1')];
   assert.equal(parentMap(twice).get('c1').id, 'new');
   assert.equal(parentMap(twice), parentMap(twice));
@@ -121,12 +116,9 @@ test('the header index groups subagents by the user message that started their r
   assert.deepEqual(indexGroups(bare, [], [agent('a1', 'c1')]).map((g) => [g.key, g.text, g.time]), [['u1', '', at(0)]]);
 });
 
-test('a full run record says "50+ runs" and marks where earlier runs were dropped', () => {
+test('a full run record marks where earlier runs were dropped', () => {
   const run = (m, trigger = 'agent') => ({ started_at: at(m % 60), ended_at: at(m % 60), status: 'completed', trigger });
-  assert.equal(runCount(agent('a', 'c')), '');
-  assert.equal(runCount(agent('a', 'c', 'completed', { runs: [run(1, 'spawn'), run(2)] })), '2 runs');
   const full = agent('a', 'c', 'completed', { runs: [run(0, 'spawn'), ...Array.from({ length: 49 }, (_, i) => run(i + 1))] });
-  assert.equal(runCount(full), '50+ runs');
   const lines = runLines(full);
   assert.deepEqual(lines.slice(0, 3).map((l) => [l.n, l.gapBefore]), [[1, false], [null, true], [null, false]]);
   assert.equal(lines.at(-1).n, null);

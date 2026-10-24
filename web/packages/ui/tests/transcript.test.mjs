@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -106,12 +106,6 @@ test('the row label is the tool name and its argument, with the title as the fal
   assert.deepEqual(toolLabel({ name: '', status: 'completed', title: 'Read templates/post.html' }), { name: 'Read', arg: 'templates/post.html' });
   assert.deepEqual(toolLabel({ name: 'bash', status: 'running' }), { name: 'bash', arg: '' });
   assert.deepEqual(toolLabel(undefined), { name: 'Tool', arg: '' });
-});
-
-test('a run of more than 8 calls keeps the first 2 and the last 3', () => {
-  assert.deepEqual(foldWindow(8), { head: 8, hidden: 0, tail: 0 });
-  assert.deepEqual(foldWindow(9), { head: 2, hidden: 4, tail: 3 });
-  assert.deepEqual(foldWindow(16), { head: 2, hidden: 11, tail: 3 });
 });
 
 const item = (id, agent_id, time = '2026-09-24T10:00:00Z', t = tool('bash', '{"command":"ls"}')) => ({ id, kind: 'tool', tool: t, time, agent_id });
@@ -241,12 +235,9 @@ test('a question interaction alone drives the block, so any provider gets it', (
   assert.deepEqual(questions, []);
 });
 
-test('foreground elapsed uses recorded turn evidence across steer and rejects unknown times', async () => {
-  const { foregroundStart, elapsedSince } = await import('../src/lib/transcript.ts');
+test('elapsed time uses a recorded start and rejects unknown times', async () => {
+  const { elapsedSince } = await import('../src/lib/transcript.ts');
   const start = '2026-09-24T12:00:00Z';
-  const timings = [{ id: 'turn', user_item_id: 'user', started_at: start, state: 'working' }];
-  assert.equal(foregroundStart(timings), start);
-  assert.equal(foregroundStart([]), undefined);
   assert.equal(elapsedSince(start, Date.parse('2026-09-24T12:13:00Z')), '13m');
   assert.equal(elapsedSince(undefined, Date.now()), null);
   assert.equal(elapsedSince('invalid', Date.now()), null);
@@ -285,32 +276,28 @@ test('all current turn segments stay live across steer, while earlier turns stay
 });
 
 test('recorded final duration is stable and unknown history has no invented interval', async () => {
-  const { foregroundStart, completedDuration, timingForTurn } = await import('../src/lib/transcript.ts');
+  const { completedDuration, timingForTurn } = await import('../src/lib/transcript.ts');
   const working = { id: 'turn', user_item_id: 'user', started_at: '2026-09-24T12:00:00Z', state: 'working' };
-  assert.equal(foregroundStart([working]), working.started_at);
   assert.equal(completedDuration(working), null);
   for (const state of ['completed', 'cancelled', 'failed']) {
     const ended = { ...working, ended_at: '2026-09-24T12:00:42Z', state };
     assert.equal(completedDuration(ended), '42s');
-    assert.equal(foregroundStart([ended]), undefined);
     assert.deepEqual(timingForTurn([ended], 'user'), ended);
   }
   assert.equal(timingForTurn([working], 'imported-user'), undefined);
   assert.equal(completedDuration(undefined), null);
   assert.equal(completedDuration({ ...working, state: 'unknown' }), null);
-  assert.equal(foregroundStart([{ ...working, state: 'unknown' }]), undefined);
   assert.equal(completedDuration({ ...working, state: 'completed', ended_at: 'invalid' }), null);
   assert.equal(completedDuration({ ...working, state: 'completed', ended_at: '2026-09-24T11:59:00Z' }), null);
 });
 
 test('autopilot user continuations retain the original foreground across prose segments', async () => {
-  const { foregroundItems, foregroundStart, timingForTurn } = await import('../src/lib/transcript.ts');
+  const { foregroundItems, timingForTurn } = await import('../src/lib/transcript.ts');
   const items = [{ id: 'old-user', kind: 'user' }, { id: 'old-reply', kind: 'assistant' }, { id: 'user', kind: 'user' }, { id: 'progress', kind: 'assistant' }, { id: 'auto', kind: 'user', delivery: 'autopilot' }, { id: 'later', kind: 'assistant' }, { id: 'steer', kind: 'user', delivery: 'steer' }, { id: 'final', kind: 'assistant' }];
   const timing = { id: 'turn', user_item_id: 'user', state: 'working', started_at: '2026-09-24T12:00:00Z' };
   const foreground = foregroundItems(items);
   assert.deepEqual(foreground.map((item) => item.id), ['user', 'progress', 'auto', 'later', 'steer', 'final']);
   assert.equal(timingForTurn([timing], foreground[0].id), timing);
-  assert.equal(foregroundStart([timing]), timing.started_at);
 });
 
 test('an empty response keeps its recorded duration after the next ordinary prompt arrives', async () => {

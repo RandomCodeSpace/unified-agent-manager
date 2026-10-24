@@ -242,19 +242,6 @@ export function gitLabMarkdown(text: string, origin?: GitLabOrigin): string {
   return text.replace(/(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?)\/uploads\//gm, `$1https://${origin.host}/${origin.path}/uploads/`);
 }
 
-/** A Markdown body as one line of plain text, for a list that clamps it. */
-export function markdownSummary(text: string): string {
-  return text
-    .replace(/^ {0,3}(```|~~~).*$/gm, '')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^ {0,3}(#{1,6} +|> ?|[-*+] +(\[[ xX]\] +)?|\d+[.)] +)/gm, '')
-    .replace(/\*\*|__|~~|`/g, '')
-    .replace(/(^|[^\w*])\*(?=\S)|(?<=\S)\*(?=[^\w*]|$)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 /** A GitLab item's address in the Thread's project (an epic in its parent group). */
 export function gitLabUrl(r: GitLabRef, origin: GitLabOrigin): string {
   if (r.kind === 'epic') return `https://${origin.host}/groups/${r.group ?? parentGroup(origin.path)}/-/epics/${r.id}`;

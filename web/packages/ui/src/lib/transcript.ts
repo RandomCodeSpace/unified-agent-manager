@@ -121,17 +121,6 @@ export function readableInput(name: string, input: string): { kind: 'command' | 
   return command ? { kind: 'command', text: command } : { kind: 'input', text: input };
 }
 
-/** Runs longer than this fold their middle. */
-export const FOLD_AFTER = 8;
-const FOLD_HEAD = 2;
-const FOLD_TAIL = 3;
-
-/** How a run of `count` rows shows: all of them, or the first `head`, "Show `hidden` more", the last `tail`. */
-export function foldWindow(count: number): { head: number; hidden: number; tail: number } {
-  if (count <= FOLD_AFTER) return { head: count, hidden: 0, tail: 0 };
-  return { head: FOLD_HEAD, hidden: count - FOLD_HEAD - FOLD_TAIL, tail: FOLD_TAIL };
-}
-
 /** Reveal roughly 100 more items, keeping the first turn whole (including steers). */
 export function transcriptWindowStart(items: Item[], before = items.length): number {
   let start = Math.max(0, before - 100);
@@ -448,12 +437,6 @@ export function foregroundItems(items: Item[]): Item[] {
     if (items[i].kind === 'user' && !items[i].delivery) return items.slice(i);
   }
   return items;
-}
-
-/** The live clock uses recorded foreground evidence, never message timestamps. */
-export function foregroundStart(timings: TurnTiming[]): string | undefined {
-  const current = timings.at(-1);
-  return current?.state === 'working' ? current.started_at : undefined;
 }
 
 /** Link the recorded interval to the ordinary user message that began its turn. */

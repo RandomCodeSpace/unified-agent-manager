@@ -75,15 +75,8 @@ export function notificationHash(target: NotificationTarget): string {
 
 let notificationSource: NotificationSource | null = null;
 let connectedAttention: ConnectedAttention[] = [];
-const attentionListeners = new Set<(sources: ConnectedAttention[]) => void>();
-export function onConnectedAttention(listener: (sources: ConnectedAttention[]) => void): () => void {
-  attentionListeners.add(listener);
-  listener(connectedAttention);
-  return () => { attentionListeners.delete(listener); };
-}
 function publishAttention(sources: ConnectedAttention[]): void {
   connectedAttention = sources;
-  for (const listener of attentionListeners) listener(sources);
 }
 
 export function setNotificationSource(source: NotificationSource | null): void {

@@ -186,12 +186,6 @@ export function modelCostLine(model: Pick<Model, 'cost_tier' | 'discount_percent
 /** The unit of `modelCostLine` without its own. */
 export const MODEL_PRICE_UNIT = `credits per ${compactTokens(BATCH)} tokens`;
 
-/** The quota the credits chip shows for a provider: its first limited one, else its first; null when it reports none. */
-export function providerQuota(quotas: readonly Quota[] | undefined, provider: string): Quota | null {
-  const mine = (quotas ?? []).filter((q) => q.provider === provider);
-  return mine.find((q) => !q.unlimited) ?? mine[0] ?? null;
-}
-
 /** "AI credits" when the provider bills the quota by tokens, "premium requests" for Copilot's premium_interactions; other types read as words. */
 export function quotaLabel(quota: Pick<Quota, 'type' | 'unit'>): string {
   if (quota.unit === 'ai_credits') return 'AI credits';
@@ -209,11 +203,4 @@ export function planName(plan: string | undefined): string {
 /** The chip's face: "88% left", or "Unlimited". */
 export function quotaFace(quota: Pick<Quota, 'unlimited' | 'remaining_percent'>): string {
   return quota.unlimited ? 'Unlimited' : `${Math.round(quota.remaining_percent)}% left`;
-}
-
-/** "180 of 1,500 premium requests used", with the overage when there is one. */
-export function quotaText(quota: Quota): string {
-  if (quota.unlimited) return `Unlimited ${quotaLabel(quota)}`;
-  const base = `${quota.used.toLocaleString('en-US')} of ${quota.entitlement.toLocaleString('en-US')} ${quotaLabel(quota)} used`;
-  return quota.overage > 0 ? `${base} · ${quota.overage.toLocaleString('en-US')} over` : base;
 }

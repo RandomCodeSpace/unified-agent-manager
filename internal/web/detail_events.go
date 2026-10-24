@@ -294,18 +294,6 @@ func compactItemBytes(it compactItem) int {
 
 // Capture immutable resource values and register at one barrier. The handler
 // serializes one resource at a time outside the lock; live frames queue after it.
-func (m *Manager) subscribeDetail(id, agent string, refs []bodyRef) (*Subscriber, []initialDetailFrame, error) {
-	return m.subscribeDetailRange(id, agent, refs, "")
-}
-
-func (m *Manager) subscribeDetailRange(id, agent string, refs []bodyRef, before string) (*Subscriber, []initialDetailFrame, error) {
-	return m.subscribeDetailKnown(id, agent, refs, before, "", nil)
-}
-
-func (m *Manager) subscribeDetailKnown(id, agent string, refs []bodyRef, before, epoch string, known map[bodyRef]uint64) (*Subscriber, []initialDetailFrame, error) {
-	return m.subscribeDetailWindow(id, agent, refs, before, "", epoch, known)
-}
-
 func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before, until, epoch string, known map[bodyRef]uint64) (*Subscriber, []initialDetailFrame, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

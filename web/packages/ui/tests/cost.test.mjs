@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota, planName, quotaLabel, quotaText } from '../src/lib/cost.ts';
+import { estimateTurnCost, modelCostLine, priceTier, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota, planName, quotaLabel } from '../src/lib/cost.ts';
 
 // Pace counts working days in the browser's time zone; the expectations below are in UTC unless a test picks a zone.
 process.env.TZ = 'UTC';
@@ -38,12 +38,6 @@ test('context and quota warning boundaries match their different meanings', () =
   assert.equal(ringTone(0.79), 'accent');
   assert.equal(ringTone(0.8), 'attention');
   assert.equal(ringTone(0.95), 'danger');
-});
-
-test('quota belongs to the selected provider and prefers a limited allowance', () => {
-  const limited = { provider: 'copilot', type: 'premium_interactions', unlimited: false };
-  assert.equal(providerQuota([{ provider: 'other', unlimited: false }, { provider: 'copilot', unlimited: true }, limited], 'copilot'), limited);
-  assert.equal(providerQuota([limited], 'other'), null);
 });
 
 const quota = { provider: 'copilot', type: 'premium_interactions', used: 50, entitlement: 100, unlimited: false, remaining_percent: 50, overage: 0, reset_at: '2026-11-01T00:00:00Z' };
@@ -182,9 +176,9 @@ test('the allowance month: used so far, projected to the reset at the average pa
 
 test('a quota billed by tokens reads as AI credits, and the plan tier reads as its name', () => {
   const quota = { provider: 'copilot', type: 'premium_interactions', used: 218, entitlement: 1500, unlimited: false, remaining_percent: 85.5, overage: 0 };
-  assert.equal(quotaText(quota), '218 of 1,500 premium requests used');
-  assert.equal(quotaText({ ...quota, unit: 'requests' }), '218 of 1,500 premium requests used');
-  assert.equal(quotaText({ ...quota, unit: 'ai_credits' }), '218 of 1,500 AI credits used');
+  assert.equal(quotaLabel(quota), 'premium requests');
+  assert.equal(quotaLabel({ ...quota, unit: 'requests' }), 'premium requests');
+  assert.equal(quotaLabel({ ...quota, unit: 'ai_credits' }), 'AI credits');
   assert.equal(quotaLabel({ type: 'chat' }), 'chat');
   assert.equal(planName('pro_plus'), 'Pro+');
   assert.equal(planName('team_plan'), 'team plan');
