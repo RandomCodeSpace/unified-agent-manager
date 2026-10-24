@@ -54,6 +54,9 @@ const LONG_REPLIES: Record<string, string[]> = {
   t21: ['Upload the .sig files next to each archive in the release job, then add a section to the install docs that explains how to fetch the public key and verify a downloaded archive with cosign before anyone runs it, and link it from the README.'],
 };
 
+/** `?mock&decide` (G1): the one reply code picks from what the turn did; none for a plain answer. */
+const DECIDE_REPLIES: Record<string, string[]> = { 'g1-explain': [], 'g1-tests': ['Fix the failing tests'], 'g1-ask': ['Yes, go ahead'], 'g1b-ci': [] };
+
 export function assistMock(host: AssistHost) {
   return function route(method: string, url: URL, body: Json): Response | null {
     const path = url.pathname;
@@ -63,7 +66,7 @@ export function assistMock(host: AssistHost) {
       if (!t) return fail(404, 'session not found');
       const last = t.items.filter((i) => !i.agent_id).at(-1);
       const on = host.settings().suggest_replies !== false && t.state === 'completed' && last?.kind === 'assistant';
-      return json(200, on ? { item_id: last.id, replies: LONG_REPLIES[t.id] ?? REPLIES } : { item_id: '', replies: [] });
+      return json(200, on ? { item_id: last.id, replies: DECIDE_REPLIES[t.id] ?? LONG_REPLIES[t.id] ?? REPLIES } : { item_id: '', replies: [] });
     }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/evidence$/)) && method === 'GET') {
       const t = host.task(decodeURIComponent(r[1]));

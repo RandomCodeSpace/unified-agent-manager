@@ -795,7 +795,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           ]}
         />
       </Row>
-      <Row id="suggest-replies" label="Suggest replies" help="After a turn, a reply you might send next shows as faint text in the empty composer. Right Arrow or End fills it in; nothing is sent, and typing replaces it. It takes one Utility model call per finished turn you open.">
+      <Row id="suggest-replies" label="Suggest replies" help="After a turn, one reply you might send next shows as faint text in the empty composer: Commit this, Push it, Run the tests, Fix the failing tests, Fix the failed command, or Yes, go ahead / No, leave it when the answer ends with a question. uam picks it from what the turn did and asks the Utility model only when more than one fits; a plain answer gets none. Right Arrow or End fills it in; nothing is sent, and typing replaces it.">
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
       {repliesPaused && (

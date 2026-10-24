@@ -224,6 +224,80 @@ export function budgetTasks(dir: string): MockTask[] {
   ];
 }
 
+/**
+ * `?mock&decide`: the owner-gated Decide mocks (2026-10-24 plan). Three finished turns for the
+ * suggested reply (G1), a Thread whose CI failed twice (G1b), and a Safe Thread on its third
+ * identical `git status` request (G1c). `now` keeps today's option order.
+ */
+export function decideTasks(dir: string, now: boolean): MockTask[] {
+  const base = { project_id: 'p1', workdir: dir, model: 'gpt-6-luna', last_model: 'gpt-6-luna', title: '' };
+  const sh = (id: string, min: number, command: string, output: string, extra: Partial<ToolCall> = {}) =>
+    tool(id, min, { name: 'bash', title: command, status: 'completed', input: JSON.stringify({ command }), output, ...extra });
+  const once = { id: 'approve_once', label: 'Allow once' }, session = { id: 'approve_session', label: 'Allow for this session' }, deny = { id: 'reject', label: 'Deny', reject: true };
+  return [
+    task({
+      ...base, id: 'g1-explain', name: 'Explain the redraw order', state: 'completed', created_at: ago(9), updated_at: ago(8),
+      turn_timings: [{ id: 'tt-e1', user_item_id: 'e1', started_at: ago(9), ended_at: ago(7.9), state: 'completed', model: 'gpt-6-luna' }],
+      items: [
+        { id: 'e1', kind: 'user', time: ago(9), text: 'Why does Redraw replay the private modes before the screen?' },
+        { id: 'e2', kind: 'assistant', time: ago(8), text: 'A re-attached client starts from a reset terminal. `Redraw` sends the private modes first (bracketed paste, focus events, the alternate screen) so the screen it paints next lands in the right buffer with the right input modes. Painting first and switching to the alternate screen afterwards would show the screen once in the main buffer and then blank it.' },
+      ],
+    }),
+    task({
+      ...base, id: 'g1-tests', name: 'Round the cache TTL to whole seconds', state: 'completed', created_at: ago(30), updated_at: ago(21),
+      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(30), ended_at: ago(20.9), state: 'completed', model: 'gpt-6-luna' }],
+      items: [
+        { id: 'f1', kind: 'user', time: ago(30), text: 'Round the cache TTL to whole seconds before it is stored.' },
+        tool('f2', 26, { name: 'edit', title: 'Edit internal/cache/ttl.go', status: 'completed', path: `${dir}/internal/cache/ttl.go`, output: '+\treturn ttl.Round(time.Second)', file_edits: [{ path: 'internal/cache/ttl.go', kind: 'modified', additions: 2, deletions: 1, diff_status: 'available' }] }),
+        sh('f3', 23, 'go test ./internal/cache/...', '--- FAIL: TestTTLKeepsMilliseconds (0.00s)\n--- FAIL: TestExpiryRoundTrip (0.01s)\nFAIL\tgithub.com/example/app/internal/cache\t0.31s\n<shellId: 0 completed with exit code 1>', { status: 'failed', tests: { passed: 14, failed: 2 } }),
+        { id: 'f4', kind: 'assistant', time: ago(21), text: 'The TTL is now rounded to whole seconds in `ttl.go`. Two cache tests fail: `TestTTLKeepsMilliseconds` still expects the old sub-second value, and `TestExpiryRoundTrip` compares an unrounded expiry.' },
+      ],
+    }),
+    task({
+      ...base, id: 'g1-ask', name: 'Remove the unused pager flags', state: 'completed', created_at: ago(16), updated_at: ago(12),
+      turn_timings: [{ id: 'tt-q1', user_item_id: 'q1', started_at: ago(16), ended_at: ago(11.9), state: 'completed', model: 'gpt-6-luna' }],
+      items: [
+        { id: 'q1', kind: 'user', time: ago(16), text: 'Find the pager flags nothing reads any more.' },
+        tool('q2', 14, { name: 'grep', title: 'Search "pagerFlag" in internal/', status: 'completed', output: '3 matches' }),
+        { id: 'q3', kind: 'assistant', time: ago(12), text: 'Three pager flags have no readers left: `--pager-wrap`, `--pager-tail` and `--pager-raw`. Each is parsed in `cmd/flags.go` and never used after that. Should I delete them and their parsing code?' },
+      ],
+    }),
+    task({
+      ...base, id: 'g1b-ci', name: 'Find why the cache pipeline failed', state: 'completed', created_at: ago(50), updated_at: ago(6),
+      turn_timings: [{ id: 'tt-c1', user_item_id: 'c1', started_at: ago(50), ended_at: ago(46.9), state: 'completed', model: 'gpt-6-luna' }, { id: 'tt-c4', user_item_id: 'c4', started_at: ago(10), ended_at: ago(5.9), state: 'completed', model: 'gpt-6-luna' }],
+      items: [
+        { id: 'c1', kind: 'user', time: ago(50), text: 'The pipeline on fix/cache-ttl failed. Find out why.' },
+        sh('c2', 48, 'glab ci view -p 4416', 'Pipeline #4416 failed\n  build:image  failed\n<shellId: 0 completed with exit code 0>'),
+        sh('c2b', 47.5, 'glab ci trace 99087', 'Running on runner-7k2 ...\nERROR: Job failed (system failure): pod "runner-7k2-build" was evicted: The node was low on resource: ephemeral-storage.\n<shellId: 1 completed with exit code 0>'),
+        { id: 'c3', kind: 'assistant', time: ago(47), text: 'Pipeline #4416 failed in `build:image` because the runner was evicted for low disk. Nothing in the branch caused it.' },
+        { id: 'c4', kind: 'user', time: ago(10), text: 'I retried it. Check the new one.' },
+        sh('c5', 8, 'glab ci view -p 4417', 'Pipeline #4417 failed\n  test:unit  failed\n<shellId: 2 completed with exit code 0>'),
+        sh('c5b', 7.5, 'glab ci trace 99102', '--- FAIL: TestTTLKeepsMilliseconds (0.00s)\n--- FAIL: TestExpiryRoundTrip (0.01s)\nFAIL\tgithub.com/example/app/internal/cache\t0.31s\nERROR: Job failed: exit code 1\n<shellId: 3 completed with exit code 0>'),
+        { id: 'c6', kind: 'assistant', time: ago(6), text: 'Pipeline #4417 failed in `test:unit`: `TestTTLKeepsMilliseconds` and `TestExpiryRoundTrip` still expect sub-second TTLs.' },
+      ],
+    }),
+    task({
+      ...base, id: 'g1c-perm', name: 'Check the working tree between steps', state: 'awaiting_permission', pending: 1, mode: 'safe', created_at: ago(12), updated_at: ago(1),
+      turn_timings: [{ id: 'tt-p1', user_item_id: 'p1', started_at: ago(12), state: 'working', model: 'gpt-6-luna' }],
+      items: [
+        { id: 'p1', kind: 'user', time: ago(12), text: 'Stage the cache fix in three steps and show me git status after each one.' },
+        sh('p2', 10, 'git status', 'On branch fix/cache-ttl\nChanges not staged for commit:\n\tmodified:   internal/cache/ttl.go\n<shellId: 0 completed with exit code 0>'),
+        sh('p3', 9, 'git add internal/cache/ttl.go', '<shellId: 1 completed with exit code 0>'),
+        sh('p4', 6, 'git status', 'On branch fix/cache-ttl\nChanges to be committed:\n\tmodified:   internal/cache/ttl.go\n<shellId: 2 completed with exit code 0>'),
+        sh('p5', 4, 'git add internal/cache/ttl_test.go', '<shellId: 3 completed with exit code 0>'),
+        tool('p6', 1, { name: 'bash', title: 'git status', status: 'pending', input: JSON.stringify({ command: 'git status' }) }),
+      ],
+      interactions: [
+        { id: 'perm-p2', kind: 'permission', title: 'Run shell command', detail: 'git status', state: 'answered', resolution: 'Allow once', time: ago(10), tool_call_id: 'p2' },
+        { id: 'perm-p3', kind: 'permission', title: 'Run shell command', detail: 'git add internal/cache/ttl.go', state: 'answered', resolution: 'Allow once', time: ago(9), tool_call_id: 'p3' },
+        { id: 'perm-p4', kind: 'permission', title: 'Run shell command', detail: 'git status', state: 'answered', resolution: 'Allow once', time: ago(6), tool_call_id: 'p4' },
+        { id: 'perm-p5', kind: 'permission', title: 'Run shell command', detail: 'git add internal/cache/ttl_test.go', state: 'answered', resolution: 'Allow once', time: ago(4), tool_call_id: 'p5' },
+        { id: 'perm-p6', kind: 'permission', title: 'Run shell command', detail: 'git status', state: 'pending', time: ago(1), tool_call_id: 'p6', options: now ? [once, session, deny] : [session, once, deny] },
+      ],
+    }),
+  ];
+}
+
 export function seed(): MockState {
   const wholeTexts: Record<string, string> = {};
   const meta: Meta = {

@@ -15,7 +15,7 @@ import { serviceMock } from './service';
 import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
-import { budgetTasks, seed, type MockState, type MockTask } from './data';
+import { budgetTasks, decideTasks, seed, type MockState, type MockTask } from './data';
 import { seedAsides } from './asides';
 import { seedUtility, utilityLog } from './utility';
 import { cleanPath } from '../lib/folders';
@@ -145,6 +145,9 @@ export function install(): { received: Received[] } {
   if (new URLSearchParams(window.location.search).has('manychanges')) {
     for (let i = 1; i <= 40; i++) st.changes.p1.push({ path: `web/src/generated/module-${i}.ts`, status: 'M', additions: i, deletions: 1, patch: '' });
   }
+  // `?mock&decide` adds the Decide review Threads; `?mock&decide=now` shows them as today's build would.
+  const decide = new URLSearchParams(window.location.search).get('decide');
+  if (decide !== null) st.tasks.push(...decideTasks(st.projects.find((p) => p.id === 'p1')!.dir, decide === 'now'));
   if (new URLSearchParams(window.location.search).has('budget')) st.tasks.push(...budgetTasks(st.projects.find((p) => p.id === 'p1')!.dir));
   // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
   st.settings.utility_daily_limit = 40;
@@ -778,6 +781,18 @@ export function install(): { received: Received[] } {
       const known: Record<string, object> = {
         'mr:42': { kind: 'mr', title: 'Replay focus events on re-attach', state: 'opened', pipeline_id: 91, pipeline_state: 'success', web_url: 'https://gitlab.example.com/group/repo/-/merge_requests/42' },
         'issue:17': { kind: 'issue', title: 'Focus lost after re-attach', state: 'closed', web_url: 'https://gitlab.example.com/group/repo/-/issues/17' },
+      };
+      return json(200, { items: url.searchParams.getAll('ref').map((ref) => ({ ref, ...(known[ref] ?? { kind: '', error: 'unavailable' }) })) });
+    }
+    // `?mock&decide` (G1b): two failed pipelines, each with what failed in its jobs.
+    if (path === '/api/sessions/g1b-ci/gitlab' && method === 'GET') return json(200, { supported: true, auto_investigate: false, can_investigate: false, origin: { host: 'gitlab.example.com', path: 'group/repo' } });
+    if (path === '/api/sessions/g1b-ci/gitlab/items' && method === 'GET') {
+      const label = (failure_kind: string, failure_detail: string) => (decide === 'now' ? {} : { failure_kind, failure_detail });
+      const known: Record<string, object> = {
+        'job:99087': { kind: 'job', title: 'build:image', state: 'failed', pipeline_id: 4416, web_url: 'https://gitlab.example.com/group/repo/-/jobs/99087', ...label('Runner failure', 'not your change') },
+        'pipeline:4416': { kind: 'pipeline', state: 'failed', web_url: 'https://gitlab.example.com/group/repo/-/pipelines/4416', ...label('Runner failure', 'not your change') },
+        'job:99102': { kind: 'job', title: 'test:unit', state: 'failed', pipeline_id: 4417, web_url: 'https://gitlab.example.com/group/repo/-/jobs/99102', ...label('Tests failed', '2 tests') },
+        'pipeline:4417': { kind: 'pipeline', state: 'failed', web_url: 'https://gitlab.example.com/group/repo/-/pipelines/4417', ...label('Tests failed', '2 tests') },
       };
       return json(200, { items: url.searchParams.getAll('ref').map((ref) => ({ ref, ...(known[ref] ?? { kind: '', error: 'unavailable' }) })) });
     }

@@ -306,6 +306,10 @@ export function stateBlocks(item?: GitLabItemSummary): Block[] {
     const pipeline = item.pipeline_state;
     out.push({ key: 'pipeline', tone: blockTone(pipeline), Icon: pipeline === 'success' ? Check : pipeline === 'failed' ? X : CircleDashed, label: 'pipeline', title: `pipeline ${statusLabel(pipeline).toLowerCase()}` });
   }
+  if (item.failure_kind) {
+    const failure = item.failure_detail ? `${item.failure_kind} · ${item.failure_detail}` : item.failure_kind;
+    out.push({ key: 'failure', tone: 'none', label: failure, title: failure });
+  }
   if (item.stale) out.push({ key: 'stale', tone: 'none', label: 'stale', title: 'stale' });
   return out;
 }
