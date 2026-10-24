@@ -19,8 +19,8 @@ import (
 
 // The assist features (docs/web.md): replies suggested after a turn, the
 // outcome line of a completed turn, Run again and Export as Markdown. The
-// suggestions and the outcome's verb phrase are Utility model calls, one per
-// finished turn at most; everything else is built from the transcript.
+// suggestions are a Utility model call, one per finished turn at most;
+// everything else is built from the transcript.
 const (
 	// maxSuggestedReplies is one: the composer shows a single suggestion.
 	maxSuggestedReplies    = 1
@@ -31,11 +31,8 @@ const (
 	assistTimeout = 45 * time.Second
 )
 
-// The purposes of the assist Utility calls, in the Utility log.
-const (
-	purposeSuggestReplies = "suggest-replies"
-	purposeOutcome        = "outcome"
-)
+// purposeSuggestReplies names the suggestion calls in the Utility log.
+const purposeSuggestReplies = "suggest-replies"
 
 // assistRoutes adds the assist endpoints.
 func (s *Server) assistRoutes(mux *http.ServeMux) {
@@ -85,18 +82,14 @@ func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, 
 	req.Timeout = assistTimeout
 	call.Purpose, call.Model = req.Purpose, req.Model
 	job := suggestionJob
-	if req.Purpose == purposeOutcome {
-		job = outcomeJob
-	} else {
-		// A Thread settled or archived meanwhile needs no replies.
-		job.wanted = func() error {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			if s := m.sessions[call.TaskID]; s == nil || s.removed || s.stage != StageActive {
-				return errors.New("the thread is no longer active")
-			}
-			return nil
+	// A Thread settled or archived meanwhile needs no replies.
+	job.wanted = func() error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if s := m.sessions[call.TaskID]; s == nil || s.removed || s.stage != StageActive {
+			return errors.New("the thread is no longer active")
 		}
+		return nil
 	}
 	return m.runJob(ctx, job, call, runner, req)
 }
@@ -402,14 +395,10 @@ func outcomeLine(verb string, ev turnOutcome) string {
 
 // outcomeTurnLocked updates s's outcome line for a turn transition: a turn
 // that starts clears it, and one that completes gets the line its evidence
-// shows at once. A matching accepted native summary supplies the phrase; a
-// turn with no edits or commands reads "Answered"; otherwise a Utility call
-// supplies it when a model can run. The caller holds mu.
+// shows, such as "1 file changed; tests pass". A matching accepted native
+// summary supplies a phrase before it; a turn with no edits or commands
+// reads "Answered". No model is asked. The caller holds mu.
 func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, completion *agentapi.TaskCompletion) {
-	if state == agentapi.TurnWorking && s.outcome == "" && s.outcomeRun == 0 {
-		return
-	}
-	s.outcomeRun++
 	s.outcome = ""
 	if state != agentapi.TurnCompleted {
 		return
@@ -432,39 +421,9 @@ func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, com
 	if !ok || last < 0 || s.items[last].Kind != agentapi.ItemAssistant || strings.TrimSpace(s.items[last].Text) == "" {
 		return
 	}
-	// A turn that changed nothing visible needs no model to name it.
 	if len(facts.edits) == 0 && facts.commands == 0 {
 		s.outcome = outcomeLine("Answered", ev)
-		return
 	}
-	runner, model := m.assistRunnerLocked(s)
-	if runner == nil {
-		return
-	}
-	user := s.items[s.lastMain(agentapi.ItemUser, last)].Text
-	prompt := "<user_message>\n" + assistInput(user) + "\n</user_message>\n<agent_reply>\n" + assistInput(s.items[last].Text) + "\n</agent_reply>"
-	req := agentapi.UtilityRequest{Model: model, Workdir: s.workdir, Purpose: purposeOutcome, System: outcomeJobSystem, Prompt: prompt}
-	call := UtilityCall{Provider: s.provider, TaskID: s.id, ProjectID: s.projectID}
-	run := s.outcomeRun
-	// Past today's Utility limit the line keeps the evidence alone.
-	go func() {
-		defer m.titles.Done()
-		reply, err := m.runAssist(m.ctx, runner, call, req)
-		verb := cleanGeneratedTitle(reply)
-		if err != nil || verb == "" {
-			log.Info("turn outcome has no verb phrase", "session", s.id, "model", model, "error", err)
-			return
-		}
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.closed || s.removed || s.outcomeRun != run {
-			return
-		}
-		before := m.summaryLocked(s)
-		s.outcome = outcomeLine(verb, ev)
-		m.changedLocked(s, before)
-		log.Info("turn outcome phrased", "session", s.id, "model", model)
-	}()
 }
 
 /* ---------- Run again ---------- */

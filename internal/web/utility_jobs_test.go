@@ -59,21 +59,19 @@ func TestUtilityAnswerShapes(t *testing.T) {
 		{"clean", `{"verb":"Fixed","object":"the test"}`, true},
 		{"preamble", `Here is the answer: {"verb":"Fixed","object":"the test"}`, true},
 		{"think", `<think>{"verb":"Wrong"}</think>` + "\n```json\n" + `{"verb":"Fixed","object":"the test"}` + "\n```", true},
-		{"casing", `{"verb":"fixed","object":"the test"}`, false},
-		{"enum", `{"verb":"Deleted","object":"the test"}`, false},
-		{"range", `{"verb":"Fixed","object":"one two three four five six seven"}`, false},
 		{"two answers", `{"verb":"Fixed","object":"the test"} {"verb":"Reviewed","object":"the test"}`, false},
 		{"refusal", `I cannot help. {"verb":"Fixed","object":"the test"}`, false},
 		{"embedded object", `{"answer":{"verb":"Fixed","object":"the test"}}`, false},
-		{"invented object", `{"verb":"Fixed","object":"a production outage"}`, false},
-		{"missing object", `{"verb":"Fixed"}`, false},
-		{"null object", `{"verb":"Fixed","object":null}`, false},
 		{"unknown field", `{"verb":"Fixed","object":"the test","extra":true}`, false},
 		{"oversize", strings.Repeat("x", 2049) + `{"verb":"Fixed","object":"the test"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := validateOutcome(tc.reply, "Fixed the test, one two three four five six seven")
-			if (err == nil) != tc.valid {
+			var answer struct {
+				Verb   string `json:"verb"`
+				Object string `json:"object"`
+			}
+			err := parseAnswer(tc.reply, &answer)
+			if (err == nil) != tc.valid || tc.valid && answer.Verb != "Fixed" {
 				t.Fatalf("valid=%v, error=%v", tc.valid, err)
 			}
 		})
@@ -97,9 +95,6 @@ func TestUtilityAnswerShapes(t *testing.T) {
 			t.Errorf("accepted %q", reply)
 		}
 	}
-	if got, err := validateOutcome(`{"verb":"Fixed","object":"The flaky test"}`, prompt); err != nil || got != "Fixed The flaky test" {
-		t.Fatalf("outcome in another case = %q, %v", got, err)
-	}
 }
 
 func TestUtilityJobRetryAndFallback(t *testing.T) {
@@ -110,7 +105,7 @@ func TestUtilityJobRetryAndFallback(t *testing.T) {
 		want    string
 		calls   int
 	}{
-		{"retry valid", []string{"wrong", `{"verb":"Fixed","object":"the test"}`}, false, "Fixed the test", 2},
+		{"retry valid", []string{"wrong", "ok"}, false, "ok", 2},
 		{"retry invalid", []string{"wrong", "wrong again"}, false, "", 2},
 		{"runner error", nil, true, "", 1},
 	} {
@@ -128,7 +123,13 @@ func TestUtilityJobRetryAndFallback(t *testing.T) {
 				}
 				return tc.replies[n-1], nil
 			})
-			got, err := m.runJob(context.Background(), outcomeJob, UtilityCall{Provider: "fake"}, prov, agentapi.UtilityRequest{Model: "a", Prompt: "Fixed the test"})
+			job := utilityJob{purpose: "test-job", system: "Reply ok.", retryHint: "Reply ok.", validate: func(reply, _ string) (string, error) {
+				if reply != "ok" {
+					return "", errors.New("not ok")
+				}
+				return reply, nil
+			}}
+			got, err := m.runJob(context.Background(), job, UtilityCall{Provider: "fake"}, prov, agentapi.UtilityRequest{Model: "a", Prompt: "Fixed the test"})
 			if got != tc.want || n != tc.calls || (err != nil) != tc.failure {
 				t.Fatalf("got %q, %v, %d calls", got, err, n)
 			}
@@ -147,18 +148,18 @@ func TestUtilityInvalidStreakPausesUntilMidnight(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 4; i++ {
-		if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
-	if reason := l.reserve(now, purposeOutcome, 400, false); reason != skippedInvalid {
+	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
 	}
 	if reason := l.reserve(now, purposeTitle, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
-	if reason := l.reserve(midnightAfter(now), purposeOutcome, 400, false); reason != "" {
+	if reason := l.reserve(midnightAfter(now), purposeCommitMessage, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
 }
@@ -197,12 +198,12 @@ func TestUtilityInvalidWindowDropsOldAnswers(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 13; i++ {
-		if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(i >= 3 && i < 12)})
+		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(i >= 3 && i < 12)})
 	}
-	if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
+	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
 }

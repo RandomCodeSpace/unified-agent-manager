@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -422,28 +421,6 @@ func TestTurnFilesMatchChangesInASubfolderProject(t *testing.T) {
 	}
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "2 files changed" {
 		t.Fatalf("outcome = %q", got)
-	}
-}
-
-// The outcome line's phrase lands after the turn it words: it is no new
-// activity, so a Task the owner watched finish stays read (F28).
-func TestOutcomePhraseDoesNotMarkTheTaskUnread(t *testing.T) {
-	prov := newAssistProvider()
-	m, project := assistManager(t, openTestStore(t), prov)
-	verb := make(chan string, 1)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return <-verb, nil })
-	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	finishTurn(prov.Last(), "fix", "Fixed it.",
-		agentapi.Item{ID: "e1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Input: `{"path":"a.go"}`, Status: agentapi.ToolCompleted}})
-	before := summaryOf(t, m, sum.ID).UpdatedAt
-	time.Sleep(5 * time.Millisecond)
-	verb <- `{"verb":"Fixed","object":"it"}`
-	waitUntil(t, "the verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Fixed it; 1 file changed" })
-	if after := summaryOf(t, m, sum.ID).UpdatedAt; !after.Equal(before) {
-		t.Fatalf("updated_at moved from %v to %v", before, after)
 	}
 }
 

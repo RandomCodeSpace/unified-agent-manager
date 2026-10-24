@@ -306,14 +306,14 @@ func TestUtilityInvalidPauseRebuilt(t *testing.T) {
 	m := startManager(t, st)
 	now := time.Now()
 	for i := 0; i < 4; i++ {
-		m.utility.reserve(now, purposeOutcome, 400, false)
-		m.utility.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		m.utility.reserve(now, purposeCommitMessage, 400, false)
+		m.utility.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	again := startManager(t, st)
-	if reason := again.utility.reserve(now, purposeOutcome, 400, false); reason != skippedInvalid {
+	if reason := again.utility.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
 	}
 }

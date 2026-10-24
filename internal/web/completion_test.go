@@ -30,9 +30,6 @@ func TestCompletionOutcomeUsesOnlyMatchingAcceptedSummary(t *testing.T) {
 			prov := newAssistProvider()
 			st := openTestStore(t)
 			m, project := assistManager(t, st, prov)
-			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-				return `{"verb":"Reviewed","object":"parser"}`, nil
-			})
 			sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 			if err != nil {
 				t.Fatal(err)
@@ -46,14 +43,12 @@ func TestCompletionOutcomeUsesOnlyMatchingAcceptedSummary(t *testing.T) {
 				conv.EmitItem(agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Native completion", Completion: tc.completion})
 			}
 			conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Completion: tc.completion}})
-			want := "Reviewed parser; 1 file changed"
+			want := "1 file changed"
 			if tc.accepted {
 				want = "Fixed the parser; 1 file changed"
 			}
-			waitUntil(t, "the native or Utility outcome", func() bool { return summaryOf(t, m, sum.ID).Outcome == want })
-			calls := utilityCalls(prov, "outcome")
-			if (tc.accepted && calls != 0) || (!tc.accepted && calls != 1) {
-				t.Fatalf("Utility calls=%d", calls)
+			if got := summaryOf(t, m, sum.ID).Outcome; got != want {
+				t.Fatalf("outcome=%q, want %q", got, want)
 			}
 			// The existing stored outcome survives a cold Manager reload.
 			if tc.accepted {
@@ -154,9 +149,6 @@ func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 func TestCompletionPreviousUserCannotShortcutLatestTiming(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		return `{"verb":"Answered","object":"Second reply"}`, nil
-	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -176,8 +168,5 @@ func TestCompletionPreviousUserCannotShortcutLatestTiming(t *testing.T) {
 	finish("message-2", "Second reply", old)
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
 		t.Fatalf("latest outcome=%q", got)
-	}
-	if calls := utilityCalls(prov, "outcome"); calls != 0 {
-		t.Fatalf("latest fallback calls=%d", calls)
 	}
 }

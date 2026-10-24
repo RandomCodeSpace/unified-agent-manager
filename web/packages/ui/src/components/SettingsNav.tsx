@@ -20,7 +20,7 @@ export const SETTINGS_GROUPS = [
   ] },
   { label: 'Models & AI', scope: 'service', pages: [
     { id: 'models', label: 'Models', blurb: 'The models the menus offer, and the ones subagents may use.', keywords: 'hide show hidden visible menu subagent subagents fallback allow list' },
-    { id: 'background-ai', label: 'Background AI', blurb: "UAM's own AI calls: titles, suggested replies, outcome lines and drafts.", keywords: 'utility model cheapest none titles title daily limit calls budget paused credits log' },
+    { id: 'background-ai', label: 'Background AI', blurb: "UAM's own AI calls: titles, suggested replies and drafts.", keywords: 'utility model cheapest none titles title daily limit calls budget paused credits log' },
     { id: 'token-costs', label: 'Token costs', blurb: 'The prices used to estimate what threads cost.', keywords: 'price prices usd dollars tokens cost costs cache input output estimate' },
   ] },
   { label: 'Accounts', scope: 'service', pages: [

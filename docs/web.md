@@ -1449,22 +1449,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or whose folder is gone, is not asked again. Settings → Composer →
   **Suggest replies** turns it off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
-  such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
+  such as "3 files changed; tests pass". The
   Thread's row in the sidebar keeps it in its hover text ("Review" is the
   visible status until you open the Thread, then "Finished"), and the Thread header
-  beside its state (not on a phone). Everything after the opening phrase
-  is the finish evidence's own reading of the turn (the service reads it
+  beside its state (not on a phone). It is the finish evidence's own reading
+  of the turn, with no model call (the service reads it
   once, for both): the files the Thread's edit tools changed in the turn (the main
   agent's and its subagents', the files Changes shows for "Last turn"),
   whether the main agent's last test run (a "Ran the tests" row in the
   evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
-  exited non-zero. The phrase arriving after the turn does not mark the
-  Thread unread again. A turn with no edits or commands reads "Answered"
-  without a model call. Otherwise the opening phrase comes from one
-  Utility model call, told to describe only what the agent's final answer
-  says it did and to leave tests, files and commands to the evidence; until
-  it answers, or without a Utility model, the line holds the evidence only.
+  exited non-zero. A turn with no edits or commands reads "Answered". When
+  Copilot accepts the turn's native completion, its summary opens the line,
+  as in "Fixed the flaky redraw test; 3 files changed; tests pass".
   A new turn clears the line, and a turn that is stopped or fails gets none.
   When the line says "tests fail" or that commands failed, the Thread's state
   shows no check: the sidebar row reads "Tests fail" or "Command failed" with
@@ -1578,8 +1575,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   installed at the binary it started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  including Thread titles, completed subagent result lines, suggested replies
-  and the opening phrase of outcome lines. Pick the cheapest
+  including Thread titles, completed subagent result lines and suggested
+  replies. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
@@ -1630,15 +1627,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   confirmation). The sidebar has no Archived shelf; its search still finds
   archived Threads.
 - **Background AI**: every call UAM makes on the Utility model (Thread
-  titles, also those made with a Thread's own model, subagent result lines, suggested replies and outcome lines) counts
+  titles, also those made with a Thread's own model, subagent result lines and suggested replies) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Thread title", "Suggested replies", "Outcome line",
+  what it was for ("Thread title", "Suggested replies",
   "Merge request description";
-  older versions also logged "Subagent summary" and "Thread done check"), the Thread (a click opens
+  older versions also logged "Subagent summary", "Thread done check" and
+  "Outcome line"), the Thread (a click opens
   it) or Project, the model
   (marked "the thread's model" for a title made with the Thread's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
@@ -1657,10 +1655,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Threads
   keep their first message as the title, completed subagents keep their own
-  report, no replies are suggested (and the next look asks again)
-  and outcome lines keep the evidence alone. Settings then says Background AI is
+  report and no replies are suggested (the next look asks again).
+  Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
-  Suggested replies and outcome lines also pause on their own until
+  Suggested replies also pause on their own until
   tomorrow when 4 of their last 10 turns ended with an unusable answer
   (the answer and its one retry both invalid). Settings → Background AI
   names the paused purpose and when it resumes, its rail entry and, for

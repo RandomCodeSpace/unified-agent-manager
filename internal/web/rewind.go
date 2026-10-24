@@ -459,7 +459,6 @@ func (m *Manager) resetRewoundLocked(s *webSession) agentapi.Conversation {
 	m.expireOwnLocked(s, "the conversation was rewound")
 	s.interactions, s.ixIdx, s.ask = nil, map[string]*interaction{}, nil
 	s.outcome, s.suggestions = "", nil
-	s.outcomeRun++
 	s.turnActivity, s.todoBase, s.turnIntent = TurnActivity{}, TodoView{}, ""
 	s.edits, s.editsKnown, s.turnStart, s.activity, s.diff = nil, false, time.Time{}, nil, nil
 	s.invalidateNativeDiff()

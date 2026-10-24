@@ -147,12 +147,7 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose == purposeSuggestReplies {
-			return "Run the full test suite", nil
-		}
-		return `{"verb":"Answered","object":""}`, nil
-	})
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "Run the full test suite", nil })
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -212,13 +207,6 @@ func TestSuggestionPromptBoundsEachMessage(t *testing.T) {
 func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	verb := make(chan string, 1)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose != "outcome" {
-			return "", fmt.Errorf("no %s here", req.Purpose)
-		}
-		return <-verb, nil
-	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -237,15 +225,10 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 		tool("t7", "bash", `{"command":"cd x && go test ./pkg"}`, agentapi.ToolCompleted, codeOf(0)),
 	)
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "2 files changed; tests pass; 2 commands failed" {
-		t.Fatalf("outcome before the verb = %q", got)
+		t.Fatalf("outcome of an edit turn = %q", got)
 	}
-	verb <- `{"verb":"Fixed","object":"the flaky test"}`
-	waitUntil(t, "the verb phrase", func() bool {
-		return summaryOf(t, m, sum.ID).Outcome == "Fixed the flaky test; 2 files changed; tests pass; 2 commands failed"
-	})
 
-	// A new turn clears it; one without edits or commands reads "Answered"
-	// at once, with no Utility call.
+	// A new turn clears it; one without edits or commands reads "Answered".
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "" {
 		t.Fatalf("outcome while working = %q", got)
@@ -259,20 +242,16 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
 		t.Fatalf("outcome of a turn without tools = %q", got)
 	}
-	if n := utilityCalls(prov, "outcome"); n != 1 {
-		t.Fatalf("outcome calls = %d", n)
+	if n := len(prov.UtilityRequests()); n != 0 {
+		t.Fatalf("outcome made %d Utility calls", n)
 	}
 }
 
-func TestOutcomeGateSkipsTurnsWithoutEditsOrCommands(t *testing.T) {
+// Only a turn without edits or commands gets a phrase, "Answered"; a shell
+// turn reads its evidence alone.
+func TestOutcomeAnswersOnlyTurnsWithoutEditsOrCommands(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose != "outcome" {
-			return "", fmt.Errorf("no %s here", req.Purpose)
-		}
-		return `{"verb":"Reviewed","object":"files"}`, nil
-	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -283,14 +262,13 @@ func TestOutcomeGateSkipsTurnsWithoutEditsOrCommands(t *testing.T) {
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "Answered" {
 		t.Fatalf("outcome of a read-only turn = %q", got)
 	}
-	if n := utilityCalls(prov, "outcome"); n != 0 {
-		t.Fatalf("read-only turn made %d outcome calls", n)
-	}
 	finishTurn(conv, "list files", "Two files.",
 		agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"ls"}`, Status: agentapi.ToolCompleted, ExitCode: codeOf(0)}})
-	waitUntil(t, "the shell turn's verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Reviewed files" })
-	if n := utilityCalls(prov, "outcome"); n != 1 {
-		t.Fatalf("shell turn outcome calls = %d", n)
+	if got := summaryOf(t, m, sum.ID).Outcome; got != "" {
+		t.Fatalf("outcome of a shell turn = %q", got)
+	}
+	if n := len(prov.UtilityRequests()); n != 0 {
+		t.Fatalf("outcome made %d Utility calls", n)
 	}
 }
 
@@ -417,12 +395,7 @@ func TestExportHoldsTheWholeRecord(t *testing.T) {
 func TestAssistPastTheUtilityLimit(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose == "outcome" {
-			return "Fixed it", nil
-		}
-		return "Commit this", nil
-	})
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "Commit this", nil })
 	zero := 0
 	limit := &zero
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
@@ -436,9 +409,11 @@ func TestAssistPastTheUtilityLimit(t *testing.T) {
 	if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || got.ItemID != "" || len(got.Replies) != 0 {
 		t.Fatalf("paused suggestions = %+v, %v", got, err)
 	}
-	waitUntil(t, "the skipped calls in the log", func() bool { return len(m.UtilityLog(0, 10).Calls) == 2 })
+	if n := len(m.UtilityLog(0, 10).Calls); n != 1 {
+		t.Fatalf("%d skipped calls in the log, want the suggestion only", n)
+	}
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "1 file changed" || len(prov.UtilityRequests()) != 0 {
-		t.Fatalf("paused outcome = %q after %d calls", got, len(prov.UtilityRequests()))
+		t.Fatalf("outcome = %q after %d calls", got, len(prov.UtilityRequests()))
 	}
 	// Once calls may run again, a look asks for them: nothing was kept.
 	var unset *int

@@ -582,10 +582,8 @@ type webSession struct {
 
 	// rerunOf is the Task whose last message this one ran again (assist.go).
 	rerunOf string
-	// outcome is the last completed turn's outcome line; outcomeRun counts
-	// turn transitions, so a late verb phrase for an older turn is dropped.
-	outcome    string
-	outcomeRun uint64
+	// outcome is the last completed turn's outcome line.
+	outcome string
 	// suggestions are the replies suggested for the transcript's last item;
 	// suggesting is the call in flight for them.
 	suggestions *store.WebSuggestions
@@ -2226,8 +2224,8 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	// turn state (including waiting for input), detail, name, title, model
 	// and the last submission. Queue changes are activity too. A viewer
 	// opening the conversation (open, starting) and provider capability or
-	// catalog changes are not, nor is the outcome line's phrase, which lands
-	// after the turn it words.
+	// catalog changes are not, nor is the outcome line, which only follows
+	// the turn state.
 	worded := key
 	worded.outcome = s.persisted.outcome
 	worded.place = s.persisted.place // the branch taking the title is not activity either

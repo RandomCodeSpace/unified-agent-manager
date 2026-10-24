@@ -863,7 +863,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Row>
         ))}
       </Section>}
-      <Section id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: thread titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
+      <Section id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: thread titles, suggested replies, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
         <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} onPausedPurposes={onPausedPurposes} />
       </Section>
     </>,
