@@ -8,6 +8,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -22,6 +23,11 @@ const assistedRules = "Deny: reading files outside the working directory that ho
 type permissionModeSession interface {
 	SetPermissionMode(ctx context.Context, req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	GetPermissionMode(ctx context.Context) (*rpc.PermissionsGetModeResult, error)
+	ConfigurePermissions(ctx context.Context, req *rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error)
+}
+
+func (a sdkSessionAdapter) ConfigurePermissions(ctx context.Context, req *rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
+	return a.s.RPC.Permissions.Configure(ctx, req)
 }
 
 func (a sdkSessionAdapter) SetPermissionMode(ctx context.Context, req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) {
@@ -68,6 +74,22 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 			got = string(res.Mode)
 		}
 		return fmt.Errorf("the runtime did not apply permission mode %s (reports %q)", req.Mode, got)
+	}
+	if approvalModel == "" {
+		return nil
+	}
+	// The CLI forgets the instructions on resume, so every assisted open sends them.
+	cres, err := setter.ConfigurePermissions(ctx, &rpc.PermissionsConfigureParams{AssistedApprovalInstructions: copilot.String(assistedRules)})
+	if err != nil {
+		var rpcErr *copilot.RPCError
+		if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+			log.Info("copilot CLI takes no assisted approval instructions; the reviewer runs without uam's rules", "session", c.id)
+			return nil
+		}
+		return fmt.Errorf("configure assisted approval instructions: %s", errText(err))
+	}
+	if cres == nil || !cres.Success {
+		return errors.New("the runtime did not apply the assisted approval instructions")
 	}
 	return nil
 }

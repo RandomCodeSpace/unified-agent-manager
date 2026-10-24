@@ -1290,6 +1290,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   > file your Linux account can reach, with your credentials, and nobody is
   > asked first. Turn it on only for a project where you would click "Allow"
   > on everything anyway. Sign-in is required to create or control a Thread.
+- **Assisted**: a reviewer model checks each permission request. The ones it
+  approves run without waiting; the rest wait for you. UAM gives the reviewer
+  rules of its own. These requests always wait for you: reading credential
+  files outside the working directory (`~/.ssh`, `~/.config/uam`,
+  `~/.copilot`, `.env`, `*.pem`, `*token*`), a push to main or master, any
+  force push, deleting files outside the working directory, and sending
+  repository contents to a host the request did not name. A Copilot CLI too
+  old to take these rules keeps Assisted, and its reviewer judges without them.
 - **Commands**: type `/` at the start of a message to list supported provider
   commands and skills. Names and aliases are searchable. Known unsupported
   commands stay visible with their reason and cannot become ordinary prompts.

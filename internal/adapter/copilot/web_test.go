@@ -304,6 +304,10 @@ type fakeSession struct {
 	permMode         func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	permModes        []*rpc.PermissionsSetModeRequest
 	sentAtPermMode   int // sends before the first permission mode change
+	// configure answers ConfigurePermissions, nil succeeds; configures are
+	// the requests it got.
+	configure  func(*rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error)
+	configures []*rpc.PermissionsConfigureParams
 	// getMode answers GetPermissionMode; nil reports the last applied mode.
 	getMode     func() (*rpc.PermissionsGetModeResult, error)
 	deselectErr error
