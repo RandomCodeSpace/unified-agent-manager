@@ -76,6 +76,17 @@ func validateDecisionRequest(req DecisionRequest) error {
 	return nil
 }
 
+// decisionSchema is the closed answer shape: an option ID or null. It is a
+// hint the provider may enforce; parseDecision still validates.
+func decisionSchema(options []DecisionOption) map[string]any {
+	ids := make([]any, len(options))
+	for i, option := range options {
+		ids[i] = option.ID
+	}
+	return map[string]any{"type": "object", "required": []any{"choice"}, "additionalProperties": false,
+		"properties": map[string]any{"choice": map[string]any{"anyOf": []any{map[string]any{"enum": ids}, map[string]any{"type": "null"}}}}}
+}
+
 // parseDecision reads the answer the way other Utility jobs do (thinking,
 // a preamble or a fence are tolerated, a second answer is not), then accepts
 // only an allowed option ID or null. No model text is included in errors.
@@ -139,7 +150,7 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 		return DecisionResult{}, err
 	}
 	req := agentapi.UtilityRequest{Model: model.Model, Purpose: "decision-" + input.Purpose,
-		System: decisionSystem + input.Instructions, Prompt: string(prompt), Timeout: decisionTimeout}
+		System: decisionSystem + input.Instructions, Prompt: string(prompt), Timeout: decisionTimeout, ResponseSchema: decisionSchema(input.Options)}
 	var result DecisionResult
 	// A cancellation while waiting for a slot spends no budget.
 	if err := ctx.Err(); err != nil {
