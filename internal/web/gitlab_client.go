@@ -45,6 +45,9 @@ type GitLabJob struct {
 	AllowFailure bool     `json:"allow_failure"`
 	WebURL       string   `json:"web_url"`
 	Duration     *float64 `json:"duration,omitempty"`
+	// FailureReason is GitLab's reason a failed job failed, such as
+	// script_failure or runner_system_failure.
+	FailureReason string `json:"failure_reason,omitempty"`
 }
 
 type GitLabMergeRequest struct {
@@ -187,6 +190,7 @@ func gitLabReadJobs(ctx context.Context, gate glabGate, base string, pipeline gi
 			seen[job.ID] = true
 			job.Name = displaytext.Sanitize(job.Name)
 			job.Stage = displaytext.Sanitize(job.Stage)
+			job.FailureReason = displaytext.Sanitize(job.FailureReason)
 			job.WebURL = gitLabSafeURL(gate.Host, job.WebURL)
 			jobs = append(jobs, job.GitLabJob)
 		}

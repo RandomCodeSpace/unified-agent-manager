@@ -2363,7 +2363,11 @@ GitLab**. The views:
   lines marked, and **Full log**. The log opens scrolled to its end, where
   the failure is, and a running job's log stays at its end as it grows
   unless you scroll up. The pipeline of the Thread's own commit
-  offers **Investigate**.
+  offers **Investigate**. With Settings → GitLab → **Automatic
+  investigation** on, a failed pipeline opens its investigation Thread by
+  itself, unless every failed job (allowed failures aside) failed on the
+  runner or GitLab: a runner system failure, stuck or timed out, an API,
+  scheduler or data integrity failure. Those open no Thread.
 
 Discussion notes, work item descriptions and agent reply drafts render as
 Markdown, the same safe renderer replies use (no raw HTML, no image from

@@ -91,7 +91,7 @@ func gitLabFixtureJobs(branch string, start, count int) string {
 	jobs := make([]any, 0, count)
 	for i := start; i < start+count; i++ {
 		jobs = append(jobs, map[string]any{
-			"id": i, "name": "test-" + strconv.Itoa(i), "stage": "test", "status": "failed", "allow_failure": false,
+			"id": i, "name": "test-" + strconv.Itoa(i), "stage": "test", "status": "failed", "allow_failure": false, "failure_reason": "script_failure",
 			"web_url":  "https://gitlab.example.com/group/sub/repo/-/jobs/" + strconv.Itoa(i),
 			"pipeline": gitLabFixturePipeline(gitLabFixtureSHA, branch),
 		})
