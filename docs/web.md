@@ -1239,8 +1239,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   answer from any tab wins and later answers are refused. Once decided, the
   card goes away: the decision shows on the tool call it was for, and a
   request UAM could not tie to a call shows as one grey line where it
-  happened. A question with one question is not a card: it appears at the
-  top of the message box, with its options. One option is already picked
+  happened. After you click "Allow once" twice for the same kind of request
+  (the same command, for example), the next one in that Thread offers "Allow
+  for this session" as its main button; "Allow once" stays next to it, and
+  automatic approvals do not count. A question with one question is not a
+  card: it appears at the top of the message box, with its options. One option is already picked
   when the question appears: the one the agent marks "(Recommended)", else
   the first. It is sent when you press Enter or Answer, or click the picked
   option again. Pick another option to change it, or type your own answer.

@@ -1197,6 +1197,64 @@ func TestWebPermissionWaitsForRespond(t *testing.T) {
 	}
 }
 
+func optionIDs(in *agentapi.Interaction) string {
+	var ids []string
+	for _, o := range in.Options {
+		ids = append(ids, o.ID)
+	}
+	return strings.Join(ids, ",")
+}
+
+// After two owner "Allow once" answers for the same scope, the third request
+// offers "Allow for this session" first; another scope keeps today's order.
+func TestWebRepeatedApprovalOffersSessionFirst(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	for i, id := range []string{"r1", "r2", "r3"} {
+		h.fs.onEvent(ev(fmt.Sprintf("e%d", i), shellRequest(id)))
+		want := "approve_once,approve_session,reject"
+		if id == "r3" {
+			want = "approve_session,approve_once,reject"
+		}
+		if got := optionIDs(h.sink.interaction(id)); got != want {
+			t.Fatalf("%s options = %s, want %s", id, got, want)
+		}
+		if err := h.conv.Respond(ctx, id, agentapi.Answer{Decision: "approve_once"}); err != nil {
+			t.Fatalf("Respond %s: %v", id, err)
+		}
+	}
+	if d, ok := h.fs.answer("r3").(*rpc.PermissionDecisionApproveOnce); !ok || d.ApprovedInteractively == nil || !*d.ApprovedInteractively {
+		t.Fatalf("reordered approve_once decision = %#v", h.fs.answer("r3"))
+	}
+	other := shellRequest("other")
+	other.PromptRequest = &rpc.PermissionPromptRequestCommands{FullCommandText: "git status", CanOfferSessionApproval: true, CommandIdentifiers: []string{"git status"}}
+	h.fs.onEvent(ev("e9", other))
+	h.fs.onEvent(ev("e10", &rpc.PermissionRequestedData{RequestID: "read", PromptRequest: &rpc.PermissionPromptRequestRead{Path: "/x"}}))
+	for _, id := range []string{"other", "read"} {
+		if got := optionIDs(h.sink.interaction(id)); got != "approve_once,approve_session,reject" {
+			t.Fatalf("%s options = %s", id, got)
+		}
+	}
+}
+
+// Automatic (yolo) approvals and session answers never count toward the reorder.
+func TestWebAutoApprovalsDoNotCount(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	answers := []agentapi.Answer{{Decision: "approve_once", Auto: true}, {Decision: "approve_once", Auto: true}, {Decision: "approve_session"}, {Decision: "approve_once"}}
+	for i, ans := range answers {
+		id := fmt.Sprintf("a%d", i)
+		h.fs.onEvent(ev("e"+id, shellRequest(id)))
+		if err := h.conv.Respond(ctx, id, ans); err != nil {
+			t.Fatalf("Respond %s: %v", id, err)
+		}
+	}
+	h.fs.onEvent(ev("elast", shellRequest("last")))
+	if got := optionIDs(h.sink.interaction("last")); got != "approve_once,approve_session,reject" {
+		t.Fatalf("options after one owner approval = %s", got)
+	}
+}
+
 func askAsync(fs *fakeSession, req copilot.UserInputRequest) <-chan userReply {
 	done := make(chan userReply, 1)
 	go func() {
