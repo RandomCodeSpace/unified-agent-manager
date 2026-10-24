@@ -75,7 +75,7 @@ func TestOpenAppliesAssistedPermissionsWithTheExplicitReviewer(t *testing.T) {
 	if len(fs.permModes) != 1 || fs.permModes[0].Mode != rpc.PermissionModeAssisted || fs.permModes[0].AssistedApprovalModel == nil || *fs.permModes[0].AssistedApprovalModel != "gpt-6-luna" || fs.sentAtPermMode != 0 {
 		t.Fatalf("set mode = %+v", fs.permModes)
 	}
-	if len(fs.configures) != 1 || fs.configures[0].AssistedApprovalInstructions == nil || *fs.configures[0].AssistedApprovalInstructions != assistedRules {
+	if len(fs.configures) != 1 || fs.configures[0].AssistedApprovalInstructions == nil || *fs.configures[0].AssistedApprovalInstructions != assistedRules || !strings.HasPrefix(assistedRules, "Require approval for: ") {
 		t.Fatalf("reviewer rules = %+v", fs.configures)
 	}
 	if !newWebProvider(nil, time.Hour).Capabilities().AssistedPermissions {
