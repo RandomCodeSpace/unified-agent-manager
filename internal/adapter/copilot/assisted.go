@@ -8,6 +8,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -15,9 +16,18 @@ import (
 // maxAssistedReason bounds the reviewer's reason a permission request shows.
 const maxAssistedReason = 1000
 
+// assistedRules are uam's restrictions, appended to the Assisted reviewer's
+// system prompt.
+const assistedRules = "Require approval for: reading files outside the working directory that hold credentials (~/.ssh, ~/.config/uam, ~/.copilot, .env, *.pem, *token*); git push to main or master and any force push; deleting files outside the working directory; sending repository contents to a network host not named in the user's request."
+
 type permissionModeSession interface {
 	SetPermissionMode(ctx context.Context, req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	GetPermissionMode(ctx context.Context) (*rpc.PermissionsGetModeResult, error)
+	ConfigurePermissions(ctx context.Context, req *rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error)
+}
+
+func (a sdkSessionAdapter) ConfigurePermissions(ctx context.Context, req *rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
+	return a.s.RPC.Permissions.Configure(ctx, req)
 }
 
 func (a sdkSessionAdapter) SetPermissionMode(ctx context.Context, req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) {
@@ -64,6 +74,22 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 			got = string(res.Mode)
 		}
 		return fmt.Errorf("the runtime did not apply permission mode %s (reports %q)", req.Mode, got)
+	}
+	if approvalModel == "" {
+		return nil
+	}
+	// The CLI forgets the instructions on resume, so every assisted open sends them.
+	cres, err := setter.ConfigurePermissions(ctx, &rpc.PermissionsConfigureParams{AssistedApprovalInstructions: copilot.String(assistedRules)})
+	if err != nil {
+		var rpcErr *copilot.RPCError
+		if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+			log.Info("copilot CLI takes no assisted approval instructions; the reviewer runs without uam's rules", "session", c.id)
+			return nil
+		}
+		return fmt.Errorf("configure assisted approval instructions: %s", errText(err))
+	}
+	if cres == nil || !cres.Success {
+		return errors.New("the runtime did not apply the assisted approval instructions")
 	}
 	return nil
 }

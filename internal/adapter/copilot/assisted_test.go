@@ -28,6 +28,17 @@ func (s *fakeSession) SetPermissionMode(_ context.Context, req *rpc.PermissionsS
 	return &rpc.PermissionsSetModeResult{Mode: req.Mode, Success: true}, nil
 }
 
+func (s *fakeSession) ConfigurePermissions(_ context.Context, req *rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
+	s.mu.Lock()
+	s.configures = append(s.configures, req)
+	hook := s.configure
+	s.mu.Unlock()
+	if hook != nil {
+		return hook(req)
+	}
+	return &rpc.PermissionsConfigureResult{Success: true}, nil
+}
+
 func (s *fakeSession) GetPermissionMode(context.Context) (*rpc.PermissionsGetModeResult, error) {
 	s.mu.Lock()
 	hook := s.getMode
@@ -64,20 +75,50 @@ func TestOpenAppliesAssistedPermissionsWithTheExplicitReviewer(t *testing.T) {
 	if len(fs.permModes) != 1 || fs.permModes[0].Mode != rpc.PermissionModeAssisted || fs.permModes[0].AssistedApprovalModel == nil || *fs.permModes[0].AssistedApprovalModel != "gpt-6-luna" || fs.sentAtPermMode != 0 {
 		t.Fatalf("set mode = %+v", fs.permModes)
 	}
+	if len(fs.configures) != 1 || fs.configures[0].AssistedApprovalInstructions == nil || *fs.configures[0].AssistedApprovalInstructions != assistedRules || !strings.HasPrefix(assistedRules, "Require approval for: ") {
+		t.Fatalf("reviewer rules = %+v", fs.configures)
+	}
 	if !newWebProvider(nil, time.Hour).Capabilities().AssistedPermissions {
 		t.Fatal("assisted permissions capability absent")
 	}
 	if err := conv.(agentapi.AssistedPermissionSetter).SetAssistedPermissions(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if last := fs.permModes[1]; last.Mode != rpc.PermissionModeManual || last.AssistedApprovalModel != nil {
-		t.Fatalf("off = %+v", last)
+	if last := fs.permModes[1]; last.Mode != rpc.PermissionModeManual || last.AssistedApprovalModel != nil || len(fs.configures) != 1 {
+		t.Fatalf("off = %+v, rules sent %d times", last, len(fs.configures))
 	}
 
 	// Safe and yolo Tasks never touch the runtime's mode.
 	plain := &fakeClient{}
 	if _, err := openAssisted(t, plain, ""); err != nil || len(plain.sessions[0].permModes) != 0 {
 		t.Fatalf("plain open = %v, modes %d", err, len(plain.sessions[0].permModes))
+	}
+}
+
+// A CLI without session.permissions.configure keeps Assisted, with the
+// reviewer's own rules; any other refusal fails like a mode refusal.
+func TestAssistedRulesUnsupportedCLIStillAssisted(t *testing.T) {
+	fc := &fakeClient{}
+	conv, err := openAssisted(t, fc, "gpt-6-luna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := fc.sessions[0]
+	setter := conv.(agentapi.AssistedPermissionSetter)
+	fs.configure = func(*rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
+		return nil, &copilot.RPCError{Code: -32601}
+	}
+	if err := setter.SetAssistedPermissions(context.Background(), "gpt-6-luna"); err != nil {
+		t.Fatalf("unsupported configure = %v", err)
+	}
+	if on, err := setter.AssistedPermissionsOn(context.Background()); err != nil || !on {
+		t.Fatalf("assisted after unsupported configure = %v, %v", on, err)
+	}
+	fs.configure = func(*rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
+		return nil, errors.New("invalid instructions")
+	}
+	if err := setter.SetAssistedPermissions(context.Background(), "gpt-6-luna"); err == nil || !strings.Contains(err.Error(), "invalid instructions") {
+		t.Fatalf("failed configure = %v", err)
 	}
 }
 
