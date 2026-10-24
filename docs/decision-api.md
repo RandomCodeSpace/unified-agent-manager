@@ -70,9 +70,9 @@ Eino core is pinned to v0.9.22. Its [Workflow API](https://www.cloudwego.io/docs
 and [Lambda API](https://www.cloudwego.io/docs/eino/core_modules/components/lambda_guide/)
 support wrapping existing functions without introducing a second provider or
 credential implementation. Eino uses [Apache-2.0](https://github.com/cloudwego/eino/blob/v0.9.22/LICENSE-APACHE).
-The dependency review on 2026-10-24 found no OSV advisories for this release and
-its direct non-test dependencies at their pinned versions. That was a bounded
-check, not a full transitive or reachability audit.
+Its transitive `github.com/buger/jsonparser` dependency is pinned to v1.1.2 to
+fix [GHSA-6g7g-w4f8-9c9x](https://github.com/advisories/GHSA-6g7g-w4f8-9c9x).
+Eino's default transitive version, v1.1.1, is affected by that advisory.
 
 ## Researched adoption opportunities
 
