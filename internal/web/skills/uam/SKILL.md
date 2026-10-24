@@ -35,6 +35,8 @@ and conventions below instead.
 
 When uam attaches a `uam trail:` note, another running Thread recently edited that file; re-read it before relying on its contents.
 
+A `uam read-once:` result means the file is unchanged since your earlier view; use that.
+
 When uam reports repeated permission denials or a refused fetch with a reopening time, stop retrying that kind of action or URL segment; continue work that does not need it.
 
 The owner may give a Thread a budget: AI credits it may spend, or how much of the account quota may be used. `uam` `sense` reports `usage` and `budget` (`credits`, `spent`, `quota_percent`, `quota_used`, `reached`, `wrapping_up`). Before long or costly work, check it and pace yourself. When a `uam budget:` note says you are close, finish the current step and get to a point where the work can be picked up.
