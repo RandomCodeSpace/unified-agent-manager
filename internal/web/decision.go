@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	"github.com/cloudwego/eino/compose"
 )
 
 const decisionTimeout = 10 * time.Second
@@ -80,34 +77,21 @@ func validateDecisionRequest(req DecisionRequest) error {
 	return nil
 }
 
-// parseDecision uses the standard decoder for the one-member object contract.
-// Reading tokens also rejects duplicate keys and case variants, which ordinary
-// struct unmarshalling would accept. No model text is included in errors.
+// parseDecision reads the answer the way other Utility jobs do (thinking,
+// a preamble or a fence are tolerated, a second answer is not), then accepts
+// only an allowed option ID or null. No model text is included in errors.
 func parseDecision(reply string, options []DecisionOption) (DecisionResult, error) {
-	if len(reply) > 2048 || !utf8.ValidString(reply) {
+	var answer struct {
+		Choice json.RawMessage `json:"choice"`
+	}
+	if !utf8.ValidString(reply) || parseAnswer(reply, &answer) != nil || len(answer.Choice) == 0 {
 		return DecisionResult{}, ErrInvalidDecision
 	}
-	dec := json.NewDecoder(strings.NewReader(reply))
-	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
-		return DecisionResult{}, ErrInvalidDecision
-	}
-	if key, err := dec.Token(); err != nil || key != "choice" {
-		return DecisionResult{}, ErrInvalidDecision
-	}
-	value, err := dec.Token()
-	if err != nil {
-		return DecisionResult{}, ErrInvalidDecision
-	}
-	if end, err := dec.Token(); err != nil || end != json.Delim('}') {
-		return DecisionResult{}, ErrInvalidDecision
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return DecisionResult{}, ErrInvalidDecision
-	}
-	if value == nil {
+	if string(answer.Choice) == "null" {
 		return DecisionResult{Abstained: true}, nil
 	}
-	if choice, ok := value.(string); ok {
+	var choice string
+	if json.Unmarshal(answer.Choice, &choice) == nil {
 		for _, option := range options {
 			if choice == option.ID {
 				return DecisionResult{Choice: choice}, nil
@@ -117,8 +101,8 @@ func parseDecision(reply string, options []DecisionOption) (DecisionResult, erro
 	return DecisionResult{}, ErrInvalidDecision
 }
 
-// Decide runs a tool-free Eino Workflow with the configured Utility model. It
-// makes at most one inference call, shares Utility slots, budget and logging,
+// Decide makes one tool-free call to the configured Utility model, with no
+// retry or fallback model. It shares Utility slots, budget and logging,
 // and bounds queueing plus inference to ten seconds (or the caller's deadline).
 // Provider cleanup may extend beyond that deadline. Empty evidence is an input
 // error: callers that know there is no evidence should abstain locally.
@@ -157,46 +141,25 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 	}
 	req := agentapi.UtilityRequest{Model: model.Model, Purpose: "decision-" + input.Purpose,
 		System: decisionSystem + input.Instructions, Prompt: string(prompt), Timeout: decisionTimeout}
-	var reply string
 	var result DecisionResult
-	var validated bool
-	wf := compose.NewWorkflow[agentapi.UtilityRequest, DecisionResult]()
-	wf.AddLambdaNode("infer", compose.InvokableLambda(func(ctx context.Context, req agentapi.UtilityRequest) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		var err error
-		reply, err = runner.RunUtility(ctx, req)
-		if ctx.Err() != nil {
-			return reply, ctx.Err()
-		}
-		return reply, err
-	})).AddInput(compose.START)
-	wf.AddLambdaNode("validate", compose.InvokableLambda(func(_ context.Context, reply string) (DecisionResult, error) {
-		validated = true
-		return parseDecision(reply, input.Options)
-	})).AddInput("infer")
-	wf.End().AddInput("validate")
-	workflow, err := wf.Compile(ctx)
-	if err != nil {
-		return DecisionResult{}, fmt.Errorf("compile decision workflow: %w", err)
-	}
-	// A cancellation while waiting for a slot or compiling spends no budget.
+	// A cancellation while waiting for a slot spends no budget.
 	if err := ctx.Err(); err != nil {
 		return DecisionResult{}, err
 	}
 	_, err = m.runUtilityChecked(ctx, UtilityCall{Purpose: req.Purpose, Provider: model.Provider, Model: model.Model}, req.System+req.Prompt,
 		func(ctx context.Context, usage func(agentapi.UtilityUsage)) (string, error) {
 			req.OnUsage = usage
-			var err error
-			result, err = workflow.Invoke(ctx, req)
+			reply, err := runner.RunUtility(ctx, req)
 			if ctx.Err() != nil {
-				err = ctx.Err()
+				return reply, ctx.Err()
+			}
+			if err == nil {
+				result, err = parseDecision(reply, input.Options)
 			}
 			return reply, err
 		}, func(call *UtilityCall, _ string, err error) {
 			call.Fallback = err != nil
-			if !validated || err != nil && !errors.Is(err, ErrInvalidDecision) {
+			if err != nil && !errors.Is(err, ErrInvalidDecision) {
 				return
 			}
 			call.Valid = new(err == nil)

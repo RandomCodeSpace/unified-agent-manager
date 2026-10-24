@@ -27,19 +27,18 @@ func TestDecisionAnswerContract(t *testing.T) {
 		{"first choice", `{"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
 		{"second choice", ` {"choice":"changed"} `, DecisionResult{Choice: "changed"}, true},
 		{"abstention", `{"choice":null}`, DecisionResult{Abstained: true}, true},
+		{"preamble", `Answer: {"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
+		{"fence", "```json\n{\"choice\":\"explained\"}\n```", DecisionResult{Choice: "explained"}, true},
+		{"thinking", `<think>{"choice":"changed"}</think>{"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
+		{"thinking abstention", "<think>hmm</think>\n{\"choice\":null}", DecisionResult{Abstained: true}, true},
 		{name: "missing", reply: `{}`},
 		{name: "empty", reply: ""},
 		{name: "unknown", reply: `{"choice":"complete"}`},
 		{name: "empty choice", reply: `{"choice":""}`},
-		{name: "case variant", reply: `{"Choice":"explained"}`},
 		{name: "unknown field", reply: `{"choice":"explained","reason":"fine"}`},
-		{name: "duplicate", reply: `{"choice":"explained","choice":"changed"}`},
-		{name: "same duplicate", reply: `{"choice":"explained","choice":"explained"}`},
 		{name: "multiple", reply: `{"choice":"explained"}{"choice":"changed"}`},
 		{name: "trailing prose", reply: `{"choice":"explained"} done`},
-		{name: "preamble", reply: `Answer: {"choice":"explained"}`},
-		{name: "fence", reply: "```json\n{\"choice\":\"explained\"}\n```"},
-		{name: "thinking", reply: `<think>hmm</think>{"choice":"explained"}`},
+		{name: "refusal", reply: `I cannot choose. {"choice":"explained"}`},
 		{name: "number", reply: `{"choice":1}`},
 		{name: "boolean", reply: `{"choice":false}`},
 		{name: "array", reply: `{"choice":[]}`},
@@ -96,7 +95,7 @@ func TestDecisionUsesConfiguredUtilityAndAccountsOnce(t *testing.T) {
 	prov := newAssistProvider()
 	m, _ := assistManager(t, openTestStore(t), prov)
 	// A different configured model and different options on the next call must
-	// not reuse any closure state from the first Workflow.
+	// not reuse any state from the first call.
 	for i, model := range []string{"a", "b"} {
 		if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": model}}); err != nil {
 			t.Fatal(err)
