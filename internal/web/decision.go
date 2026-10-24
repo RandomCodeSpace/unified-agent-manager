@@ -156,22 +156,26 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 				result, err = parseDecision(reply, input.Options)
 			}
 			return reply, err
-		}, func(call *UtilityCall, _ string, err error) {
-			call.Fallback = err != nil
-			if err != nil && !errors.Is(err, ErrInvalidDecision) {
-				return
-			}
-			call.Valid = new(err == nil)
-			if err != nil {
-				call.Reason = "invalid_answer"
-			} else if result.Abstained {
-				call.Answer = "[abstain]"
-			} else {
-				call.Answer = result.Choice
-			}
-		})
+		}, func(call *UtilityCall, _ string, err error) { logDecision(call, result, err) })
 	if err != nil {
 		return DecisionResult{}, err
 	}
 	return result, nil
+}
+
+// logDecision fills a Decide call's Utility log entry: provider and context
+// errors leave validity unset, an invalid answer is recorded as such.
+func logDecision(call *UtilityCall, result DecisionResult, err error) {
+	call.Fallback = err != nil
+	if err != nil && !errors.Is(err, ErrInvalidDecision) {
+		return
+	}
+	call.Valid = new(err == nil)
+	if err != nil {
+		call.Reason = "invalid_answer"
+	} else if result.Abstained {
+		call.Answer = "[abstain]"
+	} else {
+		call.Answer = result.Choice
+	}
 }
