@@ -190,6 +190,83 @@ func TestWebAutopilotTaskCompleteEndsTurn(t *testing.T) {
 	}
 }
 
+// autopilotRun starts a turn in autopilot mode whose model call is running.
+func autopilotRun(t *testing.T) webHarness {
+	t.Helper()
+	h, runtime := runtimeHarness(t)
+	runtime.state.Mode = "autopilot"
+	h.conv.(*conversation).refreshExecution(context.Background())
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "reply"}); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("user", userMessage("p1", rpc.UserMessageDeliveryIdle, "reply")))
+	h.fs.onEvent(ev("start", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	return h
+}
+
+// endedTurns lists the turn ends the sink saw.
+func endedTurns(h webHarness) []agentapi.Turn {
+	var ended []agentapi.Turn
+	for _, event := range h.sink.all() {
+		if event.Turn != nil && event.Turn.State != agentapi.TurnWorking {
+			ended = append(ended, *event.Turn)
+		}
+	}
+	return ended
+}
+
+// Copilot CLI 1.0.103, live: session.autopilot_stopped comes before the run's
+// assistant.idle, and an attached shell withholds the session.idle after it,
+// so the assistant.idle ends the turn.
+func TestWebAutopilotStoppedEndsTurn(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		want   agentapi.TurnState
+	}{
+		{"task_complete", agentapi.TurnCompleted},
+		{"background_timeout", agentapi.TurnCompleted},
+		{"error", agentapi.TurnCompleted},
+		{"aborted", agentapi.TurnCancelled},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			h := autopilotRun(t)
+			h.fs.onEvent(ev("stopped", &rpc.SessionAutopilotStoppedData{Reason: tc.reason, RequestID: copilot.String("p1")}))
+			if ended := endedTurns(h); len(ended) != 0 {
+				t.Fatalf("autopilot_stopped alone ended the turn: %+v", ended)
+			}
+			h.fs.onEvent(ev("idle", &rpc.AssistantIdleData{Aborted: copilot.Bool(tc.reason == "aborted")}))
+			if ended := endedTurns(h); len(ended) != 1 || ended[0].State != tc.want {
+				t.Fatalf("turn ends = %+v, want one %s", ended, tc.want)
+			}
+		})
+	}
+}
+
+// The session.idle after the stop ends nothing more, and a stop after an
+// assistant.idle the run withheld ends the turn itself.
+func TestWebAutopilotStoppedThenIdleEndsOnce(t *testing.T) {
+	mode := rpc.SessionModeAutopilot
+	h := autopilotRun(t)
+	h.fs.onEvent(ev("done", &rpc.SessionTaskCompleteData{}))
+	h.fs.onEvent(ev("stopped", &rpc.SessionAutopilotStoppedData{Reason: "task_complete"}))
+	h.fs.onEvent(ev("idle", &rpc.AssistantIdleData{}))
+	h.fs.onEvent(ev("final", &rpc.SessionIdleData{Mode: &mode}))
+	if ended := endedTurns(h); len(ended) != 1 || ended[0].State != agentapi.TurnCompleted {
+		t.Fatalf("turn ends = %+v", ended)
+	}
+
+	h = autopilotRun(t)
+	h.fs.onEvent(ev("idle", &rpc.AssistantIdleData{}))
+	if ended := endedTurns(h); len(ended) != 0 {
+		t.Fatalf("a withheld idle ended the turn: %+v", ended)
+	}
+	h.fs.onEvent(ev("stopped", &rpc.SessionAutopilotStoppedData{Reason: "task_complete"}))
+	h.fs.onEvent(ev("final", &rpc.SessionIdleData{Mode: &mode}))
+	if ended := endedTurns(h); len(ended) != 1 || ended[0].State != agentapi.TurnCompleted {
+		t.Fatalf("turn ends after a withheld idle = %+v", ended)
+	}
+}
+
 func TestWebAutopilotCompletedModeAndPartialFailure(t *testing.T) {
 	h, runtime := runtimeHarness(t)
 	mode := rpc.SessionModeAutopilot

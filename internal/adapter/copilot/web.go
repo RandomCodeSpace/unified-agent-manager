@@ -2084,10 +2084,15 @@ type conversation struct {
 	// taskCompleted marks a main-agent session.task_complete in the current
 	// turn: the session.idle that follows ends an autopilot run even though
 	// it still reports the autopilot mode.
-	taskCompleted   bool
-	completion      *agentapi.TaskCompletion
-	completionReady bool
-	foregroundIdle  bool
+	taskCompleted bool
+	// autopilotStopped marks a main-agent session.autopilot_stopped in the
+	// current turn (CLI 1.0.103+): the run is over, so its assistant.idle
+	// ends the turn without waiting for a session.idle that an attached
+	// shell withholds.
+	autopilotStopped bool
+	completion       *agentapi.TaskCompletion
+	completionReady  bool
+	foregroundIdle   bool
 	// turnRunning is set from a foreground turn's start until its end. Send
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
@@ -3411,6 +3416,23 @@ func attachedShellRunning(tasks []rpc.TaskInfo) bool {
 	})
 }
 
+// autopilotStoppedLocked notes the main agent's session.autopilot_stopped.
+// CLI 1.0.103 sends it before the run's assistant.idle and session.idle,
+// which then end the turn; an idle already withheld ends it here. Older CLIs
+// keep the task_complete and task-list paths.
+func (c *conversation) autopilotStoppedLocked(d *rpc.SessionAutopilotStoppedData, at time.Time) {
+	requestID := ""
+	if d.RequestID != nil {
+		requestID = *d.RequestID
+	}
+	log.Info("copilot autopilot stopped", "conversation", c.id, "reason", d.Reason, "request_id", requestID)
+	c.autopilotStopped, c.taskCompleted = true, true
+	if c.idleUnresolved {
+		c.assistantIdleSeen = true
+		c.finishTurnLocked(copilot.Bool(d.Reason == "aborted"), at)
+	}
+}
+
 func (c *conversation) applyShellTasksLocked(tasks []rpc.TaskInfo) {
 	snapshot := agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{}}
 	for _, task := range tasks {
@@ -3624,6 +3646,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	if c.observeMCPStatusLocked(ev, agentID) {
 		return
 	}
+	if d, ok := ev.Data.(*rpc.SessionAutopilotStoppedData); ok && agentID == "" {
+		c.autopilotStoppedLocked(d, ev.Timestamp)
+	}
 	switch d := ev.Data.(type) {
 	case *rpc.SessionModelChangeData:
 		if agentID == "" {
@@ -3826,7 +3851,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if agentID != "" {
 			return
 		}
-		if (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
+		if !c.autopilotStopped && (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
 			c.idleUnresolved = true
 			if c.execution != nil && c.execution.Mode == "" {
 				c.checkExecutionLocked()
@@ -4002,7 +4027,7 @@ func (c *conversation) startTurnLocked() {
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
-	c.idleUnresolved, c.taskCompleted = false, false
+	c.idleUnresolved, c.taskCompleted, c.autopilotStopped = false, false, false
 	c.completion = nil
 	c.completionReady = false
 	c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
