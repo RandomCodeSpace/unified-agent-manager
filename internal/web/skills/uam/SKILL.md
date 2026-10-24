@@ -260,6 +260,7 @@ start instead.
   moves a subagent you start to an allowed model and tells you so: that is
   final, so do not start it again. If no allowed model is usable, the launch
   is refused: do the work yourself.
+- A subagent that uam cancelled after a model stall can be started again once.
 
 ## Slash commands and autopilot
 

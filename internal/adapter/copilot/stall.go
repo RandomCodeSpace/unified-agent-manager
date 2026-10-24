@@ -46,6 +46,15 @@ type stallState struct {
 	aborting, sending bool
 	// note is the cancelled turn's note after a second stall.
 	note string
+	// subWait follows each subagent's model requests by agent ID.
+	subWait map[string]subagentWait
+}
+
+// subagentWait is one subagent's stall watch: whether it waits on a model
+// request, when it was last heard from, and whether uam cancelled it.
+type subagentWait struct {
+	lastAt             time.Time
+	waiting, cancelled bool
 }
 
 // stallContinuation reports whether d is uam's continuation of a stalled
@@ -73,13 +82,45 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 	}
 }
 
+// noteSubagentWaitLocked is noteModelWaitLocked for a subagent, which the
+// main agent's watch never sees: its parent's task call is a running tool.
+func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID string) {
+	w, seen := c.stall.subWait[agentID]
+	switch ev.Data.(type) {
+	case *rpc.AssistantTurnStartData:
+		w.waiting = true
+		if c.stall.timer == nil {
+			c.stall.timer = time.AfterFunc(webStallAfter, c.checkStall)
+		}
+	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
+		w.waiting = false
+	default:
+		if !seen {
+			return
+		}
+	}
+	w.lastAt = time.Now()
+	if c.stall.subWait == nil {
+		c.stall.subWait = map[string]subagentWait{}
+	}
+	c.stall.subWait[agentID] = w
+}
+
 // checkStall aborts a main-agent model request that has heard nothing for
-// webStallAfter, and otherwise looks again when it could have.
+// webStallAfter, cancels such a subagent, and otherwise looks again when
+// either could have stalled.
 func (c *conversation) checkStall() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stall.timer = nil
-	if c.closed || !c.turnRunning || c.modelWaitAt.IsZero() {
+	if c.closed || !c.turnRunning {
+		return
+	}
+	next := c.checkSubagentStallsLocked()
+	if c.modelWaitAt.IsZero() {
+		if next > 0 {
+			c.stall.timer = time.AfterFunc(next, c.checkStall)
+		}
 		return
 	}
 	wait := webStallAfter - time.Since(c.lastEventAt)
@@ -87,6 +128,9 @@ func (c *conversation) checkStall() {
 		wait = webStallAfter
 	}
 	if wait > 0 {
+		if next > 0 {
+			wait = min(wait, next)
+		}
 		c.stall.timer = time.AfterFunc(wait, c.checkStall)
 		return
 	}
@@ -101,6 +145,60 @@ func (c *conversation) checkStall() {
 	}
 	c.stall.retries++
 	go c.abortStalled(c.sess)
+}
+
+// checkSubagentStallsLocked cancels, once each, the subagents whose model
+// request has heard nothing for webStallAfter while none of their tools runs,
+// and reports when the next could stall, or zero.
+func (c *conversation) checkSubagentStallsLocked() time.Duration {
+	var next time.Duration
+	busy := len(c.pending) > 0 || c.stopPendingLocked()
+	for id, w := range c.stall.subWait {
+		if sa := c.subs.byID[id]; c.stoppedSubagents[id] || sa != nil && sa.Status.Terminal() {
+			delete(c.stall.subWait, id)
+			continue
+		}
+		if !w.waiting || w.cancelled {
+			continue
+		}
+		wait := webStallAfter - time.Since(w.lastAt)
+		if wait <= 0 && (busy || c.subagentToolRunningLocked(id)) {
+			wait = webStallAfter
+		}
+		if wait > 0 {
+			if next == 0 || wait < next {
+				next = wait
+			}
+			continue
+		}
+		w.cancelled = true
+		c.stall.subWait[id] = w
+		log.Warn("copilot subagent model request stalled; cancelling", "conversation", c.id, "agent", id,
+			"silence_ms", time.Since(w.lastAt).Milliseconds())
+		go c.cancelStalledSubagent(c.id, id)
+	}
+	return next
+}
+
+// subagentToolRunningLocked reports whether a tool call of the agent runs.
+// The transcript's running calls carry no agent; toolAgents maps them.
+func (c *conversation) subagentToolRunningLocked(agentID string) bool {
+	for _, agent := range c.tr.toolAgents {
+		if agent == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelStalledSubagent cancels the stalled subagent; its parent's task call
+// then ends and the main agent goes on.
+func (c *conversation) cancelStalledSubagent(conv, agentID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), webStopRPCWait)
+	defer cancel()
+	if err := c.CancelSubagent(ctx, agentID); err != nil {
+		log.Warn("copilot stalled subagent not cancelled", "conversation", conv, "agent", agentID, "error", errText(err))
+	}
 }
 
 // abortStalled aborts the stalled request. A failed abort leaves the turn

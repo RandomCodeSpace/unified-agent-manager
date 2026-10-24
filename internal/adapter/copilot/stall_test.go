@@ -33,6 +33,24 @@ func (s *fakeSession) sentMessages() []copilot.MessageOptions {
 	return append([]copilot.MessageOptions(nil), s.msgs...)
 }
 
+func (s *fakeSession) subagentCancels() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.subCancels...)
+}
+
+// subagentWaiting starts a turn whose main agent runs a subagent's task call
+// and leaves the subagent waiting on a model request.
+func subagentWaiting(t *testing.T, h webHarness) {
+	t.Helper()
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "delegating", MessageID: "m-1"}))
+	h.fs.onEvent(ev("task-1", &rpc.ToolExecutionStartData{ToolCallID: "task-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("sub-start", "agent-1", &rpc.SubagentStartedData{ToolCallID: "task-call"}))
+	h.fs.onEvent(agentEv("sub-ts-1", "agent-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+}
+
 func turnStates(sink *recSink) []agentapi.TurnState {
 	var states []agentapi.TurnState
 	for _, e := range sink.all() {
@@ -165,5 +183,55 @@ func TestWebStopDuringAStallRetryEndsTheTurn(t *testing.T) {
 	time.Sleep(3 * webStallAfter)
 	if n := len(h.fs.sentMessages()); n != 1 {
 		t.Fatalf("messages sent = %d, want no continuation", n)
+	}
+}
+
+// A subagent's model request that hears nothing is cancelled through the
+// subagent, once; the main agent's request is left alone.
+func TestWebStalledSubagentIsCancelledOnce(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	waitFor(t, "the stalled subagent's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 1 || got[0] != "agent-1" {
+		t.Fatalf("subagent cancels = %v", got)
+	}
+	if n := h.fs.abortCount(); n != 0 {
+		t.Fatalf("the main request was aborted %d times", n)
+	}
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnWorking {
+		t.Fatalf("turn = %+v", turn)
+	}
+}
+
+// A subagent running a tool of its own is not stalled.
+func TestWebSubagentStallWatchLeavesRunningToolsAlone(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-tool", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-call", ToolName: "bash"}))
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 0 {
+		t.Fatalf("a subagent with a running tool was cancelled: %v", got)
+	}
+	// Once its tool ends, the same silent request is a stall.
+	h.fs.onEvent(agentEv("sub-done", "agent-1", &rpc.ToolExecutionCompleteData{ToolCallID: "sub-call", Success: true}))
+	waitFor(t, "the stalled subagent's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+}
+
+// Events of the subagent keep its request alive; its message ends the wait.
+func TestWebSubagentEventsResetTheStallWatch(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	for i := range 6 {
+		time.Sleep(webStallAfter / 2)
+		h.fs.onEvent(agentEv(fmt.Sprintf("sub-delta-%d", i), "agent-1", &rpc.AssistantMessageDeltaData{MessageID: "sm-1", DeltaContent: "x"}))
+	}
+	h.fs.onEvent(agentEv("sub-msg", "agent-1", &rpc.AssistantMessageData{Content: "done", MessageID: "sm-1"}))
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 0 {
+		t.Fatalf("a subagent that was heard from was cancelled: %v", got)
 	}
 }

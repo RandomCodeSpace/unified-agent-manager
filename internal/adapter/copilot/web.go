@@ -3609,6 +3609,8 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	agentID := agentOf(ev)
 	if agentID == "" {
 		c.noteModelWaitLocked(ev)
+	} else {
+		c.noteSubagentWaitLocked(ev, agentID)
 	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
 	c.observeCompactionLocked(ev, agentID)
