@@ -123,6 +123,9 @@ func (r *fakeRuntime) serve(conn net.Conn) {
 			reply["error"] = map[string]any{"code": -32000, "message": msg}
 		} else if res, ok := r.results[req.Method]; ok {
 			reply["result"] = json.RawMessage(res)
+		} else if req.Method == "session.sendAndWait" {
+			// An unset completion RPC is a runtime without it: SDK 1.0.26 then waits for session.idle.
+			reply["error"] = map[string]any{"code": -32601, "message": "method not found"}
 		} else {
 			reply["result"] = json.RawMessage(`{}`)
 		}
@@ -330,6 +333,20 @@ func TestSDKSessionAdapterRequests(t *testing.T) {
 	if id, err := s.Send(ctx, copilot.MessageOptions{Prompt: "hi"}); err != nil || id != "m-1" || rt.last("session.send")["prompt"] != "hi" {
 		t.Fatalf("Send = %q, %v", id, err)
 	}
+	// A runtime with the completion RPC answers with the request's own response.
+	answer := copilot.SessionEvent{ID: "e-5", Timestamp: time.Unix(100, 0), Data: &rpc.AssistantMessageData{MessageID: "a-2", Content: "a correlated title"}}
+	done := copilot.SessionEvent{ID: "e-6", Timestamp: time.Unix(100, 0), Data: &rpc.SessionIdleData{}}
+	completed, _ := json.Marshal(rpc.SendAndWaitResult{MessageID: "m-3", CompletionEventID: copilot.String("e-6"), Response: &answer})
+	rt.set("session.sendAndWait", string(completed))
+	rt.mu.Lock()
+	rt.events["session.sendAndWait"] = []copilot.SessionEvent{answer, done}
+	rt.mu.Unlock()
+	if text, err := s.SendAndWait(ctx, copilot.MessageOptions{Prompt: "name it"}); err != nil || text != "a correlated title" || rt.last("session.sendAndWait")["prompt"] != "name it" {
+		t.Fatalf("SendAndWait with the completion RPC = %q, %v", text, err)
+	}
+	rt.mu.Lock()
+	delete(rt.results, "session.sendAndWait")
+	rt.mu.Unlock()
 	rt.fail("session.send", "prompt refused")
 	if _, err := s.Send(ctx, copilot.MessageOptions{Prompt: "hi"}); !errors.As(err, &rejected) || !strings.Contains(rejected.Error(), "prompt refused") || errors.Unwrap(rejected) == nil {
 		t.Fatalf("refused Send err = %v", err)
@@ -340,15 +357,17 @@ func TestSDKSessionAdapterRequests(t *testing.T) {
 
 	// SendAndWait answers with the turn's last assistant message, if any.
 	idle := copilot.SessionEvent{ID: "e-3", Timestamp: time.Unix(100, 0), Data: &rpc.SessionIdleData{}}
+	// SDK 1.0.26 counts only the idle after the sent message's own user.message.
+	started := copilot.SessionEvent{ID: "e-1", Timestamp: time.Unix(100, 0), Data: &rpc.UserMessageData{MessageID: copilot.String("m-2"), Content: "name it"}}
 	rt.set("session.send", `{"messageId":"m-2"}`)
 	rt.mu.Lock()
-	rt.events["session.send"] = []copilot.SessionEvent{{ID: "e-2", Timestamp: time.Unix(100, 0), Data: &rpc.AssistantMessageData{MessageID: "a-1", Content: "a title"}}, idle}
+	rt.events["session.send"] = []copilot.SessionEvent{started, {ID: "e-2", Timestamp: time.Unix(100, 0), Data: &rpc.AssistantMessageData{MessageID: "a-1", Content: "a title"}}, idle}
 	rt.mu.Unlock()
 	if text, err := s.SendAndWait(ctx, copilot.MessageOptions{Prompt: "name it"}); err != nil || text != "a title" {
 		t.Fatalf("SendAndWait = %q, %v", text, err)
 	}
 	rt.mu.Lock()
-	rt.events["session.send"] = []copilot.SessionEvent{idle}
+	rt.events["session.send"] = []copilot.SessionEvent{started, idle}
 	rt.mu.Unlock()
 	if text, err := s.SendAndWait(ctx, copilot.MessageOptions{Prompt: "name it"}); err != nil || text != "" {
 		t.Fatalf("SendAndWait without a message = %q, %v", text, err)

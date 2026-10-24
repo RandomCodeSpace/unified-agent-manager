@@ -2743,7 +2743,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   must first restore the recorded settings successfully.
 - **Detached shells (Copilot).** While a shell Copilot started detached
   is running, Copilot CLI 1.0.92 and 1.0.93 report it in a form the
-  Copilot SDK cannot read (still so in SDK 1.0.17), so the Thread's
+  Copilot SDK cannot read (still so in SDK 1.0.26), so the Thread's
   background tasks cannot be read either. The chip says Status unavailable
   and lists the shells reported before, or does not appear when none were;
   nothing can be stopped from it. The shell shows within 15 seconds of
