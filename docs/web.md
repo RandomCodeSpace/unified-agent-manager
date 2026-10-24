@@ -713,7 +713,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   request." stands in its transcript where uam's message to the agent went.
   A second stall in the same turn ends it as Stopped with "No answer from
   the model for 180 s, again after a retry. Send the message again to
-  retry." A request stalled inside a subagent is not caught; Stop ends it.
+  retry." A request stalled inside a subagent, with none of its tools
+  running, is cancelled after 3 minutes; the main agent sees it cancelled.
   The running turn's intent and
   retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
