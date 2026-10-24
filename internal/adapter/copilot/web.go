@@ -994,7 +994,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 			return "", fmt.Errorf("copilot %s: %w", purpose, err)
 		}
 	}
-	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments})})
+	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments}), ResponseSchema: req.ResponseSchema})
 	if err != nil {
 		if ctx.Err() != nil {
 			// Stop the model request before the session goes, so it does
