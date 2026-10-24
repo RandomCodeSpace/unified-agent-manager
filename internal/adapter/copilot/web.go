@@ -2072,7 +2072,8 @@ type conversation struct {
 	questions        questionLinks
 	elicits          elicitLinks // elicitation.requested events with elicitation callbacks
 	stoppedSubagents map[string]bool
-	prompting        string // the agent PromptSubagent is sending a follow-up to
+	approvedOnce     map[string]int // owner "Allow once" answers per session-option scope
+	prompting        string         // the agent PromptSubagent is sending a follow-up to
 	tr               *transcript
 	subs             *subagentLog
 	turnErr          string
@@ -2217,6 +2218,7 @@ type interaction struct {
 	planReply chan copilot.ExitPlanModeResult   // native review: one explicit owner response
 	answering bool                              // a permission answer is in flight
 	auto      bool                              // Auto fallback needs a person's explicit Yes
+	onceKey   string                            // permissions: the session option's scope, "" without one
 	// Elicitations only: the CLI's request ID once its event is linked, and
 	// the key that links it.
 	requestID, elicitKey string
@@ -3058,6 +3060,12 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 		in.State, in.Resolution = agentapi.InteractionRejected, optionLabel(in.Options, ans.Decision)
 	default:
 		in.State, in.Resolution = agentapi.InteractionAnswered, optionLabel(in.Options, ans.Decision)
+		if ans.Decision == "approve_once" && !ans.Auto && in.onceKey != "" {
+			if c.approvedOnce == nil {
+				c.approvedOnce = map[string]int{}
+			}
+			c.approvedOnce[in.onceKey]++
+		}
 	}
 	c.emitInteractionLocked(in)
 	if !applied {
@@ -4150,6 +4158,13 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	add(agentapi.Option{ID: "approve_once", Label: "Allow once", AllowOnce: !managed}, &rpc.PermissionDecisionApproveOnce{ApprovedInteractively: copilot.Bool(true)})
 	if dec := sessionApproval(d.PromptRequest); dec != nil {
 		add(agentapi.Option{ID: "approve_session", Label: "Allow for this session"}, dec)
+		key, _ := json.Marshal(dec)
+		in.onceKey = string(key)
+		// After two owner "Allow once" answers for the same scope, the session
+		// option comes first, which the UI makes the primary button.
+		if c.approvedOnce[in.onceKey] >= 2 {
+			in.Options[0], in.Options[1] = in.Options[1], in.Options[0]
+		}
 	}
 	add(agentapi.Option{ID: "reject", Label: "Deny", Reject: true}, &rpc.PermissionDecisionReject{})
 	c.pending[d.RequestID] = in
