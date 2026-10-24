@@ -91,6 +91,24 @@ func TestDecisionRejectsInvalidInputBeforeInference(t *testing.T) {
 	}
 }
 
+func TestDecisionSendsAClosedSchema(t *testing.T) {
+	prov := newAssistProvider()
+	m, _ := assistManager(t, openTestStore(t), prov)
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
+	if _, err := m.Decide(context.Background(), decisionFixture()); err != nil {
+		t.Fatal(err)
+	}
+	reqs := prov.UtilityRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("%d Utility calls", len(reqs))
+	}
+	got, _ := json.Marshal(reqs[0].ResponseSchema)
+	want := `{"additionalProperties":false,"properties":{"choice":{"anyOf":[{"enum":["explained","changed"]},{"type":"null"}]}},"required":["choice"],"type":"object"}`
+	if string(got) != want {
+		t.Fatalf("schema = %s, want %s", got, want)
+	}
+}
+
 func TestDecisionUsesConfiguredUtilityAndAccountsOnce(t *testing.T) {
 	prov := newAssistProvider()
 	m, _ := assistManager(t, openTestStore(t), prov)

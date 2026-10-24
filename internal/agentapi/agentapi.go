@@ -229,6 +229,9 @@ type UtilityRequest struct {
 	CallTool func(context.Context, HostToolCall) HostToolResult
 	// Timeout, when positive, also bounds the whole call.
 	Timeout time.Duration
+	// ResponseSchema is an optional JSON Schema the provider enforces;
+	// callers still validate.
+	ResponseSchema map[string]any
 	// OnUsage, when set, receives what the call's model requests reported,
 	// summed, once before the call returns; it is not called when none
 	// reported usage.

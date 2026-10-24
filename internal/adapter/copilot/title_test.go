@@ -379,3 +379,24 @@ func TestUtilityReportsItsUsage(t *testing.T) {
 		t.Fatalf("usage reported without events: %+v", got)
 	}
 }
+
+// A Utility call passes its response schema to the session, except on a
+// custom model, whose endpoints the schema probe did not cover.
+func TestUtilityPassesResponseSchema(t *testing.T) {
+	var sent []map[string]any
+	p, _ := titleProvider(func(_ context.Context, msg copilot.MessageOptions) (string, error) {
+		sent = append(sent, msg.ResponseSchema)
+		return `{"choice":null}`, nil
+	})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	p.SetCustomModels([]agentapi.CustomModel{{Name: "ollama", BaseURL: "http://127.0.0.1:1/v1", ModelID: "deepseek", APIKey: "k"}})
+	schema := map[string]any{"type": "object"}
+	for _, model := range []string{"gpt-6-luna", "ollama/deepseek"} {
+		if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: model, Purpose: "decision-x", Prompt: "p", ResponseSchema: schema}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sent) != 2 || !reflect.DeepEqual(sent[0], schema) || sent[1] != nil {
+		t.Fatalf("schemas sent = %v", sent)
+	}
+}

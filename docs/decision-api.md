@@ -42,6 +42,11 @@ automatic consumer.
   object, trailing prose, refusals, invalid UTF-8, and answers exceeding 2,048
   bytes are rejected. Only an allowed ID or null is accepted. A valid
   abstention is a successful answer.
+- The request also carries a closed JSON Schema (`choice` is one of the option
+  IDs or null, no other keys), which the Copilot provider sends as a strict
+  `json_schema` response format. The schema is a hint: the answer is still
+  validated as above. Custom (BYOM) models get no schema, since their
+  endpoints were not probed for it, and rely on the prompt alone.
 - The API calls the selected Utility provider at most once. It adds no retry
   or alternate-model fallback. The existing Utility model selection and
   explicit opt-out remain authoritative. Compatibility means models runnable

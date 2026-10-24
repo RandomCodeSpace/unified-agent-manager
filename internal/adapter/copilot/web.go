@@ -994,7 +994,12 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 			return "", fmt.Errorf("copilot %s: %w", purpose, err)
 		}
 	}
-	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments})})
+	schema := req.ResponseSchema
+	if _, ok := p.customModel(model); ok {
+		// shortcut: BYOM endpoints were not probed for json_schema in the 2026-10 probe; probe them on a CLI bump
+		schema = nil
+	}
+	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments}), ResponseSchema: schema})
 	if err != nil {
 		if ctx.Err() != nil {
 			// Stop the model request before the session goes, so it does
