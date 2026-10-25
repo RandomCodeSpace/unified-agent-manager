@@ -1065,6 +1065,28 @@ func TestWebAllowOnceMarkerFollowsManagedPolicy(t *testing.T) {
 	}
 }
 
+// The model's stated reason reaches the interaction, sanitized and bounded;
+// a kind without one carries none.
+func TestWebPermissionCarriesIntention(t *testing.T) {
+	h := openWeb(t)
+	shell := shellRequest("shell")
+	shell.PromptRequest.(*rpc.PermissionPromptRequestCommands).Intention = "  Remove the build folder\x1b[31m  "
+	h.fs.onEvent(ev("e1", shell))
+	long := &rpc.PermissionRequestedData{RequestID: "write", PermissionRequest: &rpc.PermissionRequestWrite{FileName: "a.txt"}, PromptRequest: &rpc.PermissionPromptRequestWrite{FileName: "a.txt", Intention: strings.Repeat("é", 400)}}
+	h.fs.onEvent(ev("e2", long))
+	mcp := &rpc.PermissionRequestedData{RequestID: "mcp", PermissionRequest: &rpc.PermissionRequestMCP{ServerName: "s", ToolName: "t"}, PromptRequest: &rpc.PermissionPromptRequestMCP{ServerName: "s", ToolName: "t"}}
+	h.fs.onEvent(ev("e3", mcp))
+	if got := h.sink.interaction("shell").Intention; got != "Remove the build folder" {
+		t.Fatalf("shell intention = %q", got)
+	}
+	if got := h.sink.interaction("write").Intention; len(got) > maxIntention || !utf8.ValidString(got) || !strings.HasPrefix(got, "éé") {
+		t.Fatalf("write intention = %d bytes %q", len(got), got)
+	}
+	if got := h.sink.interaction("mcp").Intention; got != "" {
+		t.Fatalf("mcp intention = %q", got)
+	}
+}
+
 // A permission request names the tool call it is for, whatever its kind, and
 // that name is the ID of the call's tool item.
 func TestWebPermissionNamesItsToolCall(t *testing.T) {

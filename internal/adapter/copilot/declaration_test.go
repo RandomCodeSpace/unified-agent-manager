@@ -29,7 +29,7 @@ func readyDeclaration(t *testing.T, validate func(context.Context, string) (stri
 }
 
 func invokeFile(tool copilot.Tool, callID string, args map[string]any) (copilot.ToolResult, error) {
-	return tool.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: callID, Arguments: args, TraceContext: context.Background()})
+	return refusal(tool.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: callID, Arguments: args, TraceContext: context.Background()}))
 }
 
 func TestDeclarationHandlerMetadataCorrectionAndBounds(t *testing.T) {
