@@ -50,4 +50,13 @@ type CLIUpdater interface {
 	// on disk since it started, by UpdateCLI or by an install made outside
 	// uam; RestartCLI then restarts it like an update's.
 	CLIOutdated() bool
+	// RestartRuntime stops the running runtime whatever runs on it, so the
+	// next use starts a new one with fresh connections. A running turn ends
+	// as cancelled with reason as its note; an idle conversation ends and
+	// reopens on its next use. New starts wait meanwhile. With no runtime
+	// running it does nothing and returns nil.
+	RestartRuntime(ctx context.Context, reason string) error
+	// RuntimeStalls counts the turns the running runtime's model requests
+	// stalled twice in since it started; zero after a restart.
+	RuntimeStalls() int
 }

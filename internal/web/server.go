@@ -234,6 +234,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
 	mux.HandleFunc("GET /api/providers/{provider}/cli", s.handleProviderCLI)
 	mux.HandleFunc("POST /api/providers/{provider}/cli/update", s.handleUpdateProviderCLI)
+	mux.HandleFunc("POST /api/providers/{provider}/cli/restart", s.handleRestartProviderCLI)
 	mux.HandleFunc("GET /api/service", s.handleService)
 	mux.HandleFunc("POST /api/service/restart", s.handleRestartService)
 	mux.HandleFunc("GET /api/utility", s.handleUtility)

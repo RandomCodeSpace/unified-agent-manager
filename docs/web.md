@@ -246,6 +246,25 @@ Copilot, it stops any Copilot CLI that a UAM no longer running left behind
 (one that hung when that UAM was killed); it never touches the CLI of a UAM
 that still runs.
 
+**Restart Copilot runtime.** The same section has **Restart Copilot
+runtime**, for when Copilot's requests to the model stop getting answers:
+on some networks a connection that sat idle is dropped on the way to a proxy
+without Copilot being told, and every request Copilot then makes on it
+waits for good. The button stops the Copilot CLI whatever runs on it, without
+restarting UAM, and the next use starts a fresh one with new connections. The
+confirmation names the Threads working or waiting, which end as Stopped with
+"Copilot runtime restarted by the owner" (send their message again); idle
+Threads keep their state and reopen on their next message, as after an idle
+close. Settings then says how many Threads were stopped. Once UAM has given
+up on a stalled turn (see **Stop** under Threads) the section shows an amber
+note pointing at the button. If the dropped connections keep coming back on a
+host, have its kernel probe idle connections sooner than the default two
+hours, so the firewall sees traffic and a dead connection errors out within
+minutes rather than waiting: on Linux, `net.ipv4.tcp_keepalive_time=60`,
+`net.ipv4.tcp_keepalive_intvl=10` and `net.ipv4.tcp_keepalive_probes=6`
+in `sysctl.d`. The Copilot CLI already asks for keepalive probes on its
+connections; only their timing is the host's.
+
 **Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
 `GITHUB_TOKEN` (in that order) in the service's environment takes precedence
 over any stored sign-in, so while one is set Settings names the variable and
@@ -311,14 +330,17 @@ Threads have open conversations. The provider's `capabilities.device_sign_in` in
 `GET /api/meta` says whether it is offered. `GET /api/providers/copilot/cli`
 returns `{"installed"?, "running"?, "latest"?, "update_available",
 "manual"?, "incompatible"?, "checked_at"?, "check_error"?, "state" ("idle",
-"updating", "updated" or "failed"), "target"?, "error"?}`, reading the
+"updating", "updated" or "failed"), "target"?, "error"?, "stalled"?}`, reading the
 releases first when none were read yet or with `?refresh=1`; `installed` is
 the version on disk, and `running`, while set, the older one Copilot still runs
-until it restarts. `POST
+until it restarts; `stalled` counts the turns UAM gave up on after two
+stalled model requests since the CLI started. `POST
 /api/providers/copilot/cli/update` starts the update to `latest` and returns
 the same shape in state `updating`, or the update in progress; it answers 409
 when no update is available and when `manual` says the CLI must be updated
-another way. While an update
+another way. `POST /api/providers/copilot/cli/restart` stops the Copilot CLI
+whatever runs on it and returns `{"interrupted"}`, the number of Threads that
+were working or waiting; it answers 409 while a CLI update is installing. While an update
 is available, `GET /api/meta` lists its release as the provider's
 `cli_update`; `capabilities.cli_update` says whether updates are offered. All
 need sign-in like other protected API routes. Sign-ins and sign-outs are logged without the token.
@@ -705,16 +727,22 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   autopilot turn that Stop could not switch to interactive at once is
   switched as soon as that other change ends, unless a mode was chosen or a
   turn started since. A main-agent model request that gets no answer for
-  3 minutes, with no tool running and nothing waiting on you, is cancelled
+  too long, with no tool running and nothing waiting on you, is cancelled
   and the turn continued: a connection the network dropped without telling
   Copilot (a firewall's idle timeout on the way to a proxy) leaves a request
-  waiting for good, and the next request opens a new one. The turn keeps
-  running, and the note "No answer from the model for 180 s; uam retried the
-  request." stands in its transcript where uam's message to the agent went.
-  A second stall in the same turn ends it as Stopped with "No answer from
-  the model for 180 s, again after a retry. Send the message again to
-  retry." A request stalled inside a subagent, with none of its tools
-  running, is cancelled after 3 minutes; the main agent sees it cancelled.
+  waiting for good, and the next request opens a new one. Too long is 3
+  minutes until the conversation has seen a request answered, then four
+  times the longest silence an answered request showed, never under 1 minute
+  nor over 3: a Thread whose requests answer in seconds is retried within a
+  minute. The turn keeps running, and the note "No answer from the model for
+  60 s; uam retried the request." (with the bound it hit) stands in its
+  transcript where uam's message to the agent went. A second stall in the
+  same turn ends it as Stopped with "No answer from the model for 60 s, again
+  after a retry. Send the message again to retry.", and Settings → GitHub
+  Copilot then points at **Restart Copilot runtime** (see **Copilot CLI
+  updates**), which gives Copilot new connections. A request stalled inside
+  a subagent, with none of its tools running, is cancelled after 3 minutes;
+  the main agent sees it cancelled.
   The running turn's intent and
   retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list

@@ -1,8 +1,11 @@
 import { useApi } from '../ApiContext';
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode } from 'react';
-import { describeError, type ProviderCLI, type ProviderInfo } from '../api';
+import { describeError, LIVE, type ProviderCLI, type ProviderInfo } from '../api';
 import { dateTime, Loading, Note, timeAgo, useApp } from './common';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
+
+const threads = (n: number) => `${n} thread${n === 1 ? '' : 's'}`;
 
 /** The update on offer, or that there is none; nothing before a check has succeeded. */
 function versionText(c: ProviderCLI): string {
@@ -30,6 +33,10 @@ function statusText(c: ProviderCLI): ReactNode {
  * it runs on the server and outlives the page, so one in progress is picked up on open and read again every 2 s until
  * it ends. Tasks keep running meanwhile: the server restarts the CLI onto the update once no Copilot Task is working or
  * waiting, and the section keeps reading until it has.
+ *
+ * Restart Copilot runtime stops the CLI whatever runs on it, for when its model requests stall on connections the
+ * network dropped: the confirmation names the Threads working or waiting, which end as Stopped; idle ones reopen on
+ * their next message. An amber note points at it once the server has given up on a stalled turn twice.
  */
 export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
   const api = useApi();
@@ -42,6 +49,9 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
   const [starting, setStarting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // The restart's confirmation carries the names of the Threads it would stop.
+  const restart = useConfirm<string[]>();
+  const [recycling, setRecycling] = useState(false);
   const titleId = useId();
   const name = provider.name;
   const refresh = useRef(refreshMeta);
@@ -116,6 +126,31 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
     }
   }
 
+  async function askRestart() {
+    setFormError(null);
+    setDone(null);
+    try {
+      const live = (await api.sessions()).filter((s) => s.provider === name && LIVE.includes(s.state));
+      restart.ask(live.map((s) => s.name || s.title || 'Untitled thread'));
+    } catch (e) {
+      setFormError(`Could not read the threads: ${describeError(e)}`);
+    }
+  }
+
+  async function confirmRestart() {
+    setRecycling(true);
+    try {
+      const { interrupted } = await api.restartProviderCli(name);
+      setDone(`Copilot restarted. ${interrupted ? `${threads(interrupted)} stopped; send their message again.` : 'No thread was working.'}`);
+      setCli(await api.providerCli(name));
+    } catch (e) {
+      setFormError(`Could not restart Copilot: ${describeError(e)}`);
+    } finally {
+      setRecycling(false);
+      restart.close();
+    }
+  }
+
   if (!cli) {
     return error ? (
       <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
@@ -148,12 +183,22 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
             {restarting && <Note>Still running {cli.running}; restarts when no Copilot thread is working or waiting.</Note>}
             {!updating && cli.check_error && <Note className="[overflow-wrap:anywhere]">Could not check for a newer release: {cli.check_error}</Note>}
             {cli.manual && <Note className="[overflow-wrap:anywhere]">UAM cannot update it here: {cli.manual}</Note>}
+            {!!cli.stalled && (
+              <Note tone="warn">
+                The model stopped answering {threads(cli.stalled)} twice in a row: Copilot may be holding dead connections. Restart Copilot runtime gives it new ones.
+              </Note>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!updating && (
             <Button size="sm" variant="ghost" loading={checking} disabled={starting} onClick={check}>
               Check again
+            </Button>
+          )}
+          {!updating && (
+            <Button size="sm" variant="secondary" loading={recycling} disabled={starting} onClick={() => void askRestart()}>
+              Restart Copilot runtime
             </Button>
           )}
           {(updating || (cli.update_available && !failed)) && (
@@ -181,6 +226,28 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
         </Note>
       )}
       {done && <Note role="status">{done}</Note>}
+      <AlertDialog
+        {...restart.props}
+        title="Restart the Copilot runtime?"
+        description={
+          restart.target?.length
+            ? `${threads(restart.target.length)} working or waiting will stop; send their message again afterwards. Idle threads reopen on their next message.`
+            : 'No thread is working or waiting. Idle threads reopen on their next message.'
+        }
+        confirmLabel="Restart"
+        busy={recycling}
+        onConfirm={() => void confirmRestart()}
+      >
+        {!!restart.target?.length && (
+          <ul className="flex flex-col gap-1 text-meta">
+            {restart.target.map((label, i) => (
+              <li key={`${i}-${label}`} className="truncate">
+                {label}
+              </li>
+            ))}
+          </ul>
+        )}
+      </AlertDialog>
     </div>
   );
 }

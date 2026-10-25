@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -377,6 +378,9 @@ type webProvider struct {
 	// the utility prompts running, which it waits for too.
 	outdated  bool
 	utilities int
+	// stalls counts the turns the running CLI's model requests stalled
+	// twice in (stall.go); Settings points at RestartRuntime with it.
+	stalls atomic.Int32
 	// installedCLI is the binary a start runs now, and its file; nil leaves
 	// CLIOutdated to updates made here. cliPath and cliFile are what it read
 	// before the running client started.
@@ -1893,6 +1897,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	}
 	p.client, p.stop = c, make(chan struct{})
 	p.assistedRefused = ""
+	p.stalls.Store(0)
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()
 	p.live, p.plan, p.credits = nil, "", nil
@@ -2121,6 +2126,10 @@ type conversation struct {
 	// while none is; stall is the running turn's stall watch (stall.go).
 	modelWaitAt time.Time
 	stall       stallState
+	// modelGapMax is the longest silence a main-agent model request showed
+	// before an event answered it, over the conversation's life; the stall
+	// bound adapts to it (stallBoundLocked).
+	modelGapMax time.Duration
 	// modeOps counts execution mode choices (ensureExecutionMode), so a
 	// mode reset Stop deferred does not override a later one.
 	modeOps uint64
@@ -3632,6 +3641,12 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}()
 	if c.closed {
 		return
+	}
+	// An event while the main agent waits on the model is an answer of
+	// sorts; the silence before it sizes the stall bound. The abort of a
+	// stalled request is not one.
+	if !c.modelWaitAt.IsZero() && !c.stall.aborting {
+		c.modelGapMax = max(c.modelGapMax, time.Since(c.lastEventAt))
 	}
 	c.lastEvent, c.lastEventAt = string(ev.Type()), time.Now()
 	if c.tools != nil {

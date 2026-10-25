@@ -23,6 +23,22 @@ import (
 // same turn ends it as stopped. Tests shorten the bound.
 var webStallAfter = 3 * time.Minute
 
+// webStallMin is the shortest bound stallBoundLocked adapts to: below it a
+// slow first token of a long prompt would read as a stall.
+var webStallMin = time.Minute
+
+// stallBoundLocked is how long the main agent's model request may stay
+// silent before it counts as stalled: webStallAfter until the conversation
+// has seen a request answered, then four times the longest silence an
+// answered request showed, within webStallMin and webStallAfter. A Thread
+// whose requests answer in seconds no longer waits three minutes.
+func (c *conversation) stallBoundLocked() time.Duration {
+	if c.modelGapMax <= 0 {
+		return webStallAfter
+	}
+	return min(webStallAfter, max(webStallMin, 4*c.modelGapMax))
+}
+
 // stallSource marks uam's continuation of a stalled request on its user
 // message, live and in the CLI's record, so it reads as a note and never as
 // the turn's own message.
@@ -44,8 +60,10 @@ type stallState struct {
 	// aborting is set from uam's abort of a stalled request until its
 	// continuation reaches the CLI: the turn runs on through the abort's idle.
 	aborting, sending bool
-	// note is the cancelled turn's note after a second stall.
-	note string
+	// note is the cancelled turn's note after a second stall; silence the
+	// bound the stalls exceeded, for the notes.
+	note    string
+	silence time.Duration
 	// subWait follows each subagent's model requests by agent ID.
 	subWait map[string]subagentWait
 }
@@ -71,7 +89,7 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 	case *rpc.AssistantTurnStartData:
 		c.modelWaitAt = time.Now()
 		if c.stall.timer == nil {
-			c.stall.timer = time.AfterFunc(webStallAfter, c.checkStall)
+			c.stall.timer = time.AfterFunc(c.stallBoundLocked(), c.checkStall)
 		}
 	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
 		c.modelWaitAt = time.Time{}
@@ -123,9 +141,10 @@ func (c *conversation) checkStall() {
 		}
 		return
 	}
-	wait := webStallAfter - time.Since(c.lastEventAt)
+	bound := c.stallBoundLocked()
+	wait := bound - time.Since(c.lastEventAt)
 	if wait <= 0 && (len(c.tr.tools) > 0 || len(c.pending) > 0 || c.stopPendingLocked() || c.stall.aborting) {
-		wait = webStallAfter
+		wait = bound
 	}
 	if wait > 0 {
 		if next > 0 {
@@ -134,10 +153,12 @@ func (c *conversation) checkStall() {
 		c.stall.timer = time.AfterFunc(wait, c.checkStall)
 		return
 	}
+	c.stall.silence = bound
 	report := []any{"conversation", c.id, "turn_ms", time.Since(c.turnAt).Milliseconds(),
-		"silence_ms", time.Since(c.lastEventAt).Milliseconds(), "last_event", c.lastEvent}
+		"silence_ms", time.Since(c.lastEventAt).Milliseconds(), "bound_ms", bound.Milliseconds(), "last_event", c.lastEvent}
 	if c.stall.retries > 0 {
-		c.stall.note = fmt.Sprintf(stallGaveUpNote, seconds(webStallAfter))
+		c.stall.note = fmt.Sprintf(stallGaveUpNote, seconds(bound))
+		c.p.stalls.Add(1)
 		log.Warn("copilot model request stalled again; ending the turn", report...)
 	} else {
 		c.stall.aborting = true
@@ -235,17 +256,18 @@ func (c *conversation) continueStalledLocked() bool {
 		c.stall.sending = true
 		// The CLI drops a steer it had not used when the request is aborted.
 		c.undeliveredLocked(agentapi.TurnCancelled, time.Now())
-		go c.sendContinuation(c.sess)
+		go c.sendContinuation(c.sess, c.stall.silence)
 	}
 	return true
 }
 
-// sendContinuation continues the turn after the stalled request. A refused
-// continuation ends the turn as stopped, with the reason.
-func (c *conversation) sendContinuation(sess sdkSession) {
+// sendContinuation continues the turn after the stalled request, whose
+// silence exceeded bound. A refused continuation ends the turn as stopped,
+// with the reason.
+func (c *conversation) sendContinuation(sess sdkSession, bound time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), webStopRPCWait)
 	defer cancel()
-	_, err := sess.Send(ctx, copilot.MessageOptions{Prompt: stallPrompt, DisplayPrompt: fmt.Sprintf(stallRetriedNote, seconds(webStallAfter)), Source: stallSource})
+	_, err := sess.Send(ctx, copilot.MessageOptions{Prompt: stallPrompt, DisplayPrompt: fmt.Sprintf(stallRetriedNote, seconds(bound)), Source: stallSource})
 	if err == nil {
 		return
 	}
