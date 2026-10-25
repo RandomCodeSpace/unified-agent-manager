@@ -65,7 +65,9 @@ func sessionTools(task string, validate func(context.Context, string) (string, e
 	var gate *toolGate
 	var out []copilot.Tool
 	if d := newDeclarationTool(validate); d != nil {
-		gate, out = d.toolGate, append(out, d.tool())
+		tool := d.tool()
+		tool.Handler = modelVisible(tool.Handler)
+		gate, out = d.toolGate, append(out, tool)
 	}
 	if len(tools) == 0 {
 		return gate, out, nil
@@ -79,7 +81,7 @@ func sessionTools(task string, validate func(context.Context, string) (string, e
 		out = append(out, copilot.Tool{
 			Name: name, Description: tool.Description, Parameters: parameters[i],
 			SkipPermission: true, Defer: copilot.ToolDeferNever,
-			Handler: func(inv copilot.ToolInvocation) (copilot.ToolResult, error) { return h.invoke(name, inv) },
+			Handler: modelVisible(func(inv copilot.ToolInvocation) (copilot.ToolResult, error) { return h.invoke(name, inv) }),
 		})
 	}
 	return gate, out, nil
@@ -145,6 +147,20 @@ func (h *hostTools) invoke(name string, inv copilot.ToolInvocation) (copilot.Too
 	close(call.done)
 	h.mu.Unlock()
 	return result, nil
+}
+
+// modelVisible returns a handler's refusal as a failed result: the CLI keeps
+// a handler error's text from the model. A cancelled call stays an error, as
+// nothing reads its result.
+func modelVisible(handler copilot.ToolHandler) copilot.ToolHandler {
+	return func(inv copilot.ToolInvocation) (copilot.ToolResult, error) {
+		result, err := handler(inv)
+		if err == nil || errors.Is(err, context.Canceled) {
+			return result, err
+		}
+		text := err.Error()
+		return copilot.ToolResult{ResultType: "failure", TextResultForLLM: text, Error: text, SessionLog: text}, nil
+	}
 }
 
 // makeRoomLocked forgets the oldest finished call when the session remembers

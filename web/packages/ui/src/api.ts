@@ -1238,6 +1238,8 @@ export interface Interaction {
   kind: InteractionKind;
   title: string;
   detail?: string;
+  /** The agent's own short reason for a permission request, when the provider sends one. */
+  intention?: string;
   options?: Option[];
   questions?: Question[];
   plan?: PlanReview;

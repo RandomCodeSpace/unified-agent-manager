@@ -49,3 +49,11 @@ test('an unreviewed request shows no review, and an approved one reads as review
   render(<DecidedRow interaction={{ ...request, state: 'answered', resolution: 'allowed (assisted review)' }} />);
   expect(screen.getByText('reviewed')).toBeTruthy();
 });
+
+test("a permission shows the agent's reason under the request, and none when it gave none", () => {
+  const view = render(<InteractionCard session={session} interaction={{ ...request, intention: 'Record the release notes' }} onUpdate={() => {}} />);
+  expect(screen.getByText('Record the release notes')).toBeTruthy();
+  view.unmount();
+  render(<InteractionCard session={session} interaction={request} onUpdate={() => {}} />);
+  expect(screen.queryByText('Record the release notes')).toBeNull();
+});

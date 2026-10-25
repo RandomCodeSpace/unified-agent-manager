@@ -1397,8 +1397,11 @@ type Interaction struct {
 	Kind  InteractionKind `json:"kind"`
 	Title string          `json:"title"`
 	// Detail is display text: command, paths, patterns, or tool arguments.
-	Detail string      `json:"detail,omitempty"`
-	Plan   *PlanReview `json:"plan,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// Intention is the agent's own one-line reason for a permission request,
+	// when the provider sends one.
+	Intention string      `json:"intention,omitempty"`
+	Plan      *PlanReview `json:"plan,omitempty"`
 	// Options lists permission decisions the provider accepts. Answer.Decision
 	// must be one of these IDs.
 	Options []Option `json:"options,omitempty"`

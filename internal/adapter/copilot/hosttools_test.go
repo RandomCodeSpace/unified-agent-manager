@@ -69,7 +69,16 @@ func toolNames(tools []copilot.Tool) []string {
 }
 
 func callTool(tool copilot.Tool, session, callID string, args any) (copilot.ToolResult, error) {
-	return tool.Handler(copilot.ToolInvocation{SessionID: session, ToolCallID: callID, ToolName: tool.Name, Arguments: args, TraceContext: context.Background()})
+	return refusal(tool.Handler(copilot.ToolInvocation{SessionID: session, ToolCallID: callID, ToolName: tool.Name, Arguments: args, TraceContext: context.Background()}))
+}
+
+// refusal reads a refusal modelVisible returned as a failed result back as
+// the handler's error.
+func refusal(result copilot.ToolResult, err error) (copilot.ToolResult, error) {
+	if err == nil && result.Error != "" {
+		return copilot.ToolResult{}, errors.New(result.Error)
+	}
+	return result, err
 }
 
 // readyHostTools returns the sample tools with their catalog verified for
@@ -272,12 +281,15 @@ func TestHostToolHandlerGuards(t *testing.T) {
 		"other session":  {SessionID: "other", ToolCallID: "e", Arguments: map[string]any{}},
 		"untraced other": {SessionID: "other", ToolCallID: "f"},
 	} {
-		if result, err := get.Handler(inv); err == nil || result.TextResultForLLM != "" {
+		if result, err := refusal(get.Handler(inv)); err == nil || result.TextResultForLLM != "" {
 			t.Errorf("%s: %+v, %v", label, result, err)
 		}
 	}
-	if _, err := get.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: "big", Arguments: map[string]any{"ref": strings.Repeat("x", agentapi.MaxHostToolArguments)}}); err == nil || !strings.Contains(err.Error(), fmt.Sprint(agentapi.MaxHostToolArguments)) {
-		t.Fatalf("oversized error = %v", err)
+	// The model reads the refusal: a failed result with its text, not a Go
+	// error, whose text the CLI keeps from the model.
+	big, err := get.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: "big", Arguments: map[string]any{"ref": strings.Repeat("x", agentapi.MaxHostToolArguments)}})
+	if err != nil || big.ResultType != "failure" || !strings.Contains(big.TextResultForLLM, fmt.Sprint(agentapi.MaxHostToolArguments)) || big.Error != big.TextResultForLLM {
+		t.Fatalf("oversized call = %+v, %v", big, err)
 	}
 	if n := len(calls.recorded()); n != 0 {
 		t.Fatalf("refused calls reached CallTool %d times", n)

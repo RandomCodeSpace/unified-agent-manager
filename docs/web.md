@@ -1242,7 +1242,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and the Thread's row in the
   sidebar says it needs input; the row stays where it is (see Sidebar).
-  Open the Thread to answer. Nothing is approved
+  When the agent gave a reason for a command, file write or read, or URL
+  fetch, the permission card shows it in grey under the request, cut at
+  about 300 characters. Open the Thread to answer. Nothing is approved
   automatically unless you turned on yolo for that Thread, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
@@ -2498,8 +2500,10 @@ as that Thread's conversation sees it: Connected (**Show tools** lists its
 tools, and the button then names their count), Failed (with the error and **Restart**), Needs
 sign-in, Starting, or Off for this thread. The switch turns a server off or on
 for this Thread only, until its configuration reloads, its conversation closes,
-or the built-in GitHub server's setting changes. Otherwise a conversation keeps the servers it
-started with: other changes in Settings reach new Threads, and an open
+or the built-in GitHub server's setting changes. A change to Copilot's
+user-wide MCP configuration, from Settings → MCP servers or the `copilot`
+command, reaches open Threads as well: Copilot applies it to running
+conversations itself. Other changes in Settings reach new Threads, and an open
 Thread picks them up with **Apply current settings**, which reloads its
 configuration while keeping the conversation open when the runtime supports
 it. Prompt and tool changes apply on the next turn. Older runtimes close

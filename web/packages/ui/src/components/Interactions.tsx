@@ -110,6 +110,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
           {interaction.detail}
         </pre>
       )}
+      {permission && interaction.intention && <p className="mt-1 [overflow-wrap:anywhere] text-caption text-muted">{interaction.intention}</p>}
       {link && (
         <div className="mt-2 text-ui">
           <a href={link} target="_blank" rel="noopener noreferrer" className="break-all text-accent underline underline-offset-2">

@@ -44,6 +44,7 @@ const (
 	webTasksTimeout = 10 * time.Second
 	maxToolText     = 64 << 10
 	maxErrorText    = 512
+	maxIntention    = 300
 	// Read-only history retains at most webReadBytes encoded events from
 	// webReadPages newest pages. Older pages are drained to release the snapshot.
 	webReadEvents = 1000
@@ -4132,7 +4133,7 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	title, detail := describePermission(d)
 	in := &interaction{
-		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest), Assisted: assistedReview(d)},
+		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), Intention: permissionIntention(d.PromptRequest), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest), Assisted: assistedReview(d)},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
 	if d.PermissionRequest != nil {
@@ -4267,6 +4268,23 @@ func describePermission(d *rpc.PermissionRequestedData) (title, detail string) {
 		kind = string(d.PermissionRequest.Kind())
 	}
 	return "Permission request: " + kind, compactJSON(d.PermissionRequest)
+}
+
+// permissionIntention is the model's stated reason for a shell, write, read
+// or URL request, bounded for one line in the permission card.
+func permissionIntention(pr rpc.PermissionPromptRequest) string {
+	var s string
+	switch r := pr.(type) {
+	case *rpc.PermissionPromptRequestCommands:
+		s = r.Intention
+	case *rpc.PermissionPromptRequestWrite:
+		s = r.Intention
+	case *rpc.PermissionPromptRequestRead:
+		s = r.Intention
+	case *rpc.PermissionPromptRequestURL:
+		s = r.Intention
+	}
+	return clip(strings.TrimSpace(displaytext.Sanitize(s)), maxIntention)
 }
 
 // permissionToolCallID returns the tool call a permission request is for,
