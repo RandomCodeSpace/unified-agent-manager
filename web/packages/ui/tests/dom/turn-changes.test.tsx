@@ -2,8 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { api, type Item, type SessionSummary, type TurnChanges, type TurnTiming } from '../../src/api';
-import { ChangesSheet } from '../../src/components/Changes';
+import { api, type Item, type TurnChanges, type TurnTiming } from '../../src/api';
 import { Transcript } from '../../src/components/Transcript';
 import { SessionContext } from '../../src/components/common';
 import { LiftedRow } from '../../src/components/Subagents';
@@ -21,7 +20,7 @@ function fixture(read = vi.fn().mockResolvedValue(record)) {
   const client = { ...api, turnChanges: read };
   const all = vi.fn();
   const view = (active = true, generation = 'one', visible = true, timings = [timing], value = items) => <ApiContext.Provider value={client}><SessionContext.Provider value="task"><DetailVisibility open={visible}>
-    <Transcript sessionId="task" provider="copilot" workdir="/work" items={value} interactions={[]} subagents={[]} live={false} working={false} turnTimings={timings} onOpenAllChanges={all} readersActive={active} readerGeneration={generation} />
+    <Transcript sessionId="task" provider="copilot" workdir="/work" items={value} interactions={[]} subagents={[]} live={false} working={false} turnTimings={timings} onOpenThreadChanges={all} readersActive={active} readerGeneration={generation} />
   </DetailVisibility></SessionContext.Provider></ApiContext.Provider>;
   return { read, all, view, ...render(view()) };
 }
@@ -47,41 +46,39 @@ test('native turn facts load only when its Changed chip opens and remain histori
   await waitFor(() => expect(document.activeElement).toBe(foot));
 });
 
-test('the reply menu exposes the readonly historical reader and separate current All changes', async () => {
+test('the reply menu opens the readonly historical reader, which leads on to the Thread\'s current changes', async () => {
   const user = userEvent.setup();
   const f = fixture();
   await user.click(screen.getByRole('button', { name: 'Turn actions' }));
   const menu = await screen.findByRole('menu');
-  expect(within(menu).getByRole('menuitem', { name: "This turn's changes" })).toBeTruthy();
-  expect(within(menu).queryByRole('menuitem', { name: /Rewind|Branch|Edit and resend/ })).toBeNull();
-  await user.click(within(menu).getByRole('menuitem', { name: 'All changes' }));
+  expect(within(menu).queryByRole('menuitem', { name: /All changes|Rewind|Branch|Edit and resend/ })).toBeNull();
+  await user.click(within(menu).getByRole('menuitem', { name: "This turn's changes" }));
+  await user.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: 'Thread changes · current files' }));
   await waitFor(() => expect(f.all).toHaveBeenCalledTimes(1));
-  expect(f.read).not.toHaveBeenCalled();
 });
 
 test('one reply menu carries the turn changes and Branch from here', async () => {
   const user = userEvent.setup();
   const branch = vi.fn();
   render(<ApiContext.Provider value={{ ...api, turnChanges: vi.fn() }}><SessionContext.Provider value="task"><DetailVisibility open>
-    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} onOpenAllChanges={vi.fn()} onBranch={branch} />
+    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} onOpenThreadChanges={vi.fn()} onBranch={branch} />
   </DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
   const triggers = screen.getAllByRole('button', { name: 'Turn actions' });
   expect(triggers).toHaveLength(1);
   await user.click(triggers[0]);
   const menu = await screen.findByRole('menu');
-  expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(["This turn's changes", 'All changes', 'Branch from here']);
+  expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(["This turn's changes", 'Branch from here']);
   await user.click(within(menu).getByRole('menuitem', { name: 'Branch from here' }));
   expect(branch).toHaveBeenCalledWith('owner', triggers[0]);
 });
 
 test('a turn that changed no file shows no changes in its outcome bar or its menu', async () => {
-  const user = userEvent.setup();
   render(<ApiContext.Provider value={{ ...api, turnChanges: vi.fn() }}><SessionContext.Provider value="task"><DetailVisibility open>
-    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[{ ...timing, changes: { status: 'available', files: 0, additions: 0, deletions: 0 } }]} onOpenAllChanges={vi.fn()} />
+    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[{ ...timing, changes: { status: 'available', files: 0, additions: 0, deletions: 0 } }]} onOpenThreadChanges={vi.fn()} />
   </DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
   expect(screen.queryByRole('button', { name: /0 files/ })).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Turn actions' }));
-  expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['All changes']);
+  // Nothing to offer: the menu itself is gone.
+  expect(screen.queryByRole('button', { name: 'Turn actions' })).toBeNull();
 });
 
 test('unavailable native facts never display guessed zero or fetch historical rows', async () => {
@@ -123,16 +120,6 @@ test('wrong immutable timing identity is rejected and legacy replies stay unchan
   expect(screen.getByText('First reply.')).toBeTruthy();
 });
 
-
-test('All changes starts the current workspace scope even when the Task default is native session', async () => {
-  const changes = vi.fn().mockResolvedValue({ scope: 'workspace', supported: true, label: 'Whole working tree', files: [] });
-  const client = { ...api, changes };
-  const session = { id: 'task', provider: 'copilot', project_id: 'project', workdir: '/work', state: 'completed', stage: '', capabilities: { session_diff: true } } as SessionSummary;
-  render(<ApiContext.Provider value={client}><ChangesSheet session={session} projectName="Project" changes={null} changesError={null} isDefaultPending={() => false} inline={false} open active onChanges={() => {}} onClose={() => {}} onClosed={() => {}} turn={{ files: [], latest: false, at: 1, scope: 'workspace' }} /></ApiContext.Provider>);
-  await waitFor(() => expect(changes).toHaveBeenCalledTimes(1));
-  expect(changes.mock.calls[0].slice(0, 2)).toEqual(['task', 'workspace']);
-  expect(await screen.findByText('No uncommitted changes.')).toBeTruthy();
-});
 
 test('the lifted copy of a foot chip keeps the small type its row gives it, so the chip is not cut', () => {
   const foot = document.createElement('div');

@@ -1,5 +1,5 @@
-// Development-only git routes for the in-browser mock service (see install.ts): the commit
-// panel's state, a canned Utility draft, commit, push, pull and set-up. Paths are fictional.
+// Development-only git routes for the in-browser mock service (see install.ts): the repository's
+// state, branch switching and set-up. Paths are fictional.
 
 import { LIVE, type GitFile, type GitState, type Project, type SessionSummary } from '../api';
 import type { MockChange } from './data';
@@ -12,8 +12,6 @@ export interface GitHost {
   /** Paths a Task's edit tools touched, as the service records them. */
   touched: (taskId: string) => string[];
   projectChanged: (p: Project) => void;
-  /** Background AI's daily limit in Settings; 0 pauses drafting. */
-  utilityLimit: () => number | undefined;
 }
 
 function json(status: number, body?: unknown): Response {
@@ -32,11 +30,6 @@ const OTHER: Record<string, MockChange[]> = {
 /** Files the mock's transcripts do not show a Task editing, as if they did. */
 const EDITED: Record<string, string[]> = { t3: ['internal/vterm/redraw_test.go', 'docs/terminal.md'] };
 
-const DRAFT = `fix(vterm): replay focus events on re-attach
-
-Redraw now re-emits ?1004 after the private-mode replay, so a
-re-attached client receives focus events again.`;
-
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
 
 /** A Project's local and remote branches, newest work first within each. */
@@ -54,9 +47,8 @@ const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').re
 export function gitMock(host: GitHost) {
   const ahead: Record<string, number> = { p1: 1 };
   const behind: Record<string, number> = { p1: 2 };
-  const committed = new Set<string>();
   /** The changed files of a Project's folder not committed yet. */
-  const pendingIn = (projectId: string) => [...(host.changes()[projectId] ?? []), ...(OTHER[projectId] ?? [])].filter((c) => !committed.has(`${projectId}:${c.path}`)).length;
+  const pendingIn = (projectId: string) => [...(host.changes()[projectId] ?? []), ...(OTHER[projectId] ?? [])].length;
 
   // `?mock&gitidle` shows the panel as if no Task were mid-turn.
   const idle = new URLSearchParams(window.location.search).has('gitidle');
@@ -76,7 +68,6 @@ export function gitMock(host: GitHost) {
     const others = new Set(host.tasks().filter((o) => o.id !== t.id).flatMap((o) => [...host.touched(o.id), ...(EDITED[o.id] ?? [])]));
     for (const c of OTHER[p.id] ?? []) others.add(c.path);
     const files: GitFile[] = [...(host.changes()[p.id] ?? []), ...(OTHER[p.id] ?? [])]
-      .filter((c) => !committed.has(`${p.id}:${c.path}`))
       .map(({ path, status, additions, deletions }) => ({ path, status, additions, deletions, mine: mine.has(path) || undefined, other_task: (!mine.has(path) && others.has(path)) || undefined }));
     return { repo: true, branch: p.branch, upstream: p.branch ? `origin/${p.branch}` : undefined, ahead: ahead[p.id] ?? 0, behind: behind[p.id] ?? 0, remote: true, has_commits: true, files, task_files_known: true, busy };
   };
@@ -99,12 +90,6 @@ export function gitMock(host: GitHost) {
       if (action === '' && method === 'GET') return json(200, state(task));
       if (method !== 'POST') return fail(405, 'method not allowed');
       const st = state(task);
-      const paths = Array.isArray(body.paths) ? (body.paths as string[]) : [];
-      if (action === '/message') {
-        if (paths.length === 0) return fail(400, 'choose at least one file to describe');
-        if (host.utilityLimit() === 0) return fail(409, 'Background AI is off: its daily limit is 0. Raise it in Settings → Background AI', 'utility_paused');
-        return json(200, { message: DRAFT, conventional: true, model: 'gpt-6-luna' });
-      }
       const p = host.projects().find((x) => x.id === task.project_id)!;
       // A started Thread switches its Project folder's branch: the folder's Threads must have finished, and an
       // existing branch needs its changes committed.
@@ -127,27 +112,6 @@ export function gitMock(host: GitHost) {
           const next = { ...p, no_git: undefined, branch: 'main' };
           host.projectChanged(next);
           return json(200, state(task));
-        }
-        case '/commit': {
-          if (!String(body.message ?? '').trim()) return fail(400, 'write a commit message first');
-          if (paths.length === 0) return fail(400, 'choose at least one file to commit');
-          const bad = paths.find((x) => !st.files.some((f) => f.path === x));
-          if (bad) return fail(400, `${bad} is not a changed file in this repository`);
-          for (const x of paths) committed.add(`${p.id}:${x}`);
-          // Committed files leave the Changes lists too.
-          const changes = host.changes();
-          if (changes[p.id]) changes[p.id] = changes[p.id].filter((c) => !paths.includes(c.path));
-          ahead[p.id] = (ahead[p.id] ?? 0) + 1;
-          return json(200, { summary: `Committed ${paths.length} ${paths.length === 1 ? 'file' : 'files'} as 3f9c2e1.`, commit: '3f9c2e1' });
-        }
-        case '/push':
-          if ((behind[p.id] ?? 0) > 0) return fail(409, 'The remote has commits this branch doesn\'t. Pull first, then push:\n ! [rejected]        HEAD -> main (fetch first)');
-          ahead[p.id] = 0;
-          return json(200, { summary: `Pushed ${p.branch ?? 'main'} to origin.` });
-        case '/pull': {
-          const n = behind[p.id] ?? 0;
-          behind[p.id] = 0;
-          return json(200, { summary: n ? `Pulled ${n} new ${n === 1 ? 'commit' : 'commits'}.` : 'Already up to date.' });
         }
       }
       return fail(404, 'mock: no git route');

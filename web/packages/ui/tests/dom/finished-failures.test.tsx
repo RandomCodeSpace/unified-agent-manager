@@ -1,4 +1,4 @@
-// A finished turn whose own record failed (mock t-chart, its outcome or reply changed): no check, a warning glyph and words that say so.
+// A finished turn whose own record failed (mock t-chart, its outcome or reply changed) stays Finished: what it found is hover text, no state.
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
@@ -16,22 +16,17 @@ function withChart(change: (task: ReturnType<typeof data.seed>['tasks'][number])
 const header = () => screen.getByRole('heading', { level: 1 }).parentElement!;
 const row = () => document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-task-row="t-chart"]')!;
 
-test('failed tests and commands in the outcome turn the header chip and the row from a check to a warning, in words', async () => {
+test('failed tests in the outcome stay Finished, saying so on the header chip\'s hover', async () => {
   withChart((t) => { t.outcome = 'Charted the commits; tests fail; 1 command failed'; });
   await openTask('t-chart');
-  const chip = await within(header()).findByText('Finished · tests fail, 1 command failed');
-  expect(chip.className).toContain('text-warning');
-  expect(chip.querySelector('.lucide-circle-alert')).not.toBeNull();
-  expect(header().querySelector('.lucide-check')).toBeNull();
-  await waitFor(() => expect(row().textContent).toContain('Tests fail'));
-  expect(row().textContent).not.toContain('Finished');
-  const status = within(row()).getByText('Tests fail');
-  expect(status.className).toContain('text-warning');
-  expect(status.querySelector('.lucide-circle-alert')).not.toBeNull();
-  expect(status.querySelector('.lucide-circle-check')).toBeNull();
+  const chip = await within(header()).findByText('Finished');
+  expect(chip.closest('[title]')?.getAttribute('title')).toBe('Finished · tests fail');
+  expect(header().querySelector('.lucide-check')).not.toBeNull();
+  await waitFor(() => expect(row().textContent).toMatch(/Review|Finished/));
+  expect(row().textContent).not.toContain('Tests fail');
 });
 
-test('a reply claim the turn\'s record contradicts turns the header chip too', async () => {
+test('a reply claim the turn\'s record contradicts says so on the header chip\'s hover', async () => {
   withChart((t) => {
     const reply = t.items.filter((i) => i.kind === 'assistant').at(-1)!;
     reply.text = `${reply.text}\n\nAll tests pass.`;
@@ -39,9 +34,16 @@ test('a reply claim the turn\'s record contradicts turns the header chip too', a
     t.items.splice(t.items.indexOf(reply), 0, { id: 'red-tests', kind: 'tool', time: reply.time, tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./...' }), exit_code: 1, output: 'FAIL' } });
   });
   await openTask('t-chart');
-  const chip = await within(header()).findByText('Finished · a claim contradicted');
-  expect(chip.className).toContain('text-warning');
-  expect(header().querySelector('.lucide-check')).toBeNull();
+  const chip = await within(header()).findByText('Finished');
+  expect(chip.closest('[title]')?.getAttribute('title')).toBe('Finished · a claim contradicted');
+});
+
+test('failed commands alone are no state: the turn keeps its check', async () => {
+  withChart((t) => { t.outcome = 'Charted the commits; 2 commands failed'; });
+  await openTask('t-chart');
+  const chip = await within(header()).findByText('Finished');
+  expect(chip.querySelector('.lucide-check')).not.toBeNull();
+  expect(row().textContent).not.toContain('failed');
 });
 
 test('a clean finished turn keeps its check', async () => {

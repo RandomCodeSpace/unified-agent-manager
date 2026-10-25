@@ -101,7 +101,7 @@ func TestUtilityCallsAreLoggedAndCapped(t *testing.T) {
 	if l := again.UtilityLog(0, 1); !l.Today.Paused || l.Today.Limit != 0 {
 		t.Fatalf("today with the limit at 0 = %+v", l.Today)
 	}
-	_, err := again.runUtility(context.Background(), UtilityCall{Purpose: purposeCommitMessage}, "p", nil)
+	_, err := again.runUtility(context.Background(), UtilityCall{Purpose: purposeMRDescription}, "p", nil)
 	if e, ok := errors.AsType[*Error](err); !ok || e.Code != codeUtilityPaused || !strings.Contains(e.Message, "Background AI is off") || utilityFailed("the triage", err) != e {
 		t.Fatalf("call with the limit at 0 = %v", err)
 	}
@@ -306,14 +306,14 @@ func TestUtilityInvalidPauseRebuilt(t *testing.T) {
 	m := startManager(t, st)
 	now := time.Now()
 	for i := 0; i < 4; i++ {
-		m.utility.reserve(now, purposeCommitMessage, 400, false)
-		m.utility.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		m.utility.reserve(now, purposeMRDescription, 400, false)
+		m.utility.add(UtilityCall{At: now, Purpose: purposeMRDescription, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	again := startManager(t, st)
-	if reason := again.utility.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
+	if reason := again.utility.reserve(now, purposeMRDescription, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
 	}
 }
@@ -326,12 +326,12 @@ func TestUtilityInvalidPauseShownAndLoggedOnce(t *testing.T) {
 	m := startManager(t, st)
 	now := time.Now()
 	for i := 0; i < 4; i++ {
-		m.utility.reserve(now, purposeCommitMessage, 400, false)
-		m.utility.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		m.utility.reserve(now, purposeMRDescription, 400, false)
+		m.utility.add(UtilityCall{At: now, Purpose: purposeMRDescription, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	run := func(m *Manager) {
 		t.Helper()
-		_, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeCommitMessage}, "p", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
+		_, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeMRDescription}, "p", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
 			t.Fatal("a paused purpose ran")
 			return "", nil
 		})
@@ -355,7 +355,7 @@ func TestUtilityInvalidPauseShownAndLoggedOnce(t *testing.T) {
 	if n := skipped(m); n != 1 {
 		t.Fatalf("skipped entries = %d, want 1", n)
 	}
-	if got := log.Today.PausedPurposes; len(got) != 1 || got[0] != purposeCommitMessage || log.Today.Paused {
+	if got := log.Today.PausedPurposes; len(got) != 1 || got[0] != purposeMRDescription || log.Today.Paused {
 		t.Fatalf("today=%+v", log.Today)
 	}
 	if err := m.Shutdown(context.Background()); err != nil {

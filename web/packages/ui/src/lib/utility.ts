@@ -7,6 +7,7 @@ const PURPOSES: Record<string, string> = {
   title: 'Thread title',
   // Made only by older versions; their calls stay in the 30-day log.
   'subagent-summary': 'Subagent summary',
+  // Made only by older versions; their calls stay in the 30-day log.
   'commit-message': 'Commit message',
   'configuration-draft': 'Configuration draft',
   'mr-description': 'Merge request description',

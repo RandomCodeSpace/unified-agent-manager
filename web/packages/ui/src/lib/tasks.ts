@@ -83,20 +83,21 @@ function span(ms: number): string {
 export const QUIET_MS = 3 * 60_000;
 
 /**
- * The failures a finished turn's outcome line reports, in words ("tests fail, 1 command failed"); '' when none.
- * The service appends them from the turn's own evidence as "; "-separated parts, after any verb phrase.
+ * The failure a finished turn's outcome line reports, "tests fail"; '' when none. The service appends it from the
+ * turn's own evidence as a "; "-separated part, after any verb phrase. Failed commands are not one: agents run
+ * commands that fail on the way (a grep that finds nothing, a retry), so they stay in the line's words only.
  */
 export function outcomeFailures(outcome?: string): string {
-  return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
+  return (outcome ?? '').split('; ').some((part) => /^tests fail$/i.test(part)) ? 'tests fail' : '';
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Wrapping up' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Not started' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Review' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
-/** A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished. */
+/**
+ * A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests fail") says
+ * what finished, in the detail only: what the turn found is no state.
+ */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
-  // A turn whose own evidence failed never reads as a clean finish: no check, and the failures in words.
-  const failures = outcomeFailures(s.outcome);
-  if (failures) return { label: failures.startsWith('tests fail') ? 'Tests fail' : 'Command failed', text: `Finished · ${failures}`, tone: 'warning' };
   if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
   return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
 }
@@ -129,9 +130,10 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     case 'starting':
       return { label: 'Starting', text: 'Starting', tone: 'accent' };
     case 'working': {
-      if (s.compacting) return { label: 'Compacting', text: 'Compacting…', tone: 'accent' };
+      // Phases of the work are Working, named in the detail.
+      if (s.compacting) return { label: 'Working', text: 'Working · compacting', tone: 'accent' };
       // At its budget: tools are denied and the agent writes its handoff.
-      if (s.budget?.wrapping_up) return { label: 'Wrapping up', text: 'Wrapping up: budget reached, writing a handoff', tone: 'accent' };
+      if (s.budget?.wrapping_up) return { label: 'Working', text: 'Working · wrapping up: budget reached, writing a handoff', tone: 'accent' };
       const quiet = now - Date.parse(s.event_at ?? s.updated_at);
       return { label: 'Working', text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }
@@ -146,8 +148,8 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       return { label: 'Stopped', text: stopWords(s).title, tone: 'muted' };
     case 'closed':
       // A new branch is closed only until its first message.
-      if (s.not_started) return { label: 'Not started', text: 'Branched; starts with your first message', tone: 'muted' };
-      return { label: 'Closed', text: 'Conversation closed', tone: 'muted' };
+      if (s.not_started) return { label: 'Idle', text: 'Branched; starts with your first message', tone: 'muted' };
+      return { label: 'Idle', text: 'Conversation closed; your message reopens it', tone: 'muted' };
     default:
       return { label: 'Idle', text: 'Waiting for your message', tone: 'muted' };
   }

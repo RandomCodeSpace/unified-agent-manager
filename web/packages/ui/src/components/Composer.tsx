@@ -1,8 +1,8 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { useApi } from '../ApiContext';
-import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
-import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
@@ -26,6 +26,8 @@ import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from
 import { Loading, Markdown, Note, useApp, useMedia } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { BottomSheet } from './Subagents';
+import { FileIcon } from './FileIcon';
+import { ModelIcon } from './ModelIcon';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
@@ -270,7 +272,7 @@ function FileRow({ f }: Readonly<{ f: FileEntry }>) {
   const base = f.path.slice(cut + 1);
   return (
     <>
-      {f.type === 'directory' ? <Folder aria-hidden="true" className="text-faint" /> : <File aria-hidden="true" className="text-faint" />}
+      <FileIcon path={f.path} folder={f.type === 'directory'} />
       <span className="flex min-w-0 text-caption">
         {dir && <span className="min-w-0 truncate text-muted" title={f.path}>{dir}</span>}
         <span className="shrink-0 text-ink">
@@ -330,13 +332,6 @@ interface ComposerProps {
   onCommandOutput?: (output: CommandOutput) => void;
   /** Set while a past owner prompt is edited here, to rewind to before it and send the edit. */
   editing?: Editing | null;
-}
-
-const MENTION_EVENT = 'uam-mention';
-
-/** Puts `@path` into the composer of Thread `sessionId` (Go to file's Mention); Composer listens. */
-export function mentionFile(sessionId: string, path: string) {
-  window.dispatchEvent(new CustomEvent(MENTION_EVENT, { detail: { sessionId, path } }));
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
@@ -625,32 +620,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }
 
   // Go to file's Mention: `@path` at the end of the message, as an `@` pick would put it.
-  const mention = useEffectEvent((path: string) => {
-    if (locked) return;
-    if (answering) {
-      setNotice(answerFirst);
-      return;
-    }
-    if (!files.includes(path) && files.length >= MAX_FILE_REFS) {
-      setError(`A message references at most ${MAX_FILE_REFS} files.`);
-      return;
-    }
-    const next = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@${path} `;
-    setFiles((f) => (f.includes(path) ? f : [...f, path]));
-    pendingCaret.current = next.length;
-    setText(next);
-    setCaret(next.length);
-    textarea.current?.focus();
-  });
-  useEffect(() => {
-    const onMention = (e: Event) => {
-      const { sessionId, path } = (e as CustomEvent<{ sessionId: string; path: string }>).detail;
-      if (sessionId === session.id && !newTask) mention(path);
-    };
-    window.addEventListener(MENTION_EVENT, onMention);
-    return () => window.removeEventListener(MENTION_EVENT, onMention);
-  }, [session.id, newTask]);
-
   function removeFile(path: string) {
     const next = removeToken(text, path);
     setFiles((f) => f.filter((x) => x !== path));
@@ -1715,7 +1684,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           <>
         <Picker
           id="composer-model"
-          icon={<Cpu aria-hidden="true" className="text-faint" />}
+          icon={<ModelIcon model={selection.model} fallback={<Cpu aria-hidden="true" className="text-faint" />} />}
           label="Model"
           heading={providerLabel(meta, session.provider)}
           value={selection.model}
@@ -1724,7 +1693,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             const estimate = estimateTurnCost(m, session.context, contextSize);
             const prices = session.capabilities.usage ? modelCostLine(m, false) : '';
             const group = appSettings.custom_models?.find((c) => `${c.name}/${c.model_id}` === m.id)?.name;
-            return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
+            return { value: m.id, label: <span className="flex items-center gap-2"><ModelIcon model={m.id} fallback={<span aria-hidden="true" className="size-4 shrink-0" />} className="size-4 shrink-0" />{m.name}</span>, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}
           disabled={settingsLocked}
           // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.

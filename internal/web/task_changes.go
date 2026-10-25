@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,13 +43,11 @@ var errScope = newError(http.StatusBadRequest, "scope must be %q, %q, %q or %q",
 // diffDelay batches a burst of edits into one recount of the Task's total.
 var diffDelay = time.Second
 
-// invalidateNativeDiff leaves the header total unknown until the next
-// native read: the recount kickDiffLocked schedules, or an on-demand one.
-// Even a failed tool can have committed partial edits. The caller holds
-// Manager.mu and publishes its event's changed summary.
+// invalidateNativeDiff marks a native read made before now as stale, so it
+// no longer records native paths. Even a failed tool can have committed
+// partial edits. The caller holds Manager.mu.
 func (s *webSession) invalidateNativeDiff() {
 	if s.nativeChanges {
-		s.diff = nil
 		s.nativeDiffRevision++
 	}
 }
@@ -104,14 +103,14 @@ func (m *Manager) noteHistoryLocked(s *webSession, h agentapi.History, whole boo
 }
 
 // kickDiffLocked recounts s's total in the background, after diffDelay,
-// once more if it is kicked again meanwhile. A native Task's total is its
-// open conversation's native session diff, the read Changes makes; a closed
-// one is not resumed for it.
+// once more if it is kicked again meanwhile. Every Task's total is its task
+// scope (its edits in the Git listing), native changes or not, so it stays
+// known while a turn runs.
 func (m *Manager) kickDiffLocked(s *webSession) {
 	if m.closed || s.removed {
 		return
 	}
-	if s.nativeChanges && s.conv == nil || !s.nativeChanges && len(s.edits) == 0 && s.diff == nil {
+	if len(s.edits) == 0 && s.diff == nil {
 		return
 	}
 	if s.diffRunning {
@@ -139,21 +138,11 @@ func (m *Manager) recountDiff(s *webSession) {
 		m.mu.Lock()
 		s.diffDirty = false
 		workdir, edits, start := s.workdir, maps.Clone(s.edits), s.turnStart
-		native, conv, gen, revision := s.nativeChanges, s.conv, s.gen, s.nativeDiffRevision
 		m.mu.Unlock()
-		if native {
-			// A busy or failed read leaves the total unknown; the next kick
-			// (the turn's end at the latest) reads again.
-			if conv != nil {
-				_, _ = m.readNativeDiff(m.ctx, s, conv, gen, revision)
-			}
-			m.mu.Lock()
-		} else {
-			l, err := listTaskChanges(m.ctx, workdir, edits, start)
-			m.mu.Lock()
-			if err == nil {
-				m.setDiffLocked(s, l.stat())
-			}
+		l, err := listTaskChanges(m.ctx, workdir, edits, start)
+		m.mu.Lock()
+		if err == nil {
+			m.setDiffLocked(s, l.stat())
 		}
 		if !s.diffDirty || m.closed || s.removed {
 			s.diffRunning = false
@@ -245,9 +234,7 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		return out, nil
 	}
 	m.mu.Lock()
-	if !s.nativeChanges {
-		m.setDiffLocked(s, l.stat())
-	}
+	m.setDiffLocked(s, l.stat())
 	m.mu.Unlock()
 	out.Counts = &ScopeCounts{Task: len(l.task), Turn: len(l.turn), Workspace: len(l.all.Files)}
 	if scope != ScopeWorkspace {
@@ -258,6 +245,9 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		if !known {
 			out.Reason = joinReasons(out.Reason, partialEdits)
 		}
+	}
+	if rel, err := filepath.Rel(realPath(l.repo.top), realPath(workdir)); err == nil && rel != "." && filepath.IsLocal(rel) {
+		out.Prefix = filepath.ToSlash(rel) + "/"
 	}
 	digestFiles(l.repo.top, out.Files)
 	return out, nil

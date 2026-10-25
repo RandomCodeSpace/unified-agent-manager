@@ -17,17 +17,17 @@ const REASON = {
   unsupported: 'Native file captures were unavailable for this turn.',
 };
 
-/** Historical captured metadata only. Current patches belong to All changes;
+/** Historical captured metadata only. Current patches belong to the Thread's Changes;
  * exact individual edit patches belong to their tool rows. This reader never
  * polls or resumes a closed conversation and retains only its bounded rows. */
-export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClosed, onAllChanges }: Readonly<{
+export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClosed, onThreadChanges }: Readonly<{
   timing: TurnTiming;
   anchor: HTMLElement | null;
   phone: boolean;
   open: boolean;
   onClose: () => void;
   onClosed: () => void;
-  onAllChanges?: () => void;
+  onThreadChanges?: () => void;
 }>) {
   const api = useApi();
   const sessionId = useContext(SessionContext);
@@ -69,7 +69,7 @@ export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClos
     </div>
     <PanelFoot>
       <span>Read only</span><span className="flex-1" />
-      {onAllChanges && <button type="button" className="text-accent hover:underline" onClick={() => { onClose(); onAllChanges(); }}>All changes · current files</button>}
+      {onThreadChanges && <button type="button" className="text-accent hover:underline" onClick={() => { onClose(); onThreadChanges(); }}>Thread changes · current files</button>}
     </PanelFoot>
   </>;
   const back = () => anchor;

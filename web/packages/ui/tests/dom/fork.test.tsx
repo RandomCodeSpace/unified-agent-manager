@@ -48,11 +48,11 @@ describe('native task branching', () => {
     await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     const heading = await screen.findByRole('heading', { level: 1, name: 'Native branch' });
     expect(fork).toHaveBeenCalledTimes(1);
-    // A new branch reads not started, not closed, in its header and its row.
-    expect(heading.closest('header')!.textContent).toContain('Not started');
-    expect(heading.closest('header')!.textContent).not.toContain('Closed');
+    // A new branch is Idle, never Closed, in its header and its row; its hover says it starts with your message.
+    expect(heading.closest('header')!.textContent).toContain('Idle');
+    expect(heading.closest('header')!.querySelector('[title^="Branched"]')).not.toBeNull();
     const row = document.querySelector('[data-task-row="native-branch"]')!;
-    expect(row.textContent).toContain('Not started');
+    expect(row.textContent).toContain('Idle');
     expect(row.textContent).not.toContain('Closed');
     const [sourceId, request] = fork.mock.calls[0];
     expect(sourceId).toBe(source.id);

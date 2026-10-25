@@ -242,7 +242,6 @@ export function install(): { received: Received[] } {
       const items = t ? [...t.items, ...Object.values(t.agentItems).flat()] : [];
       return items.flatMap((i) => (i.tool && ['edit', 'create'].includes(i.tool.name) ? [(i.tool.title ?? '').replace(/^(Edit|Create) /, '')] : []));
     },
-    utilityLimit: () => (st.settings.utility_unlimited ? undefined : st.settings.utility_daily_limit),
     projectChanged: (p) => {
       st.projects = st.projects.map((x) => (x.id === p.id ? p : x));
       broadcast('project', { project: p });
@@ -898,6 +897,19 @@ export function install(): { received: Received[] } {
     if (path === '/api/fs/dirs') return method === 'POST' ? makeDir(body) : listDirs(url);
     // Which Task this tab shows: the real service skips pushes for it; the mock sends none.
     if (path === '/api/viewing' && method === 'POST') return json(204);
+    // Search in conversations: every word in a Thread's prompts or replies, the last also as a prefix (the service
+    // asks the Copilot CLI's index); one hit per Thread, its first matching message as the snippet.
+    if (path === '/api/search' && method === 'GET') {
+      const words = (url.searchParams.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = words.length === 0 ? [] : st.tasks.flatMap((t) => {
+        const text = t.items.find((i) => (i.kind === 'user' || i.kind === 'assistant') && words.every((w) => i.text?.toLowerCase().includes(w)))?.text;
+        if (!text) return [];
+        const at = text.toLowerCase().indexOf(words[0]);
+        const start = Math.max(0, at - 40);
+        return [{ thread_id: t.id, snippet: [{ text: (start ? '…' : '') + text.slice(start, at) }, { text: text.slice(at, at + words[0].length), match: true }, { text: text.slice(at + words[0].length, at + 120) }] }];
+      });
+      return json(200, { available: true, hits: hits.slice(0, 30) });
+    }
 
     if (path === '/api/projects' && method === 'GET') return json(200, { projects: st.projects });
     if (path === '/api/projects' && method === 'POST') {
@@ -1408,6 +1420,18 @@ export function install(): { received: Received[] } {
         counts: { task: mine.length, turn: turn.length, workspace: all.length },
         files: files.map(({ path: fp, status, additions, deletions, patch }) => ({ path: fp, status, additions, deletions, digest: `${patch.length}` })),
       });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/changes\/revert$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      const { path, hunk } = body as { path: string; hunk?: string };
+      const list = t ? st.changes[t.project_id] ?? [] : [];
+      const f = list.find((x) => x.path === path && x.by?.includes(t!.id));
+      if (!t || !f) return fail(400, 'path is not among the files this thread edited');
+      // A hunk leaves the patch; the last one, or the whole file, takes the file off the list.
+      const at = hunk ? f.patch.indexOf(hunk.split('\n')[0]) : -1;
+      if (at >= 0) f.patch = f.patch.slice(0, at) + f.patch.slice(at + hunk!.length);
+      if (!hunk || !f.patch.includes('\n@@')) st.changes[t.project_id] = list.filter((x) => x !== f);
+      return json(200, { ok: true });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/changes\/file$/))) {
       const t = find(decodeURIComponent(r[1]));

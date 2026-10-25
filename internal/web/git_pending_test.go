@@ -47,10 +47,12 @@ func TestGitPendingCountsTrackedChangesAndUnpushedCommits(t *testing.T) {
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	gitIn(t, repo, "init", "-q", "--bare", remote)
 	gitIn(t, repo, "remote", "add", "origin", remote)
-	g.call(http.MethodPost, "/commit", `{"paths":["tracked.txt"],"message":"fix: one"}`, http.StatusOK, nil)
+	gitIn(t, repo, "commit", "-q", "-m", "fix: one", "--", "tracked.txt")
+	g.m.refreshBranches(context.Background(), true)
 	// No remote-tracking branch yet: every commit is unpushed.
 	want("after commit", GitPending{Unpushed: 2})
-	g.call(http.MethodPost, "/push", "", http.StatusOK, nil)
+	gitIn(t, repo, "push", "-q", "-u", "origin", "HEAD")
+	g.m.refreshBranches(context.Background(), true)
 	want("after push", GitPending{})
 
 	writeRepoFile(t, repo, "unchanged.txt", "changed\n")

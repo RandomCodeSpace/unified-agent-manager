@@ -13,6 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/sourcegraph/go-diff v0.9.0
 	golang.org/x/sys v0.47.0
+	modernc.org/sqlite v1.52.0
 	mvdan.cc/sh/v3 v3.14.1
 )
 
@@ -34,5 +35,4 @@ require (
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.52.0 // indirect
 )

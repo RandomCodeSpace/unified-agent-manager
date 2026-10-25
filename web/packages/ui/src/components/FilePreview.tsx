@@ -1,14 +1,17 @@
 import { useApi } from '../ApiContext';
-import { Download, ExternalLink, RotateCw, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, Download, ExternalLink, MessageSquarePlus, RotateCw, Undo2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { describeError, subscribeAuthLoss } from '../api';
+import { describeError, subscribeAuthLoss, type Changes } from '../api';
 import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
 import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type TextPreview } from '../lib/preview';
 import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { FileMedia, Note, Spinner } from './common';
-import { CodeView } from './GoToFile';
+import { CodeView } from './CodeView';
+import { FileIcon } from './FileIcon';
+import { lensChanges, runText, type Hunk, type LensChange } from '../lib/lens';
+import { turnFile } from '../lib/review';
 import { useFileVersion } from './FileReferences';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
@@ -90,9 +93,63 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
   return { open, close, reload, selection: active && selection?.owner === owner ? selection : null };
 }
 
-export function FilePreview({ selection, open, sessionId, workdir, inline, onClose, onClosed, onReload }: Readonly<{ selection: Selection; /** False while it leaves; `onClosed` follows, and the owner unmounts it. */ open: boolean; sessionId: string; workdir: string; inline: boolean; onClose: () => void; onClosed: () => void; onReload?: () => void }>) {
+/**
+ * Lens: when the open file is one this Thread changed, its changes as marks on the file. The diff is read again when
+ * the file's digest moves; `diff` loads with the first one, so the file viewer itself stays light.
+ */
+function useLens(sessionId: string, path: string | undefined, changes: Changes | null | undefined, text: string | undefined) {
+  const api = useApi();
+  const listed = changes?.supported ? changes.files : [];
+  const changed = path ? turnFile(listed.map((f) => f.path), [path]) : null;
+  const digest = listed.find((f) => f.path === changed)?.digest ?? '';
+  const key = changed && text !== undefined ? `${changed}\n${digest}\n${text.length}` : '';
+  const [lens, setLens] = useState<{ key: string; path: string; hunks: Hunk[]; changes: LensChange[] } | null>(null);
+  useEffect(() => {
+    if (!key || !changed) return;
+    const controller = new AbortController();
+    void Promise.all([api.changeFile(sessionId, 'task', changed, controller.signal), import('diff')]).then(([diff, { parsePatch }]) => {
+      const hunks = diff.patch && !diff.binary ? parsePatch(diff.patch)[0]?.hunks ?? [] : [];
+      if (!controller.signal.aborted) setLens({ key, path: changed, hunks, changes: lensChanges(hunks) });
+    }, () => {});
+    return () => controller.abort();
+  }, [api, sessionId, changed, key]);
+  return key && lens?.path === changed ? lens : null;
+}
+
+export function FilePreview({ selection, open, sessionId, workdir, inline, onClose, onClosed, onReload, changes, readOnly = false, onChanges, onComment, onReverted }: Readonly<{
+  selection: Selection;
+  /** False while it leaves; `onClosed` follows, and the owner unmounts it. */
+  open: boolean;
+  sessionId: string;
+  workdir: string;
+  inline: boolean;
+  onClose: () => void;
+  onClosed: () => void;
+  onReload?: () => void;
+  /** This Thread's changed files: a file among them shows its changes (Lens). */
+  changes?: Changes | null;
+  readOnly?: boolean;
+  /** Back to the Thread's Changes. */
+  onChanges?: () => void;
+  /** Comment on a line of a changed file, in Changes. */
+  onComment?: (path: string, line: number) => void;
+  onReverted?: () => void;
+}>) {
+  const api = useApi();
   const closeButton = useRef<HTMLButtonElement>(null);
   const { target, file, error } = selection;
+  const lens = useLens(sessionId, target.path, changes, file?.kind === 'text' ? file.text : undefined);
+  const [focus, setFocus] = useState(0);
+  const at = lens?.changes.length ? Math.min(focus, lens.changes.length - 1) : -1;
+  const [reverting, setReverting] = useState(false);
+  const [revertError, setRevertError] = useState('');
+  const revert = () => {
+    const c = lens?.changes[at];
+    if (!lens || !c) return;
+    setReverting(true);
+    setRevertError('');
+    api.revertChange(sessionId, lens.path, runText(lens.hunks[c.hunk], c.run)).then(() => { onReload?.(); onReverted?.(); }, (e: unknown) => setRevertError(`Could not revert: ${describeError(e)}`)).finally(() => setReverting(false));
+  };
   // The agent changed the open file: read it again.
   const version = useFileVersion(target.path);
   const opened = useRef({ target, version });
@@ -137,7 +194,7 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
     // The same code view as Go to file: line numbers, highlighting, and the cited line marked.
     const line = Number(/#L(\d+)$/.exec(target.url ?? '')?.[1]) || undefined;
     const source = file.text
-      ? <div className="min-h-64 flex-1 overflow-x-auto rounded-sm bg-canvas"><CodeView path={target.path ?? target.name} text={file.text} line={line} /></div>
+      ? <div className="min-h-64 flex-1 overflow-x-auto rounded-sm bg-canvas"><CodeView path={target.path ?? target.name} text={file.text} line={line} changes={lens?.changes} focus={at >= 0 ? at : undefined} onFocus={setFocus} /></div>
       : <Note>This file is empty.</Note>;
     body = <>
       {file.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
@@ -158,6 +215,8 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
   return (
     <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${target.name}`}>
       <PanelHeader>
+        {lens && onChanges && <Button size="icon" className="text-muted" aria-label="Back to Changes" onClick={onChanges}><ArrowLeft /></Button>}
+        {target.path && <FileIcon path={target.path} />}
         <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={target.name}>{target.name}</h2>
         <Button ref={closeButton} size="icon" className="text-muted" aria-label="Close preview" onClick={onClose}><X /></Button>
       </PanelHeader>
@@ -166,6 +225,18 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
         {temporary && <Note>{limitation}</Note>}
         {body}
       </div>
+      {lens && lens.changes.length > 0 && (
+        // Lens: one change at a time, with what can be done to it.
+        <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pt-2 text-caption">
+          <span className="mr-1 tabular-nums text-muted">Change {at + 1} of {lens.changes.length}</span>
+          <Button size="icon-sm" aria-label="Previous change" className="text-muted" disabled={at <= 0} onClick={() => setFocus(at - 1)}><ChevronUp /></Button>
+          <Button size="icon-sm" aria-label="Next change" className="text-muted" disabled={at >= lens.changes.length - 1} onClick={() => setFocus(at + 1)}><ChevronDown /></Button>
+          <span className="flex-1" />
+          {onComment && !readOnly && <Button size="sm" variant="subtle" onClick={() => onComment(lens.path, lens.changes[at].line)}><MessageSquarePlus />Comment</Button>}
+          {!readOnly && <Button size="sm" variant="subtle" loading={reverting} onClick={revert}><Undo2 />Revert</Button>}
+          {revertError && <Note tone="error" role="alert" className="w-full">{revertError}</Note>}
+        </div>
+      )}
       <div className="flex shrink-0 flex-wrap gap-2 p-3">{actions}</div>
     </SidePanel>
   );

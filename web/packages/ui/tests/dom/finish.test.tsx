@@ -116,8 +116,8 @@ describe('evidence inside Changes', () => {
     expect(card.queryByRole('button', { name: 'Review changes' })).toBeNull();
     const panel = await screen.findByRole('dialog', { name: 'Changes' });
     expect(within(panel).getByRole('region', { name: 'Finished — check the evidence' })).toBeTruthy();
-    // The repository read starts when Changes opens, independently of the evidence.
-    expect(await within(panel).findByRole('region', { name: 'Commit' })).toBeTruthy();
+    // Commit, Push and Pull are the conversation's to ask for, not Changes'.
+    expect(within(panel).queryByRole('region', { name: 'Commit' })).toBeNull();
     expect(screen.queryByRole('dialog', { name: 'Finished — check the evidence' })).toBeNull();
   });
 
@@ -187,7 +187,7 @@ describe('evidence inside Changes', () => {
     install();
     // Without StrictMode's development double mount: the reads a production page makes.
     render(<UamApp />);
-    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await screen.findByRole('button', { name: /evidence available/ });
     await new Promise((r) => setTimeout(r, 300));
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
     evidence.mockRestore();
@@ -199,13 +199,13 @@ describe('evidence inside Changes', () => {
     install();
     render(<UamApp />);
     const user = userEvent.setup();
-    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await screen.findByRole('button', { name: /evidence available/ });
     const aside = await sidebar();
     await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull());
     evidence.mockClear();
     await user.click(aside.getAllByRole('button', { name: /Replay focus events on re-attach/ })[0]);
-    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await screen.findByRole('button', { name: /evidence available/ });
     await new Promise((r) => setTimeout(r, 300));
     // The other read of the same route is "Since you left" (`since`/`until`), from the look that ended on leaving.
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
@@ -236,14 +236,14 @@ describe('evidence inside Changes', () => {
     const evidence = vi.spyOn(api, 'evidence');
     render(<UamApp />);
     const user = userEvent.setup();
-    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await screen.findByRole('button', { name: /evidence available/ });
     const aside = await sidebar();
     await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull());
     await new Promise((r) => setTimeout(r, 300));
     evidence.mockClear();
     await user.click(aside.getAllByRole('button', { name: /Replay focus events on re-attach/ })[0]);
-    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await screen.findByRole('button', { name: /evidence available/ });
     await new Promise((r) => setTimeout(r, 300));
     // The kept Task is on screen at once and its fresh detail replaces it in place: one view, one read of each.
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
@@ -272,13 +272,10 @@ describe('evidence inside Changes', () => {
     const { user } = await openTask('t1');
     expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
-    const trigger = await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ });
-    // The count is the folder's (git_pending, with the Thread); the dot waits for Changes to list the Thread's files.
+    // The count is the Thread's own changed files, never its folder's; the dot is that there is something to look at.
+    const trigger = await screen.findByRole('button', { name: /^Open changes, \d+ files?$/ });
     await waitFor(() => expect(trigger.querySelector('.bg-warning')).not.toBeNull());
     expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
-    // The folder's count leaves untracked files out, and its tip says so.
-    await user.hover(trigger);
-    expect(await screen.findByText('4 tracked files not committed · untracked files are not counted')).toBeTruthy();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });

@@ -1,6 +1,7 @@
 // Hidden models (issue #191): a display preference kept in Settings. Pure, so the unit tests run in node.
 
 import type { Model, ProviderInfo } from '../api';
+import type { Brand } from './modelMarks';
 
 /** The models a provider offers for choosing: its catalog without the IDs hidden in Settings. */
 export function visibleModels<T extends Pick<Model, 'id'>>(models: readonly T[], hidden?: readonly string[]): T[] {
@@ -52,4 +53,25 @@ export function cheapestLabel(provider: Pick<ProviderInfo, 'display_name' | 'mod
   const id = provider.cheapest_model;
   if (!id) return 'Cheapest (none priced)';
   return `Cheapest (currently ${provider.models.find((m) => m.id === id)?.name || id})`;
+}
+
+// Copilot's catalog names no vendor, so the brand comes from the model ID, in order (`gpt-oss` before any `oss` rule).
+const BRANDS: [Brand, RegExp][] = [
+  ['openai', /^(gpt|o\d|codex|chatgpt)/],
+  ['claude', /^claude/],
+  ['gemini', /^(gemini|gemma)/],
+  ['qwen', /^(qwen|qwq)/],
+  ['deepseek', /^deepseek/],
+  ['kimi', /^(kimi|moonshot)/],
+  ['grok', /^grok/],
+  ['microsoft', /^(mai-|phi)/],
+  ['meta', /^(llama|meta-llama)/],
+  ['mistral', /^(mistral|codestral|devstral|magistral|ministral)/],
+];
+
+/** The brand whose mark shows beside a model, from its ID's last path segment (`ollama/deepseek-v4.1-flash`); null when none matches. */
+export function modelBrand(id: string): Brand | null {
+  const name = id.toLowerCase().split('/').pop() ?? '';
+  if (name === 'auto') return 'copilot';
+  return BRANDS.find(([, re]) => re.test(name))?.[0] ?? null;
 }

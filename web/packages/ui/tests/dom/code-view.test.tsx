@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { CodeView } from '../../src/components/GoToFile';
+import { CodeView } from '../../src/components/CodeView';
 
 test('a long file previews whole and plain at once, then highlights a slice per frame down to its last line', async () => {
   const lines = 1000;

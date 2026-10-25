@@ -92,7 +92,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
-  test('Archive from the Thread menu asks the same way, and Open Changes shows All changes', async () => {
+  test('Archive from the Thread menu asks the same way, and Open Changes shows the Thread\'s changes', async () => {
     const { user } = renderApp('#task=t15');
     await screen.findByRole('region', { name: 'Conversation' });
     await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
@@ -103,7 +103,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(screen.queryByRole('alertdialog', { name: 'Archive this thread?' })).toBeNull();
     await user.click(guard.getByRole('button', { name: 'Open Changes' }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    await waitFor(() => expect(sheet.getByRole('radio', { name: /^All changes/ }).getAttribute('aria-checked')).toBe('true'));
+    expect(await sheet.findByText(/by this thread/)).toBeTruthy();
   });
 
   test('a clean-looking Archive refused over new work replaces today\'s dialog with the confirmation beside the Thread\'s row', async () => {

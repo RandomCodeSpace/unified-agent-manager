@@ -1,8 +1,8 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, CircleAlert, CircleStop, Clock, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleStop, Ellipsis, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -12,17 +12,14 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext, type Tone } from './common';
+import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
-import { cn } from '../lib/cn';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
-import { Composer, mentionFile, type Answering, type FirstMessage } from './Composer';
-import type { FileActions, FilePlace } from './GoToFile';
-import { keysTaken, threadCovered } from '../App';
+import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentScope } from './Subagents';
@@ -51,10 +48,6 @@ import { Tip } from './ui/tooltip';
 // Go to file and the file panel load apart from the Thread: with their first opening, or once an open
 // Thread is idle. The module, once here, is rendered directly: it never suspends, so an open never
 // waits for React's fallback throttle (about 300 ms) the lazy wrappers incur on their first render.
-let goToFileModule: typeof import('./GoToFile') | null = null;
-const loadGoToFile = () => import('./GoToFile').then((m) => { goToFileModule = m; return m; });
-const GoToFileLazy = lazy(loadGoToFile);
-const FilePanelLazy = lazy(() => loadGoToFile().then((m) => ({ default: m.FilePanel })));
 /** The lazy side panels that have rendered once: a lazy wrapper's first render suspends, to an empty fallback. */
 const lazyShown = new Set<'gitlab' | 'changes' | 'charts'>();
 const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.add('gitlab'); return m; }));
@@ -86,8 +79,8 @@ interface Props {
   /** Side panels (Changes, Files) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
   onSheet: (open: boolean, restoreFocus?: boolean) => void;
-  /** A request from outside (the unsaved-work confirmation) to open Changes on All changes for this Thread, with when it was made. */
-  allChangesRequest?: { id: string; at: number } | null;
+  /** A request from outside (the unsaved-work confirmation) to open this Thread's Changes, with when it was made. */
+  changesRequest?: { id: string; at: number } | null;
   /** The terminal docked under the app (App.tsx): whether it is open, and the toggle that opens it in a Project's folder or closes it. */
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
@@ -139,7 +132,7 @@ interface HeaderProps {
   changes: ChangesData | null;
   evidenceAvailable: boolean;
   evidenceError: string;
-  /** What the finished turn's own record shows failed ("tests fail, 1 command failed"); '' when nothing did. */
+  /** What the finished turn's own record shows failed ("tests fail, a claim contradicted"), for the chip's hover only; '' when nothing did. */
   failures: string;
   sheetOpen: boolean;
   onOpenChanges: () => void;
@@ -152,40 +145,32 @@ interface HeaderProps {
 }
 
 /**
- * The header's state chip: the state's glyph and word, or what took their place (who stopped it, the finished turn's
- * failures). Working is a still dot and the word: what the work is, and the one moving mark, are the strip's live line.
+ * The header's state chip: the state's glyph and word, the same few as the Thread list's (lib/tasks taskStatus); who
+ * stopped it, a phase or the finished turn's failures are its hover text, never another state. Working is a still dot
+ * and the word: what the work is, and the one moving mark, are the strip's live line.
  */
 function HeaderState({ session, state, failures, label }: Readonly<{ session: SessionSummary; state: SessionState; failures: string; label: boolean }>) {
   let title = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   let text: string | undefined;
   let icon: ReactNode;
-  let tone: Tone | undefined;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
   if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="size-1.5 rounded-full bg-ink" />;
   if (state === 'working' && session.budget?.wrapping_up) {
-    // The still dot stays; only the word says the budget is reached.
-    text = 'Wrapping up';
-    title = 'Budget reached: tools are denied and the agent is writing a handoff';
+    title = 'Wrapping up: budget reached, tools are denied and the agent is writing a handoff';
   } else if (stop) {
     text = stop.short;
     title = stop.title;
     if (stop.notYours) icon = <CircleStop aria-hidden="true" className="size-3.5 text-warning" />;
   } else if (state === 'closed' && session.not_started) {
     // A new branch is closed only until its first message.
-    text = 'Not started';
     title = 'Branched; starts with your first message';
-    icon = <Clock aria-hidden="true" className="size-3.5 text-muted" />;
-  } else {
-    if (state !== session.state) title = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-    // A finished turn whose own record failed has no check: a warning glyph and the failures in words.
-    if (state === 'completed' && failures) {
-      text = `Finished · ${failures}`;
-      icon = <CircleAlert aria-hidden="true" className="size-3.5 text-warning" />;
-      tone = 'warning';
-    }
+  } else if (state !== session.state) {
+    title = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+  } else if (state === 'completed' && failures) {
+    title = `Finished · ${failures}`;
   }
-  return <StateMark state={state} label={label} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
+  return <StateMark state={state} label={label} text={text} icon={icon} title={title} className="shrink-0" />;
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
@@ -220,7 +205,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
   const renamable = canRename(session, actions);
-  const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} pending={session.git_pending} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
+  const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
     <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -270,7 +255,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
             <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
               <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
               <Popover.Description>
-                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has {session.capabilities.session_diff ? 'no Files or All changes view.' : 'no Changes or Files view.'}
+                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has no Changes view.
               </Popover.Description>
               {noGit === 'not_repository' && <SetUpGitButton session={session} />}
             </Popover.Content>
@@ -313,7 +298,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
 
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, itemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, allChangesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, itemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, changesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
   const api = useApi();
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
@@ -327,12 +312,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [jump, setJump] = useState(false);
   /** `jump` as last set: a scroll that does not change it must not schedule a render, which would restart a history page's render under way. */
   const jumpShown = useRef(false);
-  /** The file open in the side panel (Go to file's Enter), like the other right panels it replaces them. */
-  const [filePath, setFilePath] = useState<string | null>(null);
-  const filesOpen = !!filePath;
-  /** Go to file, and what it opened from. */
-  const [goToFile, setGoToFile] = useState<{ open: boolean; anchor: HTMLElement | null } | null>(null);
-  const phone = useMedia(PHONE);
   const [gitlabOpen, setGitlabOpen] = useState(false);
   /** A GitLab item opened from the conversation, shown in the GitLab panel with its turn's other items. */
   const [gitlabItem, setGitlabItem] = useState<GitLabOpenItem | null>(null);
@@ -398,14 +377,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (locateError) locateNote.current?.focus({ preventScroll: true });
   }, [locateError]);
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setFilePath(null); setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   // Paths written through the folder's real path (symbolic links resolved) name the same files.
   registerRealWorkdir(session.workdir, session.real_workdir);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || filesOpen || gitlabOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, filesOpen, gitlabOpen, chartsOpen, output, closePreview]);
-  // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
-  if (sheetOpen && filesOpen) setFilePath(null);
+  useLayoutEffect(() => { if (sheetOpen || gitlabOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, gitlabOpen, chartsOpen, output, closePreview]);
+  // The Changes sheet can open from outside the header (a settle guard); it replaces the other panels.
   if (sheetOpen && gitlabOpen) setGitlabOpen(false);
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
@@ -553,12 +531,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // also reports its refreshed default list; a tool completion during a badge read queues another.
   const fetching = useRef(false);
   const again = useRef(false);
-  const listScope = defaultScope(session);
   useEffect(() => {
     let alive = true;
     fetching.current = true;
     api
-      .changes(session.id, listScope)
+      .changes(session.id, 'task')
       .then((c) => {
         if (!alive) return;
         setChanges(c);
@@ -580,7 +557,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     return () => {
       alive = false;
     };
-  }, [session.id, listScope, live, changesTick, api]);
+  }, [session.id, live, changesTick, api]);
   const edits = liveItems.filter(item => completedChanges([item]) > 0).map(item => item.id).join('\n');
   const seenEdits = useRef(new Set(edits.split('\n')));
   useEffect(() => {
@@ -638,10 +615,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
-  const filesPresence = usePresence(filesOpen);
-  const [lastFile, setLastFile] = useState<string | null>(null);
-  if (filePath && filePath !== lastFile) setLastFile(filePath);
-  const fileView = filePath ?? lastFile;
   const gitlabPresence = usePresence(gitlabOpen);
   const chartsPresence = usePresence(chartsOpen);
   const outputPresence = usePresence(!!output);
@@ -656,90 +629,37 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const previewClosed = () => { previewPresence.onClosed(); setLastPreview(null); };
   if (!preview.selection && lastPreview && (!active || sheetOpen)) previewClosed();
   // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step; not while the incoming one's first render suspends, which would widen the column to full.
-  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (filesOpen && goToFileModule) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [filesPresence, filesOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
+  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
   // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it where this Thread left it.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const changesPlace = useRef<ChangesPlace | null>(null);
-  const filePlace = useRef<FilePlace | null>(null);
   const openChanges = useCallback(() => {
     setChangesTurn(null);
     closePreview(false);
-    setFilePath(null);
     setGitlabOpen(false);
     setChartsOpen(false);
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
-  const openAllChanges = useCallback(() => {
-    openChanges();
-    setChangesTurn({ files: [], latest: false, at: Date.now(), scope: 'workspace' });
-  }, [openChanges]);
-  // A fresh request for this Thread opens All changes once, also when it arrives as the Thread opens.
-  const handledAllChanges = useRef(0);
+  // A fresh request for this Thread (a settle guard's) opens Changes once, also when it arrives as the Thread opens.
+  const handledChanges = useRef(0);
   useEffect(() => {
-    if (!allChangesRequest || allChangesRequest.id !== session.id || allChangesRequest.at === handledAllChanges.current || Date.now() - allChangesRequest.at > 5000) return;
-    handledAllChanges.current = allChangesRequest.at;
-    openAllChanges();
-  }, [allChangesRequest, session.id, openAllChanges]);
-  const openTurnChanges = useCallback((turn: { files: string[]; latest: boolean }) => {
+    if (!changesRequest || changesRequest.id !== session.id || changesRequest.at === handledChanges.current || Date.now() - changesRequest.at > 5000) return;
+    handledChanges.current = changesRequest.at;
+    openChanges();
+  }, [changesRequest, session.id, openChanges]);
+  const openTurnChanges = useCallback((turn: { files: string[]; latest: boolean; line?: number }) => {
     openChanges();
     setChangesTurn({ ...turn, at: Date.now() });
   }, [openChanges]);
+  // A changed file opens whole in the file viewer, its changes marked (Lens); it replaces Changes.
+  const openChangedFile = useCallback((path: string, opener: HTMLElement) => {
+    preview.open({ url: api.viewFileUrl(session.id, path), name: path.slice(path.lastIndexOf('/') + 1), description: path, path, frameable: true }, opener);
+  }, [preview, api, session.id]);
   const dock = useRef<HTMLDivElement>(null);
-  const openFile = useCallback((path: string) => {
-    closePreview(false);
-    setGitlabOpen(false);
-    setChartsOpen(false);
-    setOutput(null);
-    onSheet(false, false);
-    setFilePath(path);
-  }, [onSheet, closePreview]);
-  const closeFile = useCallback(() => {
-    setFilePath(null);
-    // Focus goes back to where Go to file opens from, as Changes and Terminal do with their buttons.
-    dock.current?.querySelector<HTMLElement>('[data-go-to-file]')?.focus({ preventScroll: true });
-  }, []);
-  // It opens from the Files button beside the branch under the composer, else as a sheet.
-  const openGoToFile = useCallback(() => {
-    setGoToFile({ open: true, anchor: dock.current?.querySelector<HTMLElement>('[data-go-to-file]') ?? null });
-  }, []);
-  const closeGoToFile = useCallback(() => setGoToFile((g) => g && { ...g, open: false }), []);
-  const fileActions = useMemo<FileActions>(() => ({
-    open: openFile,
-    mention: (path) => mentionFile(session.id, path),
-    changes: (path) => {
-      openChanges();
-      setChangesTurn({ files: [path], latest: false, scope: 'workspace', at: Date.now() });
-    },
-  }), [openFile, openChanges, session.id]);
-  const goToFileAvailable = !project?.no_git;
-  // Alt+P opens Go to file from anywhere in the Thread but a popup or the terminal (Ctrl+P prints; Alt+F is the browser's menu).
-  // An open tooltip (the Files button's, once focus returns to it) does not take the key.
-  useEffect(() => {
-    if (!active || !goToFileAvailable) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyP' || e.defaultPrevented) return;
-      if (keysTaken() || threadCovered() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
-      e.preventDefault();
-      openGoToFile();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [active, goToFileAvailable, openGoToFile]);
-  // Go to file's code loads on demand; it is fetched once the open Thread is idle, so the first Alt+P opens as fast as the next.
-  useEffect(() => {
-    if (!active || !goToFileAvailable) return;
-    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1000));
-    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
-    const handle = idle(() => { void loadGoToFile(); });
-    return () => cancel(handle);
-  }, [active, goToFileAvailable]);
-  const GoToFile = goToFileModule?.default ?? GoToFileLazy;
-  const FilePanel = goToFileModule?.FilePanel ?? FilePanelLazy;
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
   const openGitlabItem = useCallback((refs: GitLabRef[], ref: GitLabRef) => {
     closePreview(false);
-    setFilePath(null);
     setChartsOpen(false);
     setOutput(null);
     onSheet(false);
@@ -758,7 +678,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [session.id, gitlabState, gitlabCurrent, openGitlabItem]);
   const toggleCharts = useCallback(() => {
     closePreview(false);
-    setFilePath(null);
     setGitlabOpen(false);
     setOutput(null);
     onSheet(false);
@@ -769,7 +688,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
-    setFilePath(null);
     setGitlabOpen(false);
     setChartsOpen(false);
     onSheet(false, false);
@@ -787,7 +705,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Closes every right side panel without returning focus to its opener.
   const closeSidePanels = useCallback(() => {
     closePreview(false);
-    setFilePath(null);
     setChartsOpen(false);
     setOutput(null);
     onSheet(false, false);
@@ -1068,7 +985,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               workdir={session.workdir}
               compacting={compacting}
               onOpenChanges={openTurnChanges}
-              onOpenAllChanges={noGit ? undefined : openAllChanges}
+              onOpenThreadChanges={noGit ? undefined : openChanges}
               readersActive={active && connected}
               readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
               changedLine={!noGit}
@@ -1125,14 +1042,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           )}
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id ? editing : null} />
           <ComposerFoot>
-            {goToFileAvailable && (
-              <Tip label={<>Go to file<span className="block text-on-primary/70">Alt+P</span></>} disabled={!!goToFile?.open}>
-                <Button size="sm" variant="subtle" data-go-to-file="" aria-haspopup="dialog" aria-expanded={!!goToFile?.open} aria-keyshortcuts="Alt+P" className={cn('text-caption font-normal [&_svg]:size-3.5 [&_svg]:text-muted', goToFile?.open && 'bg-raised text-ink shadow-raised')} onClick={openGoToFile}>
-                  <FolderTree aria-hidden="true" />
-                  Files
-                </Button>
-              </Tip>
-            )}
             <PlaceFoot session={session} project={project} />
             {/* At the right, an item of this row (the group is `contents`): the time split. What the turn waits on now is the strip's live line. */}
             <span className="contents">
@@ -1143,13 +1052,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} memory={changesPlace} /></Suspense>}
-      {goToFile && <Suspense fallback={null}><GoToFile session={session} project={project} anchor={goToFile.anchor} phone={phone} open={goToFile.open} onClose={closeGoToFile} onClosed={() => setGoToFile(null)} actions={fileActions} /></Suspense>}
-      {filesPresence.mounted && fileView && <Suspense fallback={null}><FilePanel session={session} project={project} path={fileView} inline={sidePanelInline} open={filesOpen} onClose={closeFile} onClosed={filesPresence.onClosed} actions={fileActions} memory={filePlace} /></Suspense>}
+      {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} onOpenFile={openChangedFile} memory={changesPlace} /></Suspense>}
       {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
-      {previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} />}
+      {previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}
     </div>
     </GitLabItemsContext.Provider>
     </SubagentScope>

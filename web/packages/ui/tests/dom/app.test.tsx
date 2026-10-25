@@ -257,7 +257,7 @@ describe('sidebar list keyboard', () => {
     expect(await side.findByText('1 matching thread')).toBeTruthy();
     await user.clear(box);
     await user.type(box, 'zzzz-no-such-task');
-    expect(side.getByText('No matching threads')).toBeTruthy();
+    expect(side.getByText('No thread names match')).toBeTruthy();
     await user.click(side.getByRole('button', { name: 'Clear search' }));
     expect((box as HTMLInputElement).value).toBe('');
     expect(document.activeElement).toBe(box);

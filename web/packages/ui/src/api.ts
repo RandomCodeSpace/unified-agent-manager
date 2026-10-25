@@ -1511,8 +1511,17 @@ export interface Changes {
   supported: boolean;
   reason?: string;
   files: ChangeFile[];
+  /** The Thread's folder inside the repository ("sub/") on the git scopes: `files` are repository paths. */
+  prefix?: string;
   /** File counts of the task, turn and workspace scopes; set on those scopes. */
   counts?: { task: number; turn: number; workspace: number };
+}
+
+/** Threads whose conversation holds the search words, best first (GET /api/search): the Copilot CLI's own index. */
+export interface SearchResults {
+  available: boolean;
+  reason?: string;
+  hits: { thread_id: string; snippet: { text: string; match?: boolean }[] }[];
 }
 
 /** One command of a turn that ran checks, as the service read it (GET /api/sessions/{id}/evidence). */
@@ -2400,14 +2409,11 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),
     changeFile: (id: string, scope: Scope, path: string, signal?: AbortSignal) =>
       call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),
-    /** Git actions refuse with 409 `git_busy` while a Task in the repository could still be writing (GitState.busy). */
-    git: (id: string, signal?: AbortSignal) => call<GitState>('GET', `/api/sessions/${enc(id)}/git`, undefined, false, signal),
+    /** Puts back one hunk (as the task scope's patch shows it, from its @@ line), or without one the whole file; 409 when the file changed since. */
+    revertChange: (id: string, path: string, hunk?: string, signal?: AbortSignal) =>
+      call<void>('POST', `/api/sessions/${enc(id)}/changes/revert`, { path, hunk }, false, signal),
     gitInit: (id: string) => call<GitState>('POST', `/api/sessions/${enc(id)}/git/init`),
-    gitCommit: (id: string, paths: string[], message: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/commit`, { paths, message }),
-    gitPush: (id: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/push`),
-    gitPull: (id: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/pull`),
-    /** Drafts a message on the Utility model; it never commits. */
-    gitMessage: (id: string, paths: string[]) => call<CommitDraft>('POST', `/api/sessions/${enc(id)}/git/message`, { paths }),
+    search: (q: string, signal?: AbortSignal) => call<SearchResults>('GET', `/api/search?q=${enc(q)}`, undefined, false, signal),
     subagent: (id: string, agentId: string, signal?: AbortSignal) =>
       foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
     olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),

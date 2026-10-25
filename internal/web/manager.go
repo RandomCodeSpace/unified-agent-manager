@@ -186,6 +186,8 @@ type Manager struct {
 	// repository, closed when it ends (git_actions.go). A turn starting there
 	// waits for it.
 	gitWrites map[string]chan struct{}
+	// searchSlot lets one search run at a time (search.go).
+	searchSlot chan struct{}
 	// pendingTop is the real path of the repository holding each Task
 	// directory read, "" outside one; gitPending is each repository's
 	// unsaved work as last read (git_pending.go).

@@ -11,7 +11,7 @@ const ts = require('typescript');
 async function components(api, environment = {}) {
   const path = new URL('../src/components/Changes.tsx', import.meta.url);
   const source = ts.createSourceFile('Changes.tsx', await readFile(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const code = source.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(source)).join('\n') + '\nexport { FileView, FileRow };';
+  const code = source.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(source)).join('\n') + '\nexport { FileView, FileCard, DiffRows, DiffSlice };';
   let current;
   const hooks = {
     useState(initial) {
@@ -39,12 +39,15 @@ async function components(api, environment = {}) {
   };
   const exports = {};
   const client = { cacheKey: id => id, ...api };
-  const names = ['Copy', 'Ellipsis', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'X', 'CommitPanel', 'FilePath', 'InstanceName', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
+  const names = ['ChevronDown', 'Copy', 'Ellipsis', 'Eye', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'Undo2', 'X', 'FileIcon', 'InstanceName', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'Menu', 'Tip', 'AlertDialog'];
+  const lens = await import('../src/lib/lens.ts');
   const review = await import('../src/lib/review.ts');
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
-    exports, ...hooks, api: client, useApi: () => client, AbortController, ...review, LIVE: ['starting', 'working'], readOnly: () => false, defaultScope: (s) => (s.capabilities.session_diff ? 'session' : 'task'), newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
+    exports, ...hooks, api: client, useApi: () => client, AbortController, ...review, ...lens, CSS: { escape: String }, requestAnimationFrame: () => 0,
+    useConfirm: () => { const [state, set] = hooks.useState({ target: null, open: false }); return { target: state.target, ask: (t) => set({ target: t, open: true }), close: () => set({ target: state.target, open: false }), props: { open: state.open } }; },
+    useCopied: () => [false, () => {}], LIVE: ['starting', 'working'], readOnly: () => false, newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
     jsxNode: (type, props, ...children) => ({ type, key: props?.key, props: { ...props, children } }),
-    useLazyContextMenu: () => ({ shell: {}, menu: () => null }), describeError: String, structuredPatch: require('diff').structuredPatch, parsePatch: require('diff').parsePatch,
+    useLazyContextMenu: () => ({ shell: {}, menu: () => null }), describeError: String, structuredPatch: require('diff').structuredPatch, parsePatch: require('diff').parsePatch, diffWordsWithSpace: require('diff').diffWordsWithSpace,
   });
   function mount(Component, props) {
     const owner = { slots: [], effects: [], props, dirty: true, cursor: 0, tree: null };
@@ -76,53 +79,6 @@ function find(node, predicate) {
   return null;
 }
 
-test('default and alternate Changes scopes update a selected diff without token-driven reads', async () => {
-  for (const alternate of [false, true]) {
-    let content = 'first\n';
-    let reads = 0, lists = 0;
-    const listing = () => ({ supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1 }] });
-    const api = {
-      changes: async () => { lists++; return listing(); },
-      changeFile: async () => { reads++; return { path: 'sample.txt', before: 'base\n', after: content }; },
-    };
-    const { ChangesSheet, FileView, mount } = await components(api, environment());
-    let props = { session: { id: 'owned', capabilities: { session_diff: alternate } }, changes: listing(), changesError: null, isDefaultPending: () => false, open: true, active: true,
-      onChanges: changes => { props = { ...props, changes }; sheet.update(props); },
-      onRefresh: () => { props = { ...props, changes: listing() }; sheet.update(props); },
-    };
-    const sheet = mount(ChangesSheet, props);
-    if (alternate) {
-      const tree = await sheet.flush();
-      find(tree, node => node.type === 'Segmented').props.onValueChange('workspace');
-    }
-    let file, key;
-    async function render() {
-      const tree = await sheet.flush();
-      const child = find(tree, node => node.type === FileView);
-      assert.ok(child);
-      if (!file || child.key !== key) { file?.close(); file = mount(FileView, child.props); key = child.key; }
-      else file.update(child.props);
-      return file.flush();
-    }
-    assert.match(JSON.stringify(await render()), /first/);
-    assert.equal(reads, alternate ? 2 : 1);
-    content = 'other\n';
-    props = { ...props, changes: listing() };
-    sheet.update(props);
-    assert.match(JSON.stringify(await render()), /other/, 'an automatic listing refresh updates the selected diff even with unchanged path/counts');
-    assert.equal(reads, alternate ? 3 : 2);
-    assert.equal(lists, alternate ? 2 : 0);
-    for (let i = 0; i < 20; i++) { sheet.update({ ...props, session: { ...props.session, title: `token-${i}` } }); await render(); }
-    assert.equal(reads, alternate ? 3 : 2, 'unrelated parent renders must not refetch the diff');
-    assert.equal(lists, alternate ? 2 : 0, 'unrelated parent renders must not refetch the listing');
-    content = 'third\n';
-    find(await sheet.flush(), node => node.props?.['aria-label'] === 'Refresh').props.onClick();
-    assert.match(JSON.stringify(await render()), /third/, 'manual Refresh remains available');
-    assert.equal(reads, alternate ? 4 : 3);
-    sheet.close(); file.close();
-  }
-});
-
 function environment() {
   let now = 0, id = 0;
   const timers = new Map(), listeners = new Set();
@@ -151,214 +107,105 @@ function environment() {
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 
-test('open visible Changes polls every five seconds without overlap, queued work or token resets', async () => {
-  const clock = environment();
-  const listing = { supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1 }] };
-  let content = 'first', listHold, fileHold;
-  const lists = [], files = [];
-  const api = {
-    changes: async (id, scope, signal) => { lists.push({ scope, signal }); return listHold ? listHold.promise : { ...listing }; },
-    changeFile: async (id, scope, path, signal) => { files.push({ scope, path, signal }); return fileHold ? fileHold.promise : { path, before: 'base', after: content }; },
-  };
-  const { ChangesSheet, FileView, mount } = await components(api, clock);
-  let props = { session: { id: 'owned', capabilities: { session_diff: false } }, changes: listing, changesError: null, isDefaultPending: () => false, active: true, open: true,
-    onChanges: changes => { props = { ...props, changes }; sheet.update(props); },
-  };
-  const sheet = mount(ChangesSheet, props);
-  const rendered = async () => {
-    const child = find(await sheet.flush(), node => node.type === FileView);
-    return child ? JSON.stringify(await mount(FileView, child.props).flush()) : '';
-  };
-  assert.match(await rendered(), /first/);
-  assert.equal(lists.length, 0, 'opening reuses the accepted default list');
-  assert.equal(files.length, 1);
-  content = 'other';
-  clock.advance(4000);
-  for (let i = 0; i < 20; i++) { sheet.update({ ...props, session: { ...props.session, title: `token-${i}` } }); await sheet.flush(); }
-  clock.advance(999);
-  assert.equal(lists.length, 0);
-  clock.advance(1);
-  assert.match(await rendered(), /other/, 'external edits appear on the first five-second tick');
-  assert.equal(lists.length, 1);
-  assert.equal(files.length, 2);
 
-  listHold = deferred(); fileHold = deferred();
+const session = { id: 'owned', state: 'idle', capabilities: { session_diff: false } };
+const cards = (tree, FileCard) => { const out = []; (function walk(n) { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return; } if (n.type === FileCard) out.push(n); (n.props?.children ?? []).forEach?.(walk); })(tree); return out; };
+
+test('the stack reuses the Thread list, polls every five seconds without overlap, and stops when hidden or closed', async () => {
+  const clock = environment();
+  const listing = { supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1, digest: 'a' }] };
+  let hold;
+  const lists = [];
+  const api = { changes: async (id, scope, signal) => { lists.push({ scope, signal }); return hold ? hold.promise : { ...listing }; } };
+  const { ChangesSheet, FileCard, mount } = await components(api, clock);
+  let props = { session, changes: listing, changesError: null, isDefaultPending: () => false, active: true, open: true,
+    onChanges: changes => { props = { ...props, changes }; sheet.update(props); } };
+  const sheet = mount(ChangesSheet, props);
+  assert.equal(cards(await sheet.flush(), FileCard).length, 1);
+  assert.equal(lists.length, 0, 'opening reuses the accepted Thread list');
+  for (let i = 0; i < 20; i++) { sheet.update({ ...props, session: { ...session, title: `token-${i}` } }); await sheet.flush(); }
+  clock.advance(4999);
+  assert.equal(lists.length, 0, 'unrelated renders do not read the list');
+  clock.advance(1); await sheet.flush();
+  assert.deepEqual(lists.map(l => l.scope), ['task'], 'only the Thread scope is read');
+  hold = deferred();
   clock.advance(5000); await sheet.flush();
   clock.advance(15000); await sheet.flush();
-  assert.equal(lists.length, 2, 'slow list reads suppress later ticks without queuing');
-  assert.match(await rendered(), /other/, 'the prior diff stays visible during the list read');
-  listHold.resolve({ ...listing }); listHold = undefined; await sheet.flush();
-  assert.equal(files.length, 3);
-  clock.advance(10000); await sheet.flush();
-  assert.equal(lists.length, 2, 'the same cycle stays busy through its diff read');
-  assert.match(await rendered(), /other/, 'the prior diff stays visible during the diff read');
-  fileHold.resolve({ path: 'sample.txt', before: 'base', after: 'third' }); fileHold = undefined;
-  assert.match(await rendered(), /third/);
-  assert.equal(lists.length, 2, 'finishing a read must not drain a refresh queue');
-
+  assert.equal(lists.length, 2, 'a slow read suppresses later ticks without queuing');
+  hold.resolve({ ...listing }); hold = undefined; await sheet.flush();
   clock.visibility('hidden'); clock.advance(10000); await sheet.flush();
   assert.equal(lists.length, 2);
   assert.equal(clock.timerCount(), 0, 'hidden panels stop their timer');
   clock.visibility('visible'); await sheet.flush();
   assert.equal(lists.length, 3, 'visibility return refreshes immediately');
   for (const disabled of [{ open: false }, { active: false }]) {
-    listHold = deferred(); clock.advance(5000); await sheet.flush();
+    hold = deferred(); clock.advance(5000); await sheet.flush();
     const pending = lists.at(-1);
     props = { ...props, ...disabled }; sheet.update(props); await sheet.flush();
-    assert.equal(pending.signal.aborted, true, 'closing or deactivating aborts the cycle');
+    assert.equal(pending.signal.aborted, true, 'closing or deactivating aborts the read');
     const count = lists.length;
-    clock.advance(10000); clock.visibility('visible'); await sheet.flush();
+    clock.advance(10000); await sheet.flush();
     assert.equal(lists.length, count);
-    assert.equal(clock.timerCount(), 0);
-    listHold.resolve({ supported: true, files: [{ path: 'late.txt', additions: 1, deletions: 1 }] }); listHold = undefined;
+    hold.resolve({ supported: true, files: [{ path: 'late.txt', additions: 1, deletions: 1 }] }); hold = undefined;
     assert.doesNotMatch(JSON.stringify(await sheet.flush()), /late.txt/);
     props = { ...props, open: true, active: true }; sheet.update(props); await sheet.flush();
   }
   sheet.close();
 });
 
-test('scope changes and hiding abort a cycle and reject late results without polling unseen scopes', async () => {
-  const clock = environment();
-  const listing = { supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1 }] };
-  let held = deferred();
-  const lists = [], files = [];
-  let hold = false;
-  const api = {
-    changes: async (id, scope, signal) => { lists.push({ scope, signal }); return hold ? held.promise : { ...listing }; },
-    changeFile: async (id, scope, path, signal) => { files.push({ scope, signal }); return { path, before: 'base', after: scope }; },
-  };
-  const { ChangesSheet, FileView, mount } = await components(api, clock);
-  const props = { session: { id: 'owned', capabilities: { session_diff: true } }, changes: listing, changesError: null, isDefaultPending: () => false, active: true, open: true, onChanges() {} };
-  const sheet = mount(ChangesSheet, props);
-  await sheet.flush();
-  hold = true; clock.advance(5000); await sheet.flush();
-  const old = lists.at(-1);
-  assert.ok(old, 'the five-second timer starts a refresh cycle');
-  hold = false;
-  find(await sheet.flush(), node => node.type === 'Segmented').props.onValueChange('workspace');
-  await sheet.flush();
-  assert.equal(old.signal.aborted, true);
-  assert.equal(lists.at(-1).scope, 'workspace');
-  held.resolve({ supported: true, files: [{ path: 'stale.txt', additions: 1, deletions: 1 }] });
-  const tree = await sheet.flush();
-  assert.doesNotMatch(JSON.stringify(tree), /stale.txt/);
-  const child = find(tree, node => node.type === FileView);
-  assert.match(JSON.stringify(await mount(FileView, child.props).flush()), /workspace/);
-  const before = lists.length;
-  clock.advance(5000); await sheet.flush();
-  assert.deepEqual(lists.slice(before).map(request => request.scope), ['workspace']);
-  assert.equal(files.at(-1).scope, 'workspace');
-  held = deferred(); hold = true; clock.advance(5000); await sheet.flush();
-  const hiding = lists.at(-1);
-  clock.visibility('hidden');
-  assert.equal(hiding.signal.aborted, true);
-  clock.advance(10000); await sheet.flush();
-  assert.equal(lists.at(-1), hiding);
+test('in a subfolder Project, Open strips the folder from repository paths and is absent for files outside it', async () => {
+  const environmentClock = environment();
+  const listing = { supported: true, prefix: 'sub/', files: [{ path: 'sub/a.go', additions: 1, deletions: 0, digest: 'a' }, { path: 'top.go', additions: 1, deletions: 0, digest: 'b' }] };
+  const opened = [];
+  const { ChangesSheet, FileCard, mount } = await components({ changes: async () => listing }, environmentClock);
+  const sheet = mount(ChangesSheet, { session, changes: listing, changesError: null, isDefaultPending: () => false, active: true, open: true, onChanges: () => {}, onOpenFile: (path) => opened.push(path) });
+  const [inside, outside] = cards(await sheet.flush(), FileCard);
+  inside.props.onOpenFile('opener');
+  assert.deepEqual(opened, ['a.go']);
+  assert.equal(outside.props.onOpenFile, undefined);
   sheet.close();
 });
 
-test('a pending Task listing suppresses timer, visibility and manual reads, but failure permits retry', async () => {
-  for (const failed of [false, true]) {
-    const clock = environment();
-    const listing = { supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1 }] };
-    let pending = true, lists = 0, files = 0;
-    const api = {
-      changes: async () => { lists++; return listing; },
-      changeFile: async (_id, _scope, path) => { files++; return { path, before: 'base', after: 'current' }; },
-    };
-    const { ChangesSheet, mount } = await components(api, clock);
-    let props = { session: { id: 'owned', capabilities: { session_diff: false } }, changes: null, changesError: null,
-      isDefaultPending: () => pending, active: true, open: true, onChanges() {},
-    };
-    const sheet = mount(ChangesSheet, props);
-    await sheet.flush();
-    clock.advance(15000); await sheet.flush();
-    clock.visibility('hidden'); clock.visibility('visible'); await sheet.flush();
-    find(await sheet.flush(), node => node.props?.['aria-label'] === 'Refresh').props.onClick();
-    await sheet.flush();
-    assert.equal(lists, 0, 'all refresh triggers wait for the pending Thread default list');
-    assert.equal(files, 0);
-    pending = false;
-    props = { ...props, changes: failed ? null : listing, changesError: failed ? 'initial read failed' : null };
-    sheet.update(props); await sheet.flush();
-    if (failed) { clock.advance(5000); await sheet.flush(); }
-    assert.equal(lists, failed ? 1 : 0, 'failure ends pending status and permits a later retry');
-    assert.equal(files, 1);
-    sheet.close();
-  }
+test('a card reads its diff once unfolded, again only when its digest moves, and keeps it through a failed reread', async () => {
+  let content = 'first\n', fail = false;
+  const reads = [];
+  const api = { changeFile: async (id, scope, path) => { reads.push(scope); if (fail) throw new Error('diff read failed'); return { path, before: 'base\n', after: content }; } };
+  const { FileCard, FileView, mount } = await components(api);
+  const file = digest => ({ path: 'sample.txt', status: 'modified', additions: 1, deletions: 1, digest });
+  let props = { sessionId: 'owned', file: file('a'), viewed: 'unviewed', folded: true, onFold() {}, onViewed() {}, onOpenFile() {}, comments: [], onRemoveComment() {} };
+  const card = mount(FileCard, props);
+  const shown = async () => { const v = find(await card.flush(), n => n.type === FileView); return v ? JSON.stringify(await mount(FileView, v.props).flush()) : ''; };
+  assert.equal(await shown(), '', 'a folded card shows no diff');
+  assert.equal(reads.length, 0, 'and reads none');
+  props = { ...props, folded: false }; card.update(props);
+  assert.match(await shown(), /first/);
+  assert.deepEqual(reads, ['task']);
+  for (let i = 0; i < 10; i++) { card.update({ ...props, file: { ...file('a') } }); await card.flush(); }
+  assert.equal(reads.length, 1, 'the same digest is not read again');
+  content = 'second\n'; props = { ...props, file: file('b') }; card.update(props);
+  assert.match(await shown(), /second/);
+  fail = true; props = { ...props, file: file('c') }; card.update(props);
+  const failed = await shown();
+  assert.match(failed, /second/, 'the last diff stays on screen');
+  assert.match(failed, /diff read failed/);
+  card.close();
 });
 
-test('a newer Task listing replaces a pending panel list or detail without an older publication', async () => {
-  for (const phase of ['list', 'detail']) {
-    const clock = environment();
-    const listing = name => ({ label: name, supported: true, files: [{ path: `${name}.txt`, additions: 1, deletions: 1 }] });
-    const first = listing('first'), newer = listing('newer'), held = deferred();
-    let hold = false, oldSignal;
-    const filePaths = [];
-    const api = {
-      changes: async (_id, _scope, signal) => {
-        if (hold && phase === 'list') { oldSignal = signal; return held.promise; }
-        return first;
-      },
-      changeFile: async (_id, _scope, path, signal) => {
-        filePaths.push(path);
-        if (hold && phase === 'detail' && path === 'first.txt') { oldSignal = signal; return held.promise; }
-        return { path, before: 'base', after: path };
-      },
-    };
-    const { ChangesSheet, FileView, mount } = await components(api, clock);
-    let badge;
-    let props = { session: { id: 'owned', capabilities: { session_diff: false } }, changes: first, changesError: null,
-      isDefaultPending: () => false, active: true, open: true,
-      onChanges: changes => { badge = changes; props = { ...props, changes }; sheet.update(props); },
-    };
-    const sheet = mount(ChangesSheet, props);
-    await sheet.flush();
-    hold = true; clock.advance(5000); await sheet.flush();
-    assert.ok(oldSignal);
-    badge = newer; props = { ...props, changes: newer }; sheet.update(props); await sheet.flush();
-    held.resolve(phase === 'list' ? first : { path: 'first.txt', before: 'base', after: 'obsolete' });
-    const tree = await sheet.flush();
-    assert.equal(badge, newer, 'an obsolete panel completion must not overwrite the newer Thread badge');
-    assert.equal(oldSignal.aborted, true);
-    assert.ok(filePaths.includes('newer.txt'), 'the newer listing must get its selected detail');
-    const child = find(tree, node => node.type === FileView);
-    const rendered = JSON.stringify(await mount(FileView, child.props).flush());
-    assert.match(rendered, /newer.txt/);
-    assert.doesNotMatch(rendered, /obsolete|first.txt/);
-    sheet.close();
-  }
-});
-
-test('accepted list counts survive a failed detail refresh while the prior diff and error stay visible', async () => {
+test('a pending Task listing suppresses timer, visibility and manual reads', async () => {
   const clock = environment();
-  const first = { supported: true, files: [{ path: 'sample.txt', additions: 1, deletions: 1 }] };
-  const next = { ...first, files: [...first.files, { path: 'another.txt', additions: 1, deletions: 0 }] };
-  let fail = false, content = 'previous-content', badge = first;
-  const api = {
-    changes: async () => next,
-    changeFile: async (_id, _scope, path) => { if (fail) throw new Error('detail refresh failed'); return { path, before: 'base', after: content }; },
-  };
-  const { ChangesSheet, FileView, mount } = await components(api, clock);
-  let props = { session: { id: 'owned', capabilities: { session_diff: false } }, changes: first, changesError: null,
-    isDefaultPending: () => false, active: true, open: true,
-    onChanges: changes => { badge = changes; props = { ...props, changes }; sheet.update(props); },
-  };
-  const sheet = mount(ChangesSheet, props);
-  const rendered = async () => {
-    const child = find(await sheet.flush(), node => node.type === FileView);
-    return JSON.stringify(await mount(FileView, child.props).flush());
-  };
-  assert.match(await rendered(), /previous-content/);
-  fail = true; clock.advance(5000);
-  const failed = await rendered();
-  assert.equal(badge.files.length, 2, 'a successful listing updates the Thread count even if detail fails');
-  assert.match(failed, /previous-content/, 'a background detail error must not hide the last same-path diff');
-  assert.match(failed, /detail refresh failed/);
-  fail = false; content = 'replacement-content'; clock.advance(5000);
-  const recovered = await rendered();
-  assert.match(recovered, /replacement-content/);
-  assert.doesNotMatch(recovered, /previous-content|detail refresh failed/);
+  let pending = true, lists = 0;
+  const api = { changes: async () => { lists++; return { supported: true, files: [] }; } };
+  const { ChangesSheet, mount } = await components(api, clock);
+  const sheet = mount(ChangesSheet, { session, changes: null, changesError: null, isDefaultPending: () => pending, active: true, open: true, onChanges() {} });
+  await sheet.flush();
+  clock.advance(15000); await sheet.flush();
+  clock.visibility('hidden'); clock.visibility('visible'); await sheet.flush();
+  find(await sheet.flush(), node => node.props?.['aria-label'] === 'Refresh').props.onClick();
+  await sheet.flush();
+  assert.equal(lists, 0, 'every refresh waits for the pending Thread list');
+  pending = false;
+  clock.advance(5000); await sheet.flush();
+  assert.equal(lists, 1);
   sheet.close();
 });
 
@@ -367,69 +214,88 @@ function memoryStorage(seed = {}) {
   return { data, getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k) };
 }
 
-test('viewed marks clear when the file changes, and comments go out as one queued message', async () => {
+test('viewed marks fold a card and clear when the file changes, and comments go out as one queued message', async () => {
   const storage = memoryStorage({ 'uam.review.owned': JSON.stringify({ viewed: {}, comments: [
     { id: 'c1', path: 'b.go', line: 7, side: 'new', code: 'x := 1', body: 'Name this better.' },
     { id: 'c2', path: 'a.go', line: 3, side: 'old', code: 'old()', body: 'Keep this call.' },
   ] }) });
   const sent = [];
-  const listing = digest => ({ supported: true, scope: 'task', counts: { task: 2, turn: 1, workspace: 3 }, files: [
+  const listing = digest => ({ supported: true, scope: 'task', files: [
     { path: 'a.go', status: 'modified', additions: 1, deletions: 1, digest },
     { path: '.github/workflows/ci.yml', status: 'modified', additions: 2, deletions: 0, digest: 'w' },
   ] });
   const api = {
     changes: async () => listing('one'),
-    changeFile: async (_id, _scope, path) => ({ path, before: 'a\n', after: 'b\n' }),
     prompt: async (id, text, requestId, mode) => { sent.push({ id, text, requestId, mode }); return { request_id: requestId, status: 'queued', time: '' }; },
   };
-  const { ChangesSheet, mount } = await components(api, { ...environment(), localStorage: storage });
-  let props = { session: { id: 'owned', state: 'working', capabilities: { session_diff: false } }, changes: listing('one'), changesError: null, isDefaultPending: () => false, open: true, active: true, onChanges: () => {} };
+  const { ChangesSheet, FileCard, mount } = await components(api, { ...environment(), localStorage: storage });
+  const props = { session: { ...session, state: 'working' }, changes: listing('one'), changesError: null, isDefaultPending: () => false, open: true, active: true, onChanges: () => {} };
   const sheet = mount(ChangesSheet, props);
   let tree = await sheet.flush();
-  const rows = () => { const out = []; (function walk(n) { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return; } if (n.type?.name === 'FileRow') out.push(n); (n.props?.children ?? []).forEach?.(walk); })(tree); return out; };
-  assert.deepEqual([...rows().map(r => r.props.file.path)], ['.github/workflows/ci.yml', 'a.go'], 'risky files first');
-  assert.deepEqual([...find(tree, node => node.type === 'Segmented').props.items.map(item => item.label.props.children.join(''))], ['This thread · 2', 'Last turn · 1', 'All changes · 3']);
-  rows()[1].props.onViewed(true);
+  assert.deepEqual(cards(tree, FileCard).map(c => c.props.file.path), ['.github/workflows/ci.yml', 'a.go'], 'risky files first');
+  assert.deepEqual(cards(tree, FileCard).map(c => c.props.folded), [false, false]);
+  cards(tree, FileCard)[1].props.onViewed(true);
   tree = await sheet.flush();
-  assert.equal(rows()[1].props.viewed, 'viewed');
+  assert.equal(cards(tree, FileCard)[1].props.viewed, 'viewed');
+  assert.equal(cards(tree, FileCard)[1].props.folded, true, 'a viewed file folds');
   assert.equal(JSON.parse(storage.data.get('uam.review.owned')).viewed['a.go'], 'one');
   sheet.update({ ...props, changes: listing('two') });
   tree = await sheet.flush();
-  assert.equal(rows()[1].props.viewed, 'changed', 'a new digest clears the mark');
+  assert.equal(cards(tree, FileCard)[1].props.viewed, 'changed', 'a new digest clears the mark');
 
   const batch = find(tree, node => node.type?.name === 'CommentBatch');
   assert.equal(batch.props.comments.length, 2);
-  assert.equal(batch.props.working, true);
   batch.props.onSend();
-  tree = await sheet.flush();
+  await sheet.flush();
   assert.equal(sent.length, 1);
   assert.equal(sent[0].mode, 'queue');
   assert.match(sent[0].text, /2 comments[\s\S]*1\. a\.go, removed line 3:[\s\S]*> old\(\)[\s\S]*Keep this call\.[\s\S]*2\. b\.go, line 7:[\s\S]*Name this better\./);
   assert.equal(JSON.parse(storage.data.get('uam.review.owned') ?? '{"comments":[]}').comments.length, 0, 'sent comments leave storage');
-  assert.match(JSON.stringify(find(tree, node => node.type?.name === 'CommentBatch').props.note), /after this turn/);
   sheet.close();
 });
 
+test('Revert sends one hunk as its patch text, and Revert file asks before it reverts the whole file', async () => {
+  const reverts = [];
+  const api = { revertChange: async (id, path, hunk) => { reverts.push({ path, hunk }); }, changes: async () => ({ supported: true, files: [] }) };
+  const { ChangesSheet, FileCard, FileView, DiffRows, DiffSlice, mount } = await components(api, environment());
+  const listing = { supported: true, files: [{ path: 'a.txt', status: 'modified', additions: 1, deletions: 1, digest: 'd' }] };
+  const sheet = mount(ChangesSheet, { session, changes: listing, changesError: null, isDefaultPending: () => false, open: true, active: true, onChanges() {} });
+  let tree = await sheet.flush();
+  const card = cards(tree, FileCard)[0];
+  await card.props.onRevert('@@ -1,1 +1,1 @@\n-a\n+b\n');
+  assert.deepEqual(reverts, [{ path: 'a.txt', hunk: '@@ -1,1 +1,1 @@\n-a\n+b\n' }]);
+  card.props.onRevertFile();
+  tree = await sheet.flush();
+  const dialog = find(tree, node => node.type === 'AlertDialog');
+  assert.equal(dialog.props.open, true, 'a whole-file revert asks first');
+  assert.equal(reverts.length, 1);
+  dialog.props.onConfirm();
+  await sheet.flush();
+  assert.deepEqual(reverts.at(-1), { path: 'a.txt', hunk: undefined });
+  // The diff's hunk bar carries the hunk's own text to Revert.
+  const hunks = [];
+  const view = mount(FileView, { path: 'a.txt', file: { path: 'a.txt', before: 'one\ntwo\n', after: 'one\nTWO\n' }, error: null, bare: true, onRevert: async (hunk) => { hunks.push(hunk); } });
+  const rows = find(await view.flush(), node => node.type === DiffRows);
+  const slice = find(await mount(DiffRows, rows.props).flush(), node => node.type === DiffSlice);
+  const bar = find(await mount(DiffSlice, slice.props).flush(), node => node.type === 'Button' && JSON.stringify(node.props.children).includes('Revert'));
+  assert.ok(bar, 'each hunk has a Revert');
+  bar.props.onClick();
+  assert.deepEqual(hunks, ['@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n']);
+  sheet.close(); view.close();
+});
 
 test('native binary and truncated changes do not claim zero line changes or an empty text diff', async () => {
-  const { FileView, FileRow, mount } = await components({}, { useCopied: () => [false, () => {}] });
+  const { FileView, FileCard, mount } = await components({ changeFile: async () => new Promise(() => {}) });
   for (const flags of [{ binary: true }, { truncated: true }]) {
     const file = { path: 'native.bin', status: 'modified', additions: 0, deletions: 0, counts_unknown: true, ...flags };
-    const row = mount(FileRow, { file, selected: false, viewed: 'unviewed', onOpen() {}, onViewed() {} });
-    const tree = await row.flush();
-    const count = find(tree, node => node.props?.title === 'Line counts unavailable');
-    assert.ok(count, 'unknown native counts must have an explicit label');
+    const card = mount(FileCard, { sessionId: 'owned', file, viewed: 'unviewed', folded: true, onFold() {}, onViewed() {}, onOpenFile() {}, comments: [], onRemoveComment() {} });
+    const tree = await card.flush();
     assert.equal(JSON.stringify(tree).includes('+0'), false);
+    assert.match(JSON.stringify(tree), flags.binary ? /"binary"/ : /"—"/);
     const view = mount(FileView, { path: file.path, file, error: null });
     const shown = JSON.stringify(await view.flush());
     assert.match(shown, flags.binary ? /Binary file/ : /omitted|size limit/);
     assert.equal(shown.includes('No textual changes'), false);
-    row.close(); view.close();
+    card.close(); view.close();
   }
-  // A binary change git counted (workspace scopes) says so rather than +0 −0.
-  const counted = mount(FileRow, { file: { path: 'blob.bin', status: 'modified', additions: 0, deletions: 0, binary: true }, selected: false, viewed: 'unviewed', onOpen() {}, onViewed() {} });
-  const countedTree = await counted.flush();
-  assert.equal(find(countedTree, node => node.props?.title === 'Line counts unavailable')?.props.children?.toString(), 'binary');
-  assert.equal(JSON.stringify(countedTree).includes('+0'), false);
-  counted.close();
 });

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 )
 
 func toolEdit(id, tool, path string, status agentapi.ToolStatus, at time.Time) agentapi.Item {
@@ -147,5 +148,27 @@ func TestNoteHistoryRecordsEdits(t *testing.T) {
 	m.noteHistoryLocked(s, agentapi.History{}, true)
 	if !s.editsKnown {
 		t.Fatal("a whole record did not make the edits known")
+	}
+}
+
+// A Thread whose Project is a subfolder of its repository lists repository
+// paths, and says where its folder sits, so the UI can open them in it.
+func TestTaskChangesPrefixInASubfolderProject(t *testing.T) {
+	repo := gitRepoFixture(t)
+	for _, tc := range []struct{ dir, prefix string }{{repo, ""}, {filepath.Join(repo, "sub"), "sub/"}} {
+		prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true})
+		m := startManager(t, openTestStore(t), prov)
+		sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, tc.dir)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		prov.Last().EmitItem(toolEdit("e1", "create", filepath.Join(repo, "sub", "new file.txt"), agentapi.ToolCompleted, time.Now()))
+		got, err := m.Changes(t.Context(), sum.ID, ScopeTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Prefix != tc.prefix || len(got.Files) != 1 || got.Files[0].Path != "sub/new file.txt" {
+			t.Fatalf("project %s: prefix %q, files %+v; want prefix %q and sub/new file.txt", tc.dir, got.Prefix, got.Files, tc.prefix)
+		}
 	}
 }
