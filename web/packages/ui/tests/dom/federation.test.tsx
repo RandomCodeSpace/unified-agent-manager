@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
@@ -276,6 +276,25 @@ test('Unarchive from a remote search result restores only its owner and opens it
   expect(calls.filter(call => call.path.endsWith('/unarchive')).map(call => [call.owner, call.method])).toEqual([['b', 'POST']]);
   for (const owner of owners) expect(owner.mock.received).toHaveLength(0);
   for (const label of ['Main Server', 'Workstation C']) expect(restoredRows.getByRole('button', { name: /Archived.*Pin GitHub Actions to Node 24/, description: label })).toBeTruthy();
+});
+
+test('conversation search runs on this server only, never through a connected instance', async () => {
+  const home = federated();
+  const rows = await taskRows();
+  await home.user.type(rows.getByRole('searchbox', { name: 'Search threads' }), 'Node 24');
+  await rows.findByRole('region', { name: 'In conversations' });
+  await waitFor(() => expect(home.calls.some(call => call.path.startsWith('/api/search') && call.owner === '')).toBe(true));
+  cleanup();
+  const remote = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=1');
+  await screen.findByRole('region', { name: 'Conversation' });
+  await waitFor(() => expect(remote.calls.some(call => call.owner === 'b' && call.path.startsWith('/api/sessions/t3'))).toBe(true));
+  const nav = () => within(screen.getByRole('navigation', { name: 'Threads' }));
+  await remote.user.type(nav().getByRole('searchbox', { name: 'Search threads' }), 'Node 24');
+  await waitFor(() => expect(screen.getByRole('navigation', { name: 'Threads' }).textContent).toMatch(/Pin GitHub Actions to Node 24/));
+  // Past the conversation search's pause: it never fires through the connected instance.
+  await new Promise(resolve => setTimeout(resolve, 400));
+  expect(nav().queryByRole('region', { name: 'In conversations' })).toBeNull();
+  expect(remote.calls.some(call => call.path.startsWith('/api/search'))).toBe(false);
 });
 
 test('Unarchive is hidden for a connected instance that does not advertise it', async () => {
