@@ -125,6 +125,10 @@ type Server struct {
 	mcpCallbackOrigins map[string]string
 	// frameSecurity and frameETag are framePolicy's for the embedded frame document.
 	frameSecurity, frameETag string
+	// publicOrigins are the normalised public origins, and drawioClient the
+	// client the draw.io check uses (drawings_drawio.go); nil is the default.
+	publicOrigins []string
+	drawioClient  *http.Client
 
 	// fleet is each connection's Copilot account as last read.
 	fleet fleetAccounts
@@ -148,6 +152,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 			return nil, err
 		}
 		s.terminalOrigins = append(s.terminalOrigins, originPattern(normalized))
+		s.publicOrigins = append(s.publicOrigins, normalized)
 		u, _ := url.Parse(normalized)
 		if u.Scheme == "https" {
 			if s.mcpCallbackOrigins == nil {
@@ -315,6 +320,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}/diff", s.handleItemDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.chartRoutes(mux)
+	s.drawingRoutes(mux)
 	s.routineRoutes(mux)
 	s.assistRoutes(mux)
 	s.mcpRoutes(mux)
@@ -334,7 +340,7 @@ func safeMethod(method string) bool {
 // ServeHTTP applies the security checks every request passes before routing.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
-	h.Set(headerContentSecurity, contentSecurity)
+	h.Set(headerContentSecurity, s.m.pagePolicy())
 	h.Set(headerContentTypeOptions, "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set(headerFrameOptions, "DENY")
@@ -371,6 +377,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case !bodyless && !jsonContentType(r.Header.Get(headerContentType)):
 			s.refuse(w, r, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
 			return
+		case r.Method == http.MethodPut && drawingSavePath(r.URL.Path):
+			limit = maxDrawingBody
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
@@ -729,6 +737,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "github_mcp must be true or false")
 				return
 			}
+		case "drawio":
+			patch.DrawIO = new(DrawIOSettings)
+			if json.Unmarshal(raw, patch.DrawIO) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "drawio must be an object with origin and enabled")
+				return
+			}
 		case "suggest_replies":
 			patch.SuggestReplies = new(bool)
 			if json.Unmarshal(raw, patch.SuggestReplies) != nil || string(raw) == "null" {
@@ -763,6 +777,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		default:
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
+			return
+		}
+	}
+	// The editor is enabled only on a passing check of its origin, run
+	// again here.
+	if patch.DrawIO != nil && patch.DrawIO.Enabled {
+		if check := s.checkDrawIO(r.Context(), patch.DrawIO.Origin); !check.OK {
+			writeFailure(w, &Error{Status: http.StatusBadRequest, Message: "the draw.io origin check failed: " + strings.Join(check.Errors, "; "), Refs: check.Errors})
 			return
 		}
 	}

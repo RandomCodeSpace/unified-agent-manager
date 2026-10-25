@@ -142,6 +142,19 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
   1,000 edges.
 - For numbers, use `uam_chart` rather than a Mermaid chart.
 
+### Drawings
+
+- The owner can convert a mermaid flowchart or sequence diagram you wrote
+  into a drawing: a `.excalidraw` or `.drawio` file in the thread's `docs/`
+  folder, which they edit in uam.
+- Their edits arrive as a note on your next message: which nodes and edges
+  were added, removed, renamed, restyled or moved. Build on their version.
+- Call `uam_diagram_read` for the full drawing as text (one line per node
+  and edge); without `path` it lists the drawings.
+- Do not edit a drawing file with your file tools: its layout is the
+  owner's. To change the picture, write a new mermaid block and say the
+  owner can convert it.
+
 ## Charts: uam_chart
 
 When the owner asks a data question (counts over time, sizes per kind,

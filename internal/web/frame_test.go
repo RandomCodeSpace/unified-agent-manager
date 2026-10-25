@@ -98,7 +98,8 @@ func TestFramePolicyWithoutAScriptAllowsNone(t *testing.T) {
 
 // Every response but the frame document keeps the service policy, byte for
 // byte, and stays unframeable: the relaxation never leaks to a look-alike
-// path, an asset, the SPA fallback, the API or a refusal.
+// path, an asset, the SPA fallback, the API or a refusal. Only an enabled
+// draw.io origin changes it (TestDrawIOOriginIsTheOnlyFrameSource).
 func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 	const want = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	if contentSecurity != want {
@@ -106,6 +107,9 @@ func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 	}
 	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
 	createSession(t, ts.m, ts.prov)
+	if ts.m.Settings().DrawIO.Enabled || ts.m.pagePolicy() != contentSecurity {
+		t.Fatalf("draw.io is off, yet the page policy is %q", ts.m.pagePolicy())
+	}
 	paths := []string{
 		"/", "/index.html", "/sessions/abc", "/diagram-frame", "/diagram-frame.htm", "/nested/diagram-frame.html", "/diagram-frame.html.bak",
 		"/assets/diagram-frame-abc.js", "/assets/diagram-frame-abc.map", "/assets/app.js", "/assets/style.css", "/assets/inter-latin.woff2",
@@ -129,6 +133,33 @@ func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 	} {
 		if got := w.Header().Get("Content-Security-Policy"); got != contentSecurity {
 			t.Fatalf("CSP = %q", got)
+		}
+	}
+}
+
+// With draw.io enabled, every page response carries the service policy
+// plus the one frame source, the frame document keeps its own policy, and
+// the frame stays unframeable from elsewhere.
+func TestDrawIOOriginIsTheOnlyFrameSource(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
+	createSession(t, ts.m, ts.prov)
+	if _, err := ts.m.UpdateSettings(SettingsPatch{DrawIO: &DrawIOSettings{Origin: "https://Drawio.Example:8443/", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	want := contentSecurity + "; frame-src 'self' https://drawio.example:8443"
+	for _, p := range []string{"/", "/index.html", "/sessions/abc", "/assets/app.js", "/api/sessions", "/api/nope"} {
+		w := ts.do(http.MethodGet, p, "", withCookie(ts))
+		if got := w.Header().Get("Content-Security-Policy"); got != want || w.Header().Get("X-Frame-Options") != "DENY" {
+			t.Fatalf("GET %s (%d): CSP = %q", p, w.Code, got)
+		}
+	}
+	if w := ts.do(http.MethodGet, "/diagram-frame.html", ""); w.Header().Get("Content-Security-Policy") != ts.srv.frameSecurity || strings.Contains(ts.srv.frameSecurity, "drawio.example") {
+		t.Fatalf("frame policy = %q", w.Header().Get("Content-Security-Policy"))
+	}
+	// Enabled without a valid origin, or disabled, is the service policy.
+	for _, st := range []Settings{{DrawIO: DrawIOSettings{Origin: "nope", Enabled: true}}, {DrawIO: DrawIOSettings{Origin: "https://drawio.example"}}, {}} {
+		if got := drawioPolicy(st); got != contentSecurity {
+			t.Fatalf("drawioPolicy(%+v) = %q", st.DrawIO, got)
 		}
 	}
 }

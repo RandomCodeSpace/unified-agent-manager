@@ -254,6 +254,11 @@ type Manager struct {
 	usageHome          string        // set by RunDaemon before Start; empty disables local discovery
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
+	// drawings are the Threads' drawing indexes (drawings.go), and policy
+	// the page's Content-Security-Policy, which follows the draw.io
+	// setting (drawioPolicy).
+	drawings drawingStore
+	policy   atomic.Pointer[string]
 	// routines is the routine scheduler (routines.go).
 	routines routineState
 	// binary follows the uam binary on disk for a restart onto a new one
@@ -812,8 +817,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
-		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, WorktreesDir: cfg.WebSettings.WorktreesDir}
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
 	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
+	m.setPolicy(m.settings)
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1298,6 +1304,7 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		QueuePaused:      s.queuePaused,
 		History:          s.historyState(),
 		HistoryReason:    s.historyReason,
+		Drawings:         m.drawingSummaries(s.id),
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.public())
@@ -1661,6 +1668,20 @@ func (m *Manager) Settings() Settings {
 	return m.settings
 }
 
+// pagePolicy is the Content-Security-Policy of every response, computed
+// when the settings load or change.
+func (m *Manager) pagePolicy() string {
+	if p := m.policy.Load(); p != nil {
+		return *p
+	}
+	return contentSecurity
+}
+
+func (m *Manager) setPolicy(st Settings) {
+	p := drawioPolicy(st)
+	m.policy.Store(&p)
+}
+
 // SettingsPatch is a settings change; a nil field changes nothing.
 // HiddenModels replaces the hidden model IDs of each provider it names, and
 // only those; an empty list hides none of that provider's models.
@@ -1704,6 +1725,9 @@ type SettingsPatch struct {
 	// WorktreesDir sets the folder new worktrees go in; "" puts the
 	// default back. A leading ~ is the home folder.
 	WorktreesDir *string
+	// DrawIO sets the draw.io editor's origin and whether it is enabled.
+	// The HTTP handler checks the origin before it enables it.
+	DrawIO *DrawIOSettings
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1894,6 +1918,16 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.GitHubMCP != nil {
 		next.GitHubMCP = *p.GitHubMCP
 	}
+	if p.DrawIO != nil {
+		next.DrawIO = DrawIOSettings{}
+		if p.DrawIO.Origin != "" || p.DrawIO.Enabled {
+			origin, err := drawioOrigin(p.DrawIO.Origin)
+			if err != nil {
+				return Settings{}, newError(http.StatusBadRequest, "%s", err)
+			}
+			next.DrawIO = DrawIOSettings{Origin: origin, Enabled: p.DrawIO.Enabled}
+		}
+	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1928,7 +1962,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	var oldRoots []string
@@ -1945,6 +1979,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
 		cfg.WebSettings.GitLabMRPrompt = next.GitLabMRPrompt
+		cfg.WebSettings.DrawIO = store.WebDrawIO(next.DrawIO)
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.UtilityUnlimited = next.UtilityUnlimited
@@ -1970,6 +2005,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if next.GitHubMCP != current.GitHubMCP {
 		m.setGitHubMCP(next.GitHubMCP)
 	}
+	m.setPolicy(next)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
@@ -3184,7 +3220,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 		return m.failedToolUse(ctx, s, use, failure)
 	}
 	req.Hooks.Succeeded = func(ctx context.Context, use agentapi.ToolUse) { m.succeededToolUse(ctx, s, use) }
-	req.Hooks.Prompt = func(context.Context) string { return m.takeChildNotes(s) }
+	req.Hooks.Prompt = func(context.Context) string { return m.takeHostNotes(s) }
 	req.SkillDirectories = m.skillDirs
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100

@@ -1212,6 +1212,48 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Repeated pictorial symbols need an explicit integer `symbolRepeat` from
   0 to 1000; automatic repetition is unavailable. `splitNumber` uses the
   same limit. Sankey `layoutIterations` defaults to 32 and accepts 0 to 128.
+- **Drawings**: a mermaid flowchart or sequence diagram in a reply can be
+  edited as a drawing. The block becomes a `.excalidraw` file (or, with the
+  draw.io editor enabled, a `.drawio` file) under the Thread folder's
+  `docs/`, owner-only (0600), at most 2 MiB, written atomically and only
+  there: a path outside `docs/`, a symbolic link or another extension is
+  refused. The file is yours; uam keeps the agent's version of it (the
+  baseline) and the version counters in its own store, beside
+  `sessions.json`, never in the project. `GET /api/sessions/{id}/drawings`
+  lists them as `{"drawings": [{path, format, version, agent_version,
+  item_id, fence_index, changes_count}]}`, which the session snapshot also
+  carries as `drawings`, so a card finds its drawing by the message and
+  block it came from. `GET /api/sessions/{id}/drawings/{path}` returns the
+  file and its baseline with the changes between them (`changes`,
+  `status`, `note`; `baseline` is null while the agent has seen the current
+  version). `PUT /api/sessions/{id}/drawings/{path}` with `{content,
+  format, base_version?, origin?, item_id?, fence_index?}` saves it:
+  `origin: "convert"` creates the file (409 when one exists) as the agent's
+  version 1; any other save bumps the version, refuses a `base_version`
+  that is not the current one (409) and answers with the changes since the
+  agent's version, computed from the drawing itself (nodes added, removed,
+  renamed, restyled or moved by more than 8 px; edges added, removed,
+  rebound or relabelled). A save also sends the Thread's session event, so
+  other browsers refresh. The agent learns of your edits as a note on your
+  next message, "The user edited docs/flow.excalidraw since your version
+  (v1 → v2): …", logged in the transcript as a uam notice, and through its
+  `uam_diagram_read` tool, which lists the drawings or returns one as text
+  (one line per node and edge, with the unseen changes); both make the
+  current version the agent's. The draw.io editor is opt-in: Settings holds
+  `drawio: {origin, enabled}`, and `POST /api/settings/drawio/check` with
+  `{"origin"}` probes an origin as the editor frame would load it
+  (`/?embed=1&proto=json`, 5 s, no cross-origin redirect, 256 KiB) and
+  answers `{ok, errors, warnings, detail: {public, cors, framing_ok}}`: an
+  origin must be absolute http(s), must not be plain http when uam is
+  served over https (a loopback origin is fine), must answer with a draw.io
+  page and must not refuse framing through `X-Frame-Options` or
+  `frame-ancestors`; the public embed.diagrams.net gets a third-party
+  warning, a self-hosted origin without CORS a same-origin one. Saving
+  `enabled: true` runs the check again and is refused with its errors
+  unless it passes; while enabled, every page's Content-Security-Policy
+  gains `frame-src 'self' <origin>`, and is otherwise unchanged.
+  Session stats count `drawing.convert`, `drawing.save`, `drawing.read` and
+  `drawing.note`.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
   flaky tests and report failures". **Routines** (the clock) in the
@@ -1706,7 +1748,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   a call that ran out of time says how long it waited and at which step,
   e.g. "the Utility model did not answer within 45 s (its session was open
   after 0.1 s)". Each title costs AI credits,
-  about 0.002 with gpt-6-luna.
+  about 0.002 with gpt-6-luna. **draw.io** holds the opt-in editor's
+  origin and switch, kept as `drawio: {origin, enabled}`; see
+  [Drawings](#use-it) for the check it needs.
 - **Archived**: Settings → **Archived** lists the archived Threads of the
   instance on screen, in every Project, newest archived first: the Project
   badge, the Thread title, the Project name and how long ago it was archived.
