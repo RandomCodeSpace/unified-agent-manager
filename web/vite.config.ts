@@ -22,8 +22,13 @@ export default defineConfig({
           // terminal, chart and highlighting code keeps its existing on-demand loading.
           // React comes first so recursive dependency capture keeps one runtime.
           groups: [
-            { name: 'vendor-react', test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, tags: ['$initial'] },
-            { name: 'vendor-ui', test: /[\\/]node_modules[\\/]@(?:base-ui|floating-ui)[\\/]/, tags: ['$initial'] },
+            // Vite's preload helper rides with React: a group captures its dependencies, and the
+            // excalidraw group would otherwise take the helper (Excalidraw imports its locales
+            // on demand), making every lazy import in the entry depend on the editor's chunk.
+            { name: 'vendor-react', test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]|vite[\\/]preload-helper/, tags: ['$initial'] },
+            // clsx is the page's own (lib/cn.ts) and Excalidraw's; assigned here first, so the
+            // excalidraw group below cannot capture it and pull its whole chunk into the cold start.
+            { name: 'vendor-ui', test: /[\\/]node_modules[\\/](?:@(?:base-ui|floating-ui)|clsx)[\\/]/, tags: ['$initial'] },
             { name: 'vendor-markdown', test: /[\\/]node_modules[\\/](?:react-markdown|remark-breaks|remark-gfm)[\\/]/, tags: ['$initial'] },
             // On demand: ECharts but its chart types in one chunk, rather than dozens of fragments
             // the types share; each drawing loads its types beside it (EChart.tsx).
