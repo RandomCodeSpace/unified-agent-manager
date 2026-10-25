@@ -94,6 +94,7 @@ func (m *Manager) openTerminal(projectID, taskID string) (*terminal, error) {
 	}
 	m.terminals[t] = struct{}{}
 	m.terminalWG.Add(1)
+	m.count("terminal_opens")
 	return t, nil
 }
 

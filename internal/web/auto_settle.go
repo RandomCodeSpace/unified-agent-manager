@@ -89,6 +89,7 @@ func (m *Manager) settleOne(s *webSession, by string, settleable func(*webSessio
 		return false
 	}
 	m.endCalls(s.id)
+	m.count("settle_" + by)
 	if conv != nil {
 		m.closeConversation(conv)
 	}

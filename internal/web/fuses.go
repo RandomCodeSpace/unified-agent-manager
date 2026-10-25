@@ -41,6 +41,9 @@ func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.To
 			out.Args = args
 		}
 	}
+	if out.Deny != "" {
+		m.count("tool_refusals")
+	}
 	return out
 }
 
@@ -71,11 +74,13 @@ func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) age
 			e.warned = true
 		}
 		out.Deny = note
+		m.count("fuse_permission")
 		return out
 	}
 	key := fetchFuseKey(use)
 	if e := s.fuses[fuseKey{kind: "fetch", key: key}]; key != "" && e != nil {
 		if m.now().Before(e.until) {
+			m.count("fuse_fetch")
 			out.Deny = fmt.Sprintf("uam fuse: %s refused %s at %s UTC; reopens %s UTC", key, e.status, e.at.UTC().Format("15:04"), e.until.UTC().Format("15:04"))
 		} else {
 			delete(s.fuses, fuseKey{kind: "fetch", key: key})

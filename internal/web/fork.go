@@ -468,5 +468,6 @@ func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	s.m.count("forks")
 	writeJSON(w, http.StatusCreated, result)
 }

@@ -192,8 +192,10 @@ func (m *Manager) endCalls(id string) {
 func (m *Manager) createTask(ctx context.Context, taskID string, call agentapi.HostToolCall) agentapi.HostToolResult {
 	text, err := m.startSpawn(ctx, taskID, call)
 	if err != nil {
+		m.count("create_task_refused")
 		return agentapi.HostToolResult{Text: err.Error(), Failed: true}
 	}
+	m.count("create_task_spawned")
 	return agentapi.HostToolResult{Text: text}
 }
 
@@ -454,6 +456,7 @@ func (m *Manager) childEndLocked(s *webSession, before, after SessionSummary) {
 	// shortcut: the oldest notes go past maxChildNotes; key them by Thread if
 	// a creator ever needs every note of a long idle wait.
 	parent.childNotes = append(parent.childNotes, text)
+	m.count("child_end_notes")
 	if n := len(parent.childNotes); n > maxChildNotes {
 		parent.childNotes = parent.childNotes[n-maxChildNotes:]
 	}

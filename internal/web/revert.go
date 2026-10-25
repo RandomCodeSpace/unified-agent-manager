@@ -159,5 +159,6 @@ func (s *Server) handleRevertChange(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	s.m.count("reverts")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

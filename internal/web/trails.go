@@ -73,5 +73,6 @@ func (m *Manager) trailContextLocked(s *webSession, use agentapi.ToolUse) string
 			s.trailPaths[path] = true
 		}
 	}
+	m.countN("trail_notes", len(notes))
 	return strings.Join(notes, "\n")
 }

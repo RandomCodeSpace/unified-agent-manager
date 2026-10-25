@@ -1368,6 +1368,11 @@ type Turn struct {
 	// Reason is the provider's code for why a TurnCancelled turn stopped,
 	// such as "autopilot_credit_limit"; "" when it gave none.
 	Reason string `json:"reason,omitempty"`
+	// ReadOnceHits counts the repeat views the provider's read-once replaced
+	// in the turn; StallGaveUp is set when a second model stall ended it.
+	// Only uam's own counts read them.
+	ReadOnceHits int  `json:"-"`
+	StallGaveUp  bool `json:"-"`
 }
 
 // InteractionKind separates permission requests from questions.

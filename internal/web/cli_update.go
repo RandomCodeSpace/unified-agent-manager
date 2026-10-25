@@ -297,9 +297,11 @@ func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, targe
 	pending := false
 	if err == nil {
 		log.Info("web provider CLI updated", "provider", name, "version", target)
+		m.count("cli_updates")
 		pending = m.restartCLI(p, u) != nil
 	} else {
 		log.Warn("update web provider CLI failed", "provider", name, "version", target, "error", err)
+		m.count("cli_update_failures")
 	}
 	// Read again, so the installed version is the one now in place.
 	m.checkCLI(m.ctx, name, u)
@@ -373,7 +375,11 @@ func (m *Manager) restartCLI(p agentapi.Provider, u agentapi.CLIUpdater) error {
 	if n := m.cliBusyTasks(p.Name()); n > 0 {
 		return busyTasksError(p, n)
 	}
-	return u.RestartCLI(m.ctx, func() error { return m.quiesceCLI(p) })
+	err := u.RestartCLI(m.ctx, func() error { return m.quiesceCLI(p) })
+	if err == nil {
+		m.count("cli_restarts")
+	}
+	return err
 }
 
 // cliBusyTasks counts the provider's Tasks whose open conversation works or

@@ -15,4 +15,18 @@ describe('Settings → Session stats', () => {
     expect(screen.getByText('/home/user/.config/uam/session-stats.txt')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Scan again' })).toBeTruthy();
   });
+
+  test('Copy puts the key=value lines on the clipboard', async () => {
+    const { user } = renderApp('#settings');
+    // After renderApp: its user-event setup installs a clipboard of its own.
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => { written.push(t); } } });
+    await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    await user.click(screen.getByRole('button', { name: 'Session stats', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Copy' }));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(/^scan\.at=.+\n/);
+    expect(written[0]).toContain('\nfriction.tool_failure_pct=8\n');
+  });
 });

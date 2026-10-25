@@ -111,6 +111,9 @@ func (m *Manager) budgetOverLocked(s *webSession) string {
 func (m *Manager) checkBudgetLocked(s *webSession) {
 	why := m.budgetOverLocked(s)
 	if why != "" {
+		if !s.budget.Reached {
+			m.count("budget_reached")
+		}
 		s.budget.Reached = true
 	}
 	if m.closed || !s.budget.Reached || s.budgetStopping || s.wrap != nil || s.budget.WrapUp || s.conv == nil {
@@ -207,6 +210,7 @@ func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSu
 	s.budget, s.budgetWarned = store.Budget{}, false
 	if credits > 0 || quotaPercent > 0 {
 		s.budget = store.Budget{Credits: credits, From: s.usedUnits(), QuotaPercent: quotaPercent}
+		m.count("budget_set")
 		m.checkBudgetLocked(s)
 	}
 	m.changedLocked(s, before)
@@ -460,6 +464,7 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 		before := m.summaryLocked(s)
 		s.wrap, s.budget.WrapUp = nil, false
 		s.handoff = &store.WebHandoff{At: m.now(), ReplyID: replyID, NoReply: noReply, Facts: facts}
+		m.count("handoffs")
 		m.changedLocked(s, before)
 	}()
 }

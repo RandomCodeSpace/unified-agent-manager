@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,11 +23,20 @@ import (
 // sessionStatsFile holds the last scan as key=value lines, beside the store.
 const sessionStatsFile = "session-stats.txt"
 
-// Rows kept from the per-tool tallies; the rest are left out of the summary.
+// Rows kept from the per-tool and per-model tallies; the rest are left out of
+// the summary.
 const (
 	sessionStatsTopTools    = 10
 	sessionStatsTopFailures = 5
+	sessionStatsTopModels   = 5
 )
+
+// stallRetrySource marks uam's continuation of a stalled request on its user
+// message in the journal (the Copilot adapter's stallSource).
+const stallRetrySource = "uam-stall-retry"
+
+// shellPoll matches a shell command that waits: a sleep, or a while/until loop.
+var shellPoll = regexp.MustCompile(`(?s)\bsleep\b|\b(while|until)\b.*\bdo\b`)
 
 // SessionStat is one key=value line. Keys are "<group>.<name>".
 type SessionStat struct {
@@ -33,24 +45,53 @@ type SessionStat struct {
 }
 
 // SessionStats is GET /api/session-stats: counts over every Copilot session
-// journal on this server. It holds no prompt, reply or tool output text.
+// journal on this server, uam's own counts and its configuration. It holds no
+// prompt, reply, command or tool output text.
 type SessionStats struct {
 	Path  string        `json:"path"`
 	Stats []SessionStat `json:"stats"`
 }
 
-// journalEvent is the part of an events.jsonl line the counts read.
+// journalEvent is the part of an events.jsonl line the counts read. Command
+// texts are only hashed in memory; no text read here reaches the summary.
 type journalEvent struct {
 	Type      string `json:"type"`
 	Timestamp string `json:"timestamp"`
+	AgentID   string `json:"agentId"`
 	Data      struct {
-		ToolCallID string          `json:"toolCallId"`
-		ToolName   string          `json:"toolName"`
-		Success    *bool           `json:"success"`
-		Result     json.RawMessage `json:"result"`
-		Reason     string          `json:"reason"`
-		ErrorType  string          `json:"errorType"`
+		ToolCallID        string          `json:"toolCallId"`
+		ToolName          string          `json:"toolName"`
+		Arguments         json.RawMessage `json:"arguments"`
+		Success           *bool           `json:"success"`
+		Result            json.RawMessage `json:"result"`
+		Reason            string          `json:"reason"`
+		ErrorType         string          `json:"errorType"`
+		RequestID         string          `json:"requestId"`
+		Source            string          `json:"source"`
+		Cause             string          `json:"cause"`
+		PermissionRequest struct {
+			FullCommandText         string `json:"fullCommandText"`
+			Intention               string `json:"intention"`
+			CanOfferSessionApproval bool   `json:"canOfferSessionApproval"`
+		} `json:"permissionRequest"`
+		Usage struct {
+			Model              string  `json:"model"`
+			Initiator          string  `json:"initiator"`
+			InputTokens        float64 `json:"inputTokens"`
+			OutputTokens       float64 `json:"outputTokens"`
+			CacheReadTokens    float64 `json:"cacheReadTokens"`
+			CacheWriteTokens   float64 `json:"cacheWriteTokens"`
+			ReasoningTokens    float64 `json:"reasoningTokens"`
+			Cost               float64 `json:"cost"`
+			TimeToFirstTokenMs float64 `json:"timeToFirstTokenMs"`
+		} `json:"usage"`
 	} `json:"data"`
+}
+
+// usageSum totals the session.usage_record calls of one initiator.
+type usageSum struct {
+	calls                                                 int
+	input, output, cacheRead, cacheWrite, reasoning, cost float64
 }
 
 type sessionTally struct {
@@ -58,24 +99,69 @@ type sessionTally struct {
 	first, last                          string
 	events, tools, failures, permissions map[string]int
 	errors, aborts                       map[string]int
+
+	// Permission requests: wait seconds, how many could offer session
+	// approval or had an intention, and repeats of a command already asked
+	// in the same session; commands counts each command hash over all.
+	waits                       []float64
+	offers, intentions, repeats int
+	commands                    map[[32]byte]int
+	// Shell calls, those that wait (shellPoll), and repeats of the same
+	// command in one turn: from a prompt to its reply, not one model step.
+	shells, polls, sameInTurn int
+	// Completed turns: seconds, tool calls, and how many ran no tool;
+	// promptTurns is the main turns of each owner prompt.
+	turnSecs, turnTools, promptTurns []float64
+	noTools                          int
+	usage                            map[string]*usageSum
+	ttfb                             []float64
+	models, modelChanges             map[string]int
+	rateSwitches, prompts, stalls    int
+	days                             map[string]bool
 }
 
-// SessionStats scans every session journal under COPILOT_HOME, writes the
-// summary to sessionStatsFile and returns it.
-func (m *Manager) SessionStats(ctx context.Context) (SessionStats, error) {
+// journalScan is one journal's state while it is read.
+type journalScan struct {
+	tools    map[string]string
+	asked    map[string]time.Time
+	commands map[[32]byte]bool
+	// turns is each agent's open model step ("" the main agent); turnsSince
+	// counts the main steps since the last owner prompt, -1 before the
+	// first. shell holds each agent's shell commands since its last prompt.
+	turns      map[string]*openTurn
+	turnsSince int
+	shell      map[string]map[[32]byte]bool
+}
+
+type openTurn struct {
+	at    time.Time
+	tools int
+}
+
+func newSessionTally() sessionTally {
+	return sessionTally{events: map[string]int{}, tools: map[string]int{}, failures: map[string]int{}, permissions: map[string]int{}, errors: map[string]int{}, aborts: map[string]int{},
+		commands: map[[32]byte]int{}, usage: map[string]*usageSum{}, models: map[string]int{}, modelChanges: map[string]int{}, days: map[string]bool{}}
+}
+
+// SessionStats scans every session journal under COPILOT_HOME, adds uam's own
+// counts and configuration (extra first among them), writes the summary to
+// sessionStatsFile and returns it.
+func (m *Manager) SessionStats(ctx context.Context, extra ...SessionStat) (SessionStats, error) {
 	scope, err := m.configurationScope("")
 	if err != nil {
 		return SessionStats{}, err
 	}
 	journals, _ := filepath.Glob(filepath.Join(scope.base, "session-state", "*", "events.jsonl"))
-	t := sessionTally{events: map[string]int{}, tools: map[string]int{}, failures: map[string]int{}, permissions: map[string]int{}, errors: map[string]int{}, aborts: map[string]int{}}
+	t := newSessionTally()
 	for _, path := range journals {
 		if err := ctx.Err(); err != nil {
 			return SessionStats{}, err
 		}
 		t.scan(path)
 	}
-	out := SessionStats{Path: filepath.Join(filepath.Dir(m.store.Path()), sessionStatsFile), Stats: t.stats(time.Now())}
+	stats := append(t.stats(time.Now()), m.uamStats()...)
+	stats = append(append(stats, extra...), m.configStats()...)
+	out := SessionStats{Path: filepath.Join(filepath.Dir(m.store.Path()), sessionStatsFile), Stats: stats}
 	var b strings.Builder
 	for _, s := range out.Stats {
 		b.WriteString(s.Key)
@@ -98,7 +184,7 @@ func (t *sessionTally) scan(path string) {
 	defer func() { _ = f.Close() }()
 	t.sessions++
 	prompted := false
-	tools := map[string]string{}
+	js := &journalScan{tools: map[string]string{}, asked: map[string]time.Time{}, commands: map[[32]byte]bool{}, turns: map[string]*openTurn{}, turnsSince: -1, shell: map[string]map[[32]byte]bool{}}
 	r := bufio.NewReader(f)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -107,7 +193,7 @@ func (t *sessionTally) scan(path string) {
 			if json.Unmarshal(line, &e) != nil {
 				t.skipped++
 			} else {
-				prompted = t.add(&e, tools) || prompted
+				prompted = t.add(&e, js) || prompted
 			}
 		}
 		if err != nil {
@@ -120,10 +206,13 @@ func (t *sessionTally) scan(path string) {
 	if prompted {
 		t.withPrompts++
 	}
+	if js.turnsSince >= 0 {
+		t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
+	}
 }
 
 // add counts one event; it reports whether the event is a user prompt.
-func (t *sessionTally) add(e *journalEvent, tools map[string]string) bool {
+func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 	t.events[e.Type]++
 	if e.Timestamp != "" {
 		if t.first == "" || e.Timestamp < t.first {
@@ -131,13 +220,36 @@ func (t *sessionTally) add(e *journalEvent, tools map[string]string) bool {
 		}
 		t.last = max(t.last, e.Timestamp)
 	}
+	at, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
 	switch e.Type {
 	case "tool.execution_start":
-		tools[e.Data.ToolCallID] = e.Data.ToolName
+		js.tools[e.Data.ToolCallID] = e.Data.ToolName
 		t.tools[e.Data.ToolName]++
+		if turn := js.turns[e.AgentID]; turn != nil {
+			turn.tools++
+		}
+		if e.Data.ToolName == "bash" || e.Data.ToolName == "shell" {
+			seen := js.shell[e.AgentID]
+			if seen == nil {
+				seen = map[[32]byte]bool{}
+				js.shell[e.AgentID] = seen
+			}
+			t.addShell(e.Data.Arguments, seen)
+		}
 	case "tool.execution_complete":
 		if e.Data.Success != nil && !*e.Data.Success {
-			t.failures[cmp.Or(tools[e.Data.ToolCallID], "unknown")]++
+			t.failures[cmp.Or(js.tools[e.Data.ToolCallID], "unknown")]++
+		}
+	case "permission.requested":
+		p := e.Data.PermissionRequest
+		js.asked[e.Data.RequestID] = at
+		t.offers += b2i(p.CanOfferSessionApproval)
+		t.intentions += b2i(strings.TrimSpace(p.Intention) != "")
+		if p.FullCommandText != "" {
+			h := sha256.Sum256([]byte(p.FullCommandText))
+			t.commands[h]++
+			t.repeats += b2i(js.commands[h])
+			js.commands[h] = true
 		}
 	case "permission.completed":
 		var result struct {
@@ -145,19 +257,101 @@ func (t *sessionTally) add(e *journalEvent, tools map[string]string) bool {
 		}
 		_ = json.Unmarshal(e.Data.Result, &result)
 		t.permissions[cmp.Or(result.Kind, "unknown")]++
+		if asked, ok := js.asked[e.Data.RequestID]; ok {
+			delete(js.asked, e.Data.RequestID)
+			if !asked.IsZero() && !at.IsZero() {
+				t.waits = append(t.waits, max(at.Sub(asked).Seconds(), 0))
+			}
+		}
+	case "assistant.turn_start":
+		js.turns[e.AgentID] = &openTurn{at: at}
+		if e.AgentID == "" && js.turnsSince >= 0 {
+			js.turnsSince++
+		}
+	case "assistant.turn_end":
+		if turn := js.turns[e.AgentID]; turn != nil {
+			delete(js.turns, e.AgentID)
+			t.turnTools = append(t.turnTools, float64(turn.tools))
+			t.noTools += b2i(turn.tools == 0)
+			if !turn.at.IsZero() && !at.IsZero() {
+				t.turnSecs = append(t.turnSecs, max(at.Sub(turn.at).Seconds(), 0))
+			}
+		}
+	case "session.usage_record":
+		t.addUsage(e)
+	case "session.model_change":
+		t.modelChanges[cmp.Or(e.Data.Source, "unknown")]++
+		t.rateSwitches += b2i(e.Data.Cause == "rate_limit_auto_switch")
 	case "session.error":
 		t.errors[cmp.Or(e.Data.ErrorType, "unknown")]++
 	case "abort":
 		t.aborts[cmp.Or(e.Data.Reason, "unknown")]++
 	case "user.message":
+		t.stalls += b2i(e.Data.Source == stallRetrySource)
+		if e.Data.Source != stallRetrySource {
+			delete(js.shell, e.AgentID)
+		}
+		// The owner's prompts: neither a subagent's task nor uam's
+		// continuation of a stalled request.
+		if e.AgentID == "" && e.Data.Source != stallRetrySource {
+			t.prompts++
+			t.days[e.Timestamp[:min(len(e.Timestamp), 10)]] = true
+			if js.turnsSince >= 0 {
+				t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
+			}
+			js.turnsSince = 0
+		}
 		return true
 	}
 	return false
 }
 
+// addShell counts a shell call that waits, and one whose command is in seen,
+// the agent's commands since its prompt.
+func (t *sessionTally) addShell(raw json.RawMessage, seen map[[32]byte]bool) {
+	t.shells++
+	var args struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(raw, &args) != nil || args.Command == "" {
+		return
+	}
+	t.polls += b2i(shellPoll.MatchString(args.Command))
+	h := sha256.Sum256([]byte(args.Command))
+	t.sameInTurn += b2i(seen[h])
+	seen[h] = true
+}
+
+// addUsage adds one model call to the total and to its initiator's sums.
+func (t *sessionTally) addUsage(e *journalEvent) {
+	u := e.Data.Usage
+	group := map[string]string{"user": "user", "sub-agent": "subagent"}[u.Initiator]
+	for _, g := range []string{"total", cmp.Or(group, "other")} {
+		sum := t.usage[g]
+		if sum == nil {
+			sum = &usageSum{}
+			t.usage[g] = sum
+		}
+		sum.calls++
+		sum.input += u.InputTokens
+		sum.output += u.OutputTokens
+		sum.cacheRead += u.CacheReadTokens
+		sum.cacheWrite += u.CacheWriteTokens
+		sum.reasoning += u.ReasoningTokens
+		sum.cost += u.Cost
+	}
+	t.models[cmp.Or(u.Model, "unknown")]++
+	if u.TimeToFirstTokenMs > 0 {
+		t.ttfb = append(t.ttfb, u.TimeToFirstTokenMs)
+	}
+}
+
 func (t *sessionTally) stats(now time.Time) []SessionStat {
 	var out []SessionStat
 	add := func(key string, n int) { out = append(out, SessionStat{key, strconv.Itoa(n)}) }
+	addF := func(key string, v float64, prec int) {
+		out = append(out, SessionStat{key, strconv.FormatFloat(v, 'f', prec, 64)})
+	}
 	day := func(ts string) string { return ts[:min(len(ts), 10)] }
 	out = append(out, SessionStat{"scan.at", now.UTC().Format(time.RFC3339)})
 	add("scan.skipped", t.skipped)
@@ -175,11 +369,7 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	add("work.mode_changes", t.events["session.mode_changed"])
 	add("friction.turns_unfinished", max(0, t.events["assistant.turn_start"]-t.events["assistant.turn_end"]))
 	add("friction.tool_failures", sum(t.failures))
-	pct := 0
-	if calls := t.events["tool.execution_start"]; calls > 0 {
-		pct = sum(t.failures) * 100 / calls
-	}
-	add("friction.tool_failure_pct", pct)
+	add("friction.tool_failure_pct", pct(sum(t.failures), t.events["tool.execution_start"]))
 	add("friction.permission_prompts", t.events["permission.requested"])
 	add("friction.session_errors", sum(t.errors))
 	for _, kv := range ranked(t.aborts, 0) {
@@ -197,7 +387,105 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	for _, kv := range ranked(t.failures, sessionStatsTopFailures) {
 		add("tool_failures."+kv.k, kv.n)
 	}
+
+	requests := t.events["permission.requested"]
+	addF("approvals.wait_median_s", quantile(t.waits, 0.5), 1)
+	addF("approvals.wait_p90_s", quantile(t.waits, 0.9), 1)
+	addF("approvals.wait_total_s", fsum(t.waits), 0)
+	add("approvals.session_offer_pct", pct(t.offers, requests))
+	add("approvals.with_intention_pct", pct(t.intentions, requests))
+	add("approvals.repeats", t.repeats)
+	add("approvals.repeat_pct", pct(t.repeats, requests))
+	asked3 := 0
+	for _, n := range t.commands {
+		asked3 += b2i(n >= 3)
+	}
+	add("approvals.commands_asked_3x", asked3)
+
+	add("polling.shell_calls", t.shells)
+	add("polling.sleep_or_loop", t.polls)
+	add("polling.sleep_or_loop_pct", pct(t.polls, t.shells))
+	add("polling.same_command_in_prompt", t.sameInTurn)
+
+	add("turns.completed", len(t.turnSecs))
+	addF("turns.median_s", quantile(t.turnSecs, 0.5), 1)
+	addF("turns.p90_s", quantile(t.turnSecs, 0.9), 1)
+	addF("turns.tool_calls_median", quantile(t.turnTools, 0.5), 0)
+	add("turns.no_tools_pct", pct(t.noTools, len(t.turnTools)))
+	addF("turns.per_prompt_median", quantile(t.promptTurns, 0.5), 0)
+
+	for _, g := range []string{"total", "user", "subagent", "other"} {
+		u := t.usage[g]
+		if u == nil {
+			u = &usageSum{}
+		}
+		add("tokens."+g+"_calls", u.calls)
+		addF("tokens."+g+"_input", u.input, 0)
+		addF("tokens."+g+"_output", u.output, 0)
+		addF("tokens."+g+"_cache_read", u.cacheRead, 0)
+		addF("tokens."+g+"_cache_write", u.cacheWrite, 0)
+		addF("tokens."+g+"_reasoning", u.reasoning, 0)
+		addF("tokens."+g+"_cost", u.cost, 2)
+	}
+	addF("models.ttfb_median_ms", quantile(t.ttfb, 0.5), 0)
+	addF("models.ttfb_p90_ms", quantile(t.ttfb, 0.9), 0)
+	add("models.rate_limit_switches", t.rateSwitches)
+	for _, kv := range ranked(t.models, sessionStatsTopModels) {
+		add("model_calls."+kv.k, kv.n)
+	}
+	for _, kv := range ranked(t.modelChanges, 0) {
+		add("model_changes."+kv.k, kv.n)
+	}
+
+	add("activity.owner_prompts", t.prompts)
+	add("activity.active_days", len(t.days))
+	addF("activity.sessions_per_day", ratio(t.withPrompts, len(t.days)), 1)
+	addF("activity.prompts_per_day", ratio(t.prompts, len(t.days)), 1)
+	add("activity.subagents_started", t.events["subagent.started"])
+	add("activity.subagents_completed", t.events["subagent.completed"])
+	add("activity.subagents_failed", t.events["subagent.failed"])
+	addF("activity.compactions_per_session", ratio(t.events["session.compaction_complete"], t.withPrompts), 2)
+	add("activity.stall_retries", t.stalls)
 	return out
+}
+
+// pct is n of total in whole percent, 0 for no total.
+func pct(n, total int) int {
+	if total == 0 {
+		return 0
+	}
+	return n * 100 / total
+}
+
+func ratio(n, d int) float64 {
+	if d == 0 {
+		return 0
+	}
+	return float64(n) / float64(d)
+}
+
+// quantile is the nearest-rank q quantile of xs, 0 for none.
+func quantile(xs []float64, q float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := slices.Sorted(slices.Values(xs))
+	return s[max(int(math.Ceil(q*float64(len(s))))-1, 0)]
+}
+
+func fsum(xs []float64) float64 {
+	n := 0.0
+	for _, x := range xs {
+		n += x
+	}
+	return n
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 type tallyRow struct {
@@ -227,7 +515,11 @@ func sum(counts map[string]int) int {
 }
 
 func (s *Server) handleSessionStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.m.SessionStats(r.Context())
+	extra := []SessionStat{{"config.uam_version", cmp.Or(s.version, "unknown")}}
+	if s.connections != nil {
+		extra = append(extra, SessionStat{"config.connected_instances", strconv.Itoa(len(s.connections.List()))})
+	}
+	stats, err := s.m.SessionStats(r.Context(), extra...)
 	if err != nil {
 		writeFailure(w, err)
 		return
