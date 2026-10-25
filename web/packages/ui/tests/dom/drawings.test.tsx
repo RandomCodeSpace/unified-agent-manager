@@ -2,8 +2,8 @@
 // fence whose drawing exists with unsent changes (d4, mock/drawings.ts). Excalidraw needs a canvas
 // happy-dom has not, so the package is a stand-in here; the real editor runs in scripts/check-drawings.mjs.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { expect, test, vi } from 'vitest';
-import { api } from '../../src/api';
+import { beforeEach, expect, test, vi } from 'vitest';
+import { api, ApiError } from '../../src/api';
 import { mermaidFences } from '../../src/lib/diagram';
 import { composer, log, openTask } from './render';
 
@@ -19,11 +19,14 @@ vi.mock('../../src/lib/diagram', async (original) => {
 type Emit = (elements: Record<string, unknown>[], state: unknown, files: Record<string, unknown>) => void;
 /** The stand-in's `onChange`, so a test can report scenes the way Excalidraw does. */
 let emit: Emit | null = null;
+/** The stand-in's `updateScene`: what Reload and Revert put on the canvas. */
+const updateScene = vi.fn();
+beforeEach(() => updateScene.mockClear());
 
 vi.mock('@excalidraw/excalidraw', () => ({
   Excalidraw: ({ excalidrawAPI, onChange }: { excalidrawAPI?: (api: unknown) => void; onChange?: Emit }) => {
     emit = onChange ?? null;
-    excalidrawAPI?.({ scrollToContent: () => {}, updateScene: () => {} });
+    excalidrawAPI?.({ scrollToContent: () => {}, updateScene });
     return <div className="excalidraw-container" tabIndex={-1} data-testid="excalidraw" />;
   },
   MainMenu: Object.assign(() => null, { DefaultItems: new Proxy({}, { get: () => () => null }), Separator: () => null }),
@@ -86,6 +89,45 @@ test('saves go one at a time: a second edit waits for the first PUT and carries 
     expect(screen.queryByText('The agent changed this drawing.')).toBeNull();
     const card = await cardOf('diagram-d4-0.excalidraw');
     await waitFor(() => expect(card.getByText(/^Yours v4 · /)).toBeTruthy());
+  } finally {
+    put.mockRestore();
+  }
+});
+
+test('a 409 keeps the scene, says the agent changed the drawing, and Reload puts the server’s file on the canvas', async () => {
+  const { user } = await openTask('t-chart');
+  const put = vi.spyOn(api, 'putDrawing').mockRejectedValue(new ApiError(409, 'the drawing changed since this version was loaded'));
+  try {
+    const { canvas, restored } = await openEditor(user);
+    fireEvent.keyDown(canvas, { key: 'Shift' });
+    act(() => emit!([{ ...restored[0], x: 50 }], {}, {}));
+    const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
+    expect(await editor.findByText(/The agent changed this drawing/)).toBeTruthy();
+    expect(updateScene).not.toHaveBeenCalled();
+    await user.click(editor.getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(updateScene).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(editor.queryByText(/The agent changed this drawing/)).toBeNull());
+    expect(editor.getByText('Saved')).toBeTruthy();
+    expect(put).toHaveBeenCalledTimes(1);
+  } finally {
+    put.mockRestore();
+  }
+});
+
+test('Revert puts the agent’s file on the canvas and saves it, so the versions agree again', async () => {
+  const { user } = await openTask('t-chart');
+  const put = vi.spyOn(api, 'putDrawing');
+  try {
+    await openEditor(user);
+    const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
+    await user.click(editor.getByRole('button', { name: 'Revert to agent’s' }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    const body = put.mock.calls[0][2];
+    expect(body.base_version).toBe(2);
+    expect(JSON.parse(body.content).elements.some((e: { text?: string }) => e.text === 'Event cache')).toBe(false);
+    expect(updateScene).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(editor.getByText('Same as the agent’s')).toBeTruthy());
+    expect(editor.queryByRole('button', { name: 'Revert to agent’s' })).toBeNull();
   } finally {
     put.mockRestore();
   }

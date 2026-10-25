@@ -7,6 +7,9 @@ import type { Picture } from './drawings';
 /** The embed page: JSON protocol, no exit button, no "save and exit", the version beacon off (`stealth`). */
 export const drawioEmbedUrl = (origin: string): string => `${origin.replace(/\/+$/, '')}/?embed=1&proto=json&spin=1&stealth=1&noExitBtn=1&saveAndExit=0`;
 
+/** The page's origin as a message event spells it (`scheme://host[:port]`): what every post targets and every listener demands. */
+export const drawioOrigin = (origin: string): string => new URL(origin).origin;
+
 export const DRAWIO_SANDBOX = 'allow-scripts allow-same-origin allow-downloads';
 
 /** How long an export may take before the picture says it did not answer. */
@@ -55,6 +58,7 @@ function ensureExporter(origin: string) {
   frame.tabIndex = -1;
   frame.title = 'draw.io exporter';
   frame.className = 'pointer-events-none fixed top-0 left-0 -z-10 h-150 w-200 opacity-0';
+  const from = drawioOrigin(origin);
   const ready = new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       // A page that never said `init` goes, so the next picture starts a fresh one.
@@ -63,7 +67,7 @@ function ensureExporter(origin: string) {
       reject(new Error('The draw.io page did not start'));
     }, EXPORT_TIMEOUT * 4);
     const onMessage = (e: MessageEvent) => {
-      if (e.source !== frame.contentWindow) return;
+      if (e.source !== frame.contentWindow || e.origin !== from) return;
       if (drawioMessage(e.data)?.event !== 'init') return;
       clearTimeout(timer);
       window.removeEventListener('message', onMessage);
@@ -83,15 +87,16 @@ async function run(origin: string, job: Job) {
     await ready;
     const target = frame.contentWindow;
     if (!target) throw new Error('The draw.io page is gone');
+    const from = drawioOrigin(origin);
     const url = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         window.removeEventListener('message', onMessage);
         reject(new Error('draw.io did not answer the export in time'));
       }, EXPORT_TIMEOUT);
       const onMessage = (e: MessageEvent) => {
-        if (e.source !== target) return;
+        if (e.source !== target || e.origin !== from) return;
         const m = drawioMessage(e.data);
-        if (m?.event === 'load') target.postMessage(JSON.stringify({ action: 'export', format: 'png' }), '*');
+        if (m?.event === 'load') target.postMessage(JSON.stringify({ action: 'export', format: 'png' }), from);
         if (m?.event !== 'export') return;
         clearTimeout(timer);
         window.removeEventListener('message', onMessage);
@@ -100,7 +105,7 @@ async function run(origin: string, job: Job) {
         else reject(new Error('draw.io did not return a PNG'));
       };
       window.addEventListener('message', onMessage);
-      target.postMessage(JSON.stringify({ action: 'load', xml: job.xml }), '*');
+      target.postMessage(JSON.stringify({ action: 'load', xml: job.xml }), from);
     });
     job.resolve(await measure(url));
   } catch (err) {

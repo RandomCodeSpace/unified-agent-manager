@@ -9,7 +9,7 @@ import { ArrowUp, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus } from '../api';
 import { cn } from '../lib/cn';
-import { drawioEmbedUrl, drawioMessage, DRAWIO_SANDBOX } from '../lib/drawio';
+import { drawioEmbedUrl, drawioMessage, drawioOrigin, DRAWIO_SANDBOX } from '../lib/drawio';
 import { changesWord, drawioOverlayXml, excalidrawFile, overlay, parseExcalidraw, type DrawnElement } from '../lib/drawings';
 import { useScheme } from '../lib/theme';
 import { Note, Spinner } from './common';
@@ -357,9 +357,10 @@ function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
-    const load = (xml: string) => el.contentWindow?.postMessage(JSON.stringify({ action: 'load', xml, autosave: 1 }), '*');
+    const from = drawioOrigin(origin);
+    const load = (xml: string) => el.contentWindow?.postMessage(JSON.stringify({ action: 'load', xml, autosave: 1 }), from);
     const onMessage = (e: MessageEvent) => {
-      if (e.source !== el.contentWindow) return;
+      if (e.source !== el.contentWindow || e.origin !== from) return;
       const m = drawioMessage(e.data);
       if (!m) return;
       if (m.event === 'init') {
@@ -370,6 +371,6 @@ function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [origin]);
   return <iframe ref={frame} title="draw.io editor" src={drawioEmbedUrl(origin)} sandbox={DRAWIO_SANDBOX} className="size-full border-0 bg-raised" />;
 }
