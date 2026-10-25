@@ -31,7 +31,9 @@ type uamCounts struct {
 	mu      sync.Mutex
 	path    string
 	n       map[string]int
-	pending bool
+	// timer is the pending write; closed, set at shutdown, arms no more.
+	timer  *time.Timer
+	closed bool
 }
 
 // count adds one to name. It takes no Manager lock, so any caller may.
@@ -46,9 +48,8 @@ func (m *Manager) countN(name string, n int) {
 	defer c.mu.Unlock()
 	c.loadLocked(m.store)
 	c.n[name] += n
-	if !c.pending && c.path != "" {
-		c.pending = true
-		time.AfterFunc(countsDelay, c.save)
+	if c.timer == nil && !c.closed && c.path != "" {
+		c.timer = time.AfterFunc(countsDelay, c.save)
 	}
 }
 
@@ -77,16 +78,28 @@ func (c *uamCounts) save() {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	c.mu.Lock()
-	c.pending = false
+	c.timer = nil
 	data, err := json.Marshal(c.n)
 	path := c.path
 	c.mu.Unlock()
 	if path == "" || err != nil {
 		return
 	}
-	if err := writeFileAtomic(path, ".uam-counts-*", data); err != nil {
+	// A folder gone with its store leaves nothing to keep.
+	if err := writeFileAtomic(path, ".uam-counts-*", data); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Warn("write the uam counts failed", "error", err)
 	}
+}
+
+// close writes the counts now and arms no later write; Shutdown calls it.
+func (c *uamCounts) close() {
+	c.mu.Lock()
+	c.closed = true
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	c.mu.Unlock()
+	c.save()
 }
 
 // countTurn counts what the provider reported of an ended turn.

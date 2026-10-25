@@ -5215,7 +5215,7 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
-	m.counts.save()
+	m.counts.close()
 	return true, firstErr
 }
 
