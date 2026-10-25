@@ -8,8 +8,7 @@ import { taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, ty
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
-import { fenceClosed } from '../lib/diagram';
-import { mermaidFences } from '../lib/drawings';
+import { fenceClosed, mermaidFences } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';

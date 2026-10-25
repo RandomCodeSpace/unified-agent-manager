@@ -2,8 +2,7 @@ import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError } from '../api';
 import { cn } from '../lib/cn';
-import { DiagramError, convertDiagram, convertible, errorReason, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
-import { drawingPath, excalidrawFile, loadExcalidraw, styleSkeletons, toDrawioXml, type DrawnElement, type Skeleton } from '../lib/drawings';
+import { DiagramError, convertible, errorReason, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
 import { usePreview } from '../lib/previewContext';
 import { useScheme } from '../lib/theme';
 import { Lightbox } from './Attachments';
@@ -65,18 +64,13 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
   const url = rendered ? svgDataUrl(rendered.svg) : '';
   const editable = !!drawings?.writable && !!fence && !!rendered && convertible(rendered.diagramType) && api.supports('drawings-v1');
 
-  /** Converts in the frame, styles the skeletons in the page's look, and files the result as the agent's v1. */
+  /** Converts the fence into a drawing (DrawingCards.tsx, loaded on this first click) and files it as the agent's v1. */
   async function edit() {
     if (!drawings || !fence) return;
     setConvert({ busy: true });
     try {
-      const { elements } = await convertDiagram(source);
-      const { convertToExcalidrawElements } = await loadExcalidraw();
-      const converted = convertToExcalidrawElements(styleSkeletons(elements as Skeleton[]) as never, { regenerateIds: false }) as unknown as DrawnElement[];
-      const format = drawings.drawio ? 'drawio' : 'excalidraw';
-      const path = drawingPath(fence.itemId, fence.index, format);
-      await drawings.create(path, { content: format === 'drawio' ? toDrawioXml(converted) : excalidrawFile(converted, {}), format, origin: 'convert', item_id: fence.itemId, fence_index: fence.index });
-      onCreated(path);
+      const { convertFence } = await import('./DrawingCards');
+      onCreated(await convertFence(drawings, source, fence));
     } catch (err) {
       setConvert({ busy: false, error: err instanceof DiagramError ? errorReason(err.message) : describeError(err) });
     }

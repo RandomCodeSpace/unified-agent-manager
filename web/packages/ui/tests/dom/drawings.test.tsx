@@ -4,7 +4,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { mermaidFences } from '../../src/lib/drawings';
+import { mermaidFences } from '../../src/lib/diagram';
 import { composer, log, openTask } from './render';
 
 vi.mock('../../src/lib/diagram', async (original) => {
@@ -31,12 +31,18 @@ vi.mock('@excalidraw/excalidraw', () => ({
   convertToExcalidrawElements: (skeletons: Record<string, unknown>[]) => skeletons.map((s) => ({ ...s, label: undefined })),
 }));
 
-const cardOf = (file: string) => within(document.querySelector(`[data-drawing$="${file}"]`) as HTMLElement);
+/** A drawing's card once its lazy module has rendered it. */
+const cardOf = async (file: string) =>
+  within(await waitFor(() => {
+    const el = document.querySelector(`[data-drawing$="${file}"]`);
+    if (!el) throw new Error(`no card for ${file}`);
+    return el as HTMLElement;
+  }));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Opens d4's editor and reports Excalidraw's restored scene, as the real one does before any touch. */
 async function openEditor(user: Awaited<ReturnType<typeof openTask>>['user']) {
-  await user.click(await cardOf('diagram-d4-0.excalidraw').findByRole('button', { name: 'Edit', exact: true }));
+  await user.click(await (await cardOf('diagram-d4-0.excalidraw')).findByRole('button', { name: 'Edit', exact: true }));
   const canvas = await screen.findByTestId('excalidraw');
   const restored = [{ type: 'rectangle', id: 'a', x: 0, y: 0, width: 100, height: 40, roughness: 0, locked: false }];
   act(() => emit!(restored, {}, {}));
@@ -78,7 +84,8 @@ test('saves go one at a time: a second edit waits for the first PUT and carries 
     expect(put.mock.calls.map((c) => c[2].base_version)).toEqual([2, 3]);
     await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
     expect(screen.queryByText('The agent changed this drawing.')).toBeNull();
-    await waitFor(() => expect(cardOf('diagram-d4-0.excalidraw').getByText(/^Yours v4 · /)).toBeTruthy());
+    const card = await cardOf('diagram-d4-0.excalidraw');
+    await waitFor(() => expect(card.getByText(/^Yours v4 · /)).toBeTruthy());
   } finally {
     put.mockRestore();
   }
@@ -100,7 +107,7 @@ test('a flowchart offers Edit as drawing, a gantt does not, and converting swaps
     await user.click(buttons[0]);
     await waitFor(() => expect(put).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.excalidraw', expect.objectContaining({ origin: 'convert', item_id: 'd2', fence_index: 0, format: 'excalidraw' })));
     await waitFor(() => expect(document.querySelector('[data-drawing$="diagram-d2-0.excalidraw"]')).toBeTruthy());
-    expect(await cardOf('diagram-d2-0.excalidraw').findByText('Agent’s v1')).toBeTruthy();
+    expect(await (await cardOf('diagram-d2-0.excalidraw')).findByText('Agent’s v1')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Edit as drawing' })).toBeNull();
     expect(log().getAllByText('mermaid')).toHaveLength(1);
   } finally {
@@ -110,7 +117,7 @@ test('a flowchart offers Edit as drawing, a gantt does not, and converting swaps
 
 test('a drawing with unsent changes shows the pair, and collapses once the note went with a message', async () => {
   const { user } = await openTask('t-chart');
-  const card = cardOf('diagram-d4-0.excalidraw');
+  const card = await cardOf('diagram-d4-0.excalidraw');
   expect(await card.findByText('Yours v2 · 4 changes')).toBeTruthy();
   expect(await card.findByRole('button', { name: 'Agent’s version' })).toBeTruthy();
   expect(card.getByRole('button', { name: 'Edit your version' })).toBeTruthy();
@@ -127,7 +134,7 @@ test('a drawing with unsent changes shows the pair, and collapses once the note 
 
 test('Edit opens the anchored editor on Yours with the version segment, and Done closes it', async () => {
   const { user } = await openTask('t-chart');
-  const card = cardOf('diagram-d4-0.excalidraw');
+  const card = await cardOf('diagram-d4-0.excalidraw');
   await user.click(await card.findByRole('button', { name: 'Edit' }));
   const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
   const segment = editor.getByRole('radiogroup', { name: 'Version' });
@@ -144,7 +151,7 @@ test('Edit opens the anchored editor on Yours with the version segment, and Done
 
 test('Compare opens Changes with the server’s change lines and the note', async () => {
   const { user } = await openTask('t-chart');
-  const card = cardOf('diagram-d4-0.excalidraw');
+  const card = await cardOf('diagram-d4-0.excalidraw');
   await user.click(await card.findByRole('button', { name: 'Compare' }));
   const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
   const lines = within(editor.getByRole('list', { name: 'Changes' })).getAllByRole('listitem').map((li) => li.textContent);

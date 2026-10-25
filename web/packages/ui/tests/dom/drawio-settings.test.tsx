@@ -10,7 +10,7 @@ test('Enable waits for a check of the origin in the field, which shows the serve
     const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
     await user.click(rail.getByRole('button', { name: 'Diagram editor' }));
     const section = within(await screen.findByRole('region', { name: 'Diagram editor' }));
-    await user.click(section.getByRole('radio', { name: 'draw.io' }));
+    await user.click(await section.findByRole('radio', { name: 'draw.io' }));
     const origin = section.getByRole('textbox', { name: 'Origin' });
     const enable = section.getByRole('switch', { name: 'Enable draw.io' });
     expect(enable.hasAttribute('data-disabled')).toBe(true);
@@ -37,7 +37,7 @@ test('a failed check shows the server’s error and keeps Enable off', async () 
   const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
   await user.click(rail.getByRole('button', { name: 'Diagram editor' }));
   const section = within(await screen.findByRole('region', { name: 'Diagram editor' }));
-  await user.click(section.getByRole('radio', { name: 'draw.io' }));
+  await user.click(await section.findByRole('radio', { name: 'draw.io' }));
   await user.type(section.getByRole('textbox', { name: 'Origin' }), 'http://drawio.example.test');
   await user.click(section.getByRole('button', { name: 'Check' }));
   expect((await section.findByRole('alert')).textContent).toContain('mixed content');

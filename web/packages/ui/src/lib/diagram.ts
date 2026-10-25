@@ -104,6 +104,14 @@ export interface Rendered {
 
 export type Converted = Omit<DiagramConverted, 'id'>;
 
+/** The sources of a message's mermaid fences, in order; a fence's index among them is its drawing's `fence_index`. */
+export function mermaidFences(text: string): string[] {
+  const out: string[] = [];
+  // The closing fence may be longer than the opening one, as remark reads it.
+  for (const m of text.matchAll(/^[ \t>]*(`{3,}|~{3,})[ \t]*mermaid[^\n]*\n([\s\S]*?)\n[ \t>]*\1[`~]*[ \t]*$/gm)) out.push(m[2].trim());
+  return out;
+}
+
 /** The Mermaid diagram types "Edit as drawing" converts: `flowchart-v2` (also `flowchart`, `graph`) and `sequence`. */
 export const convertible = (diagramType: string | undefined): boolean => !!diagramType && (/^flowchart/.test(diagramType) || diagramType === 'graph' || diagramType === 'sequence');
 

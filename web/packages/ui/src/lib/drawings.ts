@@ -54,14 +54,6 @@ export function drawingPath(itemId: string, fenceIndex: number, format: DrawingF
   return `docs/diagram-${itemId.replaceAll(/[^A-Za-z0-9_-]/g, '-')}-${fenceIndex}.${format}`;
 }
 
-/** The sources of a message's mermaid fences, in order; a fence's index among them is its `fence_index`. */
-export function mermaidFences(text: string): string[] {
-  const out: string[] = [];
-  // The closing fence may be longer than the opening one, as remark reads it.
-  for (const m of text.matchAll(/^[ \t>]*(`{3,}|~{3,})[ \t]*mermaid[^\n]*\n([\s\S]*?)\n[ \t>]*\1[`~]*[ \t]*$/gm)) out.push(m[2].trim());
-  return out;
-}
-
 /** A colour token's live value, as the diagram theme reads them (`lib/diagram.ts`). */
 export const token = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim();
 

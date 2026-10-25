@@ -8,7 +8,6 @@ import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { GitLabSettings } from './GitLabSettings';
-import { DrawioSettings } from './DrawioSettings';
 import { restartOffered, UamService } from './UamService';
 import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
@@ -42,6 +41,7 @@ import { Segmented } from './ui/segmented';
 import { HelpTip, Tip } from './ui/tooltip';
 
 const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
+const DrawioSettings = lazy(() => import('./DrawioSettings').then((m) => ({ default: m.DrawioSettings })));
 
 /** Wide enough for the rail beside the page; narrower, the rail is a list of pages that opens one at a time. */
 const WIDE = '(min-width: 768px)';
@@ -778,7 +778,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       </Section>
     ),
     drawings: loaded ? <Section id="drawings" title="Diagram editor" help="A mermaid diagram in a reply can be edited as a drawing. Excalidraw is built in; draw.io runs a page from an origin the server checks first.">
-      {api.supports('drawings-v1') ? <DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /> : <Unsupported what="drawings" />}
+      {api.supports('drawings-v1') ? <Suspense fallback={null}><DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /></Suspense> : <Unsupported what="drawings" />}
     </Section> : <PendingSection id="drawings" title="Diagram editor" label="Loading settings…" />,
     composer: loaded ? <Section id="composer" title="Composer">
       <Row
