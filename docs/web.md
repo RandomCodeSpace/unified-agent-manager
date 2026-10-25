@@ -2203,7 +2203,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   index (`session-store.db` in the Copilot home, kept up to date by the CLI)
   read-only; uam builds no index and runs nothing between searches. One search
   runs at a time, for at most 2 seconds, and returns at most 30 Threads. Tool
-  output is not in that index, so it is not searched.
+  output is not in that index, so it is not searched. The index is this
+  server's own: while you view a connected instance, the group is not shown.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation (while one is open), Run again, Try with
   another model…, Export as Markdown, Settle (or Reopen for a settled Thread)

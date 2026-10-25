@@ -918,7 +918,8 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
         <ul className="flex flex-col gap-1 animate-fade-in">{rows.slice(0, mountedRows).map((r) => renderRow(r))}</ul>
-        <ConversationHits query={query} sessions={sessions} />
+        {/* The index is this server's own: a connected instance's Threads are not searched there. */}
+        {!here?.id && <ConversationHits query={query} sessions={sessions} />}
       </>
     );
   } else {
