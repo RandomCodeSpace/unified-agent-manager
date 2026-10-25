@@ -100,6 +100,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/providers/{provider}/account/sign-in",
 		"POST /api/providers/{provider}/account/sign-out",
 		"POST /api/providers/{provider}/cli/update",
+		"POST /api/providers/{provider}/cli/restart",
 		"POST /api/routines/{id}/run",
 		"POST /api/service/restart",
 		"POST /api/sessions",

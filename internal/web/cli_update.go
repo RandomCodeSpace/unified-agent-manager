@@ -56,7 +56,20 @@ type ProviderCLI struct {
 	// Target is the release being installed, or the last one tried.
 	Target string `json:"target,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Stalled counts the turns the running CLI's model requests stalled
+	// twice in since it started: a sign its connections are dead and a
+	// restart (POST .../cli/restart) is due.
+	Stalled int `json:"stalled,omitempty"`
 }
+
+// CLIRestart is what a runtime restart reports: how many Threads were
+// working or waiting on the runtime when it stopped.
+type CLIRestart struct {
+	Interrupted int `json:"interrupted"`
+}
+
+// cliRestartedNote is the note on a turn a runtime restart ended.
+const cliRestartedNote = "Copilot runtime restarted by the owner"
 
 type cliStatus struct {
 	ProviderCLI
@@ -206,7 +219,9 @@ func (m *Manager) ProviderCLI(ctx context.Context, name string, refresh bool) (P
 	}
 	m.cli.mu.Lock()
 	defer m.cli.mu.Unlock()
-	return m.cli.by[name].view(), nil
+	v := m.cli.by[name].view()
+	v.Stalled = u.RuntimeStalls()
+	return v, nil
 }
 
 // checkCLI reads the provider CLI's releases. A failed read keeps the
@@ -476,4 +491,31 @@ func (s *Server) handleUpdateProviderCLI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, cli)
+}
+
+// RestartProviderCLI stops the provider's runtime whatever runs on it, so
+// the next use starts a fresh one: the way out when its model requests
+// stall on connections the network dropped. Threads working or waiting end
+// as stopped with cliRestartedNote; idle ones keep their state and reopen on
+// their next use. It reports how many were working or waiting.
+func (m *Manager) RestartProviderCLI(ctx context.Context, name string) (CLIRestart, error) {
+	p, u, err := m.cliUpdater(name)
+	if err != nil {
+		return CLIRestart{}, err
+	}
+	busy := m.cliBusyTasks(name)
+	if err := u.RestartRuntime(ctx, cliRestartedNote); err != nil {
+		return CLIRestart{}, newError(http.StatusConflict, "restart the %s runtime: %s", p.DisplayName(), shortError(err))
+	}
+	log.Info("web provider runtime restarted on request", "provider", name, "interrupted", busy)
+	return CLIRestart{Interrupted: busy}, nil
+}
+
+func (s *Server) handleRestartProviderCLI(w http.ResponseWriter, r *http.Request) {
+	res, err := s.m.RestartProviderCLI(r.Context(), r.PathValue("provider"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

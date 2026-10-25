@@ -28,6 +28,11 @@ type cliFake struct {
 	restarts int
 	// beforeQuiesce, when set, runs at the start of each restart.
 	beforeQuiesce func()
+	// running marks the conversations whose turn RestartRuntime ends as
+	// cancelled; stalls is what RuntimeStalls reports until a restart.
+	running         map[string]bool
+	stalls          int
+	runtimeRestarts int
 }
 
 func newCLIFake(rel agentapi.CLIRelease) *cliFake {
@@ -100,6 +105,39 @@ func (p *cliFake) CLIOutdated() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.outdated
+}
+
+// RestartRuntime ends every conversation as the adapter does: a turn the
+// test marked running (setRunning) ends as cancelled with the reason first.
+func (p *cliFake) RestartRuntime(_ context.Context, reason string) error {
+	p.mu.Lock()
+	running := p.running
+	p.stalls = 0
+	p.runtimeRestarts++
+	p.mu.Unlock()
+	for _, c := range p.Conversations() {
+		if running[c.ID()] {
+			c.EmitTurn(agentapi.TurnCancelled, reason)
+		}
+		c.Exit(reason)
+	}
+	return nil
+}
+
+func (p *cliFake) RuntimeStalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stalls
+}
+
+// setRunning marks id's turn as running for RestartRuntime.
+func (p *cliFake) setRunning(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running == nil {
+		p.running = map[string]bool{}
+	}
+	p.running[id] = true
 }
 
 func (p *cliFake) restarted() int {
@@ -406,4 +444,44 @@ func TestCLIUpdateRemembersAnIncompatibleRelease(t *testing.T) {
 	if code, cli, body := cliCall(t, ts, auth, http.MethodGet, "/api/providers/fake/cli?refresh=1"); code != http.StatusOK || !cli.UpdateAvailable || cli.Incompatible != "1.0.95" {
 		t.Fatalf("GET with a newer release = %d %s", code, body)
 	}
+}
+
+// A runtime restart counts the Threads working or waiting, ends their turns
+// as stopped with the note, leaves the idle ones' state alone, clears the
+// stall count the CLI status reported, and lets both reopen on their next
+// prompt.
+func TestCLIRuntimeRestartStopsBusyThreadsAndResumesAll(t *testing.T) {
+	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.80"})
+	m, ts, auth := cliServer(t, prov)
+	busy, busyConv := createSession(t, m, prov.Provider)
+	busyConv.EmitTurn(agentapi.TurnWorking, "")
+	prov.setRunning(busyConv.ID())
+	idle, _ := createSession(t, m, prov.Provider)
+	idleState := detail(t, m, idle.ID).State
+	prov.mu.Lock()
+	prov.stalls = 2
+	prov.mu.Unlock()
+	if _, cli, body := cliCall(t, ts, auth, http.MethodGet, "/api/providers/fake/cli"); cli.Stalled != 2 {
+		t.Fatalf("stalled before the restart = %+v (%s)", cli, body)
+	}
+	w := ts.do(http.MethodPost, "/api/providers/fake/cli/restart", "{}", auth)
+	var res CLIRestart
+	if err := json.Unmarshal(w.Body.Bytes(), &res); w.Code != http.StatusOK || err != nil || res.Interrupted != 1 {
+		t.Fatalf("POST restart = %d %s", w.Code, w.Body.String())
+	}
+	if d := detail(t, m, busy.ID); d.State != StateCancelled || d.StateDetail != cliRestartedNote {
+		t.Fatalf("busy Thread after the restart = %s %q", d.State, d.StateDetail)
+	}
+	if d := detail(t, m, idle.ID); d.State != idleState {
+		t.Fatalf("idle Thread after the restart = %s, was %s", d.State, idleState)
+	}
+	if _, cli, _ := cliCall(t, ts, auth, http.MethodGet, "/api/providers/fake/cli"); cli.Stalled != 0 || prov.runtimeRestarts != 1 {
+		t.Fatalf("after the restart: stalled %d, restarts %d", cli.Stalled, prov.runtimeRestarts)
+	}
+	for _, id := range []string{busy.ID, idle.ID} {
+		if _, err := m.Submit(id, PromptRequest{Text: "again", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+			t.Fatalf("prompt after the restart: %v", err)
+		}
+	}
+	waitUntil(t, "both Threads reopened", func() bool { return len(prov.Opens()) == 4 })
 }

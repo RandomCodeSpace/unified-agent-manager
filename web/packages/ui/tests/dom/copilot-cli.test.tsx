@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { api, ApiError } from '../../src/api';
+import { api, ApiError, type SessionSummary } from '../../src/api';
 import { renderApp, type User } from './render';
 
 const NOTICE = 'Copilot CLI update available';
@@ -111,5 +111,31 @@ describe('Copilot CLI version and update', () => {
     const group = await cli(user);
     expect(await group.findByText(/^1\.0\.95 needs a newer UAM · Checked/)).toBeTruthy();
     expect(group.queryByRole('button', { name: /^Update to/ })).toBeNull();
+  });
+});
+
+describe('Copilot runtime restart', () => {
+  test('a stalled runtime shows the amber note; Restart names the working threads, restarts and reports the count', async () => {
+    vi.spyOn(api, 'providerCli').mockResolvedValue({ installed: '1.0.92', latest: '1.0.92', update_available: false, state: 'idle', checked_at: '2026-10-25T10:00:00Z', stalled: 1 });
+    vi.spyOn(api, 'sessions').mockResolvedValue([
+      { id: 't-1', provider: 'copilot', state: 'working', name: 'Fix the build', title: '' },
+      { id: 't-2', provider: 'copilot', state: 'awaiting_answer', name: '', title: 'Review notes' },
+      { id: 't-3', provider: 'copilot', state: 'completed', name: 'Done already', title: '' },
+      { id: 't-4', provider: 'other', state: 'working', name: 'Not Copilot', title: '' },
+    ] as unknown as SessionSummary[]);
+    const restart = vi.spyOn(api, 'restartProviderCli').mockResolvedValue({ interrupted: 2 });
+    const { user } = renderApp('#settings');
+    const group = await cli(user);
+    expect(await group.findByText(/stopped answering 1 thread twice in a row/)).toBeTruthy();
+    await user.click(group.getByRole('button', { name: 'Restart Copilot runtime' }));
+    const dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText('Fix the build')).toBeTruthy();
+    expect(dialog.getByText('Review notes')).toBeTruthy();
+    expect(dialog.queryByText('Done already')).toBeNull();
+    expect(dialog.queryByText('Not Copilot')).toBeNull();
+    expect(restart).not.toHaveBeenCalled();
+    await user.click(dialog.getByRole('button', { name: 'Restart' }));
+    expect(restart).toHaveBeenCalledWith('copilot');
+    expect(await group.findByText('Copilot restarted. 2 threads stopped; send their message again.')).toBeTruthy();
   });
 });

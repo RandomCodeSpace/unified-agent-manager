@@ -11,7 +11,7 @@ The pages are grouped. **Threads** holds New threads (thread defaults), Composer
 Worktrees (Threads' worktrees and the disk they use) and Archived. **Models &
 AI** holds Models (visibility and subagent models), Background AI (the
 Utility model and its daily limit) and Token costs. **Accounts** holds GitHub
-Copilot (sign-in and CLI updates), GitLab (pipeline investigation, merge
+Copilot (sign-in, CLI updates and Restart Copilot runtime), GitLab (pipeline investigation, merge
 request descriptions and `glab` access) and Custom providers (your own
 endpoints). **Agent toolkit** holds Agents, Skills,
 Hooks, Instructions and MCP servers. **Server** holds UAM and access (the

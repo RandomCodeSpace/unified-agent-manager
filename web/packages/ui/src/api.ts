@@ -442,6 +442,14 @@ export interface ProviderCLI {
   target?: string;
   /** Why the update failed (`failed`). */
   error?: string;
+  /** Turns the running CLI's model requests stalled twice in since it started: a restart is due. */
+  stalled?: number;
+}
+
+/** What a runtime restart reports (`api.restartProviderCli`). */
+export interface CLIRestart {
+  /** Threads that were working or waiting on the runtime when it stopped. */
+  interrupted: number;
 }
 
 /** Refusal code of a create or send while the Task's provider is signed out. */
@@ -2236,6 +2244,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     providerCli: (provider: string, refresh = false) => call<ProviderCLI>('GET', `/api/providers/${enc(provider)}/cli${refresh ? '?refresh=1' : ''}`),
     /** Starts the update to the release the server picked, or returns the one running. */
     updateProviderCli: (provider: string) => call<ProviderCLI>('POST', `/api/providers/${enc(provider)}/cli/update`, {}),
+    /** Stops the provider's runtime whatever runs on it; working Threads stop, idle ones reopen on their next use. */
+    restartProviderCli: (provider: string) => call<CLIRestart>('POST', `/api/providers/${enc(provider)}/cli/restart`, {}),
+    /** Every Thread on this server, as the sidebar lists them. */
+    sessions: () => call<SessionSummary[]>('GET', '/api/sessions'),
 
     session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
     history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
