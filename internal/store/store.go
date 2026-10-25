@@ -824,8 +824,17 @@ type WebSettings struct {
 	// WorktreeRoots are the folders new worktrees went in before
 	// WorktreesDir last changed; the worktrees left there are still listed.
 	WorktreeRoots []string `json:"worktree_roots,omitempty"`
+	// DrawIO is the opt-in draw.io editor: its origin and whether it is
+	// enabled. Unset when absent.
+	DrawIO WebDrawIO `json:"drawio,omitzero"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebDrawIO is the draw.io editor setting.
+type WebDrawIO struct {
+	Origin  string `json:"origin,omitempty"`
+	Enabled bool   `json:"enabled,omitempty"`
 }
 
 // DefaultUtilityDailyLimit is WebSettings.UtilityDailyLimit when unset.
@@ -1065,6 +1074,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"gitlab_mr_prompt":        {},
 	"worktrees_dir":           {},
 	"worktree_roots":          {},
+	"drawio":                  {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},

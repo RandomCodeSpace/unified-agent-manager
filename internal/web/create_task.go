@@ -70,19 +70,21 @@ type createTaskArgs struct {
 
 // taskToolsLocked is the Manager's hostTools: uam_create_task unless
 // spawned (that tool or a routine's run created the Task), uam_chart
-// (charts.go), and the uam read tool. Its CallTool dispatches by tool name.
-// The caller holds mu.
+// (charts.go), uam_diagram_read (drawings.go) and the uam read tool. Its
+// CallTool dispatches by tool name. The caller holds mu.
 func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 	var tools []agentapi.HostTool
 	if !spawned {
 		tools = append(tools, createTaskTool)
 	}
-	return append(tools, chartTool, uamTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
+	return append(tools, chartTool, diagramReadTool, uamTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
 		case call.Name == uamToolName:
 			return m.uamCall(ctx, taskID, call)
 		case call.Name == chartToolName:
 			return m.chartCall(ctx, taskID, call)
+		case call.Name == diagramReadToolName:
+			return m.diagramReadCall(ctx, taskID, call)
 		case call.Name == createTaskToolName && !spawned:
 			return m.createTask(ctx, taskID, call)
 		}

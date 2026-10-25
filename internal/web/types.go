@@ -193,6 +193,9 @@ type Settings struct {
 	// WorktreesDir is the absolute folder new Thread worktrees go in;
 	// omitted while the default, ~/.uam/worktrees, is used.
 	WorktreesDir string `json:"worktrees_dir,omitempty"`
+	// DrawIO is the opt-in draw.io editor for drawings (drawings_drawio.go);
+	// omitted while unset.
+	DrawIO DrawIOSettings `json:"drawio,omitzero"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment
@@ -562,6 +565,8 @@ type SessionDetail struct {
 	HistoryReason string `json:"history_reason,omitempty"`
 	// Present for paged clients, empty when all retained items are included.
 	HistoryBefore *string `json:"history_before,omitempty"`
+	// Drawings are the Thread's editable diagrams (drawings.go).
+	Drawings []DrawingSummary `json:"drawings"`
 }
 
 // PreviousConversation is a provider conversation recorded for a Project's
