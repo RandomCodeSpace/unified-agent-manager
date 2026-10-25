@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   base: '/',
   publicDir: 'packages/ui/public',
-  plugins: [react(), tailwindcss(), diagramFrame(), mockAttachmentRoute()],
+  plugins: [react(), tailwindcss(), excalidrawAssets(), diagramFrame(), mockAttachmentRoute()],
   // The theme script must run before the first paint, so it stays a classic script, which Vite
   // does not bundle (and warns so): a build copies it to assets/ under a content hash instead,
   // cached for good like the bundle.
@@ -28,6 +28,8 @@ export default defineConfig({
             // On demand: ECharts but its chart types in one chunk, rather than dozens of fragments
             // the types share; each drawing loads its types beside it (EChart.tsx).
             { name: 'echarts', test: /[\\/]node_modules[\\/](?:tslib|zrender|echarts(?![\\/]lib[\\/]chart[\\/]))[\\/]/ },
+            // On demand: the drawing editor (Drawing.tsx lazy-loads ExcalidrawCanvas), never in the cold start; its 55 locales stay their own lazy chunks.
+            { name: 'excalidraw', test: /[\\/]node_modules[\\/]@excalidraw[\\/]excalidraw[\\/](?!.*[\\/]locales[\\/])/ },
           ],
         },
       },
@@ -36,7 +38,9 @@ export default defineConfig({
   // Dev only: the diagram frame's module scripts come from an opaque origin (`Origin: null`),
   // which the default localhost-only CORS rule refuses. The production frame is a classic script.
   server: { cors: { origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'null'] } },
-  optimizeDeps: { include: ['mermaid'] },
+  // The pre-bundle takes the drawing packages up front (discovering one mid-session reloads every
+  // open page) and keeps Excalidraw on this origin the way the build does.
+  optimizeDeps: { include: ['mermaid', '@excalidraw/mermaid-to-excalidraw', '@excalidraw/excalidraw'], rolldownOptions: { plugins: [excalidrawOnOrigin()] } },
 });
 
 const FRAME_DOCUMENT = 'diagram-frame.html';
@@ -97,6 +101,7 @@ function diagramFrame(): Plugin {
           },
         },
         plugins: [
+          clusterIdFix(),
           {
             name: 'uam-diagram-frame-document',
             generateBundle(_options, bundle) {
@@ -121,6 +126,120 @@ function diagramFrame(): Plugin {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(frameHtml(`<script type="module" src="/${FRAME_ENTRY}"></script>`));
       });
+    },
+  };
+}
+
+/** Node's file system through `process.getBuiltinModule` (Node 22.3+): the tsconfig has no node typings, so the shape is stated here. */
+interface NodeFs {
+  readdirSync(dir: string, options: { withFileTypes: true; recursive: true }): { name: string; parentPath: string; isFile(): boolean }[];
+  readFileSync(path: string): Uint8Array;
+}
+const nodeFs = (): NodeFs => (globalThis as unknown as { process: { getBuiltinModule(id: string): NodeFs } }).process.getBuiltinModule('node:fs');
+
+const EXCALIDRAW_DIST = 'node_modules/@excalidraw/excalidraw/dist/prod';
+/** Where the build puts Excalidraw's fonts; `EXCALIDRAW_ASSETS` in lib/drawings.ts says the same. */
+const EXCALIDRAW_ASSETS = 'assets/excalidraw/';
+const CDN = '`https://esm.sh/';
+
+/**
+ * Excalidraw stays on this origin: its fonts (every family but Xiaolai, 13 MB of CJK glyphs) are
+ * copied into the build under a stable path, named by content as the package ships them, and
+ * its hardcoded esm.sh fallback for a font it cannot load is pointed at the same origin, where it
+ * fails quietly. The build stops when the fallback string is gone from the package, so an upgrade
+ * cannot bring the CDN back unseen. Excalidraw's own lazy import of the mermaid parser (its
+ * text-to-diagram dialog) is a stub here: conversion runs in the diagram frame, and a second
+ * Mermaid in the page's chunks would double the embedded build.
+ */
+/** The stub and the CDN rewrite alone: the build's plugin and the dev pre-bundle both run them. */
+function excalidrawOnOrigin(): Plugin & { rewrote(): boolean } {
+  let rewrote = false;
+  const stub = '\0uam-excalidraw-no-mermaid';
+  return {
+    name: 'uam-excalidraw-on-origin',
+    rewrote: () => rewrote,
+    resolveId(source, importer) {
+      if (source === '@excalidraw/mermaid-to-excalidraw' && importer?.includes('/node_modules/@excalidraw/excalidraw/')) return stub;
+      return null;
+    },
+    load(id) {
+      if (id !== stub) return null;
+      return 'export const parseMermaidToExcalidraw = () => Promise.reject(new Error("Mermaid conversion runs in the diagram frame"));';
+    },
+    transform(code, id) {
+      if (!id.includes('/node_modules/@excalidraw/excalidraw/') || !code.includes(CDN)) return null;
+      rewrote = true;
+      return { code: code.replaceAll(CDN, '`${location.origin}/' + EXCALIDRAW_ASSETS + 'no-cdn/'), map: null };
+    },
+  };
+}
+
+function excalidrawAssets(): Plugin {
+  let config: ResolvedConfig;
+  const origin = excalidrawOnOrigin();
+  return {
+    ...origin,
+    name: 'uam-excalidraw-assets',
+    // Before Vite's own resolver, so the stub wins over node_modules.
+    enforce: 'pre',
+    configResolved(c) {
+      config = c;
+    },
+    generateBundle() {
+      if (config.command !== 'build') return;
+      if (!origin.rewrote()) throw new Error(`excalidraw: the ${CDN} fallback was not found; check the package before trusting it to stay on this origin`);
+      const fs = nodeFs();
+      const dir = `${config.root}/${EXCALIDRAW_DIST}/fonts`;
+      let copied = 0;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
+        if (!entry.isFile()) continue;
+        const rel = `${entry.parentPath}/${entry.name}`.slice(dir.length + 1).replaceAll('\\', '/');
+        if (rel.startsWith('Xiaolai/')) continue;
+        this.emitFile({ type: 'asset', fileName: `${EXCALIDRAW_ASSETS}fonts/${rel}`, source: fs.readFileSync(`${dir}/${rel}`) });
+        copied++;
+      }
+      if (copied === 0) throw new Error('excalidraw: no fonts found to copy');
+    },
+    // Dev: the same path, served from the package.
+    configureServer(server) {
+      server.middlewares.use((rawReq, rawRes, next) => {
+        const req = rawReq as unknown as { url?: string };
+        const res = rawRes as unknown as { statusCode: number; setHeader(name: string, value: string): void; end(body?: Uint8Array): void };
+        const m = /^\/assets\/excalidraw\/fonts\/([A-Za-z]+\/[A-Za-z0-9_-]+\.woff2)$/.exec((req.url ?? '').split('?')[0]);
+        if (!m) return next();
+        try {
+          res.setHeader('Content-Type', 'font/woff2');
+          res.end(nodeFs().readFileSync(`${config.root}/${EXCALIDRAW_DIST}/fonts/${m[1]}`));
+        } catch {
+          res.statusCode = 404;
+          res.end();
+        }
+      });
+    },
+  };
+}
+
+const FLOWCHART_PARSER = '@excalidraw/mermaid-to-excalidraw/dist/parser/flowchart.js';
+const CLUSTER_LOOKUP = 'const el = containerEl.querySelector(`[id=${toCssString(data.id)}]`);';
+const CLUSTER_LOOKUP_FIXED = 'const el = containerEl.querySelector(`[id=${toCssString(data.id)}], .cluster[id$=${toCssString(`-${data.id}`)}]`);';
+
+/**
+ * Mermaid 11.14+ prefixes a subgraph's cluster id, which the converter looks up by the bare id
+ * and so loses every subgraph (excalidraw/mermaid-to-excalidraw#107). The frame bundle also
+ * accepts the prefixed id; the build stops when the line it patches has changed.
+ */
+function clusterIdFix(): Plugin {
+  let patched = false;
+  return {
+    name: 'uam-mermaid-cluster-ids',
+    transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith(FLOWCHART_PARSER)) return null;
+      if (!code.includes(CLUSTER_LOOKUP)) throw new Error(`${FLOWCHART_PARSER}: the cluster lookup line changed; revisit the subgraph fix`);
+      patched = true;
+      return { code: code.replace(CLUSTER_LOOKUP, CLUSTER_LOOKUP_FIXED), map: null };
+    },
+    generateBundle() {
+      if (!patched) throw new Error(`${FLOWCHART_PARSER} was not part of the frame bundle`);
     },
   };
 }

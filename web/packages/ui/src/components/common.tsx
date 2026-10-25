@@ -9,6 +9,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
+import { mermaidFences } from '../lib/drawings';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
@@ -538,6 +539,9 @@ interface MdSource {
 
 const MdContext = createContext<MdSource>({ text: '', streaming: false });
 
+/** The reply an assistant message's markdown belongs to (its id and whole text), so a mermaid fence knows which drawing is its own. */
+export const ItemContext = createContext<{ id: string; text: string } | null>(null);
+
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
 export const SessionContext = createContext<string | undefined>(undefined);
 
@@ -822,9 +826,12 @@ interface Span {
 
 function MermaidBlock({ source, position, children }: Readonly<{ source: string; position?: Span; children: ReactNode }>) {
   const { text, streaming } = useContext(MdContext);
+  const item = useContext(ItemContext);
   const ready = !streaming || !position || fenceClosed(text, position.start.offset ?? 0, position.end.offset ?? text.length);
+  // The fence's index among the reply's mermaid fences (its `fence_index`); two fences of one source share the first's.
+  const index = item ? mermaidFences(item.text).indexOf(source.trim()) : -1;
   return (
-    <DiagramCard source={source} ready={ready}>
+    <DiagramCard source={source} ready={ready} fence={item && index >= 0 ? { itemId: item.id, index } : undefined}>
       {children}
     </DiagramCard>
   );

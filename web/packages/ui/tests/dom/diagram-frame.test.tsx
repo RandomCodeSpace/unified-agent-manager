@@ -7,6 +7,8 @@ const mermaid = vi.hoisted(() => ({
   render: vi.fn(),
 }));
 vi.mock('mermaid', () => ({ default: mermaid }));
+const converter = vi.hoisted(() => ({ parseMermaidToExcalidraw: vi.fn() }));
+vi.mock('@excalidraw/mermaid-to-excalidraw', () => converter);
 
 await import('../../src/diagram-frame/main');
 
@@ -58,10 +60,34 @@ describe('diagram frame', () => {
     expect(reply).toMatchObject({ id: 'd1', width: 2160, height: 320 });
   });
 
-  test('other diagrams keep the frame body, whose width a gantt takes', async () => {
+  test('other diagrams keep the frame body, whose width a gantt takes, and the reply names the diagram type', async () => {
     mermaid.parse.mockResolvedValueOnce({ diagramType: 'flowchart-v2', config: {} });
     mermaid.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 100 50"></svg>' });
-    await draw('d2', 'flowchart LR\n  a --> b');
+    const reply = await draw('d2', 'flowchart LR\n  a --> b');
     expect(mermaid.render).toHaveBeenLastCalledWith('d2', 'flowchart LR\n  a --> b', undefined);
+    expect(reply).toMatchObject({ id: 'd2', diagramType: 'flowchart-v2' });
+  });
+
+  /** Posts a convert request as the parent does and resolves with the reply. */
+  const convert = (id: string, source: string) =>
+    new Promise<unknown>((resolve) => {
+      const post = vi.spyOn(window.parent, 'postMessage').mockImplementationOnce((reply: unknown) => {
+        post.mockRestore();
+        resolve(reply);
+      });
+      window.dispatchEvent(new MessageEvent('message', { data: { id, convert: source }, source: window.parent, origin: 'http://localhost' }));
+    });
+
+  test('a convert request answers with the converter’s element skeletons and files', async () => {
+    const elements = [{ type: 'rectangle', id: 'a', x: 0, y: 0, width: 10, height: 10, label: { text: 'A' } }];
+    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements, files: undefined });
+    expect(await convert('c1', 'flowchart LR\n  a --> b')).toEqual({ id: 'c1', elements, files: {} });
+    expect(converter.parseMermaidToExcalidraw).toHaveBeenLastCalledWith('flowchart LR\n  a --> b', { themeVariables: { fontSize: '16px' } });
+    expect(mermaid.render).not.toHaveBeenCalledWith('c1', expect.anything(), expect.anything());
+  });
+
+  test('a diagram the converter rejects answers with its error', async () => {
+    converter.parseMermaidToExcalidraw.mockRejectedValueOnce(new Error('Unsupported diagram type: gantt'));
+    expect(await convert('c2', 'gantt\n  title x')).toEqual({ id: 'c2', error: 'Unsupported diagram type: gantt' });
   });
 });

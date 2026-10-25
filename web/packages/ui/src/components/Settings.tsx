@@ -8,6 +8,7 @@ import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { GitLabSettings } from './GitLabSettings';
+import { DrawioSettings } from './DrawioSettings';
 import { restartOffered, UamService } from './UamService';
 import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
@@ -463,8 +464,9 @@ function NotifyRow() {
 type Catalog = ReturnType<typeof useApp>['meta'];
 
 /** What needs the user, marked on its page in the rail. */
-function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog }>): Partial<Record<SettingsPage, PageAttention>> {
+function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; drawioProblem: string | null }>): Partial<Record<SettingsPage, PageAttention>> {
   const attention: Partial<Record<SettingsPage, PageAttention>> = {};
+  if (drawioProblem) attention.drawings = { tone: 'warning', text: drawioProblem };
   if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
   else if (pausedPurposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.map(purposeLabel).join(', ')}` };
   if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
@@ -505,6 +507,7 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
   return {
     'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
     composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
+    drawings: settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw (built in)',
     models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
     'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
     copilot: accountSummary(accounts, cliUpdate),
@@ -638,6 +641,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [drawioProblem, setDrawioProblem] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
   const [theme, setTheme] = useState(loadTheme);
   const [scrolled, sentinel] = useScrolled();
@@ -735,7 +739,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   const accounts = (meta?.providers ?? []).filter((p) => p.capabilities.account);
   const missingKeys = configured.filter((p) => !p.key_present);
-  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta });
+  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem });
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
   const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme });
@@ -773,6 +777,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </div>
       </Section>
     ),
+    drawings: loaded ? <Section id="drawings" title="Diagram editor" help="A mermaid diagram in a reply can be edited as a drawing. Excalidraw is built in; draw.io runs a page from an origin the server checks first.">
+      {api.supports('drawings-v1') ? <DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /> : <Unsupported what="drawings" />}
+    </Section> : <PendingSection id="drawings" title="Diagram editor" label="Loading settings…" />,
     composer: loaded ? <Section id="composer" title="Composer">
       <Row
         id="send-default"

@@ -15,6 +15,7 @@ export const SETTINGS_GROUPS = [
   { label: 'Threads', scope: 'service', pages: [
     { id: 'new-tasks', label: 'New threads', blurb: 'The model, effort, mode and compaction a new thread starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
     { id: 'composer', label: 'Composer', blurb: 'What Enter does while a thread runs, and suggested replies.', keywords: 'enter send now after this turn queue steer suggest suggested replies keyboard' },
+    { id: 'drawings', label: 'Diagram editor', blurb: 'Excalidraw, built in, or a draw.io page at an origin you name.', keywords: 'drawing drawings diagram diagrams mermaid excalidraw draw.io drawio origin embed editor edit as drawing' },
     { id: 'worktrees', label: 'Worktrees', blurb: 'Worktrees of Threads on their own branch, and the disk they use.', keywords: 'worktree worktrees disk space free size branch remove clean settle' },
     { id: 'archived', label: 'Archived', blurb: 'Archived threads, read-only for good.', keywords: 'archive archived read-only delete export run again old threads' },
   ] },
