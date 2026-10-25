@@ -10,6 +10,7 @@ export interface CustomProvider {
   api_key?: string;
   wire_api?: NonNullable<CustomModel['wire_api']>;
   key_present?: boolean;
+  key_error?: string;
   models: CustomModel[];
 }
 
@@ -19,7 +20,7 @@ export function customProviders(models: readonly CustomModel[]): CustomProvider[
   for (const m of models) {
     let p = out.find((g) => g.name === m.name);
     if (!p) {
-      p = { name: m.name, base_url: m.base_url, api_key_env: m.api_key_env, wire_api: m.wire_api, key_present: m.key_present, models: [] };
+      p = { name: m.name, base_url: m.base_url, api_key_env: m.api_key_env, wire_api: m.wire_api, key_present: m.key_present, key_error: m.key_error, models: [] };
       out.push(p);
     }
     p.models.push(m);
@@ -27,9 +28,9 @@ export function customProviders(models: readonly CustomModel[]): CustomProvider[
   return out;
 }
 
-/** The list as PATCH takes it: without the output-only `key_present`. */
+/** The list as PATCH takes it: without the output-only `key_present` and `key_error`. */
 export function storedModels(models: readonly CustomModel[]): CustomModel[] {
-  return models.map(({ key_present: _, ...m }) => m);
+  return models.map(({ key_present: _, key_error: _error, ...m }) => m);
 }
 
 /**

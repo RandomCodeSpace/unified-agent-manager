@@ -197,7 +197,7 @@ type Settings struct {
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment
 // source, or is empty for a saved key. KeyPresent reports availability; no key
-// value is ever sent.
+// value is ever sent. KeyError says why a saved key is not available.
 type CustomModel struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name,omitempty"`
@@ -207,6 +207,7 @@ type CustomModel struct {
 	WireAPI     string `json:"wire_api,omitempty"`
 	APIKeyEnv   string `json:"api_key_env"`
 	KeyPresent  bool   `json:"key_present"`
+	KeyError    string `json:"key_error,omitempty"`
 }
 
 // AccountUsage is the GET /api/usage response: the account quotas of every

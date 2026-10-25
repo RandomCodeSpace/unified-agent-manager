@@ -2040,7 +2040,7 @@ func customModelsView(list []store.WebCustomModel) []CustomModel {
 	}
 	out := make([]CustomModel, 0, len(list))
 	for _, c := range list {
-		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: c.APIKey != "" || os.Getenv(c.APIKeyEnv) != ""})
+		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: c.APIKey != "" || os.Getenv(c.APIKeyEnv) != "", KeyError: c.KeyError})
 	}
 	return out
 }
