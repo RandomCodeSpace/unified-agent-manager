@@ -836,7 +836,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   with the Thread. Near the limit (80% of the credits, or 5 points short of
   the quota limit) the agent's next tool call carries a note to wrap up.
   At the limit a running turn is not cut off; it **wraps up** (`wrapping_up`,
-  "Wrapping up" on the Thread's row and header): a tool already running
+  the Thread stays Working, "wrapping up" on hover): a tool already running
   finishes (tools cost no AI credits, model calls do), the model call in
   flight finishes, and uam denies every further tool call with the
   instruction to stop and reply with a handoff in Markdown (Done, In
@@ -1479,11 +1479,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Copilot accepts the turn's native completion, its summary opens the line,
   as in "Fixed the flaky redraw test; 3 files changed; tests pass".
   A new turn clears the line, and a turn that is stopped or fails gets none.
-  When the line says "tests fail" or that commands failed, the Thread's state
-  shows no check: the sidebar row reads "Tests fail" or "Command failed" with
-  a warning glyph, and the header chip reads "Finished · tests fail, 1 command
-  failed" in the warning tone. The header chip says "a claim contradicted"
-  too when the last reply's receipts contradict one of its claims.
+  What the line reports is no state: a Thread whose turn says "tests fail" or
+  that commands failed is Review or Finished like any other, the line's words
+  in its row tip, and the header chip's hover reads "Finished · tests fail",
+  or "a claim contradicted" when the last reply's receipts contradict one of
+  its claims.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
   copies the conversation through that reply into a new active Thread, without
@@ -2164,8 +2164,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The service reads it once per repository along with the Projects'
   branches (when a turn ends, after Commit, Pull and Set up git, and when a
   page loads), and after Push; the summary carries it as
-  `git_pending {uncommitted, unpushed}`. The status is one of "Input", "Starting", "Working", "Compacting", "Review",
-  "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
+  `git_pending {uncommitted, unpushed}`. The status is one of "Input", "Starting", "Working", "Review",
+  "Finished", "Error", "Interrupted", "Stopped", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Finished green; Error red; inactive states gray.
   The second line shows the Thread title, its branch in muted text (a
@@ -2196,7 +2196,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Settled after you reviewed it".
   A settled or archived Thread opens read-only. Search matches Thread names and
   titles, Project names and branches within the chosen Project filter,
-  archived Threads included.
+  archived Threads included. From 3 characters it also searches what was
+  said: an **In conversations** group lists the Threads whose prompts or
+  replies hold every word (the last also as a prefix), best first, with the
+  matching passage. `GET /api/search?q=` reads the Copilot CLI's own full-text
+  index (`session-store.db` in the Copilot home, kept up to date by the CLI)
+  read-only; uam builds no index and runs nothing between searches. One search
+  runs at a time, for at most 2 seconds, and returns at most 30 Threads. Tool
+  output is not in that index, so it is not searched.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation (while one is open), Run again, Try with
   another model…, Export as Markdown, Settle (or Reopen for a settled Thread)

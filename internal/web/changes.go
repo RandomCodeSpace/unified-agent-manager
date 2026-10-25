@@ -183,8 +183,8 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 
 // readNativeDiff reads conv's native session diff with each file's line
 // counts. While s still has conv, gen and revision, the read becomes its
-// total and its native paths: native Tasks never publish the HEAD-based
-// fallback as their total. The caller holds no lock.
+// native paths; the Task's total is its task scope, not this read. The
+// caller holds no lock.
 func (m *Manager) readNativeDiff(ctx context.Context, s *webSession, conv agentapi.Conversation, gen, revision uint64) ([]agentapi.FileDiff, error) {
 	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
 	defer cancel()
@@ -204,20 +204,7 @@ func (m *Manager) readNativeDiff(ctx context.Context, s *webSession, conv agenta
 	}
 	m.mu.Lock()
 	if s.nativeChanges && !s.removed && s.conv == conv && s.gen == gen && s.nativeDiffRevision == revision {
-		var total *DiffStat
-		if len(files) > 0 && len(files) <= maxChangedFiles {
-			total = &DiffStat{Files: len(files)}
-			for _, file := range files {
-				if file.CountsUnknown {
-					total = nil
-					break
-				}
-				total.Additions += file.Additions
-				total.Deletions += file.Deletions
-			}
-		}
 		s.nativePaths = paths
-		m.setDiffLocked(s, total)
 	}
 	m.mu.Unlock()
 	return files, nil
@@ -761,21 +748,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// head is the repository's HEAD commit, "" before the first commit.
-func (r *gitRepo) head(ctx context.Context) (string, error) {
-	if !r.hasHead {
-		return "", nil
-	}
-	out, code, stderr, err := runGit(ctx, r.git, r.top, 4096, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", newError(http.StatusBadGateway, "git rev-parse failed: %s", gitMessage(stderr))
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // repoPaths returns a function mapping a tool's file path, relative to dir

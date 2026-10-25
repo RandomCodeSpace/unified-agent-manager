@@ -667,6 +667,10 @@ type Changes struct {
 	Supported bool          `json:"supported"`
 	Reason    string        `json:"reason"`
 	Files     []ChangedFile `json:"files"`
+	// Prefix is the Thread's folder inside the repository, such as "sub/",
+	// on the git scopes: Files are repository paths, and files open in the
+	// folder ("" when it is the top level).
+	Prefix string `json:"prefix,omitempty"`
 	// Counts is set on the task, turn and workspace scopes.
 	Counts *ScopeCounts `json:"counts,omitempty"`
 }

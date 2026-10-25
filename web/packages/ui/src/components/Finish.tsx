@@ -1,14 +1,13 @@
 import { useApi } from '../ApiContext';
 import { CheckCircle2, CircleDashed, CircleX, FileDiff, History, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { describeError, type Changes, type CheckKind, type EvidenceCheck, type GitPending, type Item, type SessionDetail, type TurnEvidence } from '../api';
+import { describeError, type Changes, type CheckKind, type EvidenceCheck, type Item, type SessionDetail, type TurnEvidence } from '../api';
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
 import type { CommandOutput } from './CommandOutput';
 import { useBodyRead } from './Details';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { Tip } from './ui/tooltip';
 
 /**
  * "Since you left": one line under the Task header when the Task changed while the owner was
@@ -88,23 +87,20 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
 }
 
 /** One button always opens Changes, with its evidence in the same panel; the branch is under the composer. */
-export function ChangesButton({ label, compact, sheetOpen, changes, pending, evidenceAvailable, onOpen }: Readonly<{
+export function ChangesButton({ label, compact, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
   label: boolean;
   /** A narrower header: the button drops its word. */
   compact?: boolean;
   sheetOpen: boolean;
+  /** This Thread's own changes: the count is the sidebar row's too. */
   changes: Changes | null;
-  /** The folder's unsaved git work (`git_pending`): its count is the sidebar row's, so both agree. */
-  pending?: GitPending;
   evidenceAvailable: boolean;
   onOpen: () => void;
 }>) {
-  const listed = changes?.supported ? changes.files.length : null;
-  const fileCount = pending ? pending.uncommitted : listed;
-  // The dot is this Thread's own news (its default scope's files), not its folder's.
-  const needsReview = evidenceAvailable || (listed ?? 0) > 0;
-  const button = (
-    <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${fileCount === null ? '' : `, ${fileCount} ${pending ? 'not committed' : 'files'}`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} onClick={onOpen}>
+  const fileCount = changes?.supported ? changes.files.length : null;
+  const needsReview = evidenceAvailable || (fileCount ?? 0) > 0;
+  return (
+    <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${fileCount === null ? '' : `, ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} onClick={onOpen}>
       <FileDiff aria-hidden="true" />
       {label && !compact && <span>Changes</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
@@ -112,8 +108,6 @@ export function ChangesButton({ label, compact, sheetOpen, changes, pending, evi
       {needsReview && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />}
     </Button>
   );
-  // The folder's count leaves untracked files out (as the sidebar row's does), so a folder of only new files reads 0: the tip says so.
-  return pending ? <Tip label={`${pending.uncommitted} tracked ${pending.uncommitted === 1 ? 'file' : 'files'} not committed · untracked files are not counted`}>{button}</Tip> : button;
 }
 
 /** Checks, claims and edited files inside Changes. Output opens the existing output panel. */

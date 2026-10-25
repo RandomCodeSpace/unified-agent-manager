@@ -1,30 +1,31 @@
 import { useApi } from '../ApiContext';
-import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { memo, startTransition, useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
-import { LIVE, defaultScope, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
+import { ChevronDown, Copy, Ellipsis, Eye, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, Undo2, X } from 'lucide-react';
+import { memo, useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { diffWordsWithSpace, parsePatch, structuredPatch, type StructuredPatch } from 'diff';
+import { LIVE, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { CommitPanel } from './CommitPanel';
-import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
-import { FilePath, Highlighted, InstanceName, Note, Skeleton } from './common';
+import { hunkText } from '../lib/lens';
+import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
+import { Highlighted, InstanceName, Note, Skeleton } from './common';
+import { FileIcon } from './FileIcon';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
-import { ContextMenu, Menu, useLazyContextMenu, type ActionItem } from './ui/menu';
-import { Segmented } from './ui/segmented';
+import { AlertDialog, useConfirm } from './ui/dialog';
+import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
-/** A turn's "View changes": the files it edited, and whether it is the Task's latest turn; `at` tells two asks apart. */
+/** What Changes opens on: a turn's edited files (its first one scrolled to), or one file and line to comment on (Lens). */
 export interface ChangesTurn {
   files: string[];
   latest: boolean;
   at: number;
-  /** Explicit full workspace reader from a reply menu. */
-  scope?: 'workspace';
+  /** A new-side line of the first file whose comment box opens. */
+  line?: number;
 }
 
-/** Where Changes was left in a Thread: the next open from the header goes back to it. */
-export interface ChangesPlace { scope: Scope; path: string | null; scrollTop: number }
+/** Where Changes was left in a Thread: the next open from the header scrolls back to it. */
+export interface ChangesPlace { scrollTop: number }
 
 /** Scrolls `el` back to `top` while its content grows in over the next frames (diff slices, a late image), until it holds or the reader scrolls. */
 export function restoreScroll(el: HTMLElement, top: number): () => void {
@@ -38,15 +39,6 @@ export function restoreScroll(el: HTMLElement, top: number): () => void {
   apply();
   return () => cancelAnimationFrame(frame);
 }
-
-const STATUS_TONE: Record<string, string> = { A: 'text-success', U: 'text-success', D: 'text-error', '!': 'text-error' };
-
-const EMPTY: Record<Scope, string> = {
-  task: 'No changes from this thread: it has not edited a file that still differs from HEAD.',
-  turn: 'The latest turn edited no file that still differs from HEAD.',
-  workspace: 'No uncommitted changes.',
-  session: 'No changes.',
-};
 
 function readReview(id: string): Review {
   try {
@@ -66,15 +58,17 @@ function writeReview(id: string, r: Review) {
   }
 }
 
+const splitPath = (p: string) => ({ dir: p.slice(0, p.lastIndexOf('/') + 1), name: p.slice(p.lastIndexOf('/') + 1) });
+
 /**
- * The sheet owns one visible list/detail refresh cycle. The Task's event-driven default
- * list seeds it and receives refreshed counts. Polling reads only the selected scope.
+ * This Thread's changes as one scroll of file cards: each file's diff under its own head, folded once viewed, with
+ * Revert and Comment on every change. The Task's event-driven list seeds it; while open it reads the list again every
+ * 5 s, and a card reads its diff again only when its file's digest moves.
  */
 export function ChangesSheet({
   turn = null,
   evidence,
   session,
-  projectName,
   changes,
   changesError,
   isDefaultPending,
@@ -84,15 +78,15 @@ export function ChangesSheet({
   onChanges,
   onClose,
   onClosed,
+  onOpenFile,
   memory,
 }: Readonly<{
-  /** Open on this turn's edits: the Last turn scope for the latest turn, else the default scope with its first file shown. */
+  /** Scroll to this turn's first edited file; with `line`, open a comment there. */
   turn?: ChangesTurn | null;
   evidence?: ReactNode;
   session: SessionSummary;
-  projectName: string;
   changes: ChangesData | null;
-  /** Why the default scope's list failed to load; null while it loads or once it has. */
+  /** Why the list failed to load; null while it loads or once it has. */
   changesError: string | null;
   /** Read at refresh time so pending Task reads do not need to rerender the panel. */
   isDefaultPending: () => boolean;
@@ -103,73 +97,32 @@ export function ChangesSheet({
   onChanges: (changes: ChangesData) => void;
   onClose: () => void;
   onClosed: () => void;
-  /** This Thread's last place in Changes, written as the sheet leaves; a turn's ask opens on the turn instead. */
+  /** Opens the whole file in the file viewer (Lens). */
+  onOpenFile: (path: string, opener: HTMLElement) => void;
+  /** This Thread's last place in Changes, written as the sheet leaves; a turn's ask scrolls to the turn instead. */
   memory?: RefObject<ChangesPlace | null>;
 }>) {
   const api = useApi();
-  const canSession = session.capabilities.session_diff;
-  // Only the latest turn has a scope of its own ("Last turn"); providers with their own diff have none.
-  const turnScope = (t: ChangesTurn | null): Scope => (t?.scope ?? (t?.latest && !canSession ? 'turn' : defaultScope(session)));
-  const [left] = useState(() => (turn ? null : memory?.current ?? null));
-  const [scope, setScope] = useState<Scope>(() => left?.scope ?? turnScope(turn));
-  // A plain open on an empty default scope moves to All changes when that has files, once the default list is known,
-  // so the first glance matches the header's count. The session scope's list has no counts: the folder's, as on the header, stands in.
-  const [opening, setOpening] = useState(!turn && !left);
-  if (opening && changes) {
-    setOpening(false);
-    if (scope === defaultScope(session) && changes.supported && !changes.files.length && (changes.counts?.workspace ?? session.git_pending?.uncommitted)) setScope('workspace');
-  }
-  // The remembered file is preferred as a turn's edited files are: shown once its scope lists it.
-  const [turnPaths, setTurnPaths] = useState(turn?.files ?? (left?.path ? [left.path] : []));
-  const [askedTurn, setAskedTurn] = useState(turn);
-  const [view, setView] = useState<{
-    sessionId: string; scope: Scope; list: ChangesData | null; path: string | null;
-    file: FileDiffData | null; error: string | null; fileError: string | null;
-  } | null>(null);
-  const [path, setPath] = useState<string | null>(null);
+  const [view, setView] = useState<{ sessionId: string; list: ChangesData | null; error: string | null } | null>(null);
   const [tick, setTick] = useState(0);
   const request = useRef<AbortController | null>(null);
-  const observedChanges = useRef(changes);
   const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus({ preventScroll: true }); }, []);
 
-  useEffect(() => {
-    closeRef.current?.focus({ preventScroll: true });
-  }, []);
-
-  const isDefault = scope === defaultScope(session);
-  const current = view?.sessionId === session.id && view.scope === scope ? view : null;
-  const data = current?.list ?? (isDefault ? changes : null);
-  let error: string | null = null;
-  if (current) error = current.error;
-  else if (isDefault) error = changesError;
-  // Risky files first, so the default selection is the one most worth a look.
+  const current = view?.sessionId === session.id ? view : null;
+  const data = current?.list ?? changes;
+  const error = current ? current.error : changesError;
+  // Risky files first, so the top of the stack is the one most worth a look.
   const files = useMemo(() => byRisk(data?.supported ? data.files : []), [data]);
-  if (turn !== askedTurn) {
-    setAskedTurn(turn);
-    if (turn) {
-      setOpening(false);
-      const next = turnScope(turn);
-      setScope(next);
-      setTurnPaths(turn.files);
-      // Same scope: its list is here, so the turn's file can be chosen now (and read); a new scope picks it on arrival.
-      setPath(next === scope ? turnFile(files.map((f) => f.path), turn.files) : null);
-    }
-  }
-  const shownPath = path && files.some((f) => f.path === path) ? path : (turnFile(files.map((f) => f.path), turnPaths) ?? files[0]?.path ?? null);
   const countsKnown = files.every(f => !f.counts_unknown);
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
-  const label = data ? data.label : `${projectName} vs HEAD`;
-  // Every git listing carries all three counts; the Task's own listing stands in while another loads.
-  const counts = data?.counts ?? changes?.counts;
-  const count = (key: 'task' | 'turn' | 'workspace') => (counts ? ` · ${counts[key]}` : '');
 
   // Viewed marks and line comments, per Task in localStorage; every change writes through.
   const [stored, setStored] = useState(() => ({ id: session.id, review: readReview(api.cacheKey(session.id)) }));
   const review = stored.id === session.id ? stored.review : readReview(api.cacheKey(session.id));
   // The latest review, for a change that lands later (a comment send resolving): it must not undo marks made meanwhile.
   const latest = useRef(stored);
-  // Stable per Thread, as are the comment handlers built on it: a refresh then leaves the diff's mounted slices alone.
   const updateReview = useCallback((change: (r: Review) => Review) => {
     const id = session.id;
     const next = change(latest.current.id === id ? latest.current.review : readReview(api.cacheKey(id)));
@@ -184,7 +137,7 @@ export function ChangesSheet({
     else delete marks[f.path];
     return { ...r, viewed: marks };
   });
-  const commentable = !readOnly(session);
+  const editable = !readOnly(session);
   const comments = review.comments;
   const working = LIVE.includes(session.state);
   const [sending, setSending] = useState(false);
@@ -216,57 +169,25 @@ export function ChangesSheet({
     updateReview((r) => ({ ...r, comments: [...r.comments, { ...c, id: newRequestId() }] }));
   }, [updateReview]);
   const removeComment = useCallback((id: string) => updateReview((r) => ({ ...r, comments: r.comments.filter((c) => c.id !== id) })), [updateReview]);
-  const shownFile = files.find((f) => f.path === shownPath);
-  // Stable while nothing changed, so the diff's mounted slices stay as they are across refreshes.
-  const shownComments = useMemo(() => comments.filter((c) => c.path === shownPath), [comments, shownPath]);
 
   const stop = useEffectEvent(() => {
     request.current?.abort();
     request.current = null;
   });
-  const refresh = useEffectEvent((mode: 'read' | 'initial' | 'known' | 'selection' = 'read') => {
-    if (!open || !active || document.visibilityState !== 'visible' || request.current) return;
-    let listing: ChangesData | null = null;
-    if (mode === 'selection') listing = data;
-    else if (mode !== 'read' && isDefault) listing = changes;
-    // The Task may already be loading the default list. Reuse its response on arrival.
-    if (mode === 'initial' && isDefault && !listing) return;
-    if (!listing && isDefault && isDefaultPending()) return;
+  const refresh = useEffectEvent(() => {
+    if (!open || !active || document.visibilityState !== 'visible' || request.current || isDefaultPending()) return;
     const controller = new AbortController();
     request.current = controller;
-    let selected = shownPath;
-    let readingFile = false;
-    void Promise.resolve(listing ?? api.changes(session.id, scope, controller.signal)).then(accepted => {
-      if (controller.signal.aborted) return null;
-      listing = accepted;
-      const entries = listing.supported ? listing.files : [];
-      const ordered = byRisk(entries).map(file => file.path);
-      selected = path && entries.some(file => file.path === path) ? path : (turnFile(ordered, turnPaths) ?? ordered[0] ?? null);
-      readingFile = !!selected;
-      const next = { sessionId: session.id, scope, list: listing, path: selected,
-        file: current?.path === selected ? current.file : null, error: null,
-        fileError: current?.path === selected ? current.fileError : null };
-      setView(next);
-      if (isDefault) {
-        observedChanges.current = listing;
-        onChanges(listing);
-      }
-      return selected
-        ? api.changeFile(session.id, scope, selected, controller.signal).then(file => ({ ...next, file, fileError: null }))
-        : next;
-    }).then(next => {
-      if (controller.signal.aborted || !next) return;
-      setView(next);
-    }).catch((error: unknown) => {
+    api.changes(session.id, 'task', controller.signal).then((list) => {
       if (controller.signal.aborted) return;
-      setView({ sessionId: session.id, scope, list: listing ?? data, path: selected,
-        file: current?.path === selected ? current.file : null,
-        error: readingFile ? null : describeError(error), fileError: readingFile ? describeError(error) : null });
+      setView({ sessionId: session.id, list, error: null });
+      onChanges(list);
+    }).catch((e: unknown) => {
+      if (!controller.signal.aborted) setView({ sessionId: session.id, list: data, error: describeError(e) });
     }).finally(() => {
       if (request.current === controller) request.current = null;
     });
   });
-
   useEffect(() => {
     if (!open || !active) return;
     let timer: number | undefined;
@@ -279,59 +200,77 @@ export function ChangesSheet({
         schedule();
       } else stop();
     };
-    if (document.visibilityState === 'visible') {
-      refresh('initial');
-      schedule();
-    }
+    if (document.visibilityState === 'visible') schedule();
     document.addEventListener('visibilitychange', visibility);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
       stop();
     };
-  }, [session.id, scope, open, active]);
-  useEffect(() => {
-    if (changes === observedChanges.current) return;
-    observedChanges.current = changes;
-    stop();
-    refresh('known');
-  }, [changes]);
-  useEffect(() => { if (tick) refresh(); }, [tick]);
-  useEffect(() => {
-    if (!path) return;
-    stop();
-    refresh('selection');
-  }, [path]);
-  // The place is written as the sheet leaves; its scroll comes back once the remembered file's diff is in.
+  }, [session.id, open, active]);
+  useEffect(() => { if (tick) { stop(); refresh(); } }, [tick]);
+  const reread = useCallback(() => setTick(t => t + 1), []);
+
+  // Folded cards: a viewed file folds unless the reader opened it again; a file it did not decide on stays open.
+  const [folds, setFolds] = useState<Record<string, boolean>>({});
+  const folded = (f: ChangeFile) => folds[f.path] ?? viewState(review, f) === 'viewed';
   const body = useRef<HTMLDivElement>(null);
   const scrolled = useRef(0);
-  const restore = useRef(left);
-  useEffect(() => () => { if (memory) memory.current = { scope, path: shownPath, scrollTop: scrolled.current }; }, [memory, scope, shownPath]);
-  const shownLoaded = current?.path === shownPath && !!current.file;
+  const [left] = useState(() => (turn ? null : memory?.current ?? null));
+  useEffect(() => () => { if (memory) memory.current = { scrollTop: scrolled.current }; }, [memory]);
+  // A turn's ask: its first listed file opens and comes into view, once its card is there.
+  const target = turn ? turnFile(files.map(f => f.path), turn.files) : null;
+  const [shown, setShown] = useState<{ at: number; path: string } | null>(null);
+  if (turn && target && shown?.at !== turn.at) {
+    setShown({ at: turn.at, path: target });
+    setFolds(f => ({ ...f, [target]: false }));
+  }
   useLayoutEffect(() => {
-    const at = restore.current;
-    if (!at || !shownLoaded || !body.current) return;
-    restore.current = null;
-    if (at.path === shownPath) return restoreScroll(body.current, at.scrollTop);
-  }, [shownLoaded, shownPath]);
+    if (shown) body.current?.querySelector(`[data-change-file="${CSS.escape(shown.path)}"]`)?.scrollIntoView({ block: 'start' });
+  }, [shown]);
+  useLayoutEffect(() => {
+    if (left && body.current && files.length) return restoreScroll(body.current, left.scrollTop);
+  }, [left, files.length]);
+  const jump = (path: string) => {
+    setFolds(f => ({ ...f, [path]: false }));
+    requestAnimationFrame(() => body.current?.querySelector(`[data-change-file="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  };
+
+  const confirm = useConfirm<ChangeFile>();
+  const [reverting, setReverting] = useState(false);
+  const [revertError, setRevertError] = useState<string | null>(null);
+  const revert = async (path: string, hunk?: string) => {
+    setRevertError(null);
+    try {
+      await api.revertChange(session.id, path, hunk);
+      reread();
+    } catch (e) {
+      setRevertError(`Could not revert ${path}: ${describeError(e)}`);
+      throw e;
+    }
+  };
+  const revertFile = () => {
+    const f = confirm.target;
+    if (!f) return;
+    setReverting(true);
+    revert(f.path).then(confirm.close, () => confirm.close()).finally(() => setReverting(false));
+  };
 
   return (
-    <SidePanel id="changes" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Changes" defaultWidth={440}>
+    <SidePanel id="changes" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Changes" defaultWidth={560}>
       <PanelHeader>
         <FileDiff aria-hidden="true" className="size-4 text-muted" />
         <span className="text-title text-ink">Changes</span>
         <InstanceName />
         {data?.supported && (
-          // Two lines where one is too short (a phone), broken only between its parts, rather than cut off.
           <span className="line-clamp-2 min-w-0 text-caption leading-tight tabular-nums text-muted">
-            <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'}{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}</span>
-            {!countsKnown && <> · <span className="whitespace-nowrap">line counts unavailable</span></>}
+            <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'} by this thread{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}</span>
             {files.length > 0 && <> · <span className="whitespace-nowrap">{viewedCount} of {files.length} viewed</span></>}
           </span>
         )}
         <span className="flex-1" />
         <Tip label="Refresh">
-          <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={() => setTick(t => t + 1)}>
+          <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={reread}>
             <RefreshCw />
           </Button>
         </Tip>
@@ -340,88 +279,144 @@ export function ChangesSheet({
         </Button>
       </PanelHeader>
       {evidence}
-      <div className="shrink-0 px-3 pb-1.5">
-        <Segmented
-          size="sm"
-          aria-label="Scope"
-          className="w-full"
-          value={scope}
-          onValueChange={(s) => setScope(s as Scope)}
-          items={canSession ? [
-            { value: 'session', label: 'This thread' },
-            { value: 'workspace', label: 'All changes' },
-          ] : [
-            { value: 'task', label: <span className="tabular-nums" title={scope === 'task' ? label : undefined}>This thread{count('task')}</span> },
-            { value: 'turn', label: <span className="tabular-nums">Last turn{count('turn')}</span> },
-            { value: 'workspace', label: <span className="tabular-nums">All changes{count('workspace')}</span> },
-          ]}
-        />
-      </div>
-      {/* The Task scope's description is the tip of its segment. */}
-      {scope !== 'task' && <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
-        {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any thread or source.' : label}
-      </p>}
       {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
       {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}
-      {/* The list gives way to an open commit form (down to one row) and scrolls. */}
-      <ul className="max-h-[40%] min-h-10 shrink overflow-y-auto overflow-x-hidden p-1" aria-busy={!data && !error ? true : undefined}>
-        {error && (
-          <li className="px-2 py-1">
-            <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1">Could not load the changes: {error}</span>
-              <Button size="sm" variant="secondary" onClick={() => setTick(t => t + 1)}>
-                Retry
-              </Button>
-            </Note>
-          </li>
-        )}
-        {!data && !error && (
-          <li className="px-2 py-1">
-            <Skeleton label="Loading the changes…" rows={3} className="gap-2" rowClassName="h-6 w-full" />
-          </li>
-        )}
-        {data && !data.supported && (
-          <li className="px-2 py-1">
-            <Note>{data.reason || 'Not available for this thread.'}</Note>
-          </li>
-        )}
-        {data?.supported && files.length === 0 && (
-          <li className="px-2 py-1">
-            <Note>{EMPTY[scope]}</Note>
-          </li>
-        )}
-        {/* Another file's diff replaces the shown one in a transition: taking down a long diff and redrawing the list are
-            then split into short tasks, not one long one under the press. */}
-        {files.map((f) => (
-          <FileRow key={f.path} file={f} selected={f.path === shownPath} viewed={viewState(review, f)} onOpen={() => startTransition(() => setPath(f.path))} onViewed={(v) => toggleViewed(f, v)} />
-        ))}
-      </ul>
-      <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      {/* The diff keeps some height while the commit form is open. */}
-      <div ref={body} className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden" onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
-        {shownPath && (
-          <FileView
-            key={shownPath}
-            path={shownPath}
-            file={current?.path === shownPath ? current.file : null}
-            error={current?.path === shownPath ? current.fileError : null}
-            viewed={shownFile ? viewState(review, shownFile) === 'viewed' : undefined}
-            onViewed={shownFile ? (v: boolean) => toggleViewed(shownFile, v) : undefined}
-            comments={shownComments}
-            onComment={commentable ? addComment : undefined}
-            onRemoveComment={removeComment}
-          />
-        )}
-      </div>
-      {commentable && (comments.length > 0 || sendNote) && (
-        <CommentBatch comments={comments} working={working} sending={sending} note={sendNote} onOpen={setPath} onRemove={removeComment} onSend={sendComments} />
+      {revertError && <Note tone="error" role="alert" className="shrink-0 px-3 pb-1">{revertError}</Note>}
+      {files.length > 1 && (
+        <nav aria-label="Changed files" className="flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2">
+          {files.map(f => (
+            <button key={f.path} type="button" title={f.path} className="flex shrink-0 items-center gap-1.5 rounded-full bg-tint-well px-2.5 py-0.5 text-caption text-ink hover:bg-tint-hover" onClick={() => jump(f.path)}>
+              <FileIcon path={f.path} className="size-3.5" />
+              {splitPath(f.path).name}
+              {!f.counts_unknown && <span className="tabular-nums"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span></span>}
+            </button>
+          ))}
+        </nav>
       )}
-      <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      {/* Expanded, the form outgrows a short column: it shrinks into the space the diff leaves and scrolls, with its actions in view below it. */}
-      <CommitPanel session={session} className="min-h-0 shrink" onChanged={() => setTick(t => t + 1)} />
+      <div ref={body} className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3" aria-busy={!data && !error ? true : undefined} onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
+        {error && (
+          <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">Could not load the changes: {error}</span>
+            <Button size="sm" variant="secondary" onClick={reread}>Retry</Button>
+          </Note>
+        )}
+        {!data && !error && <Skeleton label="Loading the changes…" rows={3} className="gap-2" rowClassName="h-6 w-full" />}
+        {data && !data.supported && <Note>{data.reason || 'Not available for this thread.'}</Note>}
+        {data?.supported && files.length === 0 && <Note>No changes from this thread: it has not edited a file that still differs from HEAD.</Note>}
+        <div className="flex flex-col gap-3">
+          {files.map((f) => (
+            <FileCard
+              key={f.path}
+              sessionId={session.id}
+              file={f}
+              viewed={viewState(review, f)}
+              folded={folded(f)}
+              onFold={(fold) => setFolds(m => ({ ...m, [f.path]: fold }))}
+              onViewed={(v) => { toggleViewed(f, v); setFolds(m => ({ ...m, [f.path]: v })); }}
+              // Files are repository paths; the viewer opens them in the Thread's folder, and nothing outside it.
+              onOpenFile={f.path.startsWith(data?.prefix ?? '') ? (opener) => onOpenFile(f.path.slice(data?.prefix?.length ?? 0), opener) : undefined}
+              comments={comments}
+              onComment={editable ? addComment : undefined}
+              onRemoveComment={removeComment}
+              onRevert={editable ? (hunk) => revert(f.path, hunk) : undefined}
+              onRevertFile={editable ? () => confirm.ask(f) : undefined}
+              draftLine={turn?.line !== undefined && shown?.at === turn.at && shown.path === f.path ? turn.line : undefined}
+            />
+          ))}
+        </div>
+      </div>
+      {editable && (comments.length > 0 || sendNote) && (
+        <CommentBatch comments={comments} working={working} sending={sending} note={sendNote} onOpen={jump} onRemove={removeComment} onSend={sendComments} />
+      )}
+      <AlertDialog
+        {...confirm.props}
+        className="max-w-88"
+        title="Revert this file?"
+        description={confirm.target ? `${confirm.target.path} goes back to how it is at HEAD${confirm.target.status === 'untracked' || confirm.target.status === 'added' ? ': the new file is deleted' : ''}. Changes anything else made to it are lost too.` : undefined}
+        confirmLabel="Revert file"
+        busy={reverting}
+        onConfirm={revertFile}
+      />
     </SidePanel>
+  );
+}
+
+/** One changed file: its head (type, path, counts, actions) and, unfolded, its diff with Revert and Comment on each change. */
+function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpenFile, comments, onComment, onRemoveComment, onRevert, onRevertFile, draftLine }: Readonly<{
+  sessionId: string;
+  file: ChangeFile;
+  viewed: 'viewed' | 'changed' | 'unviewed';
+  folded: boolean;
+  onFold: (folded: boolean) => void;
+  onViewed: (viewed: boolean) => void;
+  /** Opens the file in the viewer; unset for a file outside the Thread's folder. */
+  onOpenFile?: (opener: HTMLElement) => void;
+  comments: ReviewComment[];
+  onComment?: (comment: Omit<ReviewComment, 'id'>) => void;
+  onRemoveComment: (id: string) => void;
+  onRevert?: (hunk: string) => Promise<void>;
+  onRevertFile?: () => void;
+  draftLine?: number;
+}>) {
+  const api = useApi();
+  const [diff, setDiff] = useState<{ key: string; file: FileDiffData | null; error: string | null } | null>(null);
+  const key = `${f.path}\n${fileDigest(f)}`;
+  // Read when unfolded, and again only when the file's digest moves; the last diff stays on screen meanwhile.
+  useEffect(() => {
+    if (folded || diff?.key === key) return;
+    const controller = new AbortController();
+    api.changeFile(sessionId, 'task', f.path, controller.signal).then(
+      (file) => setDiff({ key, file, error: null }),
+      (e: unknown) => { if (!controller.signal.aborted) setDiff({ key, file: diff?.file ?? null, error: describeError(e) }); },
+    );
+    return () => controller.abort();
+  }, [api, sessionId, f.path, key, folded, diff?.key, diff?.file]);
+  const [, copy] = useCopied();
+  const items: ActionItem[] = [
+    { key: 'copy', label: 'Copy path', icon: <Copy />, onSelect: () => copy(f.path) },
+    ...(onRevertFile ? [{ key: 'revert', label: 'Revert file…', icon: <Undo2 />, onSelect: onRevertFile }] : []),
+  ];
+  const risk = riskOf(f.path);
+  const { dir, name } = splitPath(f.path);
+  const fileComments = useMemo(() => comments.filter((c) => c.path === f.path), [comments, f.path]);
+  return (
+    <section data-change-file={f.path} aria-label={f.path} className="rounded-md bg-raised shadow-raised">
+      <div className={cn('sticky top-0 z-10 flex min-h-10 items-center gap-2 rounded-t-md bg-raised py-1 pr-1.5 pl-1', folded && 'rounded-b-md')}>
+        <Button size="icon-sm" aria-expanded={!folded} aria-label={`${folded ? 'Show' : 'Hide'} the diff of ${f.path}`} className="text-faint" onClick={() => onFold(!folded)}>
+          <ChevronDown className={cn('transition-transform duration-100', folded && '-rotate-90')} />
+        </Button>
+        <FileIcon path={f.path} />
+        <span className="min-w-0 flex-1 truncate text-ui" title={f.path}>
+          <span className="text-muted">{dir}</span><span className="font-medium text-ink">{name}</span>
+          {f.old_path && <span className="ml-1.5 text-caption text-muted">from {f.old_path}</span>}
+        </span>
+        {risk && <span className="inline-flex shrink-0 items-center gap-1 text-meta text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
+        {viewed === 'changed' && <span className="shrink-0 text-meta text-warning">Changed since viewed</span>}
+        {f.binary || f.counts_unknown ? <span className="shrink-0 text-caption text-muted">{f.binary ? 'binary' : '—'}</span> : (
+          <span className="shrink-0 text-caption tabular-nums"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span></span>
+        )}
+        {onOpenFile && (
+          <Tip label="Open file">
+            <Button size="icon-sm" aria-label={`Open ${f.path}`} className="text-muted" disabled={f.status === 'deleted'} onClick={(e) => onOpenFile(e.currentTarget)}><Eye /></Button>
+          </Tip>
+        )}
+        <Menu.Root modal={false}>
+          <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="text-muted" />}><Ellipsis /></Menu.Trigger>
+          <Menu.Content align="end"><Menu.Actions items={items} /></Menu.Content>
+        </Menu.Root>
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-caption text-muted hover:bg-tint-hover pointer-coarse:min-h-11">
+          <input type="checkbox" className="size-3.5 cursor-pointer accent-success" aria-label={`Viewed ${f.path}`} checked={viewed === 'viewed'} onChange={(e) => onViewed(e.target.checked)} />
+          <span aria-hidden="true">Viewed</span>
+        </label>
+      </div>
+      {!folded && (
+        <div className="overflow-hidden rounded-b-md">
+          <FileView path={f.path} file={diff?.file ?? null} error={diff?.error ?? null} bare comments={fileComments} onComment={onComment} onRemoveComment={onRemoveComment} onRevert={onRevert} draftLine={draftLine} />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -468,64 +463,11 @@ function CommentBatch({ comments, working, sending, note, onOpen, onRemove, onSe
   );
 }
 
-function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ file: ChangeFile; selected: boolean; viewed: 'viewed' | 'changed' | 'unviewed'; onOpen: () => void; onViewed: (viewed: boolean) => void }>) {
-  const [, copy] = useCopied();
-  const items: ActionItem[] = [
-    { key: 'open', label: 'Open diff', icon: <FileDiff />, onSelect: onOpen },
-    { key: 'copy', label: 'Copy path', icon: <Copy />, onSelect: () => copy(f.path) },
-  ];
-  const risk = riskOf(f.path);
-  const letter = statusLetter(f.status);
-  const context = useLazyContextMenu();
-  return (
-    <li className="flex items-center">
-      <label className="flex size-8 shrink-0 cursor-pointer items-center justify-center pointer-coarse:size-11" title={viewed === 'changed' ? 'Changed since you viewed it' : 'Viewed'}>
-        <input type="checkbox" className="size-3.5 cursor-pointer accent-success" aria-label={`Viewed ${f.path}`} checked={viewed === 'viewed'} onChange={(e) => onViewed(e.target.checked)} />
-      </label>
-      <div className="group/file relative min-w-0 flex-1" {...context.shell}>
-        <button
-          type="button"
-          aria-pressed={selected}
-          title={f.path}
-          className={cn('grid min-h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm py-1 pr-9 pl-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
-          onClick={onOpen}
-        >
-          <span className={cn('w-3 text-center font-mono font-semibold', STATUS_TONE[letter] ?? 'text-muted')} title={f.status}>{letter}</span>
-          <span className="min-w-0">
-            <FilePath path={f.path} />
-            {(risk || viewed === 'changed' || f.old_path) && (
-              <span className="flex flex-wrap items-center gap-x-2 text-meta">
-                {f.old_path && <span className="min-w-0 truncate text-muted" title={f.old_path}>from {f.old_path}</span>}
-                {risk && <span className="inline-flex items-center gap-1 text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
-                {viewed === 'changed' && <span className="text-warning">Changed since you viewed</span>}
-              </span>
-            )}
-          </span>
-          {f.binary || f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">{f.binary ? 'binary' : '—'}</span> : (
-            <span className="tabular-nums">
-              <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
-            </span>
-          )}
-        </button>
-        <Menu.Root modal={false}>
-          <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
-            <Ellipsis />
-          </Menu.Trigger>
-          <Menu.Content align="end">
-            <Menu.Actions items={items} />
-          </Menu.Content>
-        </Menu.Root>
-        {context.menu(<ContextMenu.Actions items={items} />)}
-      </div>
-    </li>
-  );
-}
-
 /** Where a comment goes: one line on one side of the diff, with its text when the comment was started. */
 type Anchor = Pick<ReviewComment, 'line' | 'side' | 'code'>;
 
 /** One file's diff; the file panel's Diff view shows it without review marks or comments. */
-export function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment }: Readonly<{
+export function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment, onRevert, bare = false, draftLine }: Readonly<{
   path: string;
   file: FileDiffData | null;
   error: string | null;
@@ -535,6 +477,12 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
   /** Absent where comments cannot be sent (a settled or archived Task). */
   onComment?: (comment: Omit<ReviewComment, 'id'>) => void;
   onRemoveComment?: (id: string) => void;
+  /** Reverts one hunk (its patch text); absent where the Thread cannot change files. */
+  onRevert?: (hunk: string) => Promise<void>;
+  /** Without its own head: the file card above says which file it is. */
+  bare?: boolean;
+  /** A new-side line whose comment box opens once the diff is in. */
+  draftLine?: number;
 }>) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
     if (!file || file.binary || file.truncated || file.counts_unknown) return null;
@@ -546,6 +494,13 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
     }
   }, [file]);
   const [draft, setDraft] = useState<Anchor | null>(null);
+  const [asked, setAsked] = useState<number | undefined>(undefined);
+  if (draftLine !== asked && patch && !(patch instanceof Error)) {
+    setAsked(draftLine);
+    const at = draftLine === undefined ? undefined : patch.hunks.flatMap((h) => numberedLines(h)).find((l) => l.side === 'new' && l.line === draftLine);
+    if (at) setDraft({ side: at.side, line: at.line, code: at.code });
+  }
+  const [reverting, setReverting] = useState<number | null>(null);
   // The comment glyph is drawn once (below) and referenced from every line: thousands of inline icons are what makes a long diff slow to mount.
   const glyph = useId();
   // One object per change, so the mounted slices of a long diff are left alone until a comment moves.
@@ -564,7 +519,12 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
     },
     cancel: () => setDraft(null),
     remove: onRemoveComment,
-  }), [comments, draft, glyph, onComment, onRemoveComment, path]);
+    reverting,
+    revert: onRevert ? (hi, text) => {
+      setReverting(hi);
+      onRevert(text).catch(() => {}).finally(() => setReverting(null));
+    } : undefined,
+  }), [comments, draft, glyph, onComment, onRemoveComment, path, onRevert, reverting]);
 
   const warning = error ? <Note tone="error" role="alert" className="p-3">{error}</Note> : null;
   if (!file) return warning ?? <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
@@ -582,7 +542,7 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
     <>
       {warning}
       <div className="diff animate-fade-in" translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
-        <div className="head">
+        {!bare && <div className="head">
           <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{file.old_path ? `${file.old_path} → ${file.path}` : file.path}</span>
             {onViewed && (
@@ -593,7 +553,7 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
             )}
           </span>
           {onComment && <span className="block font-sans text-meta">Select a line to comment on it.</span>}
-        </div>
+        </div>}
         {onComment && (
           <svg width="0" height="0" aria-hidden="true" className="absolute">
             <symbol id={glyph} viewBox="0 0 24 24"><MessageSquarePlus /></symbol>
@@ -636,7 +596,7 @@ const DiffSlice = memo(function DiffSlice({ hunks, from, to, notes }: Readonly<{
   let start = 0;
   for (const [hi, h] of hunks.entries()) {
     const end = start + h.lines.length;
-    if (end > from && start < to) rows.push(...renderHunk(h, hi, notes, Math.max(from, start) - start, Math.min(to, end) - start));
+    if (end > from && start < to) rows.push(...renderHunk(h, hi, notes, Math.max(from, start) - start, Math.min(to, end) - start, false, hunks[hi - 1]));
     start = end;
     if (start >= to) break;
   }
@@ -681,10 +641,56 @@ interface LineNotes {
   save: (body: string) => void;
   cancel: () => void;
   remove?: (id: string) => void;
+  /** Reverts hunk `hi` from its patch text. */
+  revert?: (hi: number, text: string) => void;
+  /** The hunk whose revert is under way. */
+  reverting?: number | null;
 }
 
-/** The rows of hunk h's lines [from, to), with the hunk's header when from is 0. */
-function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: LineNotes, from = 0, to = h.lines.length, highlight = false) {
+type DiffHunk = StructuredPatch['hunks'][number];
+
+/** Each line's comment anchor: its new-side number, or its old-side one for a removed line; `changed` for added and removed lines. */
+function numberedLines(h: DiffHunk): (Anchor & { changed: boolean })[] {
+  let oldNo = h.oldStart, newNo = h.newStart;
+  return h.lines.flatMap((line): (Anchor & { changed: boolean })[] => {
+    const sign = line[0] ?? ' ';
+    if (sign === '\\') return [];
+    if (sign === '-') return [{ side: 'old', line: oldNo++, code: line.slice(1), changed: true }];
+    if (sign === '+') return [{ side: 'new', line: newNo++, code: line.slice(1), changed: true }];
+    oldNo++;
+    return [{ side: 'new', line: newNo++, code: line.slice(1), changed: false }];
+  });
+}
+
+/** Lines longer than this, or runs longer than this many lines, are not compared word by word. */
+const WORD_LINE = 400;
+const WORD_RUN = 40;
+
+/**
+ * The changed words of a hunk: each run of removed lines is paired line by line with the added lines after it,
+ * and each pair compared word by word. Index → the line's text in parts, the changed parts marked.
+ */
+function changedWords(h: DiffHunk): Map<number, { text: string; changed: boolean }[]> {
+  const out = new Map<number, { text: string; changed: boolean }[]>();
+  for (let i = 0; i < h.lines.length;) {
+    if (h.lines[i][0] !== '-') { i++; continue; }
+    const dels: number[] = [], adds: number[] = [];
+    while (i < h.lines.length && h.lines[i][0] === '-') dels.push(i++);
+    while (i < h.lines.length && h.lines[i][0] === '+') adds.push(i++);
+    if (dels.length > WORD_RUN || adds.length > WORD_RUN) continue;
+    for (let k = 0; k < Math.min(dels.length, adds.length); k++) {
+      const before = h.lines[dels[k]].slice(1), after = h.lines[adds[k]].slice(1);
+      if (before.length > WORD_LINE || after.length > WORD_LINE) continue;
+      const parts = diffWordsWithSpace(before, after);
+      out.set(dels[k], parts.filter((p) => !p.added).map((p) => ({ text: p.value, changed: !!p.removed })));
+      out.set(adds[k], parts.filter((p) => !p.removed).map((p) => ({ text: p.value, changed: !!p.added })));
+    }
+  }
+  return out;
+}
+
+/** The rows of hunk h's lines [from, to), with the hunk's bar when from is 0: the unchanged lines before it, Comment and Revert. */
+function renderHunk(h: DiffHunk, hi: number, notes?: LineNotes, from = 0, to = h.lines.length, highlight = false, prev?: DiffHunk) {
   let oldNo = h.oldStart;
   let newNo = h.newStart;
   // The numbers the first shown line has, counted over the lines before it.
@@ -696,12 +702,23 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
   }
   const rows: ReactNode[] = [];
   if (from === 0) {
+    const skipped = h.oldStart - (prev ? prev.oldStart + prev.oldLines : 1);
+    const first = notes?.open && numberedLines(h).find((l) => l.changed);
     rows.push(
       <tr key={`h${hi}`} className="hunk">
-        <td colSpan={3}><span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span></td>
+        <td colSpan={3}>
+          {notes?.revert || notes?.open ? (
+            <span className="sticky left-3 flex items-center gap-2 pr-3 font-sans">
+              <span className="min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
+              {first && <Button size="sm" variant="subtle" className="h-6 text-caption" onClick={() => notes.open?.({ side: first.side, line: first.line, code: first.code })}><MessageSquarePlus />Comment</Button>}
+              {notes.revert && <Button size="sm" variant="subtle" className="h-6 text-caption" loading={notes.reverting === hi} disabled={notes.reverting != null} onClick={() => notes.revert?.(hi, hunkText(h))}><Undo2 />Revert</Button>}
+            </span>
+          ) : <span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span>}
+        </td>
       </tr>,
     );
   }
+  const words = highlight || h.lines.length > 2000 ? null : changedWords(h);
   h.lines.slice(from, to).forEach((line, offset) => {
     const li = from + offset;
     const sign = line[0] ?? ' ';
@@ -737,7 +754,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
         </td>
         <td className="code-cell">
           <span className="sign">{highlight ? '' : sign}</span>
-          {highlight ? <Highlighted language="diff" code={line} /> : text}
+          {highlight ? <Highlighted language="diff" code={line} /> : words?.get(li)?.map((p, i) => (p.changed ? <mark key={i} className={cn('rounded-xs text-inherit', sign === '+' ? 'bg-success/25' : 'bg-error/25')}>{p.text}</mark> : p.text)) ?? text}
         </td>
       </tr>,
     );

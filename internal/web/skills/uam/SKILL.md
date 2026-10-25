@@ -17,7 +17,8 @@ and conventions below instead.
   the same directory at once, so the working tree can change under you: check
   `git status` before you treat a change as yours. Between turns the owner
   may switch the Project folder to another branch, so check the branch
-  before you commit. The owner may instead
+  before you commit. uam has no commit, push or pull buttons: the owner asks
+  you in the conversation, so commit and push only when asked. The owner may instead
   start a conversation on a new `uam/…` branch, or in its own git worktree
   (by default under `~/.uam/worktrees/`): then your working directory is that worktree,
   other conversations do not share it, and uam renames the branch after the
@@ -199,6 +200,10 @@ Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
   changed that still differ from HEAD; in its own worktree, any uncommitted
   or unpushed work there) never settles itself, and the owner is asked
   before settling or archiving it.
+- The owner reviews your edits in Changes and in the file preview, which
+  marks your changes on the file. A review comment reaches you as a message;
+  between turns the owner may also revert one change or a whole file, so
+  re-read a file before you edit it again.
 - `who_touched {path}` lists Threads in your Project with edits to that path,
   relative to your directory or absolute. Shell writes are not attributed;
   `partial: true` means unread history may contain more edits.

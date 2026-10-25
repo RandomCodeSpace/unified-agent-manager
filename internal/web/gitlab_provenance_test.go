@@ -117,20 +117,6 @@ func TestGitLabReceiptRejectsBranchSwitchWithinCommand(t *testing.T) {
 	}
 }
 
-func TestGitLabUICommitHasRecoverableReceipt(t *testing.T) {
-	gitIdentity(t)
-	repo := receiptRepo(t)
-	g := newGitTask(t, repo)
-	writeRepoFile(t, repo, "file.txt", "content\n")
-	if _, err := g.m.GitCommit(context.Background(), g.id, []string{"file.txt"}, "feat: owned"); err != nil {
-		t.Fatal(err)
-	}
-	got := readGitLabCommitReceipts(context.Background(), repo)
-	if len(got) != 1 || got[0].taskID != g.id || got[0].sha != gitOutput(t, repo, "rev-parse", "HEAD") {
-		t.Fatalf("UI commit receipt = %+v", got)
-	}
-}
-
 func TestGitLabStampPreservesArgumentsAndExcludesOtherWorkdirs(t *testing.T) {
 	repo := receiptRepo(t)
 	g := newGitTask(t, repo)

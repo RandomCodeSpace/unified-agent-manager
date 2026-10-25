@@ -1,12 +1,12 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
-import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleCheck, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { createContext, memo, startTransition, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { readOnly, taskName, type Project, type SessionSummary } from '../api';
+import { describeError, readOnly, taskName, type Project, type SearchResults, type SessionSummary } from '../api';
+import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
-import { filteredProject, groupTasks, needsYouNow, pendingWork, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
-import { pendingWords } from '../lib/worktrees';
+import { filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
 import { BADGE_TEXT, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
@@ -342,7 +342,6 @@ const taskBranch = (s: SessionSummary, project?: Project) => s.worktree?.branch 
 
 /** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Thread's branch, the Task's changes and its folder's unsaved git work. */
 function rowTip(s: SessionSummary, project: Project, status: string, diff?: DiffStat) {
-  const pending = readOnly(s) ? null : pendingWork(s);
   // The 7-day settle skips a Thread with unsaved work: the tip says why it is still here. The summary shows that work
   // only for a Thread in its own worktree; in a shared folder the folder's counts are not the Thread's.
   const stopsSettle = readOnly(s) ? null : putAwayWork(s);
@@ -354,8 +353,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
       <span className="mt-1 block text-on-primary/70">
         <span className="block">{status}</span>
         {taskBranch(s, project) && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{taskBranch(s, project)}</span>}
-        {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
-        {pending && <span className="block">{pendingWords(pending)}</span>}
+        {diff && diff.files > 0 && <span className="block">{diff.files} {diff.files === 1 ? 'file' : 'files'} changed · +{diff.additions} −{diff.deletions} lines</span>}
         {stopsSettle && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
       </span>
     </>
@@ -366,17 +364,11 @@ const STATUS_MARKS = {
   Input: { icon: MessageCircleQuestion, tone: 'text-warning' },
   Starting: { icon: WorkingMark, tone: 'text-accent' },
   Working: { icon: WorkingMark, tone: 'text-accent' },
-  'Wrapping up': { icon: WorkingMark, tone: 'text-accent' },
-  Compacting: { icon: Minimize2, tone: 'text-badge-violet' },
   Review: { icon: Eye, tone: 'text-badge-teal' },
   Finished: { icon: CircleCheck, tone: 'text-success' },
-  'Tests fail': { icon: CircleAlert, tone: 'text-warning' },
-  'Command failed': { icon: CircleAlert, tone: 'text-warning' },
   Error: { icon: TriangleAlert, tone: 'text-error' },
   Interrupted: { icon: Pause, tone: 'text-warning' },
   Stopped: { icon: Square, tone: 'text-muted' },
-  Closed: { icon: CircleMinus, tone: 'text-muted' },
-  'Not started': { icon: Clock, tone: 'text-muted' },
   Idle: { icon: Clock, tone: 'text-muted' },
   Settled: { icon: CircleCheck, tone: 'text-muted' },
   Archived: { icon: Archive, tone: 'text-muted' },
@@ -386,19 +378,18 @@ const STATUS_MARKS = {
 export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
   const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
-  const pending = readOnly(session) ? null : pendingWork(session);
+  const changed = session.diff?.files ?? 0;
   const branch = taskBranch(session, project);
   return (
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} />}
         <span className={cn('min-w-0 truncate font-medium', project ? BADGE_TEXT[project.badge.color] : 'text-muted')}>{project?.name ?? 'Project'}</span>
-        {/* The folder's unsaved git work, after its name: shared by every Thread there. Glyph and count, the words for screen readers. */}
-        {pending && (
-          <span className="flex shrink-0 items-center gap-1.5 text-meta font-normal text-warning tabular-nums">
-            {pending.uncommitted > 0 && <span className="flex items-center gap-0.5"><FilePen aria-hidden="true" className="size-3" />{pending.uncommitted}</span>}
-            {pending.unpushed > 0 && <span className="flex items-center gap-0.5"><ArrowUpFromLine aria-hidden="true" className="size-3" />{pending.unpushed}</span>}
-            <span className="sr-only">{pendingWords(pending)}</span>
+        {/* The files this Thread changed, after its name: its own, never its folder's. Glyph and count, the words for screen readers. */}
+        {changed > 0 && (
+          <span className="flex shrink-0 items-center gap-0.5 text-meta font-normal text-warning tabular-nums">
+            <FilePen aria-hidden="true" className="size-3" />{changed}
+            <span className="sr-only">{changed} {changed === 1 ? 'file' : 'files'} changed by this thread</span>
           </span>
         )}
         <span className="flex-1" />
@@ -430,6 +421,63 @@ function TipMachine({ label }: Readonly<{ label: string }>) {
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
+/** Words shorter than this search names only: a prefix that short matches nearly every conversation. */
+const CONVERSATION_QUERY = 3;
+
+/**
+ * The Threads whose conversation holds the search words, under the name matches: the Copilot CLI's own index, read
+ * once typing pauses, and the previous read is cancelled.
+ */
+function ConversationHits({ query, sessions }: Readonly<{ query: string; sessions: SessionSummary[] }>) {
+  const api = useApi();
+  const a = useTaskActions();
+  const q = query.trim();
+  const [result, setResult] = useState<{ q: string; data?: SearchResults; error?: string } | null>(null);
+  useEffect(() => {
+    if (q.length < CONVERSATION_QUERY) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api.search(q, controller.signal).then(
+        (data) => setResult({ q, data }),
+        (err: unknown) => { if (!controller.signal.aborted) setResult({ q, error: describeError(err) }); },
+      );
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [api, q]);
+  if (q.length < CONVERSATION_QUERY) return null;
+  const shown = result?.q === q ? result : null;
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const hits = shown?.data?.hits.filter((h) => byId.has(h.thread_id)) ?? [];
+  let note = '';
+  if (!shown) note = 'Searching conversations…';
+  else if (shown.error) note = shown.error;
+  else if (shown.data && !shown.data.available) note = shown.data.reason ?? '';
+  else if (hits.length === 0) note = 'No conversation mentions it.';
+  return (
+    <section aria-label="In conversations" className="mt-4 flex flex-col gap-1">
+      <h2 className="px-2 py-1 text-caption text-muted">In conversations</h2>
+      {note && <p role="status" className={cn('px-2 text-caption', shown?.error ? 'text-error' : 'text-muted')}>{note}</p>}
+      {hits.length > 0 && (
+        <ul className="flex flex-col gap-1 animate-fade-in">
+          {hits.map((h) => {
+            const s = byId.get(h.thread_id)!;
+            return (
+              <li key={h.thread_id}>
+                <button type="button" onClick={() => a.select(s.id)} className="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left text-caption hover:bg-tint-hover focus-visible:-outline-offset-2">
+                  <span className="truncate text-ui text-ink">{taskName(s)}</span>
+                  <span className="line-clamp-2 text-muted">
+                    {h.snippet.map((p, i) => (p.match ? <mark key={i} className="bg-transparent font-medium text-ink">{p.text}</mark> : <span key={i}>{p.text}</span>))}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, tabStop, rowKey = s.id, machine, named = true }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
@@ -860,7 +908,7 @@ export const Sidebar = memo(function Sidebar({
   } else if (searching) {
     body = (
       <>
-        <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No matching threads' : `${rows.length} matching ${rows.length === 1 ? 'thread' : 'threads'}`}</p>
+        <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No thread names match' : `${rows.length} matching ${rows.length === 1 ? 'thread' : 'threads'}`}</p>
         {rows.length === 0 && (
           <div className="flex flex-col items-start gap-2 px-2">
             <p className="text-caption text-muted">{`Searches names, projects, folders, branches${chosen ? ` in ${chosen.name}` : ''}.`}</p>
@@ -870,6 +918,7 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
         <ul className="flex flex-col gap-1 animate-fade-in">{rows.slice(0, mountedRows).map((r) => renderRow(r))}</ul>
+        <ConversationHits query={query} sessions={sessions} />
       </>
     );
   } else {

@@ -1106,11 +1106,11 @@ export default function App() {
   }, []);
 
   // Settle and Archive of a Thread whose folder has unsaved git work ask first (SettleGuard): the service refuses
-  // without `force`, naming the counts and the first files. `allChanges` asks the Thread's view to open All changes.
+  // without `force`, naming the counts and the first files. `changesRequest` asks the Thread's view to open its Changes.
   const [unsaved, setUnsaved] = useState<UnsavedTarget | null>(null);
   const [unsavedOpen, setUnsavedOpen] = useState(false);
   const [forcing, setForcing] = useState(false);
-  const [allChanges, setAllChanges] = useState<{ id: string; at: number } | null>(null);
+  const [changesRequest, setChangesRequest] = useState<{ id: string; at: number } | null>(null);
   /** Opens the confirmation; `list` reads the folder's first changed files when no refusal named them. */
   const openUnsaved = useCallback((t: UnsavedTarget, list?: () => Promise<ChangesData>) => {
     setUnsaved(t);
@@ -1146,7 +1146,7 @@ export default function App() {
     openChanges: () => {
       setUnsavedOpen(false);
       select(id);
-      setAllChanges({ id, at: Date.now() });
+      setChangesRequest({ id, at: Date.now() });
     },
   }), () => api.changes(id, 'workspace')), `${kind} the thread`), [runTask, askUnsaved, api, select]);
 
@@ -1472,7 +1472,7 @@ export default function App() {
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
         onSheet={onSheet}
-        allChangesRequest={allChanges}
+        changesRequest={changesRequest}
         terminalOpen={!!terminalProject}
         onTerminal={toggleTerminal}
         onSessionUpdate={onSessionUpdate}

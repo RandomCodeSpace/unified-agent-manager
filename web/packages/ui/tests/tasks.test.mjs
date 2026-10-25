@@ -138,12 +138,12 @@ test('a task whose turn ended shows Working while a subagent still runs', () => 
   assert.equal(shownState({ state: 'failed', subagents_running: 1 }), 'failed');
 });
 
-test('a compacting Task shows Working and its row says Compacting', async () => {
+test('a compacting Task shows Working, compacting in its detail', async () => {
   const { taskStatus } = await import('../src/lib/tasks.ts');
   for (const state of ['idle', 'completed', 'working', 'cancelled']) assert.equal(shownState({ state, subagents_running: 0, compacting: true }), 'working');
   // A request waiting for the user still wins.
   assert.equal(shownState({ state: 'awaiting_answer', subagents_running: 0, compacting: true }), 'awaiting_answer');
-  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'completed', compacting: true }), true).text, 'Compacting…');
+  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'completed', compacting: true }), true).text, 'Working · compacting');
   assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'awaiting_permission', compacting: true })).text, 'Wants your OK to continue');
 });
 
@@ -191,12 +191,12 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed' }), 'Finished');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Fixed the test; tests pass');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
-  // Failures the outcome's evidence parts report read as such, read or not, judged done or not; a verb phrase never counts.
-  assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Finished · tests fail, 2 commands failed');
-  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed', done_at: at(1) }), 'Finished · 1 command failed');
+  // What the turn found is detail, never a state: failing tests and commands read in the outcome's words.
+  assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Ready for review: Tests fail; 2 commands failed');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed' }, true), 'Ready for review: Fixed the test; tests pass; 1 command failed');
   assert.equal(status({ state: 'completed', outcome: 'Explained why tests fail; tests pass' }), 'Explained why tests fail; tests pass');
-  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Tests fail');
-  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Command failed');
+  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Finished');
+  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Finished');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
   // No reason is not proof it was you: Copilot reports uam's own Stop and any other as user_initiated.
   assert.equal(status({ state: 'cancelled' }), 'Stopped');
@@ -218,12 +218,12 @@ test('compact Task labels retain request priority and distinguish working, revie
   for (const state of ['awaiting_answer', 'awaiting_permission']) assert.equal(label({ state, compacting: true }), 'Input');
   assert.equal(label({ state: 'working', pending: 1 }), 'Input');
   assert.equal(label({ state: 'working', ask: { kind: 'question', title: 'Which one?' } }), 'Input');
-  assert.equal(label({ state: 'completed', compacting: true }, true), 'Compacting');
+  assert.equal(label({ state: 'completed', compacting: true }, true), 'Working');
   assert.equal(label({ state: 'completed', subagents_running: 1 }, true), 'Working');
   assert.equal(label({ state: 'working', event_at: '2020-01-01T00:00:00Z' }), 'Working');
   assert.equal(label({ state: 'completed', outcome: 'A long outcome' }, true), 'Review');
   assert.equal(label({ state: 'completed', outcome: 'A long outcome' }), 'Finished');
-  for (const [state, expected] of Object.entries({ starting: 'Starting', failed: 'Error', interrupted: 'Interrupted', cancelled: 'Stopped', closed: 'Closed', idle: 'Idle' })) assert.equal(label({ state }), expected);
+  for (const [state, expected] of Object.entries({ starting: 'Starting', failed: 'Error', interrupted: 'Interrupted', cancelled: 'Stopped', closed: 'Idle', idle: 'Idle' })) assert.equal(label({ state }), expected);
   assert.equal(label({ state: 'completed', stage: 'settled' }), 'Settled');
   assert.equal(label({ state: 'completed', stage: 'archived' }), 'Archived');
 });

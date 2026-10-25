@@ -77,7 +77,7 @@ interface Props {
   /** Keep a compact turn's "Changed n files" line; off where the Task's folder has no Changes view (no Git). */
   changedLine?: boolean;
   /** The full current workspace Changes view, separate from historical native facts. */
-  onOpenAllChanges?: () => void;
+  onOpenThreadChanges?: () => void;
   readersActive?: boolean;
   readerGeneration?: string;
   /** The conversation is being compacted: the foot shows no step (the strip says so). */
@@ -114,7 +114,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line, and plain rows at the foot while one runs;
  * the chip and each row open the strip's sheet.
  */
-export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenThreadChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -128,7 +128,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const groupItems = useIdentityEntries(identityItems, loose, questions);
   const turnIds = useGroupIdentities(groupItems);
-  const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
+  const replyActions = useMemo(() => ({ threadChanges: onOpenThreadChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenThreadChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const stamps = new Map<string, Stamp[]>();
   const gitlab = useContext(GitLabItemsContext);
   const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
@@ -844,7 +844,6 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
     ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
     // The chip opens the captured changes; the files the turn's calls named stay one step away in Changes.
     ...(changes && openEdits ? [{ key: 'turn-files', label: "This turn's files in Changes", icon: <FileDiff />, onSelect: openEdits }] : []),
-    ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
     ...(edit ? [{ key: 'edit', label: 'Edit and resend…', icon: <Pencil />, takesFocus: true, onSelect: edit }] : []),
     ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: branch }] : []),
     ...(rewind ? [{ key: 'rewind', label: 'Rewind to before this prompt…', icon: <RotateCcw />, takesFocus: true, onSelect: rewind }] : []),
@@ -871,7 +870,7 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
       {asides && <AsideChip task={task} turn={end!.turn} sep={false} />}
     </>
   );
-  const reader = changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onAllChanges={replyActions?.allChanges} /></Suspense>;
+  const reader = changesReader && timing && <Suspense fallback={null}><TurnChangesReader timing={timing} anchor={changesReader.anchor} phone={changesReader.phone} open={changesReader.open} onClose={() => setChangesReader(r => r && { ...r, open: false })} onClosed={() => setChangesReader(null)} onThreadChanges={replyActions?.threadChanges} /></Suspense>;
   return { actions, chips, reader, changed: !!changeChip };
 }
 
@@ -962,7 +961,7 @@ function TurnStatus({ working = false, timing, empty = false }: Readonly<{ worki
   );
 }
 
-interface ReplyActions { allChanges?: () => void; branch?: BranchReply; rewind?: BranchReply; edit?: BranchReply; active: boolean; generation: string }
+interface ReplyActions { threadChanges?: () => void; branch?: BranchReply; rewind?: BranchReply; edit?: BranchReply; active: boolean; generation: string }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text; a reply that ends its turn has its copy in the turn card's head (DESIGN.md turn card). */
 function Copyable({ text, read, label, className, side = 'right', at, foot = true, children, extra = [], asideTurn }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: the user's clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {

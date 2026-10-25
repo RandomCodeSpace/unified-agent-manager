@@ -111,9 +111,8 @@ describe('native rewind', () => {
     const rewind = vi.spyOn(api, 'rewind');
     const { user } = await openTask('t3');
     await screen.findByText(/result was lost/);
-    await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[0]);
-    expect(screen.queryByRole('menuitem', { name: 'Rewind to before this prompt…' })).toBeNull();
-    await user.keyboard('{Escape}');
+    // With Rewind held back there is nothing else in a reply's menu, so it is not there at all.
+    expect(screen.queryByRole('button', { name: 'Turn actions' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Reread conversation' }));
     await waitFor(() => expect(reconcile).toHaveBeenCalledWith('t3', 'held-request'));
     expect(rewind).not.toHaveBeenCalled();

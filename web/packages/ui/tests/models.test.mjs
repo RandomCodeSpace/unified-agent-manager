@@ -28,3 +28,13 @@ test('models sort by display name with numbers compared as numbers, so versions 
 test('efforts read as words in menus while the stored value stays the provider one', () => {
   assert.deepEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'turbo'].map(effortLabel), ['None', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Turbo']);
 });
+
+test('modelBrand reads the brand from the model ID, provider prefixes included', async () => {
+  const { modelBrand } = await import('../src/lib/models.ts');
+  const cases = {
+    'claude-haiku-4.5': 'claude', 'gpt-6-luna': 'openai', 'gpt-5.3-codex': 'openai', 'o4-mini': 'openai', 'mai-code-1.1-flash': 'microsoft',
+    'grok-4.7': 'grok', 'kimi-k3': 'kimi', 'ollama/deepseek-v4.1-flash': 'deepseek', 'openrouter/qwen/qwen3-coder': 'qwen',
+    'gemini-3-pro': 'gemini', 'meta-llama/llama-4': 'meta', 'mistralai/devstral-2': 'mistral', 'z-ai/glm-5': null, auto: 'copilot', 'my-local-model': null, '': null,
+  };
+  for (const [id, brand] of Object.entries(cases)) assert.equal(modelBrand(id), brand, id);
+});

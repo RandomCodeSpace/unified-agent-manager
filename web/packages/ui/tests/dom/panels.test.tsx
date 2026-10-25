@@ -6,20 +6,16 @@ import { headerRoom } from '../../src/components/Task';
 import { composer, log, openMenu, openSubagentIndex, openTask, renderApp, sidebar, type User } from './render';
 
 describe('changes', () => {
-  test('the header count opens the changes sheet; a file shows its diff', async () => {
+  test('the header count opens the Thread\'s changes as a stack of files, each with its diff', async () => {
     const { user } = await openTask('t1');
-    await user.click(await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ }));
+    await user.click(await screen.findByRole('button', { name: /^Open changes, 3 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    expect(await sheet.findByText(/^3 files/)).toBeTruthy();
-    // The Task scope's description is its segment's tip, not a line of its own.
-    expect(sheet.getByTitle(/^Files this thread's agent edited/).closest('[role="radio"]')).toBeTruthy();
-    expect(sheet.queryByText(/^Files this thread's agent edited/)).toBeNull();
+    expect(await sheet.findByText(/^3 files by this thread/)).toBeTruthy();
+    // Only this Thread's changes: no scopes to pick, no commit form.
+    expect(sheet.queryByRole('radio')).toBeNull();
+    expect(sheet.queryByRole('region', { name: 'Commit' })).toBeNull();
     expect(sheet.getByText('CI workflow')).toBeTruthy();
-    await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
-    expect(await sheet.findByText(/^All uncommitted project changes vs HEAD/)).toBeTruthy();
-    await user.click(await sheet.findByTitle('internal/vterm/redraw_test.go'));
     expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
-    expect(sheet.getByTitle('internal/vterm/redraw_test.go').getAttribute('aria-pressed')).toBe('true');
     await user.click(sheet.getByRole('button', { name: 'Refresh' }));
     expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
     await user.click(sheet.getByRole('button', { name: 'Close changes' }));
@@ -27,103 +23,73 @@ describe('changes', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('changes-link'));
   });
 
-  test('a long path gives way from the middle of its folder, and the header count wraps rather than clips', async () => {
+  test('a card names its file in ink after its muted folder, and the header count wraps rather than clips', async () => {
     const { user } = await openTask('t1');
-    await user.click(await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ }));
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
-    const row = within(await sheet.findByTitle('internal/vterm/redraw_test.go'));
-    // The file name and its own folder sit in a box that does not shrink; the folders above it shorten at their end.
-    const name = row.getByText('redraw_test.go');
-    const own = row.getByText('vterm/');
-    expect(name.className).toContain('shrink-0');
-    expect(own.parentElement).toBe(name.parentElement);
-    expect(own.parentElement!.className).toContain('shrink-0');
-    expect(own.className).toContain('truncate');
-    expect(row.getByText('internal/').className).toContain('truncate');
-    expect(document.querySelector('[class*="direction:rtl"]')).toBeNull();
-    // Each part of the count stays whole; the count takes a second line instead of cutting one off.
+    const card = within(await sheet.findByRole('region', { name: 'internal/vterm/redraw_test.go' }));
+    const name = card.getByText('redraw_test.go');
+    expect(name.className).toContain('text-ink');
+    expect(card.getByText('internal/vterm/').className).toContain('text-muted');
+    expect(name.parentElement!.className).toContain('truncate');
+    expect(name.parentElement!.getAttribute('title')).toBe('internal/vterm/redraw_test.go');
     const viewed = sheet.getByText(/^\d+ of \d+ viewed$/);
     expect(viewed.className).toContain('whitespace-nowrap');
     expect(viewed.parentElement!.className).toContain('line-clamp-2');
     expect(viewed.parentElement!.className).not.toMatch(/\btruncate\b/);
   });
 
-  test('a file row has actions for its diff and its path', async () => {
-    const { user } = await openTask('t8');
-    await user.click(await screen.findByRole('button', { name: /^Open changes.*2 files$/ }));
-    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    const menu = await openMenu(user, 'Actions for assets/theme.css');
-    await user.click(menu.getByRole('menuitem', { name: 'Open diff' }));
-    expect(await sheet.findByText('--muted: #6b6560;')).toBeTruthy();
+  test('a card\'s menu copies its path and reverts the whole file only once confirmed', async () => {
+    const revert = vi.spyOn(api, 'revertChange');
+    try {
+      const { user } = await openTask('t8');
+      await user.click(await screen.findByRole('button', { name: /^Open changes, 2 files$/ }));
+      const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+      expect(await sheet.findByRole('region', { name: 'assets/theme.css' })).toBeTruthy();
+      let menu = await openMenu(user, 'Actions for assets/theme.css');
+      expect(menu.getByRole('menuitem', { name: 'Copy path' })).toBeTruthy();
+      await user.click(menu.getByRole('menuitem', { name: 'Revert file…' }));
+      const ask = within(await screen.findByRole('alertdialog'));
+      expect(ask.getByText('Revert this file?')).toBeTruthy();
+      expect(revert).not.toHaveBeenCalled();
+      await user.click(ask.getByRole('button', { name: 'Cancel' }));
+      expect(revert).not.toHaveBeenCalled();
+      menu = await openMenu(user, 'Actions for assets/theme.css');
+      await user.click(menu.getByRole('menuitem', { name: 'Revert file…' }));
+      await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Revert file' }));
+      await waitFor(() => expect(revert).toHaveBeenCalledWith('t8', 'assets/theme.css', undefined));
+      await waitFor(() => expect(sheet.queryByRole('region', { name: 'assets/theme.css' })).toBeNull());
+    } finally {
+      revert.mockRestore();
+    }
   });
 
-  test('a turn\'s Changed chip opens the same sheet on that turn, and focus comes back to it', async () => {
+  test('a hunk\'s Revert puts back that change alone', async () => {
+    const revert = vi.spyOn(api, 'revertChange');
+    try {
+      const { user } = await openTask('t8');
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      const card = within(await within(await screen.findByRole('dialog', { name: 'Changes' })).findByRole('region', { name: 'templates/post.html' }));
+      await user.click(await card.findByRole('button', { name: 'Revert' }));
+      await waitFor(() => expect(revert).toHaveBeenCalledTimes(1));
+      const [id, path, hunk] = revert.mock.calls[0];
+      expect([id, path]).toEqual(['t8', 'templates/post.html']);
+      expect(hunk).toMatch(/^@@ -\d+,\d+ \+\d+,\d+ @@\n/);
+    } finally {
+      revert.mockRestore();
+    }
+  });
+
+  test('a turn\'s Changed chip opens the same sheet on that turn\'s file, and focus comes back to it', async () => {
     const { user } = await openTask('t1');
-    const links = screen.getAllByRole('button', { name: /^Changed \d+ files?$/ });
-    const latest = links.at(-1)!;
+    const latest = screen.getAllByRole('button', { name: /^Changed \d+ files?$/ }).at(-1)!;
     await user.click(latest);
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    const lastTurn = sheet.getByRole('radio', { name: /^Last turn/ });
-    expect(lastTurn.getAttribute('aria-checked') ?? String((lastTurn as HTMLInputElement).checked)).toBe('true');
+    const card = within(await sheet.findByRole('region', { name: 'internal/vterm/redraw_test.go' }));
+    expect(card.getByRole('button', { name: /diff of internal\/vterm\/redraw_test.go$/ }).getAttribute('aria-expanded')).toBe('true');
     await user.click(sheet.getByRole('button', { name: 'Close changes' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(latest));
-  });
-
-  test('reopened in the same Thread, Changes is back on its scope and file; a turn\'s chip still opens on that turn', async () => {
-    const { user } = await openTask('t1');
-    const checked = (radio: HTMLElement) => radio.getAttribute('aria-checked') ?? String((radio as HTMLInputElement).checked);
-    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
-    let sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    await user.click(await sheet.findByRole('radio', { name: 'All changes · 4' }));
-    await user.click(await sheet.findByTitle('internal/vterm/redraw_test.go'));
-    expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
-    await user.click(sheet.getByRole('button', { name: 'Close changes' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
-    await user.click(screen.getByRole('button', { name: /^Open changes/ }));
-    sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    expect(checked(sheet.getByRole('radio', { name: /^All changes/ }))).toBe('true');
-    expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
-    expect(sheet.getByTitle('internal/vterm/redraw_test.go').getAttribute('aria-pressed')).toBe('true');
-    await user.click(sheet.getByRole('button', { name: 'Close changes' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
-    await user.click(screen.getAllByRole('button', { name: /^Changed \d+ files?$/ }).at(-1)!);
-    sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    expect(checked(sheet.getByRole('radio', { name: /^Last turn/ }))).toBe('true');
-  });
-
-  test('with no files in its default scope, Changes opens on All changes when that has some', async () => {
-    const { user } = await openTask('t3');
-    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
-    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    const all = await sheet.findByRole('radio', { name: 'All changes · 4' });
-    await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
-  });
-
-  test('a Thread with its own change record opens on All changes when that record is empty and the folder is not', async () => {
-    const original = mockData.seed;
-    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
-      const state = original();
-      const task = state.tasks.find(t => t.id === 't3')!;
-      task.capabilities = { ...task.capabilities, session_diff: true };
-      return state;
-    });
-    // The service's own-record list carries no counts.
-    const changes = api.changes.bind(api);
-    const list = vi.spyOn(api, 'changes').mockImplementation((id, scope, signal) => scope === 'session'
-      ? Promise.resolve({ scope, label: 'Files this thread changed', supported: true, files: [] })
-      : changes(id, scope, signal));
-    try {
-      const { user } = await openTask('t3');
-      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
-      const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-      const all = await sheet.findByRole('radio', { name: 'All changes' });
-      await waitFor(() => expect(all.getAttribute('aria-checked') ?? String((all as HTMLInputElement).checked)).toBe('true'));
-    } finally {
-      list.mockRestore();
-      seed.mockRestore();
-    }
   });
 
   test('inline, Changes stays open for presses on the composer and the conversation\'s controls; a press on empty canvas closes it', async () => {
@@ -170,26 +136,6 @@ describe('changes', () => {
       expect(await sheet.findByText('The thread did not take the comments.')).toBeTruthy();
     } finally {
       prompt.mockRestore();
-    }
-  });
-
-  test('native Task changes remain reachable in a project without Git', async () => {
-    const original = mockData.seed;
-    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
-      const state = original();
-      const task = state.tasks.find(t => t.id === 't6')!;
-      task.capabilities = { ...task.capabilities, session_diff: true };
-      return state;
-    });
-    try {
-      const { user } = await openTask('t6');
-      expect(await screen.findByRole('button', { name: /^Open changes/ })).toBeTruthy();
-      expect(screen.queryByRole('button', { name: 'Go to file' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Files' })).toBeNull();
-      await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
-      expect(await screen.findByText(/no Files or All changes view/)).toBeTruthy();
-    } finally {
-      seed.mockRestore();
     }
   });
 
@@ -244,13 +190,9 @@ describe('changes', () => {
       await user.click(await screen.findByRole('button', { name: 'Pinned charts, 2' }));
       await waitFor(() => expect(aside('Pinned charts')).toBeTruthy());
       await overSettings(user, 'Pinned charts');
-      await user.keyboard('{Alt>}p{/Alt}');
-      const box = within(await screen.findByRole('dialog', { name: 'Go to file' })).getByRole('combobox', { name: 'Go to file' });
-      await user.type(box, 'dctr');
-      await screen.findByRole('option', { name: 'cmd/doctor.go' });
-      await user.keyboard('{Enter}');
-      await waitFor(() => expect(aside('File doctor.go')).toBeTruthy());
-      await overSettings(user, 'File doctor.go');
+      await user.click(screen.getByRole('button', { name: /^Open changes/ }));
+      await waitFor(() => expect(aside('Changes')).toBeTruthy());
+      await overSettings(user, 'Changes');
     } finally {
       wide.mockRestore();
     }

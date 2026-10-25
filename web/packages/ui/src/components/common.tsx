@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
+import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
 import { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -11,7 +11,8 @@ import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
-import { fileLabel, previewClick, tempFile, type FileFormat } from '../lib/preview';
+import { fileLabel, previewClick, tempFile } from '../lib/preview';
+import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
 import { gitLabWords, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
 import { GitLabItemsContext, plainClick } from './GitLabStrip';
@@ -29,13 +30,13 @@ export const STATE_LABELS: Record<SessionState, string> = {
   idle: 'Idle',
   starting: 'Starting',
   working: 'Working',
-  awaiting_permission: 'Needs permission',
-  awaiting_answer: 'Needs answer',
+  awaiting_permission: 'Input',
+  awaiting_answer: 'Input',
   completed: 'Finished',
   cancelled: 'Stopped',
-  failed: 'Failed',
+  failed: 'Error',
   interrupted: 'Interrupted',
-  closed: 'Closed',
+  closed: 'Idle',
 };
 
 export type Tone = 'accent' | 'attention' | 'success' | 'error' | 'warning' | 'muted' | 'faint';
@@ -585,7 +586,6 @@ function TempFileAction({ file, children }: Readonly<{ file: { path: string; has
   );
 }
 
-const FILE_ICONS = { image: FileImage, pdf: FileType, code: FileCode, data: FileBraces, archive: FileArchive, audio: FileMusic, video: FileVideoCamera, sheet: FileSpreadsheet, text: FileText, file: File } satisfies Record<FileFormat, typeof File>;
 
 /**
  * A compact resolved file label. The path remains the link's identity and accessible name; a
@@ -595,7 +595,6 @@ const FILE_ICONS = { image: FileImage, pdf: FileType, code: FileCode, data: File
 function FileLink({ path, url, label: words }: Readonly<{ path: string; url: string; label?: string }>) {
   const preview = usePreview();
   const label = fileLabel(path);
-  const Icon = FILE_ICONS[label.format];
   const line = /#L(\d+)$/.exec(url)?.[1];
   const image = /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
   return (
@@ -605,7 +604,7 @@ function FileLink({ path, url, label: words }: Readonly<{ path: string; url: str
         preview({ url, name: label.name, description: label.path, path: label.path, frameable: true, image }, event.currentTarget);
       }
     }}>
-      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+      <FileIcon path={label.path} className="size-3.5" />
       <span className="min-w-0 truncate">{words ?? <>{label.name}{line && <span className="text-muted">:{line}</span>}</>}</span>
     </a>
   );

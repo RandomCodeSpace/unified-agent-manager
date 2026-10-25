@@ -37,18 +37,18 @@ func TestUtilityInvalidStreakPausesUntilMidnight(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 4; i++ {
-		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeMRDescription, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(false), Fallback: true})
+		l.add(UtilityCall{At: now, Purpose: purposeMRDescription, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
-	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
+	if reason := l.reserve(now, purposeMRDescription, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
 	}
 	if reason := l.reserve(now, purposeTitle, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
-	if reason := l.reserve(midnightAfter(now), purposeCommitMessage, 400, false); reason != "" {
+	if reason := l.reserve(midnightAfter(now), purposeMRDescription, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
 }
@@ -58,10 +58,10 @@ func TestUtilityInvalidStreakCountsTurnsNotAttempts(t *testing.T) {
 	l := utilityLog{}
 	answer := func(valid, final bool) {
 		t.Helper()
-		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeMRDescription, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(valid), Fallback: final && !valid})
+		l.add(UtilityCall{At: now, Purpose: purposeMRDescription, Outcome: utilityOK, Valid: new(valid), Fallback: final && !valid})
 	}
 	// Four turns whose first answer was invalid and whose retry was valid.
 	for range 4 {
@@ -73,12 +73,12 @@ func TestUtilityInvalidStreakCountsTurnsNotAttempts(t *testing.T) {
 		answer(false, false)
 		answer(false, true)
 	}
-	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
+	if reason := l.reserve(now, purposeMRDescription, 400, false); reason != "" {
 		t.Fatalf("paused after 3 failed turns: %q", reason)
 	}
 	answer(false, false)
 	answer(false, true)
-	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != skippedInvalid {
+	if reason := l.reserve(now, purposeMRDescription, 400, false); reason != skippedInvalid {
 		t.Fatalf("4 failed turns: reason=%q", reason)
 	}
 }
@@ -87,19 +87,12 @@ func TestUtilityInvalidWindowDropsOldAnswers(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 13; i++ {
-		if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
+		if reason := l.reserve(now, purposeMRDescription, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeCommitMessage, Outcome: utilityOK, Valid: new(i >= 3 && i < 12)})
+		l.add(UtilityCall{At: now, Purpose: purposeMRDescription, Outcome: utilityOK, Valid: new(i >= 3 && i < 12)})
 	}
-	if reason := l.reserve(now, purposeCommitMessage, 400, false); reason != "" {
+	if reason := l.reserve(now, purposeMRDescription, 400, false); reason != "" {
 		t.Fatal(reason)
-	}
-}
-
-func TestUtilityCommitPromptCap(t *testing.T) {
-	prompt := commitDraftPrompt([]string{strings.Repeat("a", 500)}, false, strings.Repeat("界", 6000))
-	if len(prompt) > 6<<10 {
-		t.Fatalf("prompt bytes=%d", len(prompt))
 	}
 }

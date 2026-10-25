@@ -5,24 +5,22 @@ import { openTask, renderApp, sidebar } from './render';
 
 const row = (id: string) => document.querySelector<HTMLElement>(`nav[aria-label="Threads"] [data-task-row="${id}"]`)!;
 
-describe('unsaved git work', () => {
+describe("a Thread's own changes", () => {
   const st = data.seed();
-  const inP1 = st.tasks.find((t) => t.project_id === 'p1' && t.stage !== 'settled' && t.stage !== 'archived')!;
-  const elsewhere = st.tasks.find((t) => t.project_id !== 'p1' && !t.git_pending && t.stage !== 'settled' && t.stage !== 'archived')!;
-  const n = st.changes.p1.length;
+  const inP1 = st.tasks.find((t) => t.project_id === 'p1' && t.stage !== 'settled' && t.stage !== 'archived' && st.changes.p1.some((f) => f.by?.includes(t.id)))!;
+  const mine = st.changes.p1.filter((f) => f.by?.includes(inP1.id)).length;
 
-  test('a row shows its folder\'s counts after the Project name, with the words for screen readers and in the tip', async () => {
+  test('a row shows the files its Thread changed after the Project name, never its folder\'s counts', async () => {
     renderApp();
     await sidebar();
     const line = row(inP1.id).querySelector('button[data-nav]')!.firstElementChild as HTMLElement;
-    // Project name, then the counts, then the state.
-    expect(line.textContent).toMatch(new RegExp(`unified-agent-manager${n}1${n} not committed · 1 not pushed`));
-    expect(within(line).getByText(`${n} not committed · 1 not pushed`).className).toContain('sr-only');
-    expect(row(elsewhere.id).textContent).not.toMatch(/not committed|not pushed/);
+    expect(line.textContent).toMatch(/^.*unified-agent-manager(\d+)\1 files? changed by this thread/);
+    expect(within(line).getByText(/changed by this thread$/).className).toContain('sr-only');
+    expect(document.querySelector('nav[aria-label="Threads"]')!.textContent).not.toMatch(/not committed|not pushed/);
   });
 
-  test('the header Changes count is the folder\'s uncommitted count', async () => {
+  test('the header Changes count is the Thread\'s own changed files', async () => {
     await openTask(inP1.id);
-    expect(await screen.findByRole('button', { name: new RegExp(`^Open changes.*, ${n} not committed`) })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: new RegExp(`^Open changes, ${mine} files?`) })).toBeTruthy();
   });
 });

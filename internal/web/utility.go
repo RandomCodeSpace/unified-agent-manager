@@ -41,7 +41,6 @@ const (
 // The purposes of Utility calls.
 const (
 	purposeTitle              = "title"
-	purposeCommitMessage      = "commit-message"
 	purposeConfigurationDraft = "configuration-draft"
 	purposeMRDescription      = "mr-description"
 )
