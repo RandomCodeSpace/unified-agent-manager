@@ -2229,6 +2229,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.stopPreviews()
 	s.textBuffers = nil
 	m.archive.forget(s.id)
+	m.forgetDrawingsLocked(s.id)
 	delete(m.sessions, s.id)
 	for grants := range m.fileGrants {
 		grants.revokeTask(s.id)

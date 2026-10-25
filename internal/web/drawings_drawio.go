@@ -235,12 +235,35 @@ const (
 
 var drawioMarkers = []string{"draw.io", "diagrams.net", "geApp", "mxgraph"}
 
+var drawioHostname = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+
 // drawioOrigin checks and normalises an origin for Settings: an absolute
-// http(s) origin with nothing after the host.
+// http(s) origin with nothing after the host. The host is a plain name or
+// an IP with an optional numeric port, so the origin can go into the page
+// policy as it is, even from a hand-edited settings file.
 func drawioOrigin(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
+	bad := errors.New("the draw.io origin must be an absolute http(s) origin such as https://drawio.example.com")
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
-		return "", errors.New("the draw.io origin must be an absolute http(s) origin such as https://drawio.example.com")
+		return "", bad
+	}
+	host := u.Hostname()
+	if host == "" || !drawioHostname.MatchString(host) && net.ParseIP(host) == nil {
+		return "", bad
+	}
+	want := host
+	if strings.Contains(host, ":") {
+		want = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strings.TrimLeft(port, "0123456789") != "" {
+			return "", bad
+		}
+		want += ":" + port
+	}
+	// Nothing but the host and port, so a trailing colon does not pass.
+	if u.Host != want {
+		return "", bad
 	}
 	return strings.ToLower(u.Scheme + "://" + u.Host), nil
 }

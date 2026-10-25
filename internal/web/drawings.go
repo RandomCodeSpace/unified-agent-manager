@@ -115,8 +115,8 @@ type drawingIndex struct {
 }
 
 // drawingStore is the loaded indexes by Thread. mu orders every read and
-// write of them and of the drawing files; it is never held while taking
-// Manager.mu.
+// write of them and of the drawing files. It is taken under Manager.mu
+// (detailLocked, forgetLocked) and so is never held while taking it.
 type drawingStore struct {
 	mu sync.Mutex
 	by map[string]*drawingIndex
@@ -335,6 +335,22 @@ func (m *Manager) SaveDrawing(id, p string, req DrawingSave) (DrawingSaveResult,
 	if err != nil {
 		return DrawingSaveResult{}, newError(http.StatusBadRequest, "%s", err)
 	}
+	out, err := m.writeDrawing(id, dir, rel, format, req, current)
+	if err != nil {
+		return DrawingSaveResult{}, err
+	}
+	// After the index work, so drawings.mu is never held under mu's turn.
+	m.mu.Lock()
+	if s := m.sessions[id]; s != nil && !s.removed {
+		summary := m.summaryLocked(s)
+		m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
+	}
+	m.mu.Unlock()
+	return out, nil
+}
+
+// writeDrawing is SaveDrawing's file and index work, under drawings.mu.
+func (m *Manager) writeDrawing(id, dir, rel, format string, req DrawingSave, current *diagram) (DrawingSaveResult, error) {
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
 	idx := m.drawingsLocked(id)
@@ -377,13 +393,18 @@ func (m *Manager) SaveDrawing(id, p string, req DrawingSave) (DrawingSaveResult,
 		return DrawingSaveResult{}, newError(http.StatusInternalServerError, "uam could not record the drawing")
 	}
 	out.Version, out.AgentVersion = e.Version, e.AgentVersion
-	m.mu.Lock()
-	if s := m.sessions[id]; s != nil && !s.removed {
-		summary := m.summaryLocked(s)
-		m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
-	}
-	m.mu.Unlock()
 	return out, nil
+}
+
+// forgetDrawingsLocked drops the deleted Task's drawing index; the files in
+// its directory are the owner's and stay. The caller holds mu.
+func (m *Manager) forgetDrawingsLocked(taskID string) {
+	m.drawings.mu.Lock()
+	delete(m.drawings.by, taskID)
+	m.drawings.mu.Unlock()
+	if err := os.Remove(m.drawingIndexPath(taskID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Debug("remove the drawings index failed", "session", taskID, "error", err)
+	}
 }
 
 // catchUpLocked makes the current file the agent's version of e. The
@@ -546,7 +567,8 @@ func (s *Server) drawingRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, view)
 	})
 	mux.HandleFunc("PUT /api/sessions/{id}/drawings/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxDrawingBytes+64<<10)
+		// ServeHTTP caps the body at maxDrawingBody; the file itself is
+		// checked against maxDrawingBytes once decoded.
 		var body DrawingSave
 		if !decodeBody(w, r, &body) {
 			return

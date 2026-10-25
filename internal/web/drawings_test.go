@@ -15,8 +15,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -381,6 +383,105 @@ func TestDrawingSaveRefusals(t *testing.T) {
 	}
 }
 
+// A save takes the drawing lock and then the Manager lock to broadcast,
+// while a snapshot takes them the other way round; neither may hold one
+// while waiting for the other, or a PUT racing a snapshot stops the
+// service.
+func TestDrawingSaveAndSnapshotDoNotDeadlock(t *testing.T) {
+	ts, sum, _, _ := drawingTask(t)
+	id := sum.ID
+	if _, err := ts.m.SaveDrawing(id, "docs/flow.excalidraw", DrawingSave{Content: sceneA(t), Format: "excalidraw", Origin: "convert"}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				for i := range 150 {
+					scene := sceneA(t)
+					if i%2 == 1 {
+						scene = sceneB(t)
+					}
+					if _, err := ts.m.SaveDrawing(id, "docs/flow.excalidraw", DrawingSave{Content: scene, Format: "excalidraw"}); err != nil {
+						t.Error(err)
+						return
+					}
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for range 150 {
+					if _, err := ts.m.Detail(id); err != nil {
+						t.Error(err)
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("saves and snapshots deadlocked")
+	}
+	if list, _ := ts.m.Drawings(id); list[0].Version != 301 {
+		t.Fatalf("version = %d", list[0].Version)
+	}
+}
+
+// A file under 2 MiB saves although its JSON body is larger, up to the
+// route's 3 MiB cap; one over 2 MiB is refused.
+func TestDrawingSaveTakesALargeFile(t *testing.T) {
+	ts, sum, _, _ := drawingTask(t)
+	// Each quote is two bytes in the file and four in the JSON body: a
+	// 1.9 MiB file makes a body of about 2.8 MiB.
+	label := strings.Repeat(`"`, 450<<10) + strings.Repeat("a", 1000<<10)
+	scene := exScene(t, map[string]any{"id": "t", "type": "text", "x": 0, "y": 0, "width": 10, "height": 10, "text": label, "originalText": nil})
+	if n := len(scene); n < 1900<<10 || n > maxDrawingBytes {
+		t.Fatalf("scene is %d bytes", n)
+	}
+	w, res := putDrawing(ts, sum.ID, "docs/big.excalidraw", map[string]any{"content": scene, "format": "excalidraw", "origin": "convert"})
+	if w.Code != http.StatusOK || res["version"] != 1.0 {
+		t.Fatalf("large convert = %d %s", w.Code, clipRunes(w.Body.String(), 200))
+	}
+	if w := ts.do(http.MethodPut, "/api/sessions/"+sum.ID+"/drawings/docs/huge.excalidraw", `{"content":"`+strings.Repeat("a", maxDrawingBody)+`"}`, withCookie(ts)); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over the body cap = %d", w.Code)
+	}
+}
+
+// Deleting a Thread drops its drawing index and nothing of its directory.
+func TestDeletingAThreadForgetsItsDrawings(t *testing.T) {
+	ts, sum, _, dir := drawingTask(t)
+	putDrawing(ts, sum.ID, "docs/flow.excalidraw", map[string]any{"content": sceneA(t), "format": "excalidraw", "origin": "convert"})
+	index := ts.m.drawingIndexPath(sum.ID)
+	if _, err := os.Stat(index); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.m.Delete(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(index); !os.IsNotExist(err) {
+		t.Fatalf("index after delete: %v", err)
+	}
+	ts.m.drawings.mu.Lock()
+	_, cached := ts.m.drawings.by[sum.ID]
+	ts.m.drawings.mu.Unlock()
+	if cached {
+		t.Fatal("index still cached")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "flow.excalidraw")); err != nil {
+		t.Fatalf("the owner's file went: %v", err)
+	}
+}
+
 // uam_diagram_read lists the drawings, or describes one with the changes
 // since the agent's version, which then becomes the current one.
 func TestDiagramReadTool(t *testing.T) {
@@ -497,6 +598,31 @@ func drawioServer(t *testing.T, status int, body string, headers map[string]stri
 }
 
 const drawioPage = `<!DOCTYPE html><html><head><title>Flowchart Maker</title></head><body><div id="geApp"></div><script src="js/app.min.js"></script></body></html>`
+
+// An origin is a plain host name or IP with an optional numeric port, so
+// nothing a policy would read as a delimiter can reach the page policy.
+func TestDrawioOriginIsPolicySafe(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://drawio.example.com":      "https://drawio.example.com",
+		"HTTPS://DrawIO.Example.com:8443": "https://drawio.example.com:8443",
+		"http://127.0.0.1:8080/":          "http://127.0.0.1:8080",
+		"http://[::1]:8080":               "http://[::1]:8080",
+		" https://localhost ":             "https://localhost",
+	} {
+		if got, err := drawioOrigin(raw); err != nil || got != want {
+			t.Fatalf("drawioOrigin(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"", "drawio.example", "ftp://drawio.example", "https://user@drawio.example", "https://drawio.example/app", "https://drawio.example?x=1", "https://drawio.example#f",
+		"https://drawio.example;script-src *", "https://a,b.example", "https://a'b.example", "https://*.example", "https://a b.example", "https://a_b.example",
+		"https://drawio.example:x", "https://drawio.example:0", "https://drawio.example:70000", "https://drawio.example:08a", "https://[::1", "https://%41.example", "https://drawio.example:",
+	} {
+		if got, err := drawioOrigin(raw); err == nil {
+			t.Fatalf("drawioOrigin(%q) = %q, accepted", raw, got)
+		}
+	}
+}
 
 func TestCheckDrawIO(t *testing.T) {
 	ctx := context.Background()

@@ -1219,7 +1219,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   there: a path outside `docs/`, a symbolic link or another extension is
   refused. The file is yours; uam keeps the agent's version of it (the
   baseline) and the version counters in its own store, beside
-  `sessions.json`, never in the project. `GET /api/sessions/{id}/drawings`
+  `sessions.json`, never in the project; deleting the Thread removes that
+  record, not your files. `GET /api/sessions/{id}/drawings`
   lists them as `{"drawings": [{path, format, version, agent_version,
   item_id, fence_index, changes_count}]}`, which the session snapshot also
   carries as `drawings`, so a card finds its drawing by the message and
