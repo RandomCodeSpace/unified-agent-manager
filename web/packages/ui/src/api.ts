@@ -2500,8 +2500,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     /** The Thread's drawings (`drawings-v1`). */
     drawings: async (id: string, signal?: AbortSignal) => (await call<{ drawings: Drawing[] }>('GET', `/api/sessions/${enc(id)}/drawings`, undefined, false, signal)).drawings,
-    /** One drawing with the server's diff; `at` reads it as the agent's version `at` saw it (a notice's Compare), when the server keeps that. */
-    drawing: (id: string, path: string, at?: number, signal?: AbortSignal) => call<DrawingDoc>('GET', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}${at === undefined ? '' : `?at=${at}`}`, undefined, false, signal),
+    /** One drawing with the server's diff against the agent's version. */
+    drawing: (id: string, path: string, signal?: AbortSignal) => call<DrawingDoc>('GET', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, undefined, false, signal),
     /** Saves a drawing (409 when `base_version` is behind); `origin: 'convert'` creates it as the agent's v1. */
     putDrawing: (id: string, path: string, body: DrawingPut) => call<DrawingSaved>('PUT', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, body),
     /** Checks a draw.io origin on the server: errors forbid enabling it, warnings are said. */

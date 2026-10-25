@@ -14,7 +14,8 @@ test('Enable waits for a check of the origin in the field, which shows the serve
     const origin = section.getByRole('textbox', { name: 'Origin' });
     const enable = section.getByRole('switch', { name: 'Enable draw.io' });
     expect(enable.hasAttribute('data-disabled')).toBe(true);
-    await user.type(origin, 'https://embed.diagrams.net');
+    // Typed with the spelling the server normalises away: the check and the saved setting use its form.
+    await user.type(origin, 'HTTPS://Embed.diagrams.net/');
     expect(enable.hasAttribute('data-disabled')).toBe(true);
     await user.click(section.getByRole('button', { name: 'Check' }));
     expect(await section.findByText(/Diagrams are edited in a page from embed.diagrams.net/)).toBeTruthy();

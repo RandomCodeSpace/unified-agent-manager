@@ -20,7 +20,6 @@ import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, ItemContext, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
-import { NoticeCompare } from './Drawing';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -1129,7 +1128,7 @@ function assistantMessage({ item, text, streaming = false, className, whole, sta
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
-        {whole?.status === 'whole' ? plainText(text) : <ItemContext.Provider value={{ id: item.id, text }}><Markdown text={text} streaming={streaming} /></ItemContext.Provider>}
+        {whole?.status === 'whole' ? plainText(text) : <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider>}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
       </div>
@@ -1137,15 +1136,21 @@ function assistantMessage({ item, text, streaming = false, className, whole, sta
   );
 }
 
-/** The drawing note uam adds to a prompt ("The user edited docs/x.excalidraw since your version (v1 → v2): …"): its path and the agent's version then. */
-const DRAWING_NOTE = /^The user edited (\S+\.(?:excalidraw|drawio)) since your version \(v(\d+) → v\d+\)/;
+/** A reply's context for its mermaid fences, one object per item and text, so the provider's value holds still across renders. */
+const itemContexts = new WeakMap<Item, { id: string; text: string }>();
+function itemContext(item: Item, text: string) {
+  let ctx = itemContexts.get(item);
+  if (!ctx || ctx.text !== text) {
+    ctx = { id: item.id, text };
+    itemContexts.set(item, ctx);
+  }
+  return ctx;
+}
 
 function noticeRow({ text, className, whole }: MessageParts) {
-  const edited = DRAWING_NOTE.exec(text);
   return (
     <div className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', whole && 'flex-wrap', className)}>
       {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} className="[&_p]:m-0" />}
-      {edited && <NoticeCompare path={edited[1]} at={Number(edited[2])} />}
       {whole && <WholeNote whole={whole} />}
     </div>
   );

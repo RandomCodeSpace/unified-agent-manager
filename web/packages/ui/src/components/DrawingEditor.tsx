@@ -1,14 +1,13 @@
 // The drawing editor (DESIGN.md Drawing editor): the anchored reader under a drawing card's head.
 // Loaded on the first open (Drawing.tsx `lazy`), so the conversation's cold start carries only the
 // cards. Yours is Excalidraw (ExcalidrawCanvas, its own chunk) or the draw.io embed; Agent's and
-// Changes are read-only pictures; a notice's Compare opens the Changes of a past version.
+// Changes are read-only pictures.
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { ArrowUp, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useApi } from '../ApiContext';
-import { describeError, isStatus, type DrawingDoc } from '../api';
+import { describeError, isStatus } from '../api';
 import { cn } from '../lib/cn';
 import { drawioEmbedUrl, drawioMessage, DRAWIO_SANDBOX } from '../lib/drawio';
 import { changesWord, drawioOverlayXml, excalidrawFile, overlay, parseExcalidraw, type DrawnElement } from '../lib/drawings';
@@ -37,40 +36,27 @@ type Save = { state: 'saved' } | { state: 'saving' } | { state: 'failed'; error:
 /**
  * The editor: the anchored reader under the card's head (the whole viewport's height below it,
  * or above the anchor when there is no room; a bottom sheet on a phone). Yours is Excalidraw
- * or the draw.io embed; Agent's and Changes are pictures; history (`at`) is Changes only.
+ * or the draw.io embed; Agent's and Changes are pictures.
  */
 export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ target: OpenDrawing & { open: boolean; phone: boolean }; onClose: () => void; onClosed: () => void }>) {
   const d = useContext(DrawingsContext)!;
-  const api = useApi();
   const id = useId();
   const heading = useRef<HTMLHeadingElement>(null);
-  const history = target.at !== undefined;
-  const [view, setView] = useState<DrawingView>(history ? 'changes' : target.view);
-  const [past, setPast] = useState<{ doc?: DrawingDoc; error?: string } | null>(null);
+  const [view, setView] = useState<DrawingView>(target.view);
   const [save, setSave] = useState<Save>({ state: 'saved' });
   const state = d.doc(target.path);
-  const liveDoc = state?.doc;
-  const doc = history ? past?.doc : liveDoc;
-  const error = history ? past?.error : state?.error;
+  const doc = state?.doc;
+  const error = state?.error;
   const load = d.load;
   useEffect(() => {
-    if (!liveDoc && !history) void load(target.path).catch(() => {});
-  }, [liveDoc, history, load, target.path]);
-  useEffect(() => {
-    if (!history) return;
-    let on = true;
-    api.drawing(d.sessionId, target.path, target.at).then(
-      (doc) => on && setPast({ doc }),
-      (err: unknown) => on && setPast({ error: isStatus(err, 404) ? 'That version is no longer kept.' : describeError(err) }),
-    );
-    return () => {
-      on = false;
-    };
-  }, [api, d.sessionId, history, target.path, target.at]);
+    if (!doc) void load(target.path).catch(() => {});
+  }, [doc, load, target.path]);
 
   const count = doc?.changes.length ?? 0;
   const name = doc ? fileName(doc.path) : fileName(target.path);
   const canvasApi = useRef<ExcalidrawImperativeAPI | null>(null);
+  // Puts a file's text on the editor (Excalidraw's `load`, or the draw.io embed's) as a restore, not a change.
+  const loadScene = useRef<(content: string) => void>(() => {});
   const popup = useRef<HTMLDivElement>(null);
   const fit = useCallback(() => {
     canvasApi.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.7 });
@@ -83,46 +69,63 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   const { current, base } = useParsed(doc);
   const background = useBackground();
   const scheme = useScheme();
+  // The text the next change compares against: what was saved last, or the scene as the editor
+  // restored it (Excalidraw adds defaults, so the restored file is not the saved text).
   const lastSaved = useRef(doc?.content ?? '');
+  const onRestored = useCallback((elements: DrawnElement[], files: Record<string, unknown>) => {
+    lastSaved.current = excalidrawFile(elements, files);
+  }, []);
   const onChange = useCallback((elements: DrawnElement[], files: Record<string, unknown>) => {
     const content = excalidrawFile(elements, files);
-    if (content === lastSaved.current) return;
-    void saveContent(content);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- saveContent reads the latest doc through the closure below
+    if (content !== lastSaved.current) saveContent(content);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- saveContent reads the latest doc through the ref below
   }, []);
-  const latest = useRef({ doc: liveDoc, save: d.save });
+  const latest = useRef({ doc, save: d.save });
   useEffect(() => {
-    latest.current = { doc: liveDoc, save: d.save };
-  }, [liveDoc, d.save]);
-  // Puts `content` on the canvas and returns it as Excalidraw will report it back (its restored
-  // form), so the onChange that follows a programmatic scene is not a save.
-  const setScene = (content: string): string => {
-    const api = canvasApi.current;
-    if (!api) return content;
-    api.updateScene({ elements: structuredClone(parseExcalidraw(content).elements) as never });
-    return excalidrawFile(api.getSceneElements() as unknown as DrawnElement[], api.getFiles());
-  };
-  async function saveContent(content: string, reported = content) {
-    const doc = latest.current.doc;
-    if (!doc) return;
-    lastSaved.current = reported;
-    setSave({ state: 'saving' });
-    try {
-      await latest.current.save(target.path, content, doc.version);
-      setSave({ state: 'saved' });
-    } catch (err) {
-      setSave(isStatus(err, 409) ? { state: 'conflict' } : { state: 'failed', error: describeError(err) });
+    latest.current = { doc, save: d.save };
+  }, [doc, d.save]);
+  // One PUT at a time, the newest content waiting behind it with the version the PUT returns.
+  const queue = useRef<{ busy: boolean; pending: string | null }>({ busy: false, pending: null });
+  function saveContent(content: string) {
+    const q = queue.current;
+    if (q.busy) {
+      q.pending = content;
+      return;
     }
+    q.busy = true;
+    setSave({ state: 'saving' });
+    void (async () => {
+      let version = latest.current.doc?.version;
+      for (let next: string | null = content; next !== null && version !== undefined; next = q.pending, q.pending = null) {
+        try {
+          version = (await latest.current.save(target.path, next, version)).version;
+          lastSaved.current = next;
+          setSave({ state: 'saved' });
+        } catch (err) {
+          if (isStatus(err, 409)) {
+            // The agent wrote meanwhile: the scene stays as the user left it; the doc is read again for the pills, and Reload is theirs to choose.
+            setSave({ state: 'conflict' });
+            void load(target.path).catch(() => {});
+            q.pending = null;
+            break;
+          }
+          setSave({ state: 'failed', error: describeError(err) });
+        }
+      }
+      q.busy = false;
+    })();
   }
   const reload = () => {
     void load(target.path).then((doc) => {
-      lastSaved.current = doc.format === 'excalidraw' ? setScene(doc.content) : doc.content;
+      loadScene.current(doc.content);
+      lastSaved.current = doc.content;
       setSave({ state: 'saved' });
     }, () => {});
   };
   const revert = () => {
     if (!doc || doc.baseline === null) return;
-    void saveContent(doc.baseline, doc.format === 'excalidraw' ? setScene(doc.baseline) : doc.baseline);
+    loadScene.current(doc.baseline);
+    saveContent(doc.baseline);
   };
 
   const overlaid = useMemo(() => (current && base && doc ? overlay(base.elements, current.elements, doc.status) : null), [current, base, doc]);
@@ -136,9 +139,9 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   const changesDrawio = useDrawioPicture(d.drawio, drawioXml.changes);
 
   const saveWord = save.state === 'saving' ? 'Saving' : save.state === 'saved' ? 'Saved' : 'Save failed';
-  const facts = doc ? [`↳ Agent’s v${doc.agent_version}${doc.item_id ? ' · from the reply’s mermaid' : ''}`, doc.path, ...(history || !d.writable ? [] : [saveWord])] : [];
-  const pillText = history && doc ? `Agent’s v${doc.agent_version} → yours v${doc.version} · ${changesWord(count)}` : count ? `Yours · ${changesWord(count)}` : 'Same as the agent’s';
-  const editable = d.writable && !history;
+  const facts = doc ? [`↳ Agent’s v${doc.agent_version}${doc.item_id ? ' · from the reply’s mermaid' : ''}`, doc.path, ...(d.writable ? [saveWord] : [])] : [];
+  const pillText = count ? `Yours · ${changesWord(count)}` : 'Same as the agent’s';
+  const editable = d.writable;
 
   const head = (close: ReactNode, sheet: boolean) => (
     <PanelHead className={cn('gap-1 pt-2 pb-2 pl-4', sheet ? 'pr-2' : 'pr-3')}>
@@ -150,7 +153,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
         <h2 ref={heading} tabIndex={-1} className="min-w-0 truncate text-title text-ink outline-hidden">{name}</h2>
         <Chip tone={count ? 'warning' : 'muted'} fill="well">{pillText}</Chip>
         <span className="flex-1" />
-        {!history && doc && (
+        {doc && (
           <Segmented
             aria-label="Version"
             value={view}
@@ -165,7 +168,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
         <Button variant="primary" size="sm" onClick={onClose}>Done</Button>
         {close}
       </div>
-      <p className="text-caption text-muted">{history ? 'What you changed before this message, as the agent received it.' : DESCRIPTION[view]}</p>
+      <p className="text-caption text-muted">{DESCRIPTION[view]}</p>
       {facts.length > 0 && (
         <p className="flex flex-wrap gap-1.5 text-caption text-muted">
           {facts.map((f) => <span key={f} className="rounded-xs bg-tint-well px-1.5">{f}</span>)}
@@ -178,7 +181,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   const canvas = doc && editable && (
     <div className={cn('absolute inset-0', view !== 'mine' && 'invisible [&_*]:invisible!')}>
       {doc.format === 'drawio' && d.drawio ? (
-        <DrawioFrame origin={d.drawio} xml={doc.content} onSave={(xml) => { if (xml !== lastSaved.current) void saveContent(xml); }} />
+        <DrawioFrame origin={d.drawio} xml={doc.content} onSave={(xml) => { if (xml !== lastSaved.current) saveContent(xml); }} onReady={(l) => { loadScene.current = l; }} />
       ) : current ? (
         <Suspense fallback={<div className="flex h-full items-center justify-center"><Spinner className="border-muted" /></div>}>
           <ExcalidrawCanvas
@@ -187,10 +190,10 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             theme={scheme}
             background={background}
             onChange={onChange}
-            onApi={(a) => {
+            onRestored={onRestored}
+            onApi={(a, l) => {
               canvasApi.current = a;
-              // The file as Excalidraw restored it (added defaults): the first edit's save must not carry that noise as a version of its own.
-              lastSaved.current = excalidrawFile(a.getSceneElements() as unknown as DrawnElement[], a.getFiles());
+              loadScene.current = (content) => l(parseExcalidraw(content).elements);
               // Dev only: scripts/check-drawings.mjs finds the boxes to double-click through it.
               if (import.meta.env.DEV) (window as unknown as { __uamExcalidraw?: ExcalidrawImperativeAPI }).__uamExcalidraw = a;
               setTimeout(fit, 60);
@@ -235,7 +238,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
                 ))}
               </ul>
             </PanelSection>
-            <PanelSection label={history ? 'Sent with this message' : 'Sent with your next message'} meta="added to your message, no model call">
+            <PanelSection label="Sent with your next message" meta="added to your message, no model call">
               <pre className="rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{doc.note}</pre>
             </PanelSection>
             <PanelSection label="What the agent reads" meta="uam_diagram_read · your version">
@@ -259,14 +262,14 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
           <span className="flex items-center gap-1.5"><Key>Ctrl</Key><Key>Z</Key>undo</span>
         </>
       ) : (
-        <span>{history ? 'Already with the agent: it replied from this version.' : view === 'mine' ? 'Every change saves to the file.' : DESCRIPTION[view]}</span>
+        <span>{view === 'mine' ? 'Every change saves to the file.' : DESCRIPTION[view]}</span>
       )}
       <span className="flex-1" />
       {count > 0 && editable && doc?.baseline !== null && <Button size="sm" onClick={revert}>Revert to agent’s</Button>}
     </PanelFoot>
   );
 
-  const label = history ? `Changes to ${name}` : `Edit ${name}`;
+  const label = `Edit ${name}`;
   const back = () => target.anchor;
   if (target.phone || !target.anchor.isConnected) {
     return (
@@ -339,24 +342,30 @@ function Legend() {
 
 /**
  * The draw.io embed in Yours: loads the file once the page says `init`, saves on its `autosave`
- * and `save` events. Messages count only from this frame's window.
+ * and `save` events, and hands the owner `load` for Reload and Revert (an embed keeps autosaving
+ * what it shows, so a version the owner takes back must reach it). Messages count only from
+ * this frame's window.
  */
-function DrawioFrame({ origin, xml, onSave }: Readonly<{ origin: string; xml: string; onSave: (xml: string) => void }>) {
+function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string; xml: string; onSave: (xml: string) => void; onReady: (load: (xml: string) => void) => void }>) {
   const frame = useRef<HTMLIFrameElement>(null);
   const first = useRef(xml);
-  const latest = useRef(onSave);
+  const latest = useRef({ onSave, onReady });
   useEffect(() => {
-    latest.current = onSave;
-  }, [onSave]);
+    latest.current = { onSave, onReady };
+  }, [onSave, onReady]);
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
+    const load = (xml: string) => el.contentWindow?.postMessage(JSON.stringify({ action: 'load', xml, autosave: 1 }), '*');
     const onMessage = (e: MessageEvent) => {
       if (e.source !== el.contentWindow) return;
       const m = drawioMessage(e.data);
       if (!m) return;
-      if (m.event === 'init') el.contentWindow?.postMessage(JSON.stringify({ action: 'load', xml: first.current, autosave: 1 }), '*');
-      if ((m.event === 'autosave' || m.event === 'save') && m.xml) latest.current(m.xml);
+      if (m.event === 'init') {
+        load(first.current);
+        latest.current.onReady(load);
+      }
+      if ((m.event === 'autosave' || m.event === 'save') && m.xml) latest.current.onSave(m.xml);
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);

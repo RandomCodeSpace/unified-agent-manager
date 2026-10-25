@@ -77,8 +77,8 @@ async function handle(id: string, source: string, theme: Record<string, string>)
 async function convert(id: string, source: string): Promise<DiagramReply> {
   try {
     await fontReady;
-    const { elements, files } = await parseMermaidToExcalidraw(source, { themeVariables: { fontSize: '16px' } });
-    return { id, elements: elements as unknown as Record<string, unknown>[], files: (files ?? {}) as Record<string, unknown> };
+    const { elements } = await parseMermaidToExcalidraw(source, { themeVariables: { fontSize: '16px' } });
+    return { id, elements: elements as unknown as Record<string, unknown>[] };
   } catch (err) {
     return { id, error: err instanceof Error ? err.message : String(err) };
   }

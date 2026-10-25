@@ -253,9 +253,6 @@ export function drawingsMock() {
         if (method === 'GET') {
           const e = mine[path];
           if (!e) return fail(404, 'no such drawing');
-          const at = url.searchParams.get('at');
-          // History: the mock keeps no versions; the current diff stands in while the agent's version is the one asked for.
-          if (at !== null && Number(at) !== e.agent_version) return fail(404, 'that version is no longer kept');
           return reply(200, view(path, e));
         }
         if (method === 'PUT') {

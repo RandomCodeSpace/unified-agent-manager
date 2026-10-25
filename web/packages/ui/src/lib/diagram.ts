@@ -35,10 +35,12 @@ export interface DiagramRendered {
 
 export interface DiagramConverted {
   id: string;
-  /** Excalidraw element skeletons as `@excalidraw/mermaid-to-excalidraw` emits them; the page converts them to elements. */
+  /** Excalidraw element skeletons as `@excalidraw/mermaid-to-excalidraw` emits them, of the shape types only; the page converts them to elements. */
   elements: Record<string, unknown>[];
-  files: Record<string, unknown>;
 }
+
+/** The skeleton types a drawing is made of; the page drops anything else the frame sends (images and their files above all). */
+const SKELETON_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'line', 'text', 'frame']);
 
 export interface DiagramFailed {
   id: string;
@@ -61,7 +63,7 @@ export function parseRequest(data: unknown): DiagramRequest | null {
 export function parseReply(data: unknown): DiagramReply | null {
   if (!isRecord(data) || typeof data.id !== 'string') return null;
   if (typeof data.error === 'string') return { id: data.id, error: data.error };
-  if (Array.isArray(data.elements)) return { id: data.id, elements: data.elements.filter(isRecord), files: isRecord(data.files) ? data.files : {} };
+  if (Array.isArray(data.elements)) return { id: data.id, elements: data.elements.filter((e): e is Record<string, unknown> => isRecord(e) && typeof e.type === 'string' && SKELETON_TYPES.has(e.type)) };
   if (typeof data.svg === 'string' && typeof data.width === 'number' && typeof data.height === 'number') {
     return { id: data.id, svg: data.svg, width: data.width, height: data.height, ...(typeof data.diagramType === 'string' ? { diagramType: data.diagramType } : {}) };
   }
@@ -184,7 +186,7 @@ export class DiagramQueue {
     this.current = null;
     if ('error' in reply) p.reject(new DiagramError(reply.error, false));
     else if ('svg' in reply) p.resolve({ svg: reply.svg, width: reply.width, height: reply.height, ...(reply.diagramType ? { diagramType: reply.diagramType } : {}) });
-    else p.resolve({ elements: reply.elements, files: reply.files });
+    else p.resolve({ elements: reply.elements });
     this.next();
     return true;
   }

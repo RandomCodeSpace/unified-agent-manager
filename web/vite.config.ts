@@ -44,8 +44,9 @@ export default defineConfig({
   // which the default localhost-only CORS rule refuses. The production frame is a classic script.
   server: { cors: { origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'null'] } },
   // The pre-bundle takes the drawing packages up front (discovering one mid-session reloads every
-  // open page) and keeps Excalidraw on this origin the way the build does.
-  optimizeDeps: { include: ['mermaid', '@excalidraw/mermaid-to-excalidraw', '@excalidraw/excalidraw'], rolldownOptions: { plugins: [excalidrawOnOrigin()] } },
+  // open page), keeps Excalidraw on this origin and patches the converter's subgraph lookup the
+  // way the build does (its transform only: the bundle check belongs to the frame build).
+  optimizeDeps: { include: ['mermaid', '@excalidraw/mermaid-to-excalidraw', '@excalidraw/excalidraw'], rolldownOptions: { plugins: [excalidrawOnOrigin(), { name: 'uam-mermaid-cluster-ids-dev', transform: clusterIdFix().transform }] } },
 });
 
 const FRAME_DOCUMENT = 'diagram-frame.html';

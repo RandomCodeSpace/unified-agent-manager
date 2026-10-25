@@ -70,12 +70,12 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
     if (!drawings || !fence) return;
     setConvert({ busy: true });
     try {
-      const { elements, files } = await convertDiagram(source);
+      const { elements } = await convertDiagram(source);
       const { convertToExcalidrawElements } = await loadExcalidraw();
       const converted = convertToExcalidrawElements(styleSkeletons(elements as Skeleton[]) as never, { regenerateIds: false }) as unknown as DrawnElement[];
       const format = drawings.drawio ? 'drawio' : 'excalidraw';
       const path = drawingPath(fence.itemId, fence.index, format);
-      await drawings.create(path, { content: format === 'drawio' ? toDrawioXml(converted) : excalidrawFile(converted, files), format, origin: 'convert', item_id: fence.itemId, fence_index: fence.index });
+      await drawings.create(path, { content: format === 'drawio' ? toDrawioXml(converted) : excalidrawFile(converted, {}), format, origin: 'convert', item_id: fence.itemId, fence_index: fence.index });
       onCreated(path);
     } catch (err) {
       setConvert({ busy: false, error: err instanceof DiagramError ? errorReason(err.message) : describeError(err) });

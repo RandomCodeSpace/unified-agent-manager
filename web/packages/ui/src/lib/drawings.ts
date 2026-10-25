@@ -57,7 +57,8 @@ export function drawingPath(itemId: string, fenceIndex: number, format: DrawingF
 /** The sources of a message's mermaid fences, in order; a fence's index among them is its `fence_index`. */
 export function mermaidFences(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/^[ \t>]*(`{3,}|~{3,})[ \t]*mermaid[^\n]*\n([\s\S]*?)\n[ \t>]*\1[ \t]*$/gm)) out.push(m[2].trim());
+  // The closing fence may be longer than the opening one, as remark reads it.
+  for (const m of text.matchAll(/^[ \t>]*(`{3,}|~{3,})[ \t]*mermaid[^\n]*\n([\s\S]*?)\n[ \t>]*\1[`~]*[ \t]*$/gm)) out.push(m[2].trim());
   return out;
 }
 
@@ -207,10 +208,10 @@ const DRAWIO_STYLE: Record<string, string> = {
   diamond: 'rhombus;whiteSpace=wrap;html=1;',
 };
 
-/** The label bound to each container or arrow. */
+/** The label bound to each container or arrow, escaped: draw.io reads a cell's value as HTML (`html=1`). */
 function labels(elements: readonly DrawnElement[]): Map<string, string> {
   const out = new Map<string, string>();
-  for (const e of elements) if (e.type === 'text' && e.containerId) out.set(e.containerId, (e.originalText ?? e.text ?? '').trim());
+  for (const e of elements) if (e.type === 'text' && e.containerId) out.set(e.containerId, (e.originalText ?? e.text ?? '').trim().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
   return out;
 }
 

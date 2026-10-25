@@ -22,7 +22,8 @@ export function DrawioSettings({ value, saving, onSave, onProblem }: Readonly<{ 
   const [editor, setEditor] = useState<Editor>(value?.enabled ? 'drawio' : 'excalidraw');
   const [origin, setOrigin] = useState(value?.origin ?? '');
   const [check, setCheck] = useState<{ origin: string; busy: boolean; result?: DrawioCheck; error?: string } | null>(null);
-  const trimmed = origin.trim().replace(/\/+$/, '');
+  // The server stores the origin lower-cased without a trailing slash: the check and Enable use that spelling.
+  const trimmed = origin.trim().replace(/\/+$/, '').toLowerCase();
   const checked = check && !check.busy && check.origin === trimmed ? check : null;
   const ok = !!checked?.result?.ok;
 

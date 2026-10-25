@@ -36,18 +36,20 @@ export interface CanvasProps {
   theme: 'light' | 'dark';
   /** The canvas colour: the `raised` token. */
   background: string;
-  /** Every change, debounced 200 ms by the editor, with the live elements and files. */
+  /** Every change the user made, debounced 200 ms, with the live elements and files. */
   onChange: (elements: DrawnElement[], files: Record<string, unknown>) => void;
-  /** The imperative API once it is here; the editor keeps it in a ref. */
-  onApi: (api: ExcalidrawImperativeAPI) => void;
+  /** The scene as Excalidraw restored it (added defaults, re-measured text) on mount or after `load`: the text the next change compares against. */
+  onRestored: (elements: DrawnElement[], files: Record<string, unknown>) => void;
+  /** The imperative API once it is here, and `load`, which puts a file's elements on the canvas as a restore, not a change. */
+  onApi: (api: ExcalidrawImperativeAPI, load: (elements: readonly DrawnElement[]) => void) => void;
 }
 
 export type { ExcalidrawImperativeAPI };
 
-export default function ExcalidrawCanvas({ elements, files, theme, background, onChange, onApi }: Readonly<CanvasProps>) {
+export default function ExcalidrawCanvas({ elements, files, theme, background, onChange, onRestored, onApi }: Readonly<CanvasProps>) {
   const timer = useRef(0);
-  // Excalidraw reports the scene it restored on mount (added defaults, re-measured text) as changes:
-  // only what follows the user's first pointer, key, drop or paste is one.
+  // Excalidraw reports the scene it restored (on mount, after `load`) as changes: only what
+  // follows the user's first pointer, key, drop or paste is one.
   const touched = useRef(false);
   const touch = () => {
     touched.current = true;
@@ -56,14 +58,19 @@ export default function ExcalidrawCanvas({ elements, files, theme, background, o
   const [initial] = useState(() => ({ elements: structuredClone(elements) as never, files: files as never, appState: { viewBackgroundColor: background, currentItemRoughness: 0, currentItemFontFamily: NUNITO, currentItemStrokeWidth: 1.5 }, scrollToContent: true }));
   const changed = useCallback<NonNullable<Parameters<typeof Excalidraw>[0]['onChange']>>((els, _state, f) => {
     clearTimeout(timer.current);
-    if (!touched.current) return;
-    timer.current = window.setTimeout(() => onChange(structuredClone(els.filter((e) => !e.isDeleted)) as unknown as DrawnElement[], { ...f }), 200);
-  }, [onChange]);
+    const live = () => structuredClone(els.filter((e) => !e.isDeleted)) as unknown as DrawnElement[];
+    if (!touched.current) return onRestored(live(), { ...f });
+    timer.current = window.setTimeout(() => onChange(live(), { ...f }), 200);
+  }, [onChange, onRestored]);
+  const ready = useCallback((api: ExcalidrawImperativeAPI) => onApi(api, (next) => {
+    touched.current = false;
+    api.updateScene({ elements: structuredClone(next) as never });
+  }), [onApi]);
   return (
     <div className="h-full w-full" onPointerDownCapture={touch} onKeyDownCapture={touch} onDropCapture={touch} onPasteCapture={touch}>
       {/* The editor is the reader's reason to open: the keys (R, A, Del) must work at once, so the canvas takes focus. */}
       {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
-      <Excalidraw initialData={initial} theme={theme} autoFocus excalidrawAPI={onApi} onChange={changed}>
+      <Excalidraw initialData={initial} theme={theme} autoFocus excalidrawAPI={ready} onChange={changed}>
         <FullMenu />
       </Excalidraw>
     </div>

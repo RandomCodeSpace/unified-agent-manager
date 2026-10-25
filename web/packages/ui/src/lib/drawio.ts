@@ -56,7 +56,12 @@ function ensureExporter(origin: string) {
   frame.title = 'draw.io exporter';
   frame.className = 'pointer-events-none fixed top-0 left-0 -z-10 h-150 w-200 opacity-0';
   const ready = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('The draw.io page did not start')), EXPORT_TIMEOUT * 4);
+    const timer = setTimeout(() => {
+      // A page that never said `init` goes, so the next picture starts a fresh one.
+      frame.remove();
+      if (exporter?.frame === frame) exporter = null;
+      reject(new Error('The draw.io page did not start'));
+    }, EXPORT_TIMEOUT * 4);
     const onMessage = (e: MessageEvent) => {
       if (e.source !== frame.contentWindow) return;
       if (drawioMessage(e.data)?.event !== 'init') return;
@@ -87,10 +92,12 @@ async function run(origin: string, job: Job) {
         if (e.source !== target) return;
         const m = drawioMessage(e.data);
         if (m?.event === 'load') target.postMessage(JSON.stringify({ action: 'export', format: 'png' }), '*');
-        if (m?.event !== 'export' || !m.data) return;
+        if (m?.event !== 'export') return;
         clearTimeout(timer);
         window.removeEventListener('message', onMessage);
-        resolve(m.data);
+        // Only a PNG data URL becomes an <img> source; anything else the page sent is refused.
+        if (m.data && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(m.data)) resolve(m.data);
+        else reject(new Error('draw.io did not return a PNG'));
       };
       window.addEventListener('message', onMessage);
       target.postMessage(JSON.stringify({ action: 'load', xml: job.xml }), '*');

@@ -26,8 +26,6 @@ export interface OpenDrawing {
   view: DrawingView;
   /** The element the reader anchors to and lifts above the dim. */
   anchor: HTMLElement;
-  /** History: the drawing as the agent's version `at` saw it (a notice's Compare); read-only. */
-  at?: number;
 }
 
 export interface DrawingsApi {
@@ -99,10 +97,11 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
     return p;
   }, [api, sessionId]);
 
+  const title = taskName(session);
   const value = useMemo<DrawingsApi>(() => ({
     sessionId,
     writable,
-    title: taskName(session),
+    title,
     drawings,
     drawio,
     doc: (path) => docs[path],
@@ -125,7 +124,7 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
       return saved;
     },
     open: (target) => setOpened({ ...target, open: true, phone: window.matchMedia(PHONE).matches }),
-  }), [api, sessionId, writable, session, drawings, drawio, docs, load, relist]);
+  }), [api, sessionId, writable, title, drawings, drawio, docs, load, relist]);
 
   // The agent read a drawing, or the note went with a prompt: the list says so before the doc does.
   useEffect(() => {
@@ -295,17 +294,6 @@ export function DrawingChips() {
         </span>
       ))}
     </div>
-  );
-}
-
-/** The "Compare" link of a notice row that reports an edit the agent received; it opens the editor on that version's changes. */
-export function NoticeCompare({ path, at }: Readonly<{ path: string; at: number }>) {
-  const d = useContext(DrawingsContext);
-  if (!d) return null;
-  return (
-    <button type="button" aria-haspopup="dialog" className="shrink-0 rounded-xs text-accent hover:underline" onClick={(e) => d.open({ path, view: 'changes', anchor: e.currentTarget, at })}>
-      Compare
-    </button>
   );
 }
 

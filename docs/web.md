@@ -1042,8 +1042,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Excalidraw canvas (every change saves on its own), Agent's is the version
   the agent last wrote or read, Changes shows both in one picture with the
   list of what changed. Your changes reach the agent as a note with your next
-  message (the composer shows a chip per changed drawing; the note's row in
-  the conversation keeps a Compare link). The Excalidraw editor (2.9 MB)
+  message (the composer shows a chip per changed drawing; the note itself
+  appears in the conversation as a notice). The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
   Diagram editor can switch to a draw.io page at an origin you name, after a
   check of that origin passes.

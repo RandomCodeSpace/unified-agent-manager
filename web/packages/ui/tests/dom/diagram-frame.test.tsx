@@ -78,10 +78,10 @@ describe('diagram frame', () => {
       window.dispatchEvent(new MessageEvent('message', { data: { id, convert: source }, source: window.parent, origin: 'http://localhost' }));
     });
 
-  test('a convert request answers with the converter’s element skeletons and files', async () => {
+  test('a convert request answers with the converter’s element skeletons', async () => {
     const elements = [{ type: 'rectangle', id: 'a', x: 0, y: 0, width: 10, height: 10, label: { text: 'A' } }];
-    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements, files: undefined });
-    expect(await convert('c1', 'flowchart LR\n  a --> b')).toEqual({ id: 'c1', elements, files: {} });
+    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements, files: { f1: { dataURL: 'data:image/png;base64,AAAA' } } });
+    expect(await convert('c1', 'flowchart LR\n  a --> b')).toEqual({ id: 'c1', elements });
     expect(converter.parseMermaidToExcalidraw).toHaveBeenLastCalledWith('flowchart LR\n  a --> b', { themeVariables: { fontSize: '16px' } });
     expect(mermaid.render).not.toHaveBeenCalledWith('c1', expect.anything(), expect.anything());
   });
