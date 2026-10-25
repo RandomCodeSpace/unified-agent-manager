@@ -8,12 +8,20 @@
  * frame answers to the origin the request came from. Each side validates what it receives.
  */
 
-export interface DiagramRequest {
+export interface DiagramRender {
   id: string;
   source: string;
   /** Mermaid theme variables, resolved from the page's tokens. */
   theme: Record<string, string>;
 }
+
+/** Mermaid source to Excalidraw element skeletons (flowchart and sequence), for "Edit as drawing". */
+export interface DiagramConvert {
+  id: string;
+  convert: string;
+}
+
+export type DiagramRequest = DiagramRender | DiagramConvert;
 
 export interface DiagramRendered {
   id: string;
@@ -21,19 +29,32 @@ export interface DiagramRendered {
   /** Intrinsic size from the SVG's viewBox, so the page can size the image before it loads. */
   width: number;
   height: number;
+  /** What Mermaid parsed the source as (`flowchart-v2`, `sequence`, `gantt`…), so the page knows which diagrams convert. */
+  diagramType?: string;
 }
+
+export interface DiagramConverted {
+  id: string;
+  /** Excalidraw element skeletons as `@excalidraw/mermaid-to-excalidraw` emits them, of the shape types only; the page converts them to elements. */
+  elements: Record<string, unknown>[];
+}
+
+/** The skeleton types a drawing is made of; the page drops anything else the frame sends (images and their files above all). */
+const SKELETON_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'line', 'text', 'frame']);
 
 export interface DiagramFailed {
   id: string;
   error: string;
 }
 
-export type DiagramReply = DiagramRendered | DiagramFailed;
+export type DiagramReply = DiagramRendered | DiagramConverted | DiagramFailed;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
 export function parseRequest(data: unknown): DiagramRequest | null {
-  if (!isRecord(data) || typeof data.id !== 'string' || typeof data.source !== 'string' || !isRecord(data.theme)) return null;
+  if (!isRecord(data) || typeof data.id !== 'string') return null;
+  if (typeof data.convert === 'string') return { id: data.id, convert: data.convert };
+  if (typeof data.source !== 'string' || !isRecord(data.theme)) return null;
   const theme: Record<string, string> = {};
   for (const [k, v] of Object.entries(data.theme)) if (typeof v === 'string') theme[k] = v;
   return { id: data.id, source: data.source, theme };
@@ -42,8 +63,9 @@ export function parseRequest(data: unknown): DiagramRequest | null {
 export function parseReply(data: unknown): DiagramReply | null {
   if (!isRecord(data) || typeof data.id !== 'string') return null;
   if (typeof data.error === 'string') return { id: data.id, error: data.error };
+  if (Array.isArray(data.elements)) return { id: data.id, elements: data.elements.filter((e): e is Record<string, unknown> => isRecord(e) && typeof e.type === 'string' && SKELETON_TYPES.has(e.type)) };
   if (typeof data.svg === 'string' && typeof data.width === 'number' && typeof data.height === 'number') {
-    return { id: data.id, svg: data.svg, width: data.width, height: data.height };
+    return { id: data.id, svg: data.svg, width: data.width, height: data.height, ...(typeof data.diagramType === 'string' ? { diagramType: data.diagramType } : {}) };
   }
   return null;
 }
@@ -77,7 +99,21 @@ export interface Rendered {
   svg: string;
   width: number;
   height: number;
+  diagramType?: string;
 }
+
+export type Converted = Omit<DiagramConverted, 'id'>;
+
+/** The sources of a message's mermaid fences, in order; a fence's index among them is its drawing's `fence_index`. */
+export function mermaidFences(text: string): string[] {
+  const out: string[] = [];
+  // The closing fence may be longer than the opening one, as remark reads it.
+  for (const m of text.matchAll(/^[ \t>]*(`{3,}|~{3,})[ \t]*mermaid[^\n]*\n([\s\S]*?)\n[ \t>]*\1[`~]*[ \t]*$/gm)) out.push(m[2].trim());
+  return out;
+}
+
+/** The Mermaid diagram types "Edit as drawing" converts: `flowchart-v2` (also `flowchart`, `graph`) and `sequence`. */
+export const convertible = (diagramType: string | undefined): boolean => !!diagramType && (/^flowchart/.test(diagramType) || diagramType === 'graph' || diagramType === 'sequence');
 
 export class DiagramError extends Error {
   /** True when a retry could succeed (the frame stalled); parse errors are not transient. */
@@ -108,9 +144,8 @@ export function errorReason(message: string): string {
 
 interface Pending {
   id: string;
-  source: string;
-  theme: Record<string, string>;
-  resolve: (r: Rendered) => void;
+  request: Omit<DiagramRender, 'id'> | Omit<DiagramConvert, 'id'>;
+  resolve: (r: Rendered | Converted) => void;
   reject: (e: DiagramError) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -136,9 +171,17 @@ export class DiagramQueue {
   }
 
   render(source: string, theme: Record<string, string>): Promise<Rendered> {
-    return new Promise<Rendered>((resolve, reject) => {
+    return this.enqueue({ source, theme }) as Promise<Rendered>;
+  }
+
+  convert(source: string): Promise<Converted> {
+    return this.enqueue({ convert: source }) as Promise<Converted>;
+  }
+
+  private enqueue(request: Pending['request']): Promise<Rendered | Converted> {
+    return new Promise((resolve, reject) => {
       // Mermaid uses the id as a DOM id: it must start with a letter.
-      this.waiting.push({ id: `d${++this.seq}`, source, theme, resolve, reject });
+      this.waiting.push({ id: `d${++this.seq}`, request, resolve, reject });
       this.next();
     });
   }
@@ -149,8 +192,9 @@ export class DiagramQueue {
     if (!reply || !p || reply.id !== p.id) return false;
     clearTimeout(p.timer);
     this.current = null;
-    if ('svg' in reply) p.resolve({ svg: reply.svg, width: reply.width, height: reply.height });
-    else p.reject(new DiagramError(reply.error, false));
+    if ('error' in reply) p.reject(new DiagramError(reply.error, false));
+    else if ('svg' in reply) p.resolve({ svg: reply.svg, width: reply.width, height: reply.height, ...(reply.diagramType ? { diagramType: reply.diagramType } : {}) });
+    else p.resolve({ elements: reply.elements });
     this.next();
     return true;
   }
@@ -176,7 +220,7 @@ export class DiagramQueue {
       this.onStall();
       this.next();
     }, this.timeoutMs);
-    this.send({ id: p.id, source: p.source, theme: p.theme });
+    this.send({ id: p.id, ...p.request });
   }
 }
 
@@ -289,7 +333,8 @@ function ensureFrame(): { queue: DiagramQueue; loaded: Promise<void> } {
   removeFrameListeners = () => window.removeEventListener('message', onMessage);
   frame = el;
   queue = q;
-  loaded = new Promise<void>((resolve, reject) => {
+  // The local promise is returned: a frame that fails on append (an environment without frames) drops the module's copy at once.
+  const ready = new Promise<void>((resolve, reject) => {
     const clear = () => {
       clearTimeout(timer);
       el.removeEventListener('load', onLoad);
@@ -308,8 +353,9 @@ function ensureFrame(): { queue: DiagramQueue; loaded: Promise<void> } {
     el.addEventListener('load', onLoad, { once: true });
     el.addEventListener('error', onError, { once: true });
   });
+  loaded = ready;
   document.body.append(el);
-  return { queue: q, loaded };
+  return { queue: q, loaded: ready };
 }
 
 /** Renders Mermaid source to an SVG string; the same source renders once per page and scheme. */
@@ -324,4 +370,10 @@ export function renderDiagram(source: string): Promise<Rendered> {
     if (err instanceof DiagramError && err.transient) cache.delete(key);
   });
   return p;
+}
+
+/** Converts Mermaid source (a flowchart or a sequence diagram) to Excalidraw element skeletons in the frame; not cached, a drawing is made once. */
+export function convertDiagram(source: string): Promise<Converted> {
+  const { queue: q, loaded: ready } = ensureFrame();
+  return ready.then(() => q.convert(source));
 }

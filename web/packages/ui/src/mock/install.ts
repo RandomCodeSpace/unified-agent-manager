@@ -8,6 +8,7 @@ import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
 import { worktreesMock } from './worktrees';
 import { chartMock } from './charts';
+import { drawingsMock } from './drawings';
 import { routinesMock } from './routines';
 import { accountMock } from './account';
 import { cliMock } from './cli';
@@ -162,10 +163,11 @@ export function install(): { received: Received[] } {
   // A compact Task's detail carries its newest page and a cursor for the rest.
   const detail = (t: MockTask): SessionDetail => {
     const { agentItems: _a, ...rest } = t;
-    if (t.representation !== 'compact-v1') return rest;
+    const withDrawings = { ...rest, drawings: drawings.list(t.id) };
+    if (t.representation !== 'compact-v1') return withDrawings;
     const start = Math.max(0, t.items.length - PAGE);
     const older = t.recordSubagents?.length && t.subagents.length ? { subagents_before: `a.${itemCursor(t.subagents[0].id)}` } : {};
-    return { ...rest, ...older, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
+    return { ...withDrawings, ...older, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
   };
   // The service's counts across the Threads and the Threads behind them, from their phases as the service derives
   // them; one Background AI call runs. `?aiidle` shows a service with nothing in flight.
@@ -222,6 +224,7 @@ export function install(): { received: Received[] } {
   const configuration = configurationMock(() => !!st.settings.terminal);
   const mcp = mcpMock(() => !!st.settings.terminal, () => !!st.settings.github_mcp);
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
+  const drawings = drawingsMock();
   const assist = assistMock({
     broadcast: (name, payload) => broadcast(name, payload),
     settings: () => st.settings,
@@ -707,6 +710,8 @@ export function install(): { received: Received[] } {
 
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
+    const drawn = drawings.route(method, url, body);
+    if (drawn) return drawn;
     if (path === '/api/connections') return json(200, { instance_id: 'mock-home', connections: [] });
     if (path === '/api/meta') return json(200, { ...st.meta, disk: worktrees.disk });
     if (path === '/api/session-stats' && method === 'GET') return json(200, {
@@ -810,7 +815,14 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'worktrees_dir') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
+      if (body.drawio !== undefined) {
+        const drawio = body.drawio as { origin?: unknown; enabled?: unknown } | null;
+        if (!drawio || typeof drawio.origin !== 'string' || typeof drawio.enabled !== 'boolean') return fail(400, 'drawio must be {origin, enabled}');
+        if (drawio.enabled && !drawings.check(drawio.origin).ok) return fail(400, 'the draw.io origin failed its check');
+        st.settings = { ...st.settings, drawio: { origin: drawio.origin, enabled: drawio.enabled } };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.default_project_dir !== undefined) {
         if (typeof body.default_project_dir !== 'string') return fail(400, 'default_project_dir must be a string');
         const dir = cleanPath(body.default_project_dir);
@@ -1354,6 +1366,8 @@ export function install(): { received: Received[] } {
             return fail(409, 'a turn is already running in this session');
           }
           pushItem(t, { id: nextId('u'), kind: 'user', text, time: now(), ...withAttachments });
+          // The prompt carries the drawing notes: each lands as a uam notice and the agent's version catches up.
+          for (const text of drawings.consume(t.id)) pushItem(t, { id: nextId('n'), kind: 'notice', text, time: now() });
           t.last_submission = sub;
           touch(t, { state: 'working', state_detail: undefined, open: true });
           broadcast('submission', { session_id: t.id, submission: sub }, t.id);

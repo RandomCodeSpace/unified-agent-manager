@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, ItemContext, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -1128,12 +1128,23 @@ function assistantMessage({ item, text, streaming = false, className, whole, sta
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
-        {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
+        {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
       </div>
     </Copyable>
   );
+}
+
+/** A reply's context for its mermaid fences (only a reply that mentions mermaid gets one), one object per item and text, so the provider's value holds still across renders. */
+const itemContexts = new WeakMap<Item, { id: string; text: string }>();
+function itemContext(item: Item, text: string) {
+  let ctx = itemContexts.get(item);
+  if (!ctx || ctx.text !== text) {
+    ctx = { id: item.id, text };
+    itemContexts.set(item, ctx);
+  }
+  return ctx;
 }
 
 function noticeRow({ text, className, whole }: MessageParts) {

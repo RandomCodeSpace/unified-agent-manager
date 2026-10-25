@@ -1035,6 +1035,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Diagrams render in the browser inside a sandboxed frame that cannot read
   your session or call the service (ADR 0004); the first diagram of a page
   load fetches Mermaid (3.4 MB).
+- **Editable diagrams**: a flowchart or sequence diagram in a reply offers
+  Edit as drawing in its header while the Thread is writable. It becomes a
+  `.excalidraw` file under the Thread's `docs/` folder, drawn in the card in
+  place of the diagram, and opens in an editor off the card: Yours is the
+  Excalidraw canvas (every change saves on its own), Agent's is the version
+  the agent last wrote or read, Changes shows both in one picture with the
+  list of what changed. Your changes reach the agent as a note with your next
+  message (the composer shows a chip per changed drawing; the note itself
+  appears in the conversation as a notice). The Excalidraw editor (2.9 MB)
+  loads on the first open of a page load; pictures need it too. Settings →
+  Diagram editor can switch to a draw.io page at an origin you name, after a
+  check of that origin passes.
 - **Images in replies**: an image the agent refers to by path, as
   `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
   served from the Thread's folder by the service, so it shows on any machine

@@ -609,6 +609,62 @@ export interface Settings {
   gitlab_mr_prompt?: string;
   /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
   worktrees_dir?: string;
+  /** The draw.io editor for drawings (`drawings-v1`): its origin and whether it is on; absent while Excalidraw, the built-in editor, is used. */
+  drawio?: { origin: string; enabled: boolean };
+}
+
+/** A drawing of the Thread (`docs/<name>.excalidraw` or `.drawio`), as the session lists them (`drawings-v1`). */
+export interface Drawing {
+  path: string;
+  format: 'excalidraw' | 'drawio';
+  /** The user's current version; `agent_version` is the one the agent last wrote or read. */
+  version: number;
+  agent_version: number;
+  /** The reply and the mermaid fence (0-based among the item's mermaid fences) the drawing was converted from. */
+  item_id?: string;
+  fence_index?: number;
+  /** Changes since the agent's version; 0 when the two are the same. */
+  changes_count: number;
+}
+
+export interface DrawingChange {
+  kind: '+' | '-' | '~';
+  text: string;
+}
+
+export type DrawingStatus = 'added' | 'changed' | 'moved' | 'removed';
+
+/** One drawing in full: the user's content, the agent's baseline when it differs, and the server's diff of the two. */
+export interface DrawingDoc extends Omit<Drawing, 'changes_count'> {
+  content: string;
+  /** The agent's version's text; null when it equals `content`. */
+  baseline: string | null;
+  changes: DrawingChange[];
+  /** By element id (Excalidraw) or cell id (draw.io). */
+  status: Record<string, DrawingStatus>;
+  /** The note the next prompt carries; empty without changes. */
+  note: string;
+}
+
+export interface DrawingPut {
+  content: string;
+  format: Drawing['format'];
+  /** The version this content was edited from; the server answers 409 when it moved on. */
+  base_version?: number;
+  /** `convert` creates the file from a mermaid fence and makes the content the agent's v1. */
+  origin?: 'convert';
+  item_id?: string;
+  fence_index?: number;
+}
+
+export type DrawingSaved = Pick<DrawingDoc, 'version' | 'agent_version' | 'changes' | 'status' | 'note'>;
+
+/** What the server found at a draw.io origin (`POST /api/settings/drawio/check`). */
+export interface DrawioCheck {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  detail: { public: boolean; cors: boolean; framing_ok: boolean };
 }
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
@@ -1470,6 +1526,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   mcp_status?: McpStatusSnapshot;
   /** The skills the Thread's agents loaded, first loaded first; skill loads are not transcript items. Absent from older services. */
   skills_loaded?: LoadedSkill[];
+  /** The Thread's drawings (`drawings-v1`); the summary events do not carry them, so a save reads the list again. */
+  drawings?: Drawing[];
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -2061,6 +2119,7 @@ const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boo
   ['branch-switch-v1', (path) => /^\/api\/sessions\/[^/]+\/git\/branch(?:[?]|$)/.test(path)],
   ['session-stats-v1', (path) => /^\/api\/session-stats(?:[?]|$)/.test(path)],
   ['worktrees-v1', (path) => /^\/api\/(?:worktrees|projects\/[^/]+\/branches)(?:[/?]|$)/.test(path)],
+  ['drawings-v1', (path) => /^\/api\/sessions\/[^/]+\/drawings(?:[/?]|$)/.test(path) || path.startsWith('/api/settings/drawio/')],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
   ['files-v1', (path) => /^\/api\/fs(?:[/?]|$)/.test(path) || /\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path)],
 ];
@@ -2438,6 +2497,15 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
     detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => url(`/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`),
     eventsUrl: (id: string | null) => url(id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1&page=${PAGE_ID}` : `/api/events?page=${PAGE_ID}`),
+
+    /** The Thread's drawings (`drawings-v1`). */
+    drawings: async (id: string, signal?: AbortSignal) => (await call<{ drawings: Drawing[] }>('GET', `/api/sessions/${enc(id)}/drawings`, undefined, false, signal)).drawings,
+    /** One drawing with the server's diff against the agent's version. */
+    drawing: (id: string, path: string, signal?: AbortSignal) => call<DrawingDoc>('GET', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, undefined, false, signal),
+    /** Saves a drawing (409 when `base_version` is behind); `origin: 'convert'` creates it as the agent's v1. */
+    putDrawing: (id: string, path: string, body: DrawingPut) => call<DrawingSaved>('PUT', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, body),
+    /** Checks a draw.io origin on the server: errors forbid enabling it, warnings are said. */
+    checkDrawio: (origin: string) => call<DrawioCheck>('POST', '/api/settings/drawio/check', { origin }),
 
     /** The chart a Task drew with the `uam_chart` call `callId`. */
     chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),

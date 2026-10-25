@@ -781,6 +781,11 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         tool('call-chart-3', 12, { name: 'uam_chart', title: 'Chart: Changes per week, by area', status: 'completed', input: JSON.stringify({ title: 'Changes per week, by area', kind: 'line', x: 'week', y: ['web', 'go', 'docs', 'tests'], format: 'csv' }), output: 'Charted "Changes per week, by area" (line) for the owner from 10 rows.' }),
         tool('call-chart-4', 12, { name: 'uam_chart', title: 'Chart: CI runs per week, with failures and retries', status: 'completed', input: JSON.stringify({ title: 'CI runs per week, with failures and retries', kind: 'bar', x: 'week', y: ['runs', 'failed', 'retried'], format: 'csv' }), output: 'Charted "CI runs per week, with failures and retries" (bar) for the owner from 8 rows.' }),
         { id: 'i4', kind: 'assistant', time: ago(11), text: 'September had **113 commits**, about 3.8 a day. The busiest days were the 20th (9) and the 13th (8); weekends are mostly empty.\n\nGo is most of the code at 41k lines across 212 files; the web UI adds 28k in TSX and TS.' },
+        // Diagrams: d2's flowchart offers "Edit as drawing", d3's gantt does not, d4's flowchart already is one (mock/drawings.ts).
+        { id: 'd1', kind: 'user', time: ago(10), text: 'Now draw how a request reaches the model, and the release timeline.' },
+        { id: 'd2', kind: 'assistant', time: ago(9), text: 'The request path, browser to model:\n\n```mermaid\nflowchart LR\n  A[Browser] -->|HTTPS| B[Sign-in proxy] --> C[uam web]\n  C --> D[(Session state)]\n  C -.-> E{Copilot CLI}\n```' },
+        { id: 'd3', kind: 'assistant', time: ago(9), text: 'And the release timeline:\n\n```mermaid\ngantt\n  title Release\n  dateFormat YYYY-MM-DD\n  section Build\n  Web bundle :a1, 2026-10-01, 3d\n  Go binary :a2, after a1, 2d\n```' },
+        { id: 'd4', kind: 'assistant', time: ago(8), text: 'Here is the request flow with the state store. Click it to edit; I see your changes with your next message.\n\n```mermaid\nflowchart LR\n  browser[Browser] -->|HTTPS| proxy[Sign-in proxy] --> web[uam web Go]\n  web -->|SDK stdio| cli[Copilot CLI] --> model[Model API]\n  web -->|reads| disk[Session state]\n  cli -->|writes| disk\n```' },
       ],
     }),
     task({
