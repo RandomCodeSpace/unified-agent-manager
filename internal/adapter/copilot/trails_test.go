@@ -94,3 +94,33 @@ func TestTrailContextSurvivesLogFailure(t *testing.T) {
 		t.Fatalf("output=%+v error=%v", out, err)
 	}
 }
+
+// A note the turn's prompt carries reaches the model as context and the
+// transcript as a notice; a subagent's tool call names its agent.
+func TestPromptNoteAndSubagentCalls(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	if out, err := c.userPromptSubmitted(copilot.UserPromptSubmittedHookInput{}, copilot.HookInvocation{}); out != nil || err != nil {
+		t.Fatalf("without a hook: %+v, %v", out, err)
+	}
+	note := "uam thread: done"
+	c.hooks.Prompt = func(context.Context) string { n := note; note = ""; return n }
+	out, err := c.userPromptSubmitted(copilot.UserPromptSubmittedHookInput{Prompt: "next"}, copilot.HookInvocation{})
+	if err != nil || out == nil || out.AdditionalContext != "uam thread: done" || out.ModifiedPrompt != "" {
+		t.Fatalf("prompt hook=%+v error=%v", out, err)
+	}
+	if out, _ := c.userPromptSubmitted(copilot.UserPromptSubmittedHookInput{}, copilot.HookInvocation{}); out != nil {
+		t.Fatalf("no note left=%+v", out)
+	}
+	if len(h.fs.events) != 1 || h.fs.events[0].Data.(*rpc.SessionInfoData).Message != "uam thread: done" {
+		t.Fatalf("recorded=%+v", h.fs.events)
+	}
+	var got agentapi.ToolUse
+	c.hooks.Pre = func(_ context.Context, use agentapi.ToolUse) agentapi.ToolVerdict {
+		got = use
+		return agentapi.ToolVerdict{}
+	}
+	if _, err := c.preToolUse(copilot.PreToolUseHookInput{ToolName: "view", AgentID: "sub-1"}, copilot.HookInvocation{}); err != nil || got.AgentID != "sub-1" {
+		t.Fatalf("use=%+v error=%v", got, err)
+	}
+}

@@ -534,6 +534,9 @@ type webSession struct {
 	// spawnedBy is the Task whose uam_create_task call created this one. It
 	// never changes, and such a Task does not get the tool itself.
 	spawnedBy string
+	// childNotes are the end notes of the Tasks this one created, waiting
+	// for its agent's next tool call or turn (create_task.go).
+	childNotes []string
 	// routineID is the routine whose run created this Task. It never
 	// changes, and such a Task does not get uam_create_task either.
 	routineID string
@@ -2246,6 +2249,7 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	summary := m.summaryLocked(s)
 	m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
 	m.noticeLocked(s, before, summary)
+	m.childEndLocked(s, before, summary)
 	if durable || queue {
 		if durable {
 			s.persisted = key
@@ -3178,6 +3182,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 		return m.failedToolUse(ctx, s, use, failure)
 	}
 	req.Hooks.Succeeded = func(ctx context.Context, use agentapi.ToolUse) { m.succeededToolUse(ctx, s, use) }
+	req.Hooks.Prompt = func(context.Context) string { return m.takeChildNotes(s) }
 	req.SkillDirectories = m.skillDirs
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100

@@ -47,17 +47,10 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
 			args = map[string]any{"patch": patch}
 		}
-		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)})
+		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName), AgentID: in.AgentID})
 		if verdict.Context != "" || verdict.Deny != "" || verdict.Args != nil {
-			if strings.HasPrefix(verdict.Context, "uam trail:") {
-				// SDK hook context reaches the model but is not in hook.end.
-				// A durable SDK notification uses the existing notice mapper.
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.sess.Log(ctx, verdict.Context)
-				cancel()
-				if err != nil {
-					log.Warn("persist trail notice failed", "session", c.id, "error", err)
-				}
+			if strings.HasPrefix(verdict.Context, "uam trail:") || strings.HasPrefix(verdict.Context, "uam thread:") {
+				c.logNotice(verdict.Context)
 			}
 			out := &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}
 			if verdict.Args != nil {
@@ -102,6 +95,31 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 	// own mistake and starts the subagent again.
 	reason := fmt.Sprintf("UAM started this subagent on %s, because the owner's settings let subagents use only %s. This is expected and final: do not start it again to change the model.", model, strings.Join(allowed, ", "))
 	return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: strings.TrimSpace(note + "\n" + reason)}, nil
+}
+
+// logNotice records host context in the transcript: SDK hook context
+// reaches the model but is not in hook.end. A durable SDK notification uses
+// the existing notice mapper.
+func (c *conversation) logNotice(text string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := c.sess.Log(ctx, text)
+	cancel()
+	if err != nil {
+		log.Warn("persist notice failed", "session", c.id, "error", err)
+	}
+}
+
+// userPromptSubmitted adds uam's notes for the turn a prompt starts.
+func (c *conversation) userPromptSubmitted(copilot.UserPromptSubmittedHookInput, copilot.HookInvocation) (*copilot.UserPromptSubmittedHookOutput, error) {
+	if c.hooks.Prompt == nil {
+		return nil, nil
+	}
+	note := c.hooks.Prompt(context.Background())
+	if note == "" {
+		return nil, nil
+	}
+	c.logNotice(note)
+	return &copilot.UserPromptSubmittedHookOutput{AdditionalContext: note}, nil
 }
 
 // contextOnly is a hook answer that only adds note; nil without one.

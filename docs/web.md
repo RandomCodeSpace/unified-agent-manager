@@ -1056,7 +1056,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   that time, the call fails with the reason. If the conversation is still
   opening, the call says so, and the Thread appears in the sidebar once it
   opens; a failure after that is only written to the service log. The Thread
-  runs on its own: nothing from it goes back to the Thread that started it. Its conversation begins with "Started by another thread", and
+  runs on its own. Each time its turn ends (completed, failed, stopped,
+  including at its spending limit), or it is settled or archived, the Thread
+  that started it gets a `uam thread:` note: its name and ID, how it ended,
+  the files it changed when known, and its last reply cut to 2 KiB. The
+  agent gets the note with its next tool call, or as its next turn starts
+  when it is idle; the note then shows in that Thread's conversation as a uam
+  notice, not as your message. Notes wait only in memory, so a service
+  restart drops those not yet delivered, and nothing is sent to a Thread
+  that is settled or archived. The new Thread's conversation begins with
+  "Started by another thread", and
   the API lists that Thread as `spawned_by`, which survives restarts. A Thread
   started this way does not get the tool itself. One Thread can start at
   most 5 Threads, its subagents' calls included. Every Thread it started counts

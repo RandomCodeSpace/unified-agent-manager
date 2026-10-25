@@ -1216,7 +1216,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnElicitationRequest:     c.elicit,
 			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
-			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnSubagentStart: subagentStart},
+			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -1249,7 +1249,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnAutoModeSwitchRequest: c.confirmAuto,
 			OnExitPlanModeRequest:   c.reviewPlan,
 			OnEvent:                 c.onEvent,
-			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnSubagentStart: subagentStart},
+			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,

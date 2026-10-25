@@ -75,7 +75,7 @@ func spawnOK(t *testing.T, m *Manager, prov *agenttest.Provider, conv *agenttest
 	t.Helper()
 	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: callID, Arguments: json.RawMessage(args)})
 	match := startedTask.FindStringSubmatch(res.Text)
-	if res.Failed || match == nil || strings.Contains(res.Text, "still opening") || !strings.Contains(res.Text, "no reply comes back to you") {
+	if res.Failed || match == nil || strings.Contains(res.Text, "still opening") || !strings.Contains(res.Text, "you get a 'uam thread:' note") {
 		t.Fatalf("uam_create_task %s = %+v", args, res)
 	}
 	sum, err := m.Summary(match[1])
@@ -155,6 +155,15 @@ func TestCreateTaskStartsATaskInAnExistingProject(t *testing.T) {
 	}
 	if req := child.Request(); !slices.Equal(toolNames(req.Tools), []string{chartToolName, uamToolName}) || req.CallTool == nil {
 		t.Fatalf("a created task has tools: %q", toolNames(req.Tools))
+	}
+	child.EmitTurn(agentapi.TurnCompleted, "")
+	var note string
+	waitUntil(t, "the creator's end note", func() bool {
+		note = conv.Request().Hooks.Prompt(t.Context())
+		return note != ""
+	})
+	if want := fmt.Sprintf(`uam thread: Thread "Build fix" (%s), which you started, ended its turn: completed.`, byID.ID); note != want {
+		t.Fatalf("end note = %q", note)
 	}
 
 	byName, child := spawnOK(t, m, prov, conv, "call-2", `{"project":"Target","prompt":"second"}`)
@@ -402,5 +411,86 @@ func TestCreateTaskRefusedWhenTheCallerIsNotActive(t *testing.T) {
 	waitSpawns(t, m)
 	if len(prov.Opens()) != opens {
 		t.Fatal("a settled task started a task")
+	}
+}
+
+// A Thread uam_create_task created leaves its creator a note when its turn
+// ends or it is settled; the creator's main agent gets it once, with its
+// next tool call or turn.
+func TestChildEndNoteGoesToCreator(t *testing.T) {
+	working := SessionSummary{State: StateWorking}
+	for _, tc := range []struct {
+		name          string
+		before, after SessionSummary
+		want          string
+	}{
+		{"completed", working, SessionSummary{State: StateCompleted, Diff: &DiffStat{Files: 3}}, "ended its turn: completed. Files changed: 3."},
+		{"failed", working, SessionSummary{State: StateFailed}, "ended its turn: failed."},
+		{"stopped", working, SessionSummary{State: StateCancelled}, "ended its turn: stopped."},
+		{"budget", working, SessionSummary{State: StateCancelled, Budget: &BudgetView{Reached: true}}, "ended its turn: stopped at its spending limit."},
+		{"settled", SessionSummary{State: StateCompleted}, SessionSummary{State: StateCompleted, Stage: StageSettled}, "was settled."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &webSession{id: "parent"}
+			child := &webSession{id: "child", name: "Fix login", spawnedBy: parent.id, items: []agentapi.Item{
+				{ID: "r", Kind: agentapi.ItemAssistant, Text: "Fixed it."},
+				{ID: "s", Kind: agentapi.ItemAssistant, Text: "subagent", AgentID: "sub"},
+			}}
+			m := &Manager{now: time.Now, sessions: map[string]*webSession{parent.id: parent, child.id: child}}
+			m.childEndLocked(child, tc.before, tc.after)
+			want := `uam thread: Thread "Fix login" (child), which you started, ` + tc.want + " Its last reply:\nFixed it."
+			if got := m.preToolUse(t.Context(), parent, agentapi.ToolUse{Tool: "view", AgentID: "sub"}).Context; got != "" {
+				t.Fatalf("subagent got %q", got)
+			}
+			if got := m.preToolUse(t.Context(), parent, agentapi.ToolUse{Tool: "view"}).Context; got != want {
+				t.Fatalf("note=%q\nwant %q", got, want)
+			}
+			if got := m.takeChildNotes(parent); got != "" {
+				t.Fatalf("second delivery %q", got)
+			}
+		})
+	}
+}
+
+// The end note bounds the reply, waits for an idle creator's next turn, and
+// is not made for other Threads, other changes or an inactive creator.
+func TestChildEndNoteBoundsAndScope(t *testing.T) {
+	parent := &webSession{id: "parent"}
+	child := &webSession{id: "child", spawnedBy: parent.id, items: []agentapi.Item{{Kind: agentapi.ItemAssistant, Text: strings.Repeat("é", maxChildReply)}}}
+	m := &Manager{now: time.Now, sessions: map[string]*webSession{parent.id: parent, child.id: child}}
+	working, done := SessionSummary{State: StateWorking}, SessionSummary{State: StateCompleted}
+	m.childEndLocked(child, working, done)
+	note := m.takeChildNotes(parent)
+	if !strings.HasPrefix(note, `uam thread: Thread "New thread" (child)`) || len(note) > maxChildReply+200 || !strings.HasSuffix(note, "é…") {
+		t.Fatalf("len=%d note=%q", len(note), note[:80])
+	}
+	child.items = nil
+	for range maxChildNotes + 3 {
+		m.childEndLocked(child, working, done)
+	}
+	if got := strings.Count(m.takeChildNotes(parent), "uam thread:"); got != maxChildNotes {
+		t.Fatalf("queued %d notes", got)
+	}
+	for _, tc := range []struct {
+		name          string
+		change        func()
+		before, after SessionSummary
+	}{
+		{"not created by uam_create_task", func() { child.spawnedBy = "" }, working, done},
+		{"routine run", func() { child.spawnedBy, child.routineID = "", "routine" }, working, done},
+		{"creator settled", func() { parent.stage = StageSettled }, working, done},
+		{"creator deleted", func() { delete(m.sessions, parent.id) }, working, done},
+		{"still running", func() {}, working, SessionSummary{State: StateAwaitingPermission}},
+		{"was not running", func() {}, done, done},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			child.spawnedBy, child.routineID, parent.stage = parent.id, "", StageActive
+			m.sessions[parent.id] = parent
+			tc.change()
+			m.childEndLocked(child, tc.before, tc.after)
+			if got := m.takeChildNotes(parent); got != "" {
+				t.Fatalf("unexpected note %q", got)
+			}
+		})
 	}
 }

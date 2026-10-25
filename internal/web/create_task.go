@@ -23,7 +23,9 @@ import (
 // Project of a folder, which the owner confirms adding when it has none
 // (spawn_path.go). The new Task starts in yolo mode when its creator is in
 // yolo, else in safe mode; it records its creator (spawnedBy), does not get
-// the tool, and one Task may create at most maxSpawns.
+// the tool, and one Task may create at most maxSpawns. Each time its turn
+// ends, or it is settled or archived, its creator gets an end note
+// (childEndLocked).
 
 const (
 	createTaskToolName = "uam_create_task"
@@ -34,6 +36,12 @@ const (
 	maxSpawns = 5
 	// maxSpawnPrompt bounds a created Task's first message, in bytes.
 	maxSpawnPrompt = 16 << 10
+	// maxChildReply bounds the created Task's last reply in its end note,
+	// in bytes.
+	maxChildReply = 2 << 10
+	// maxChildNotes bounds the end notes waiting for a creator: a turn end
+	// and a settle of each Thread it may create.
+	maxChildNotes = 2 * maxSpawns
 )
 
 var createTaskTool = agentapi.HostTool{
@@ -41,7 +49,7 @@ var createTaskTool = agentapi.HostTool{
 	Description: fmt.Sprintf("Start a new uam thread with prompt as its first message, in a project or in the project of a folder. "+
 		"Use it for any change outside your own thread's folder. Give project or path, not both. "+
 		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
-		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
+		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and last reply, at your next tool call or turn; wait for it instead of checking. "+
 		"You can start at most %d threads.", maxSpawns),
 	Parameters: toolSchema([]string{"prompt"}, map[string]any{
 		"project": stringProp("An existing project: its ID, or its exact name."),
@@ -277,7 +285,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	if req.Name != "" {
 		task = fmt.Sprintf("thread %s %q", req.id, req.Name)
 	}
-	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar, and no reply comes back to you. "+
+	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar. When its turn ends you get a 'uam thread:' note with its last reply. "+
 		"You can start %d more.", req.Mode, maxSpawns-n-1)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -400,4 +408,67 @@ func spawnRoom(cfg *store.Config, rec store.SessionRecord) error {
 		return fmt.Errorf("thread %s has already started %d threads", rec.Web.SpawnedBy, n)
 	}
 	return nil
+}
+
+// childEndLocked queues the end note of s, a Task uam_create_task created,
+// for its creator when s's turn ends or s leaves the active stage. Nothing
+// is queued for a creator that is no longer active. The caller holds mu.
+func (m *Manager) childEndLocked(s *webSession, before, after SessionSummary) {
+	parent := m.sessions[s.spawnedBy]
+	if s.spawnedBy == "" || parent == nil || parent.removed || parent.stage != StageActive {
+		return
+	}
+	var end string
+	switch {
+	case before.Stage == StageActive && after.Stage != StageActive:
+		end = "was " + stageVerb(after.Stage)
+	case after.Stage != StageActive || !busy(before.State) || busy(after.State) || after.State == StateIdle || after.State == StateClosed:
+		return
+	case after.State == StateCancelled:
+		end = "ended its turn: stopped"
+	default:
+		end = "ended its turn: " + after.State
+	}
+	if after.Budget != nil && after.Budget.Reached {
+		end += " at its spending limit"
+	}
+	files := ""
+	if after.Diff != nil {
+		files = fmt.Sprintf(" Files changed: %d.", after.Diff.Files)
+	}
+	var reply string
+	for i := len(s.items) - 1; i >= 0; i-- {
+		if it := s.items[i]; it.AgentID == "" && it.Kind == agentapi.ItemAssistant && strings.TrimSpace(it.Text) != "" {
+			reply = strings.TrimSpace(it.Text)
+			break
+		}
+	}
+	if len(reply) > maxChildReply {
+		reply = strings.ToValidUTF8(reply[:maxChildReply], "") + "…"
+	}
+	text := fmt.Sprintf("uam thread: Thread %q (%s), which you started, %s.%s", firstNonEmpty(s.name, s.title, "New thread"), s.id, end, files)
+	if reply != "" {
+		// A settled Thread's transcript may already be out of memory.
+		text += " Its last reply:\n" + reply
+	}
+	// shortcut: the oldest notes go past maxChildNotes; key them by Thread if
+	// a creator ever needs every note of a long idle wait.
+	parent.childNotes = append(parent.childNotes, text)
+	if n := len(parent.childNotes); n > maxChildNotes {
+		parent.childNotes = parent.childNotes[n-maxChildNotes:]
+	}
+}
+
+// takeChildNotes hands the waiting end notes of the Tasks s created to its
+// agent, once.
+func (m *Manager) takeChildNotes(s *webSession) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.takeChildNotesLocked(s)
+}
+
+func (m *Manager) takeChildNotesLocked(s *webSession) string {
+	notes := strings.Join(s.childNotes, "\n\n")
+	s.childNotes = nil
+	return notes
 }

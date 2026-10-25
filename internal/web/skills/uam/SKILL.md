@@ -237,7 +237,12 @@ write, but the rule is the same.
 
 The new Thread starts in Yolo mode when you are in Yolo, else in Safe mode.
 When the owner names a model for the new Thread, pass it as `model`. It runs on its own and shows in the owner's
-sidebar; no reply comes back to you. A Thread can start at most 5; deleting
+sidebar. The result names its Thread ID. Each time its turn ends (completed,
+failed, stopped, at its spending limit), or it is settled or archived, you get
+a `uam thread:` note with its name and ID, how it ended, the files it changed
+when known and its last reply (up to 2 KiB): with your next tool call, or as
+your next turn starts if you are idle. Wait for that note instead of polling
+the Thread with `uam`. A Thread can start at most 5; deleting
 one frees its place. A Thread started this way, or by one of the owner's
 routines (scheduled runs), does not have the tool: tell the owner what to
 start instead.
