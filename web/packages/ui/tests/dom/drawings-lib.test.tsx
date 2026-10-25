@@ -199,17 +199,20 @@ describe('draw.io exporter', () => {
   test('an export that is not answered in time fails that picture; a page that never starts is dropped so the next picture starts another', async () => {
     vi.useFakeTimers();
     const slow = lib.exportDrawioPng(ORIGIN, '<a/>');
+    // The expectations attach before the timers fire, or the rejection counts as unhandled.
+    const slowFails = expect(slow).rejects.toThrow('did not answer the export in time');
     says({ event: 'init' });
     await vi.advanceTimersByTimeAsync(0);
     expect(posted).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(lib.EXPORT_TIMEOUT);
-    await expect(slow).rejects.toThrow('did not answer the export in time');
+    await slowFails;
     // Another origin: a new frame, which never says init.
     const dead = lib.exportDrawioPng('https://other.example.test', '<b/>');
+    const deadFails = expect(dead).rejects.toThrow('did not start');
     expect(frames).toHaveLength(2);
     expect(frames[0].isConnected).toBe(false);
     await vi.advanceTimersByTimeAsync(lib.EXPORT_TIMEOUT * 4);
-    await expect(dead).rejects.toThrow('did not start');
+    await deadFails;
     expect(frames[1].isConnected).toBe(false);
     const again = lib.exportDrawioPng('https://other.example.test', '<c/>');
     await vi.advanceTimersByTimeAsync(0);
