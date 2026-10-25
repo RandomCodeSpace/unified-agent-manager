@@ -30,7 +30,8 @@ export function DiagramCard({ source, ready, fence, children }: Readonly<{ sourc
   const drawings = useContext(DrawingsContext);
   const [created, setCreated] = useState<string | null>(null);
   const existing = fenceDrawing(drawings?.drawings, fence?.itemId, fence?.index ?? -1)?.path ?? created;
-  if (existing) return <DrawingCard path={existing} />;
+  // The card this click made opens the editor at once; one found in the list only shows.
+  if (existing) return <DrawingCard path={existing} edit={existing === created} />;
   return <MermaidCard source={source} ready={ready} fence={fence} onCreated={setCreated}>{children}</MermaidCard>;
 }
 

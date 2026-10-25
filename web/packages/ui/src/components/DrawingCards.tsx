@@ -2,7 +2,7 @@
 // conversation, the composer's chips, the pictures, and converting a fence. Drawing.tsx loads
 // this module on demand (`lazy`), so a Thread without drawings never carries it.
 
-import { useContext, useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { describeError, type DrawingDoc } from '../api';
 import { cn } from '../lib/cn';
 import { convertDiagram } from '../lib/diagram';
@@ -87,9 +87,16 @@ export function useParsed(doc: DrawingDoc | undefined) {
  * changes, the pair (Agent's and Yours side by side, stacked on a phone) with the first changes
  * under it. The picture opens the editor; Compare opens the Changes view.
  */
-export function DrawingCard({ path }: Readonly<{ path: string }>) {
+export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: boolean }>) {
   const d = useContext(DrawingsContext);
   const [head, setHead] = useState<HTMLDivElement | null>(null);
+  // `edit`: the card was just made by Edit as drawing, so the editor opens once the head is there to anchor it.
+  const editOpened = useRef(false);
+  useEffect(() => {
+    if (!edit || !head || !d || editOpened.current) return;
+    editOpened.current = true;
+    d.open({ path, view: 'mine', anchor: head });
+  }, [edit, head, d, path]);
   const state = d?.doc(path);
   const doc = state?.doc;
   const load = d?.load;

@@ -153,10 +153,10 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
 }
 
 /** A drawing's card in the conversation (DrawingCards.tsx), the block's chrome holding its place while that loads. */
-export function DrawingCard({ path }: Readonly<{ path: string }>) {
+export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: boolean }>) {
   return (
     <Suspense fallback={<div className="my-2.5 min-h-24 rounded-md bg-code-bg shadow-well" />}>
-      <DrawingCardLazy path={path} />
+      <DrawingCardLazy path={path} edit={edit} />
     </Suspense>
   );
 }
