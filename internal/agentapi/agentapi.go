@@ -577,6 +577,8 @@ type ToolUse struct {
 	Tool           string
 	Args           map[string]any
 	Workdir        string
+	// AgentID is the subagent making the call; "" for the main agent.
+	AgentID string
 }
 
 // ToolVerdict adds host context, refuses a call, or replaces its arguments.
@@ -592,6 +594,8 @@ type ToolHooks struct {
 	Succeeded func(context.Context, ToolUse)
 	// Failed also receives native automatic permission denials, with PermissionKind.
 	Failed func(context.Context, ToolUse, string) string
+	// Prompt adds host context to a prompt as its turn starts.
+	Prompt func(context.Context) string
 }
 
 // OpenRequest identifies the managed session and its project.
