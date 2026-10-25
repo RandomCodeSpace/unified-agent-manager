@@ -1705,7 +1705,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   query or fragment), a model ID, an optional display name, and the API key
   from one of two sources. **API key** (the default) is a key you type in
   Settings: the service saves it in `sessions.json` (mode 0600, beside the
-  token) and never shows it again; Settings only says that a key is saved.
+  token), encrypted with a random key the service keeps in `byom.key` in the
+  same directory (created owner-only on first use), and never shows it again;
+  Settings only says that a key is saved. Keys saved by earlier versions are
+  encrypted on the next start. If `byom.key` is missing or unreadable, the
+  saved keys cannot be used: Settings reports `key_present: false` with a
+  `key_error` saying why, and the key must be entered again.
   **Environment variable** is the *name* of a variable of the service's
   environment that holds the key. That name must start with `UAM_BYOM_`
   (e.g. `UAM_BYOM_OPENROUTER`), so a custom model can never send any other

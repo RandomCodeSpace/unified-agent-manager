@@ -790,7 +790,8 @@ type WebSettings struct {
 	TitleModel map[string]string `json:"title_model,omitempty"`
 	// CustomModels are the OpenAI-compatible models the owner brought
 	// (BYOM), valid as ValidCustomModels checks. Direct keys are kept in this
-	// private store; environment-backed keys store only the variable name.
+	// private store, encrypted with the key file beside it; environment-backed
+	// keys store only the variable name.
 	CustomModels []WebCustomModel `json:"custom_models,omitempty"`
 	// TaskDefaults are the settings a new Task starts with; zero when unset.
 	TaskDefaults WebTaskDefaults `json:"task_defaults,omitzero"`
@@ -849,7 +850,13 @@ type WebCustomModel struct {
 	// WireAPI is "", "completions" (the default) or "responses".
 	WireAPI   string `json:"wire_api,omitempty"`
 	APIKeyEnv string `json:"api_key_env"`
+	// APIKey is the saved key in clear; the state file holds it encrypted
+	// (sealed_keys.go). After a load, SealedKey keeps a stored key this
+	// process could not decrypt, so a save does not drop it, and KeyError
+	// says why it is not available.
 	APIKey    string `json:"api_key,omitempty"`
+	SealedKey string `json:"-"`
+	KeyError  string `json:"-"`
 }
 
 // Custom model limits: models, and bytes per field.
@@ -882,10 +889,12 @@ func ValidCustomModel(m WebCustomModel) error {
 		return fmt.Errorf("model ID must be 1 to %d bytes without spaces or control characters", MaxHiddenModelBytes)
 	case m.WireAPI != "" && m.WireAPI != "completions" && m.WireAPI != "responses":
 		return errors.New(`wire API must be "completions" or "responses"`)
-	case m.APIKey == "" && m.APIKeyEnv == "":
+	case m.APIKey == "" && m.SealedKey == "" && m.APIKeyEnv == "":
 		return errors.New("enter an API key or choose an API key variable; changing a saved provider name or endpoint requires entering the key again")
 	case m.APIKey != "" && m.APIKeyEnv != "":
 		return errors.New("choose either an API key or an API key variable")
+	case m.APIKeyEnv == "" && m.APIKey == "":
+		// A stored key this process could not decrypt (SealedKey) is kept.
 	case m.APIKeyEnv == "" && m.APIKey != "":
 		if len(m.APIKey) > MaxCustomModelKeyBytes || !utf8.ValidString(m.APIKey) || hasControlChar(m.APIKey) {
 			return errors.New("API key must be at most 4096 bytes without control characters")
@@ -1302,6 +1311,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	cleanHiddenModels(&cfg.WebSettings)
 	cleanSubagentModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)
+	plainKeys := s.openCustomKeys(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
 	cleanTaskDefaults(&cfg.WebSettings)
 	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && *l < 0 {
@@ -1339,6 +1349,12 @@ func (s *Store) loadNoLock() (Config, error) {
 		}
 		if err := writeMigration(cfg); err != nil {
 			return Config{}, err
+		}
+	} else if plainKeys {
+		// Keys stored in clear before encryption are re-saved encrypted
+		// once; a failure here only defers that to the next save.
+		if err := s.saveNoLock(normalize(cfg)); err != nil {
+			log.Warn("could not re-save custom model keys encrypted", "err", err)
 		}
 	}
 	return normalize(cfg), nil
@@ -1684,6 +1700,12 @@ func (s *Store) saveNoLock(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
+	// Saved custom model keys never reach the file in clear.
+	sealed, err := s.sealCustomKeys(cfg.WebSettings.CustomModels)
+	if err != nil {
+		return err
+	}
+	cfg.WebSettings.CustomModels = sealed
 	// CreateTemp picks a randomly-suffixed name with O_EXCL in the SAME
 	// directory as the target (filepath.Dir) — same dir is required because a
 	// cross-device rename fails with EXDEV. The random suffix means a stale

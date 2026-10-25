@@ -275,7 +275,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
               <span className="min-w-0 break-all text-meta text-muted">{p.base_url}</span>
-              <Note tone={p.key_present ? 'muted' : 'warn'}>{p.api_key_env ? (p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`) : (p.key_present ? 'API key saved' : 'API key missing')}</Note>
+              <Note tone={p.key_present ? 'muted' : 'warn'}>{p.api_key_env ? (p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`) : (p.key_present ? 'API key saved' : (p.key_error ?? 'API key missing'))}</Note>
             </div>
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
               Edit
@@ -822,7 +822,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           const hidden = settings.hidden_models?.[p.owner] ?? [];
           return <div key={p.key} role="group" aria-label={`${p.label} models`} className="flex flex-col gap-1">
             <h3 className="mb-1 flex flex-wrap items-baseline gap-x-2 text-ui font-medium">{p.label}{p.custom && <span className="text-meta font-normal text-muted">Custom provider</span>}{p.usage && <span className="text-meta font-normal text-muted">Prices in {MODEL_PRICE_UNIT}</span>}</h3>
-            {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env ? `${p.custom.api_key_env} is not set in the service's environment.` : 'The API key is missing.'} Check it in Custom providers.</Note>}
+            {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env ? `${p.custom.api_key_env} is not set in the service's environment.` : (p.custom.key_error ? `${p.custom.key_error}.` : 'The API key is missing.')} Check it in Custom providers.</Note>}
             <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
             {[...p.models].sort(byModelName).map((m) => {
               const shown = !hidden.includes(m.id);

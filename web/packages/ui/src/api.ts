@@ -702,6 +702,8 @@ export interface CustomModel {
   api_key?: string;
   /** Output only: whether a saved or environment key is available. */
   key_present?: boolean;
+  /** Output only: why a saved key is not available. */
+  key_error?: string;
 }
 
 export type ConfigurationKind = 'agents' | 'skills' | 'hooks' | 'instructions';
