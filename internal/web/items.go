@@ -708,6 +708,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		cur.Interaction = ix
 	} else {
 		cur = &interaction{Interaction: ix}
+		m.countAsked(ix)
 		s.interactions = append(s.interactions, cur)
 		s.ixIdx[ix.ID] = cur
 		s.trimInteractions()

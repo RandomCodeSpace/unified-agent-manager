@@ -921,11 +921,45 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Connected instances advertise `time-split-v1`.
 - **Session stats**: Settings → Session stats counts every Copilot session
   journal under `COPILOT_HOME/session-state` (sessions, prompts, turns,
-  tools, failures, stops, errors and permission outcomes; never their text),
-  writes the counts as `key=value` lines to `session-stats.txt` beside uam's
-  config, and shows them grouped for a screenshot. Each visit and Scan again
-  scans anew (`GET /api/session-stats`). Connected instances advertise
-  `session-stats-v1`.
+  tools, failures, stops, errors and permission outcomes), writes the counts
+  as `key=value` lines to `session-stats.txt` beside uam's config, and shows
+  them grouped by key prefix for a screenshot; Copy puts the same lines on
+  the clipboard. Each visit and Scan again scans anew
+  (`GET /api/session-stats`). Besides counts the journals give:
+  `approvals.*` (wait from request to answer, median, p90 and total
+  seconds; requests that could offer session approval or carried an
+  intention; repeats of a command already asked in the same session, and
+  commands asked three times or more), `polling.*` (shell calls with a
+  `sleep` or a `while`/`until` loop, and an agent running the same command
+  again before its next prompt), `turns.*` (each model step from the
+  journal's turn start to its end: duration median and p90, tool calls per
+  step, steps with no tool, main steps per prompt), `tokens.*` (calls, input, output,
+  cache read and write, reasoning tokens and cost, in total and by
+  initiator: user, subagent or other), `models.*` (time to first token,
+  rate-limit Auto switches), `model_calls.*` (the five models called most,
+  by model ID), `model_changes.*` (by source) and `activity.*` (active
+  days, sessions and prompts per active day, subagents started, completed
+  and failed, compactions per session, stalled requests uam retried). Lines
+  `uam.*` are uam's own counts, kept in `uam-counts.json` beside the config
+  (written within ten seconds of a change, so a crash can lose the last few):
+  prompts steered and queued, your permission answers by decision, assisted
+  reviews approved and escalated, turns given up after a second stall,
+  read-once hits, fuse trips, tool calls uam refused, Auto fallback
+  questions asked and answered, Threads `uam_create_task` started or refused
+  and their end notes, forks, rewinds, hunk reverts, settles (by you,
+  auto-settle or review), archives, budgets set and reached, handoffs,
+  trail notes, suggested replies shown, manual compactions, notices by kind
+  and pushes, CLI updates, update failures and restarts, and terminals
+  opened; with the Utility log's calls by purpose and outcome (abstained and
+  invalid Decide answers too) over the days it keeps, and routine runs by
+  outcome. Lines `config.*` are a snapshot: uam and CLI versions, Threads by
+  mode, in worktrees and active, custom model and connected instance
+  counts, the Utility daily limit, the compaction threshold, whether
+  suggested replies and GitLab auto-investigate are on, and the folders
+  where glab is ready. The file holds only counts, durations, percentages
+  and model IDs: never a prompt, reply, command, path, URL, key or Thread
+  name; command texts are compared by hash in memory only. Connected
+  instances advertise `session-stats-v1`.
 - **Conversation**: your messages sit on the right, the agent's on the left,
   both rendered as markdown (never as HTML) while they stream; in your
   messages a single line break (Shift+Enter) stays a line break. The agent's

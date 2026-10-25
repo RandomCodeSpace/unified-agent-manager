@@ -129,6 +129,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title, Key: noticeKey(s.id, kind, seq)}
 	})
 	m.recordNoticeLocked(s.id, kind, title)
+	m.count("notices_" + kind)
 	// The owner is looking at the Task: no push. A service worker shows
 	// every push it gets (browsers penalise or replace silent ones), so the
 	// decision is made here.
@@ -140,6 +141,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	if m.connectedNotices != nil {
 		payload.Badge, payload.BadgePartial = m.connectedNotices.badge(payload.Badge)
 	}
+	m.count("notices_pushed")
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()

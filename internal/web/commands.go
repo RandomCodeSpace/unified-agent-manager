@@ -120,6 +120,9 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		result, err = executor.ExecuteCommand(ctx, req.Name, agentapi.Prompt{Text: req.Arguments, Files: files, Attachments: blobs})
 		cancel()
 	}
+	if err == nil && req.Name == "compact" {
+		m.count("manual_compactions")
+	}
 	if result != nil {
 		// The reply carries the same cleaned result as the saved and broadcast one.
 		result = cleanCommandResult(*result)

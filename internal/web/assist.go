@@ -364,6 +364,9 @@ func (s *Server) handleSuggestions(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	if len(out.Replies) > 0 {
+		s.m.count("suggested_replies_shown")
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -1,7 +1,8 @@
-import { RefreshCw } from 'lucide-react';
+import { Check, Copy, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type SessionStats } from '../api';
+import { useCopied } from '../lib/clipboard';
 import { Note, Skeleton } from './common';
 import { Button } from './ui/button';
 
@@ -21,6 +22,7 @@ export function SessionStatsSettings() {
   const [scanning, setScanning] = useState(false);
   const scan = useCallback(() => api.sessionStats().then((s) => { setStats(s); setError(null); }, (e: unknown) => setError(describeError(e))).finally(() => setScanning(false)), [api]);
   useEffect(() => { void scan(); }, [scan]);
+  const [copied, copy] = useCopied();
   if (!stats) return error ? <Note tone="error" role="alert">Could not read the sessions: {error}</Note> : <Skeleton label="Reading every session…" rows={4} />;
   const groups = new Map<string, { name: string; value: string }[]>();
   const scanned = Object.fromEntries(stats.stats.filter((s) => s.key.startsWith('scan.')).map((s) => [s.key, s.value]));
@@ -40,6 +42,11 @@ export function SessionStatsSettings() {
         <Button size="sm" variant="secondary" disabled={scanning} onClick={() => { setScanning(true); void scan(); }}>
           <RefreshCw aria-hidden="true" className={scanning ? 'animate-spin' : undefined} />
           Scan again
+        </Button>
+        {/* The same key=value lines as the file, for pasting where the file cannot go. */}
+        <Button size="sm" variant="secondary" onClick={() => copy(stats.stats.map((s) => `${s.key}=${s.value}\n`).join(''))}>
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied ? 'Copied' : 'Copy'}
         </Button>
       </div>
       {error && <Note tone="error" role="alert">{error}</Note>}

@@ -4073,6 +4073,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
 	c.endBackgroundCompactionLocked()
+	turn.ReadOnceHits, turn.StallGaveUp = c.viewRepeats, c.stall.retries > 1
 	if c.viewRepeats > 0 {
 		log.Info("copilot read-once: repeat views not re-sent", "session", c.id, "count", c.viewRepeats)
 		c.viewRepeats = 0

@@ -674,6 +674,7 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	s.m.count("rewinds")
 	writeJSON(w, http.StatusOK, out)
 }
 

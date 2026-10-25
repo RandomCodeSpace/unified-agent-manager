@@ -247,6 +247,7 @@ type Manager struct {
 	// call is logged: every look at a Thread asks again while the pause
 	// lasts, and only the first is a log line (assist.go).
 	utility            utilityLog
+	counts             uamCounts // uam's own action counts (uam_counts.go)
 	suggestPauseLogged atomic.Bool
 	tokens             tokenLedger   // guarded by mu; persisted by the existing flush loop
 	harness            *harnessUsage // optional local harness collector; snapshots guarded by mu
@@ -2542,6 +2543,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventTurn:
 		if ev.Turn != nil {
+			m.countTurn(*ev.Turn)
 			m.applyTurnLocked(s, *ev.Turn)
 		}
 	case agentapi.EventInteraction:
@@ -3608,9 +3610,11 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	// its turn even when no turn is running.
 	case willQueue:
 		defer m.mu.Unlock()
+		m.count("prompt_queued")
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
 		m.mu.Unlock()
+		m.count("prompt_steered")
 		return m.steer(s, conv, in, uploads, reqID)
 	case busy(state) || s.queueSending != "":
 		m.mu.Unlock()
@@ -4443,6 +4447,7 @@ func (m *Manager) Settle(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageSettled, StageActive)
 	if err == nil {
 		m.endCalls(id)
+		m.count("settle")
 	}
 	return summary, err
 }
@@ -4466,6 +4471,7 @@ func (m *Manager) Archive(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
 	if err == nil {
 		m.endCalls(id)
+		m.count("archive")
 	}
 	return summary, err
 }
@@ -4793,6 +4799,7 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	}
 	switch {
 	case err == nil:
+		m.countAnswer(ix.Interaction, answer)
 		if ix.Kind == agentapi.InteractionPermission && answer.Decision == "approve_session" {
 			s.fuses = nil
 		}
@@ -5208,6 +5215,7 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
+	m.counts.close()
 	return true, firstErr
 }
 
