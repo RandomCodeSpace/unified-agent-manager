@@ -18,7 +18,9 @@ and conventions below instead.
   `git status` before you treat a change as yours. Between turns the owner
   may switch the Project folder to another branch, so check the branch
   before you commit. uam has no commit, push or pull buttons: the owner asks
-  you in the conversation, so commit and push only when asked. The owner may instead
+  you in the conversation, so commit and push only when asked. Write commit
+  messages and pull or merge requests by the git rules in your instructions,
+  which the owner sets in Settings. The owner may instead
   start a conversation on a new `uam/…` branch, or in its own git worktree
   (by default under `~/.uam/worktrees/`): then your working directory is that worktree,
   other conversations do not share it, and uam renames the branch after the
@@ -277,7 +279,7 @@ start instead.
 - The owner sees each subagent as a row in your turn, with its description;
   its work stays folded, so report what it found in your reply.
 - Subagents receive neither uam's system instructions nor this skill. uam
-  passes them the todo and commit rules when they start; put any other rule
+  passes them the todo and git rules when they start; put any other rule
   a subagent needs in its prompt.
 - The owner can limit the models subagents run on in Settings. uam then
   moves a subagent you start to an allowed model and tells you so: that is
