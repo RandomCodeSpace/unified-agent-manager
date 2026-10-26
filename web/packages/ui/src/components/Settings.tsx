@@ -467,10 +467,10 @@ type Catalog = ReturnType<typeof useApp>['meta'];
 /** What needs the user, marked on its page in the rail. */
 function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; drawioProblem: string | null }>): Partial<Record<SettingsPage, PageAttention>> {
   const attention: Partial<Record<SettingsPage, PageAttention>> = {};
-  if (drawioProblem) attention.drawings = { tone: 'warning', text: drawioProblem };
   if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
   else if (pausedPurposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.map(purposeLabel).join(', ')}` };
-  if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
+  const conversation = [repliesPaused && 'Suggested replies are paused for today', drawioProblem].filter(Boolean).join(' · ');
+  if (conversation) attention.composer = { tone: 'warning', text: conversation };
   if (missingKeys.length) attention.providers = { tone: 'error', text: `API key missing: ${missingKeys.map((p) => p.name).join(', ')}` };
   if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
   else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
@@ -507,9 +507,8 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
   const customNoun = customCount === 1 ? 'model' : 'models';
   return {
     'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
-    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
+    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'} · ${settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw'}`,
     git: settings.coauthor?.enabled ? `Co-author: ${settings.coauthor.name || 'chosen by Copilot'}` : 'No co-author',
-    drawings: settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw (built in)',
     models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
     'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
     copilot: accountSummary(accounts, cliUpdate),
@@ -544,7 +543,7 @@ function railCurrentPage(searching: boolean, shown: SettingsPage | null, visible
 }
 
 /** The pages mounted only while on screen. */
-const ON_SCREEN_ONLY: readonly SettingsPage[] = ['token-costs', 'archived', 'connections', 'gitlab', 'worktrees', 'session-stats'];
+const ON_SCREEN_ONLY: readonly SettingsPage[] = ['archived', 'connections', 'gitlab', 'worktrees', 'session-stats'];
 
 /**
  * Whether a page's cards are in the tree: on screen, or shown once before and kept (hidden) with its forms and lists;
@@ -594,7 +593,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Opened for Token costs, or on a provider's account (`focusAccount`, the blocked app's Open Settings); none is the
   // phone's list, or New tasks beside the rail.
   const [page, setPage] = useState<SettingsPage | null>(() => {
-    if (tokenPricesRequest) return 'token-costs';
+    if (tokenPricesRequest) return 'models';
     if (focusAccount) return 'copilot';
     if (connectionsRequest && connections) return 'connections';
     const next = carry?.read().nextSection;
@@ -621,7 +620,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   if (handledPriceRequest !== tokenPricesRequest) {
     setHandledPriceRequest(tokenPricesRequest);
     if (tokenPricesRequest) {
-      setPage('token-costs');
+      setPage('models');
       setQuery('');
     }
   }
@@ -764,8 +763,42 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const pageLine = (p: (typeof pages)[number]) => [!wide && p.blurb, scopeLine(p.group.scope)].filter(Boolean).join(' ');
   const current = pages.find((p) => p.id === shown);
 
-  // Each page's cards. Token costs, Archived, Connected instances, GitLab and Worktrees mount only while on screen;
-  // Background AI from the start (the rail's dot reads it); the rest from their first showing, then stay mounted, hidden.
+  // Where Add project starts browsing: the first field of Projects & worktrees' Folders card.
+  const projectFolder = loaded && api.supports('project-location-v1') && (
+    <form className="flex flex-col gap-3" onSubmit={(e) => {
+      e.preventDefault();
+      if (!saving && !projectBrowsing) void save({ default_project_dir: (projectDir ?? settings.default_project_dir ?? '').trim() });
+    }}>
+      <Field id="default-project-dir" label="Default project location" hint={`Add project starts browsing here on ${api.owner?.label ?? 'this instance'}. Use this folder saves your choice; press Enter to save a typed path. Leave empty to use the home directory. Existing projects stay where they are.`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input ref={projectInput} id="default-project-dir" className="min-w-0 flex-1 basis-full text-ui sm:basis-48" spellCheck={false} autoComplete="off" placeholder="/path/to/projects" aria-describedby="default-project-dir-hint" value={projectDir ?? settings.default_project_dir ?? ''} readOnly={saving} onChange={(e) => setProjectDir(e.target.value)} />
+          <Button ref={projectBrowse} variant="secondary" disabled={saving || !api.supports('files-v1')} aria-describedby={api.supports('files-v1') ? undefined : 'default-project-dir-browse-note'} aria-expanded={projectBrowsing} aria-controls={projectBrowsing ? 'default-project-dir-picker' : undefined} onClick={() => setProjectBrowsing(!projectBrowsing)}>
+            <FolderOpen />
+            Browse
+          </Button>
+        </div>
+      </Field>
+      {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'Main Server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
+      {projectPicker.mounted && (
+        <Collapse open={projectBrowsing} appear onClosed={projectPicker.onClosed}>
+          <Suspense fallback={null}>
+            <FolderPicker id="default-project-dir-picker" start={projectDir ?? settings.default_project_dir ?? ''} onUse={(path) => {
+              setProjectDir(path);
+              void save({ default_project_dir: path });
+              setProjectBrowsing(false);
+              projectInput.current?.focus();
+            }} onClose={() => {
+              setProjectBrowsing(false);
+              projectBrowse.current?.focus();
+            }} />
+          </Suspense>
+        </Collapse>
+      )}
+    </form>
+  );
+  // Each page's cards. Archived, Connected instances, GitLab and Projects & worktrees mount only while on screen, as does
+  // Token costs on Models; Background AI from the start (the rail's dot reads it); the rest from their first showing,
+  // then stay mounted, hidden.
   const cards: Record<SettingsPage, ReactNode> = {
     gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
     git: loaded ? <Section id="git" title="Commits & pull requests" help="What agents follow when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
@@ -782,10 +815,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </div>
       </Section>
     ),
-    drawings: loaded ? <Section id="drawings" title="Diagram editor" help="A mermaid diagram in a reply can be edited as a drawing. Excalidraw is built in; draw.io runs a page from an origin the server checks first.">
-      {api.supports('drawings-v1') ? <Suspense fallback={null}><DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /></Suspense> : <Unsupported what="drawings" />}
-    </Section> : <PendingSection id="drawings" title="Diagram editor" label="Loading settings…" />,
-    composer: loaded ? <Section id="composer" title="Composer">
+    composer: loaded ? <><Section id="composer" title="Composer">
       <Row
         id="send-default"
         label="Enter while a thread is running"
@@ -815,8 +845,15 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           {`Paused until tomorrow (${resumeText(pausedPurposes.resetsAt)}) after repeated unusable answers from the Utility model. Settings → Background AI lists them in its log.`}
         </Note>
       )}
-    </Section> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
-    worktrees: api.supports('worktrees-v1') ? <WorktreesSettings /> : <Section id="worktrees" title="Worktrees"><Unsupported what="worktrees" /></Section>,
+    </Section>
+      <Section id="drawings" title="Diagram editor" help="A mermaid diagram in a reply can be edited as a drawing. Excalidraw is built in; draw.io runs a page from an origin the server checks first.">
+        {api.supports('drawings-v1') ? <Suspense fallback={null}><DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /></Suspense> : <Unsupported what="drawings" />}
+      </Section>
+    </> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
+    worktrees: api.supports('worktrees-v1') ? <WorktreesSettings projectFolder={projectFolder} /> : <>
+      {projectFolder && <Section id="folders" title="Folders">{projectFolder}</Section>}
+      <Section id="worktrees" title="Worktrees"><Unsupported what="worktrees" /></Section>
+    </>,
     archived: loaded ? <Section id="archived" title="Archived" help="Open an archived thread to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived threads too.">
       <ArchivedTasks />
     </Section> : <PendingSection id="archived" title="Archived" label="Loading threads…" />,
@@ -865,6 +902,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </div>
         ))}
       </Section>}
+      {loaded && visible.has('models') && <Section id="token-prices" title="Token costs" help="Usage estimates use these current base rates for every period, not provider bills or Copilot credits.">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>}
     </>,
     'background-ai': loaded && <>
       {/* One provider (the usual case): the card's title labels its select and the provider is the secondary line; several get a row each, named by provider. */}
@@ -879,7 +917,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} onPausedPurposes={onPausedPurposes} />
       </Section>
     </>,
-    'token-costs': loaded && <Section id="token-prices" title="Token costs" help="Usage estimates use these current base rates for every period, not provider bills or Copilot credits.">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>,
     copilot: <>
       {accounts.map((p) => (
         <Section key={p.name} id={`account-${p.name}`} title={p.display_name}>
@@ -905,45 +942,13 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       {meta?.service && <Section id="uam" title="UAM">
         <UamService />
       </Section>}
-      {loaded && api.supports('project-location-v1') && <Section id="project-folders" title="Project folders">
-        <form className="flex flex-col gap-3" onSubmit={(e) => {
-          e.preventDefault();
-          if (!saving && !projectBrowsing) void save({ default_project_dir: (projectDir ?? settings.default_project_dir ?? '').trim() });
-        }}>
-          <Field id="default-project-dir" label="Default project location" hint={`Add project starts browsing here on ${api.owner?.label ?? 'this instance'}. Use this folder saves your choice; press Enter to save a typed path. Leave empty to use the home directory. Existing projects stay where they are.`}>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input ref={projectInput} id="default-project-dir" className="min-w-0 flex-1 basis-full text-ui sm:basis-48" spellCheck={false} autoComplete="off" placeholder="/path/to/projects" aria-describedby="default-project-dir-hint" value={projectDir ?? settings.default_project_dir ?? ''} readOnly={saving} onChange={(e) => setProjectDir(e.target.value)} />
-              <Button ref={projectBrowse} variant="secondary" disabled={saving || !api.supports('files-v1')} aria-describedby={api.supports('files-v1') ? undefined : 'default-project-dir-browse-note'} aria-expanded={projectBrowsing} aria-controls={projectBrowsing ? 'default-project-dir-picker' : undefined} onClick={() => setProjectBrowsing(!projectBrowsing)}>
-                <FolderOpen />
-                Browse
-              </Button>
-            </div>
-          </Field>
-          {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'Main Server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
-          {projectPicker.mounted && (
-            <Collapse open={projectBrowsing} appear onClosed={projectPicker.onClosed}>
-              <Suspense fallback={null}>
-                <FolderPicker id="default-project-dir-picker" start={projectDir ?? settings.default_project_dir ?? ''} onUse={(path) => {
-                  setProjectDir(path);
-                  void save({ default_project_dir: path });
-                  setProjectBrowsing(false);
-                  projectInput.current?.focus();
-                }} onClose={() => {
-                  setProjectBrowsing(false);
-                  projectBrowse.current?.focus();
-                }} />
-              </Suspense>
-            </Collapse>
-          )}
-        </form>
-      </Section>}
-      {loaded && <Section id="shell" title="Shell access">
+      {loaded && <Section id="access" title="Access">
         {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Thread's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
           <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
         </Row> : <Unsupported what="the terminal" />}
-      </Section>}
-      {onLogout && <Section id="session" title="Session">
-        <Button variant="secondary" className="self-start" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
+        {onLogout && <Row id="logout" label="This browser" help="Log out ends this browser's sign-in to UAM.">
+          <Button variant="secondary" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
+        </Row>}
       </Section>}
     </>,
     connections: <Section id="connections" title="Connected instances">{connections}</Section>,

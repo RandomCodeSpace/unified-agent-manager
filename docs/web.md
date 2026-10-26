@@ -450,14 +450,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     kept, and so is one another active Thread runs in. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
-  - **Settings → Worktrees → Folder for new worktrees** sets where new
+  - **Settings → Projects & worktrees → Folders → Folder for new worktrees** sets where new
     worktrees go (`worktrees_dir` in `PATCH /api/settings`; `~` is the home
     folder, `""` puts back `~/.uam/worktrees`). The folder must be absolute,
     yours when it exists, and in no git repository; uam makes it (0700) with
     the first worktree. Existing worktrees stay where they are and are still
     listed, removed on settling and removable here. Connected instances
     advertise `worktree-folder-v1`.
-  - **Settings → Worktrees** shows the disk holding the folder for new
+  - **Settings → Projects & worktrees** shows the disk holding the folder for new
     worktrees (free space against a 10% line), every worktree biggest first
     with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
@@ -1060,7 +1060,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   message (the composer shows a chip per changed drawing; the note itself
   appears in the conversation as a notice). The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
-  Diagram editor can switch to a draw.io page at an origin you name, after a
+  Conversation → Diagram editor can switch to a draw.io page at an origin you name, after a
   check of that origin passes.
 - **Images in replies**: an image the agent refers to by path, as
   `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
@@ -1605,7 +1605,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   more than one reply fits and there is no Utility model, or past today's
   Background AI limit or while suggested replies are paused (see Background
   AI), there is none, and the next look asks again; a Thread settled or
-  archived is not asked. Settings → Composer → **Suggest replies** turns it
+  archived is not asked. Settings → Conversation → **Suggest replies** turns it
   off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "3 files changed; tests pass". The
@@ -1824,7 +1824,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   tomorrow when 4 of their last 10 calls ended with an unusable answer.
   Settings → Background AI
   names the paused purpose and when it resumes, its rail entry and, for
-  suggested replies, Settings → Composer carry a dot and a note, and the
+  suggested replies, Settings → Conversation carry a dot and a note, and the
   log keeps one skipped entry ("repeated unusable answers") per pause, not
   one per Thread opened meanwhile.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
@@ -2232,7 +2232,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   width (up to about 400 px) first: the buttons drop their labels, then
   Charts and Terminal move into the header's "…" menu.
 - **Terminal**: off by default. Turn on Settings → Server → UAM and access →
-  Shell access → Terminal and the Thread
+  Access → Terminal and the Thread
   header shows a "Terminal" button after Changes and Charts, also when the project has no
   Git and on settled and archived Threads. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
@@ -2416,7 +2416,7 @@ received a prompt, the page says so and nothing is resent.
 
 ## Terminal
 
-Settings → Server → UAM and access → Shell access → Terminal, off by
+Settings → Server → UAM and access → Access → Terminal, off by
 default, adds a terminal panel that runs a login
 shell in the Project's folder, or in the Thread's worktree when opened from a
 Thread in one: your `$SHELL` if it is an absolute path to an
@@ -2632,7 +2632,7 @@ instance has its own setting, shown when that instance offers it.
 
 **Security.** A stdio server is a command run on this host as the uam user.
 Adding or editing one is therefore allowed only while Settings → Server →
-UAM and access → Shell access → Terminal is on (see Terminal), which
+UAM and access → Access → Terminal is on (see Terminal), which
 already grants a shell to anyone signed in; with it off the form offers
 HTTP and SSE only and the service refuses a stdio add or edit (`403`).
 Turning a server on or off and removing it need no Terminal.
@@ -3032,7 +3032,7 @@ Lifetime means all recorded usage, not a provider account's complete history.
 The popover distinguishes collection failures from zero usage. Prompt-length
 estimates are excluded. The open popover refreshes every 15 seconds.
 
-Settings → Token costs lets you set prices for a model, including
+Settings → Models → Token costs lets you set prices for a model, including
 models missing from the bundled catalog. Prices are USD per million tokens.
 Input and Output are required; Cache read and Cache write are optional. An
 absent cache price uses the Input rate; an explicit zero is free. Removing a

@@ -25,7 +25,7 @@ const skillsSetupOutputLimit = 128 << 10
 const skillsSetupFileLimit = 1000
 const skillsSetupByteLimit = 25 << 20
 
-var errSkillsTerminalOff = newError(http.StatusForbidden, "skills setup requires Settings → UAM and access → Shell access → Terminal on")
+var errSkillsTerminalOff = newError(http.StatusForbidden, "skills setup requires Settings → UAM and access → Terminal on")
 
 var skillSetupName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,99}$`)
 var skillSetupRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$`)

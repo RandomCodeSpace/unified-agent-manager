@@ -770,7 +770,7 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 	terminal := m.settings.Terminal
 	m.mu.Unlock()
 	if kind != "instructions" && !terminal {
-		return ConfigurationFile{}, newError(http.StatusForbidden, "editing agents, skills or hooks requires Settings → Shell access → Terminal on because they can run commands or grant tool permissions")
+		return ConfigurationFile{}, newError(http.StatusForbidden, "editing agents, skills or hooks requires Settings → UAM and access → Terminal on because they can run commands or grant tool permissions")
 	}
 	if in.Disabled != nil && (kind == "instructions" || remove || in.Path == "" || in.Revision == "" || in.Content != "") {
 		return ConfigurationFile{}, newError(http.StatusBadRequest, "disabling or enabling requires an agent, skill or hook path and revision without content")

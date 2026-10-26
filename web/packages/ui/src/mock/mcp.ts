@@ -70,7 +70,7 @@ export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
 
   function save(input: McpServerInput, existing?: Stored): Response {
     if (!input.name || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(input.name)) return fail(400, 'a name is 1 to 64 letters, digits, . _ or -');
-    if ((input.type === 'stdio' || existing?.type === 'stdio') && !terminal()) return fail(403, 'a server that runs a command needs Settings → Shell access → Terminal on; add a remote (HTTP or SSE) server instead');
+    if ((input.type === 'stdio' || existing?.type === 'stdio') && !terminal()) return fail(403, 'a server that runs a command needs Settings → UAM and access → Terminal on; add a remote (HTTP or SSE) server instead');
     if (!existing && servers.some((s) => s.name === input.name)) return fail(409, `an MCP server named "${input.name}" already exists`);
     const merge = (rows: McpServerInput['env'], stored: Record<string, string>) => Object.fromEntries((rows ?? []).map((r) => [r.key, r.value ?? stored[r.key] ?? '']));
     const next: Stored = {

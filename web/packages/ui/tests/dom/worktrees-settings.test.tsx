@@ -6,7 +6,7 @@ import { renderApp } from './render';
 async function openWorktrees(search = '') {
   const rendered = renderApp(`${search}#settings`);
   await screen.findByRole('heading', { level: 1, name: 'Settings' });
-  await rendered.user.click(screen.getByRole('button', { name: 'Worktrees', exact: true }));
+  await rendered.user.click(screen.getByRole('button', { name: 'Projects & worktrees', exact: true }));
   const list = within(await screen.findByRole('list', { name: 'Worktrees' }));
   return { ...rendered, list };
 }
@@ -50,7 +50,7 @@ describe('Settings → Worktrees', () => {
 
   test('the folder for new worktrees changes with the folder picker and resets to the default', async () => {
     const { user } = await openWorktrees();
-    const card = within(screen.getByRole('region', { name: 'Folder for new worktrees' }));
+    const card = within(screen.getByRole('region', { name: 'Folders' }));
     expect(card.getByText('~/.uam/worktrees')).toBeTruthy();
     expect(card.getByText('Existing worktrees stay where they are.')).toBeTruthy();
     const reset = card.getByRole('button', { name: 'Reset to default' }) as HTMLButtonElement;

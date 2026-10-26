@@ -8,7 +8,7 @@ test('Enable waits for a check of the origin in the field, which shows the serve
   try {
     const { user } = renderApp('#settings');
     const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
-    await user.click(rail.getByRole('button', { name: 'Diagram editor' }));
+    await user.click(rail.getByRole('button', { name: 'Conversation' }));
     const section = within(await screen.findByRole('region', { name: 'Diagram editor' }));
     await user.click(await section.findByRole('radio', { name: 'draw.io' }));
     const origin = section.getByRole('textbox', { name: 'Origin' });
@@ -38,7 +38,7 @@ test('Enable waits for a check of the origin in the field, which shows the serve
 test('a failed check shows the server’s error and keeps Enable off', async () => {
   const { user } = renderApp('#settings');
   const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
-  await user.click(rail.getByRole('button', { name: 'Diagram editor' }));
+  await user.click(rail.getByRole('button', { name: 'Conversation' }));
   const section = within(await screen.findByRole('region', { name: 'Diagram editor' }));
   await user.click(await section.findByRole('radio', { name: 'draw.io' }));
   await user.type(section.getByRole('textbox', { name: 'Origin' }), 'http://drawio.example.test');

@@ -271,7 +271,7 @@ func (m *Manager) DraftConfiguration(ctx context.Context, projectID, kind, brief
 	}
 	if !m.settings.Terminal {
 		m.mu.Unlock()
-		return ConfigurationDraft{}, newError(http.StatusForbidden, "creating agents, skills or hooks requires Settings → Shell access → Terminal on")
+		return ConfigurationDraft{}, newError(http.StatusForbidden, "creating agents, skills or hooks requires Settings → UAM and access → Terminal on")
 	}
 	models := m.configurationAgentModelsLocked()
 	runner, model, err := m.startUtilityLocked()

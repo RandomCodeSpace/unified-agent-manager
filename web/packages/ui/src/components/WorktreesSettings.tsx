@@ -1,5 +1,5 @@
 import { ArrowUp, Check, CircleDot, TriangleAlert } from 'lucide-react';
-import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { ApiError, describeError, type DiskInfo, type WorktreeEntry, type Worktrees } from '../api';
 import { cn } from '../lib/cn';
@@ -20,10 +20,11 @@ const card = 'flex flex-col gap-2 rounded-lg bg-raised p-5 shadow-raised';
 const MEASURING_POLL_MS = 3000;
 
 /**
- * Settings → Worktrees (mock C, "storage first"): the disk with its 10% line, the Thread worktrees biggest first with
- * what removing each would lose, and the ones settling removed on its own.
+ * Settings → Projects & worktrees (mock C, "storage first"): the folders new projects and worktrees go in, the disk
+ * with its 10% line, the Thread worktrees biggest first with what removing each would lose, and the ones settling
+ * removed on its own. `projectFolder` is the default project location's field, shown first in Folders.
  */
-export function WorktreesSettings() {
+export function WorktreesSettings({ projectFolder }: Readonly<{ projectFolder?: ReactNode }>) {
   const api = useApi();
   const [list, setList] = useState<Worktrees | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function WorktreesSettings() {
   const total = list.worktrees.reduce((n, w) => n + (w.size_bytes ?? 0), 0);
   return (
     <>
-      {api.supports('worktree-folder-v1') && <FolderCard list={list} onChanged={load} />}
+      {(projectFolder || api.supports('worktree-folder-v1')) && <FolderCard list={list} onChanged={load} projectFolder={projectFolder} />}
       {list.disk && <DiskCard disk={list.disk} worktrees={total} />}
       <WorktreeList list={list} total={total} measuring={measuring} onChanged={load} />
       {list.removed.length > 0 && <RemovedCard list={list} />}
@@ -229,8 +230,8 @@ function homePath(path: string, defaultRoot?: string): string {
   return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
 }
 
-/** Where new worktrees go: the folder, Change… (the folder picker) and Reset to default. */
-function FolderCard({ list, onChanged }: Readonly<{ list: Worktrees; onChanged: () => Promise<void> }>) {
+/** Folders: where Add project starts, then where new worktrees go with Change… (the folder picker) and Reset to default. */
+function FolderCard({ list, onChanged, projectFolder }: Readonly<{ list: Worktrees; onChanged: () => Promise<void>; projectFolder?: ReactNode }>) {
   const api = useApi();
   const [browsing, setBrowsing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -250,10 +251,13 @@ function FolderCard({ list, onChanged }: Readonly<{ list: Worktrees; onChanged: 
   };
   const isDefault = !list.default_root || list.root === list.default_root;
   return (
-    <section aria-labelledby="worktrees-folder-title" className={cn(card, 'py-4')}>
+    <section aria-labelledby="worktrees-folder-title" className={cn(card, 'gap-4')}>
+      <h2 id="worktrees-folder-title" className="text-title text-ink">Folders</h2>
+      {projectFolder}
+      {api.supports('worktree-folder-v1') && <>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
-          <h2 id="worktrees-folder-title" className="text-ui font-medium text-ink">Folder for new worktrees</h2>
+          <h3 className="text-ui font-medium text-ink">Folder for new worktrees</h3>
           <p className="text-caption text-muted">Existing worktrees stay where they are.</p>
         </div>
         <code className="min-w-0 truncate font-mono text-code-sm text-body" title={list.root}>{homePath(list.root, list.default_root)}</code>
@@ -268,6 +272,7 @@ function FolderCard({ list, onChanged }: Readonly<{ list: Worktrees; onChanged: 
         </Suspense>
       )}
       {error && <Note tone="error" role="alert">{error}</Note>}
+      </>}
     </section>
   );
 }

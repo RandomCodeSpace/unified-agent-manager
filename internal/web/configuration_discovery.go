@@ -147,7 +147,7 @@ func (m *Manager) SetSkillGloballyDisabled(projectID, name string, disabled bool
 	terminal := m.settings.Terminal
 	m.mu.Unlock()
 	if !terminal {
-		return newError(http.StatusForbidden, "changing skills requires Settings → Shell access → Terminal on because they can run commands or grant tool permissions")
+		return newError(http.StatusForbidden, "changing skills requires Settings → UAM and access → Terminal on because they can run commands or grant tool permissions")
 	}
 	provider, skillDirs, projectPaths := m.configurationDiscoverer(scope)
 	setter, ok := provider.(agentapi.SkillGlobalSetter)
