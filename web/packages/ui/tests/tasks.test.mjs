@@ -164,15 +164,16 @@ test('the Tasks that need the user: a waiting request, or a failure not opened s
   assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
 });
 
-test('the Task list keeps creation order whatever the state', async () => {
+test('the Task list puts the latest activity first whatever the state, newest first on a tie', async () => {
   const { sidebarTasks } = await import('../src/lib/tasks.ts');
   const projects = [{ id: 'p1', name: 'P', dir: '/p' }];
   const list = [
     s('old-asks', 'p1', '2026-10-05T08:00:00Z', { state: 'awaiting_answer', updated_at: '2026-10-05T12:00:00Z' }),
     s('new-idle', 'p1', '2026-10-05T10:00:00Z', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' }),
     s('mid-works', 'p1', '2026-10-05T09:00:00Z', { state: 'working', updated_at: '2026-10-05T11:00:00Z' }),
+    s('tie', 'p1', '2026-10-05T07:00:00Z', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' }),
   ];
-  assert.deepEqual(sidebarTasks(projects, list, null).map((t) => t.id), ['new-idle', 'mid-works', 'old-asks']);
+  assert.deepEqual(sidebarTasks(projects, list, null).map((t) => t.id), ['old-asks', 'mid-works', 'new-idle', 'tie']);
 });
 
 test('a Task row says in plain words what it needs or how it stands', async () => {
@@ -273,15 +274,4 @@ test('only a Thread in its own worktree has its folder\'s work stop Settle', asy
   assert.equal(putAwayWork(s('a', 'p1', '1', pending)), null);
   assert.deepEqual(putAwayWork(s('a', 'p1', '1', { ...pending, worktree: { path: '/wt', branch: 'uam/x' } })), pending.git_pending);
   assert.equal(putAwayWork(s('a', 'p1', '1', { worktree: { path: '/wt', branch: 'uam/x' } })), null);
-});
-
-test('the sidebar lists the latest activity first, then the newest', async () => {
-  const { sidebarTasks } = await import('../src/lib/tasks.ts');
-  const projects = [{ id: 'a', name: 'Alpha', dir: '/a' }];
-  const sessions = [
-    { id: 'old-busy', project_id: 'a', created_at: '2026-01-01', updated_at: '2026-06-01' },
-    { id: 'new-quiet', project_id: 'a', created_at: '2026-03-01', updated_at: '2026-03-01' },
-    { id: 'tie', project_id: 'a', created_at: '2026-02-01', updated_at: '2026-03-01' },
-  ];
-  assert.deepEqual(sidebarTasks(projects, sessions, null).map((t) => t.id), ['old-busy', 'new-quiet', 'tie']);
 });
