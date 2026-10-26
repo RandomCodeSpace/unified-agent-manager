@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, ItemContext, Markdown, PlainText, SessionContext, Skeleton, Spinner, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, ItemContext, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -591,8 +591,7 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
   const running = live && isActive(t?.status);
   const words = callWords(full ?? item, live, approvals);
   const Icon = STEP_ICONS[words.icon];
-  // Held still: the strip's live line has the pane's one moving mark.
-  const glyph = running ? <span className={cn('contents', STILL_STEP)}><ToolMark tone="running" /></span> : <Icon aria-hidden="true" />;
+  const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
   const took = running ? null : itemTook(item);
   const ended = !live && isActive(t?.status);
   const title = ended ? 'The turn ended before this tool reported a result' : undefined;
@@ -895,20 +894,16 @@ function WorkingTail({ working, turnId, current }: Readonly<{ working: boolean; 
 
 /**
  * Compact (DESIGN.md live step): the call in progress at the turn's foot, its tool row (name,
- * argument) alone; its output, and a streaming thought's text, are the strip's peek. It has no
- * mark that moves: the strip's live line holds the one animated mark, so the running row's own
- * ring is held still here (`STILL_STEP`). It rises in; once the step ends it is gone from here and counted on the turn line.
+ * argument) alone; its output, and a streaming thought's text, are the strip's peek. Its mark is the
+ * step dots (`StepDots`), not the ring, which only the strip's live line turns. It rises in; once the step ends it is gone from here and counted on the turn line.
  */
 function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
   return (
     <div className="flex animate-rise flex-col gap-1">
-      <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step className={STILL_STEP} />
+      <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step />
     </div>
   );
 }
-
-/** The running step's mark, held still: the strip's live line has the pane's one ring (r13 A). The one place the running row's mark is set. */
-const STILL_STEP = '[&_.animate-spin]:animate-none';
 
 interface RenderContext {
   planVersion?: number;
@@ -1187,9 +1182,9 @@ function toolProgress(tool: Item['tool'], named = false) {
   return <p role="status" aria-label="Tool progress" className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
 }
 
-/** A call's state as a glyph: the spinner while it runs, a still dashed circle while it waits to start, a check, a cross, or a dash for a call that never reported. */
+/** A call's state as a glyph: three dots that light in turn while it runs, a still dashed circle while it waits to start, a check, a cross, or a dash for a call that never reported. */
 export function ToolMark({ tone }: Readonly<{ tone: string }>) {
-  if (tone === 'running') return <Spinner />;
+  if (tone === 'running') return <StepDots />;
   if (tone === 'pending') return <CircleDashed aria-hidden="true" className="size-3.5 text-muted" strokeWidth={2.5} />;
   if (tone === 'completed' || tone === 'decided') return <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} />;
   if (tone === 'failed') return <X aria-hidden="true" className="size-3.5 text-error" strokeWidth={2.5} />;

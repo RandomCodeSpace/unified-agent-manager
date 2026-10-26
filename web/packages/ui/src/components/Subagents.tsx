@@ -16,7 +16,7 @@ import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilt
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { BADGE_TEXT, Dot, Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, clockTime, useApp } from './common';
+import { BADGE_TEXT, Markdown, Note, Skeleton, Spinner, StepDots, SubagentIdleIcon, clockTime, useApp } from './common';
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
@@ -341,13 +341,13 @@ function Counts({ c, lead }: Readonly<{ c: SubagentCounts; lead?: ReactNode }>) 
 }
 
 /**
- * A subagent's state as a glyph (AgentChip's, without the word): a still `accent` dot (the ring
- * turns only at the Task's state and the running step), a check, a cross, the idle glyph, a dash.
+ * A subagent's state as a glyph (AgentChip's, without the word): the step dots while it runs
+ * (`StepDots`, the running tool step's mark), a check, a cross, the idle glyph, a dash.
  */
 function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
   switch (status) {
     case 'running':
-      return <Dot tone="accent" />;
+      return <StepDots />;
     case 'completed':
       return <Check aria-hidden="true" className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
     case 'failed':

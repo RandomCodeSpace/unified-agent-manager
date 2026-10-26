@@ -229,8 +229,8 @@ export function Dot({ tone, className }: Readonly<{ tone: Tone; className?: stri
   return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], className)} />;
 }
 
-import { Spinner } from './ui/spinner';
-export { Spinner };
+import { Spinner, StepDots } from './ui/spinner';
+export { Spinner, StepDots };
 
 export function SubagentIdleIcon({ className }: Readonly<{ className?: string }>) {
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
