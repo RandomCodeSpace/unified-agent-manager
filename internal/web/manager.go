@@ -995,6 +995,10 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.rewind = loadedRewind(web.Rewind)
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
+		if web.Context != nil && web.Context.Limit > 0 && web.Context.Used >= 0 {
+			usage := agentapi.Context(*web.Context)
+			s.context = &usage
+		}
 		s.agent = web.Agent
 		if web.Budget != nil {
 			s.budget = *web.Budget
@@ -2382,7 +2386,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
-				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff),
+				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
 			},
 		})
 	}
@@ -3280,7 +3284,11 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	req.Model, req.Effort, req.ContextSize = model, effort, contextSize
-	s.context, s.compacting, s.compactingBackground = nil, false, false
+	s.compacting, s.compactingBackground = false, false
+	// The same conversation reopens with the context its last report gave.
+	if s.convID == "" {
+		s.context = nil
+	}
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
 		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)

@@ -475,6 +475,15 @@ type TodoCounts struct {
 	Omitted    int `json:"omitted,omitempty"`
 }
 
+// WebContext is a conversation's context usage report, the fields of
+// agentapi.Context.
+type WebContext struct {
+	Used   int64 `json:"used"`
+	Limit  int64 `json:"limit"`
+	Prompt int64 `json:"prompt,omitempty"`
+	Cached int64 `json:"cached,omitempty"`
+}
+
 // WebState is the small durable part of a web session. Transcripts stay with
 // the provider; lifecycle metadata and request outcomes survive a service
 // restart.
@@ -557,6 +566,9 @@ type WebState struct {
 	// Place is the branch or worktree the Thread was started in; nil for a
 	// Thread on its Project's current branch.
 	Place *WebPlace `json:"place,omitempty"`
+	// Context is the conversation's last context usage report, kept so a
+	// reopened Thread shows it until the next one; nil before the first.
+	Context *WebContext `json:"context,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -645,6 +657,7 @@ var knownWebStateFields = map[string]struct{}{
 	"budget":              {},
 	"handoff":             {},
 	"place":               {},
+	"context":             {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.
