@@ -211,3 +211,25 @@ test('Compare opens Changes with the server’s change lines and the note', asyn
   expect(editor.getByRole('region', { name: 'Sent with your next message' })).toBeTruthy();
   expect(editor.getByRole('region', { name: 'What the agent reads' })).toBeTruthy();
 });
+
+test('with draw.io enabled a converted fence opens the embed, and a frame the page refuses says to reload', async () => {
+  const { user } = await openTask('t-chart');
+  await act(() => api.updateWebSettings({ drawio: { origin: 'https://embed.diagrams.net', enabled: true } }));
+  const put = vi.spyOn(api, 'putDrawing');
+  try {
+    await user.click((await screen.findAllByRole('button', { name: 'Edit as drawing' }))[0]);
+    await waitFor(() => expect(put).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.drawio', expect.objectContaining({ origin: 'convert', format: 'drawio' })));
+    const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.drawio' }));
+    const frame = editor.getByTitle('draw.io editor') as HTMLIFrameElement;
+    expect(frame.src).toContain('https://embed.diagrams.net/?embed=1');
+    expect(editor.queryByText(/Reload the page to edit in draw.io/)).toBeNull();
+    // The page was served before draw.io was enabled: its policy refuses the frame.
+    act(() => {
+      document.dispatchEvent(Object.assign(new Event('securitypolicyviolation'), { blockedURI: 'https://embed.diagrams.net/?embed=1' }));
+    });
+    expect(await editor.findByText(/Reload the page to edit in draw.io/)).toBeTruthy();
+    expect(editor.getByRole('button', { name: 'Reload' })).toBeTruthy();
+  } finally {
+    put.mockRestore();
+  }
+});
