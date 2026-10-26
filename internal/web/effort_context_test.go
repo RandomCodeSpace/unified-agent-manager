@@ -124,7 +124,7 @@ func TestTaskEffortContextValidationAndSwitch(t *testing.T) {
 	p2.AddConversation(sum.ConversationID, nil)
 	m2 := startManager(t, st, p2)
 	restored := detail(t, m2, sum.ID)
-	if restored.Effort != "high" || restored.ContextSize != "long_context" || restored.Context != nil {
+	if restored.Effort != "high" || restored.ContextSize != "long_context" || restored.Context == nil || *restored.Context != (agentapi.Context{Used: 250, Limit: 900}) {
 		t.Fatalf("restart = %+v", restored.SessionSummary)
 	}
 	if _, err := m2.Submit(sum.ID, PromptRequest{Text: "after restart", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
@@ -136,7 +136,7 @@ func TestTaskEffortContextValidationAndSwitch(t *testing.T) {
 	}
 }
 
-func TestTaskContextLiveOnly(t *testing.T) {
+func TestTaskContextKeptAcrossReopen(t *testing.T) {
 	m, p, st := newTestManager(t)
 	sum, c := createSession(t, m, p)
 	if data, _ := json.Marshal(sum); strings.Contains(string(data), `"context":`) {
@@ -170,13 +170,15 @@ func TestTaskContextLiveOnly(t *testing.T) {
 	if beforeKey != afterKey {
 		t.Fatal("live usage changed durable key")
 	}
+	// A report alone is not durable; the end of its turn saves it.
+	c.EmitTurn(agentapi.TurnCompleted, "")
 	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
 	rec, _ := loadRecord(t, st, "fake", sum.ID)
 	data, _ := json.Marshal(rec.Web)
-	if strings.Contains(string(data), `"context":`) {
-		t.Fatalf("context persisted: %s", data)
+	if !strings.Contains(string(data), `"context":{"used":250,"limit":200}`) {
+		t.Fatalf("context not persisted: %s", data)
 	}
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
@@ -184,12 +186,12 @@ func TestTaskContextLiveOnly(t *testing.T) {
 	if _, err := m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
-	if got := detail(t, m, sum.ID); got.Context != nil {
+	if got := detail(t, m, sum.ID); got.Context == nil || got.Context.Used != 250 {
 		t.Fatalf("reopened context = %+v", got.Context)
 	}
 	if stale := c; stale != p.Last() {
 		stale.Emit(agentapi.Event{Kind: agentapi.EventContext, Context: &agentapi.Context{Used: 4, Limit: 5}})
-		if detail(t, m, sum.ID).Context != nil {
+		if detail(t, m, sum.ID).Context.Used != 250 {
 			t.Fatal("stale conversation changed context")
 		}
 	}
