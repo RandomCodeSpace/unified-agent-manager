@@ -24,6 +24,9 @@ test('Enable waits for a check of the origin in the field, which shows the serve
     await user.click(enable);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ drawio: { origin: 'https://embed.diagrams.net', enabled: true } }));
     await waitFor(() => expect(enable.getAttribute('aria-checked')).toBe('true'));
+    // The page admits the origin's frame only from its next load, so enabling says to reload.
+    expect(await section.findByText(/Reload the page to open drawings in draw.io/)).toBeTruthy();
+    expect(section.getByRole('button', { name: 'Reload' })).toBeTruthy();
     // Another origin in the field: the switch waits for its own check.
     await user.type(origin, '/x');
     expect(enable.hasAttribute('data-disabled')).toBe(true);

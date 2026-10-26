@@ -351,6 +351,8 @@ function Legend() {
  */
 function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string; xml: string; onSave: (xml: string) => void; onReady: (load: (xml: string) => void) => void }>) {
   const frame = useRef<HTMLIFrameElement>(null);
+  // draw.io enabled after this page loaded: the page's security policy does not admit the frame until a reload.
+  const [blocked, setBlocked] = useState(false);
   const first = useRef(xml);
   const latest = useRef({ onSave, onReady });
   useEffect(() => {
@@ -371,8 +373,23 @@ function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string
       }
       if ((m.event === 'autosave' || m.event === 'save') && m.xml) latest.current.onSave(m.xml);
     };
+    const onViolation = (e: SecurityPolicyViolationEvent) => e.blockedURI.startsWith(from) && setBlocked(true);
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    document.addEventListener('securitypolicyviolation', onViolation);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      document.removeEventListener('securitypolicyviolation', onViolation);
+    };
   }, [origin]);
-  return <iframe ref={frame} title="draw.io editor" src={drawioEmbedUrl(origin)} sandbox={DRAWIO_SANDBOX} className="size-full border-0 bg-raised" />;
+  return (
+    <>
+      {blocked && (
+        <Note tone="warn" role="alert" className="absolute inset-x-4 top-3 z-10 flex items-center gap-3 rounded-sm bg-raised px-3 py-2 shadow-float">
+          Reload the page to edit in draw.io: it was enabled after this page loaded.
+          <Button size="sm" variant="secondary" onClick={() => globalThis.location.reload()}>Reload</Button>
+        </Note>
+      )}
+      <iframe ref={frame} title="draw.io editor" src={drawioEmbedUrl(origin)} sandbox={DRAWIO_SANDBOX} className="size-full border-0 bg-raised" />
+    </>
+  );
 }
