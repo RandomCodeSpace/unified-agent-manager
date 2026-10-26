@@ -605,8 +605,12 @@ export interface Settings {
   github_mcp?: boolean;
   /** Investigate failed pipelines for commits made through UAM, starting with the Utility model. Off by default. */
   gitlab_auto_investigate?: boolean;
-  /** The prompt the Utility model writes merge request descriptions with; absent for `DEFAULT_MR_PROMPT`. PATCH `''` puts the default back. */
+  /** Agents' pull and merge request instructions, which the Utility model also writes GitLab merge request descriptions with; absent for `DEFAULT_MR_PROMPT`. PATCH `''` puts the default back. */
   gitlab_mr_prompt?: string;
+  /** Agents' commit message instructions (`git-rules-v1`); absent for `DEFAULT_COMMIT_PROMPT`. PATCH `''` puts the default back. */
+  commit_prompt?: string;
+  /** The Co-authored-by trailer of agents' commits (`git-rules-v1`); an empty name lets the provider pick one. Absent while off with no name kept. */
+  coauthor?: { enabled: boolean; name?: string };
   /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
   worktrees_dir?: string;
   /** The draw.io editor for drawings (`drawings-v1`): its origin and whether it is on; absent while Excalidraw, the built-in editor, is used. */
@@ -670,14 +674,12 @@ export interface DrawioCheck {
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
 export const DEFAULT_COMPACT_THRESHOLD = 80;
 
-/** The service's built-in merge request description prompt: what an empty `Settings.gitlab_mr_prompt` uses. */
-export const DEFAULT_MR_PROMPT = `Write the description of a GitLab merge request from the commits and changed files shown.
-Use these sections, in this order, as level-2 Markdown headings: Summary, Changes, How it was tested, Notes.
-- Summary: one or two sentences on what the merge request does and why.
-- Changes: a short bullet list of the notable changes.
-- How it was tested: only the tests or checks the commits mention; write "Not stated in the commits." when they mention none. Never invent tests.
-- Notes: risks, follow-ups or hints for reviewers; leave the section out when there are none.
-Be concise and concrete. Plain Markdown, no other headings, no filler.`;
+/** The service's built-in commit message instructions: what an empty `Settings.commit_prompt` uses. */
+export const DEFAULT_COMMIT_PROMPT = `Follow Conventional Commits: a subject line "type(scope): summary", where type is feat, fix, docs, style, refactor, perf, test, build, ci, chore or revert and the scope is optional. Write the summary in the imperative, in plain words, at most 72 characters, with no trailing period. Add a body only when the reason is not obvious: a blank line, then a few short lines on why. Mark a breaking change with "!" after the type and a "BREAKING CHANGE:" footer.`;
+
+/** The service's built-in pull and merge request instructions: what an empty `Settings.gitlab_mr_prompt` uses. */
+export const DEFAULT_MR_PROMPT = `- Title: one short line in plain, professional words that names the outcome, in the style of the repository's commits (Conventional Commits when it uses them).
+- Description: two or three short lines in plain words on what changes and why. No headings, no list of every change, no filler.`;
 
 /** Replies suggested for the transcript ending with item `item_id`; both empty when none are offered. */
 export interface Suggestions {

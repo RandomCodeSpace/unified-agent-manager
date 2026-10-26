@@ -399,13 +399,16 @@ type webProvider struct {
 	usageMu              sync.Mutex
 	usageOwned           map[string]sdkClient
 	// customMu guards custom, the owner's custom models, subagent, the
-	// models subagents may use (empty for any), and githubMCP, whether
-	// sessions start the built-in GitHub MCP server; it is never held with
-	// mu, which a CLI start holds for long.
+	// models subagents may use (empty for any), githubMCP, whether
+	// sessions start the built-in GitHub MCP server, and gitRules and
+	// coauthor (git_rules.go); it is never held with mu, which a CLI start
+	// holds for long.
 	customMu  sync.Mutex
 	custom    []agentapi.CustomModel
 	subagent  []string
 	githubMCP bool
+	gitRules  string
+	coauthor  bool
 	// quotaMu guards live, the quota snapshots by type from the latest model
 	// call's response since this CLI started. account.getQuota keeps
 	// returning what the CLI read at sign-in, so these supersede it. It also
@@ -1136,17 +1139,13 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 // folded tool calls, the agent loads the built-in uam skill before using what
 // uam renders or provides (an agent rarely loads it from its description
 // alone), a question's options arrive as choices the composer lists and
-// pre-selects, commits and pull requests carry no agent attribution, and work
-// of several steps keeps the todo list uam shows (todos.go). Task sessions
-// also set CoauthorEnabled false, which drops the CLI's own co-author tool and
-// commit-trailer instructions. Utility sessions replace the message.
-// Subagents do not receive it: subagentStart gives them the todo and commit
-// rules.
+// pre-selects, and work of several steps keeps the todo list uam shows
+// (todos.go). The owner's git rules follow it (git_rules.go). Utility
+// sessions replace the message. Subagents do not receive it: subagentStart
+// gives them the todo and git rules.
 const taskSystem = `This conversation is a uam Thread: the owner reads it in a browser, often on a phone, where your tool calls and their output are folded away. Put what the owner needs in your reply: results, the errors that matter, decisions and next steps. Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.
 
 When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
-
-Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.
 
 For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes. Keep plans and step lists there, not in Markdown files in the project, unless the owner asks for a file.
 
@@ -1199,6 +1198,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	compaction := infiniteSessions(req.CompactionThreshold)
 	disabled := p.disabledMCPServers()
+	rules, coauthor := p.git()
+	system := taskSystem + "\n\n" + rules
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
@@ -1210,8 +1211,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:                providers,
 			Models:                   models,
 			Tools:                    uamTools,
-			SystemMessage:            &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
-			CoauthorEnabled:          copilot.Bool(false),
+			SystemMessage:            &copilot.SystemMessageConfig{Mode: "append", Content: system},
+			CoauthorEnabled:          copilot.Bool(coauthor),
 			Streaming:                copilot.Bool(true),
 			EnableFileChangeTracking: copilot.Bool(true),
 			OnPermissionRequest:      deferPermission,
@@ -1221,7 +1222,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnElicitationRequest:     c.elicit,
 			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
-			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: subagentStart},
+			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -1238,8 +1239,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:        providers,
 			Models:           models,
 			Tools:            uamTools,
-			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
-			CoauthorEnabled:  copilot.Bool(false),
+			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: system},
+			CoauthorEnabled:  copilot.Bool(coauthor),
 			Streaming:        copilot.Bool(true),
 			// Native capture survives only when the resumed session has a valid
 			// baseline; this option cannot reconstruct earlier untracked edits.
@@ -1254,7 +1255,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnAutoModeSwitchRequest: c.confirmAuto,
 			OnExitPlanModeRequest:   c.reviewPlan,
 			OnEvent:                 c.onEvent,
-			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: subagentStart},
+			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,

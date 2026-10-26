@@ -186,7 +186,7 @@ test('core-only peers render their task and name unavailable optional features i
   expect(await screen.findByText(/Unavailable on Core only:.*files.*terminal.*configuration/)).toBeTruthy();
   // A section the peer cannot serve explains why instead of offering a form that fails.
   await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
-  const shell = within(await screen.findByRole('region', { name: 'Shell access' }));
+  const shell = within(await screen.findByRole('region', { name: 'Access' }));
   expect(shell.getByText('Core only does not offer the terminal to connected instances. Update UAM on Core only to manage it here.')).toBeTruthy();
   expect(shell.queryByRole('switch', { name: 'Terminal' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Skills', exact: true }));
@@ -221,7 +221,7 @@ test('Settings of a selected peer read and write only that peer and name it in t
   expect(screen.queryByRole('button', { name: 'Connected instances' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
   const settingsCall = (call: { path: string }) => /^\/api\/(settings|mcp|configuration|providers|usage|utility)/.test(call.path);
-  await user.click(await screen.findByRole('button', { name: 'Composer', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'Conversation', exact: true }));
   const suggest = await screen.findByRole('switch', { name: 'Suggest replies' });
   await user.click(suggest);
   await waitFor(() => expect(calls.slice(switched).some(call => call.owner === 'b' && call.method === 'PATCH' && call.path === '/api/settings')).toBe(true));
@@ -233,7 +233,7 @@ test('Settings of a selected peer read and write only that peer and name it in t
   // Each page reads from B on its first visit: the account too, now that its page mounts when visited.
   await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
   await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
-  await user.click(screen.getByRole('button', { name: 'Token costs', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
   await user.click(screen.getByRole('button', { name: 'GitHub Copilot', exact: true }));
   await waitFor(() => {
     const paths = calls.slice(switched).filter(call => call.owner === 'b').map(call => call.path);
@@ -827,7 +827,7 @@ test('project location belongs to the selected instance and older peers omit the
   const { user, calls, owners } = federated('', [current, record('c', 'Workstation C')]);
   await user.click(await screen.findByRole('button', { name: 'Settings', exact: true }));
   await chooseInstance(user, /^Workstation B/);
-  await user.click(await screen.findByRole('button', { name: 'UAM and access', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'Projects & worktrees', exact: true }));
   const input = await screen.findByRole('textbox', { name: 'Default project location' });
   await user.type(input, '/home/user/projects');
   const before = calls.length;

@@ -828,9 +828,15 @@ type WebSettings struct {
 	// GitLabAutoInvestigate starts an investigation when a Task's own
 	// GitLab pipeline fails. Off when absent.
 	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
-	// GitLabMRPrompt is the prompt for merge request descriptions; the
-	// built-in one when empty.
+	// GitLabMRPrompt is the instructions for pull and merge requests, which
+	// also write GitLab merge request descriptions; the built-in ones when
+	// empty.
 	GitLabMRPrompt string `json:"gitlab_mr_prompt,omitempty"`
+	// CommitPrompt is the instructions for commit messages; the built-in
+	// ones when empty.
+	CommitPrompt string `json:"commit_prompt,omitempty"`
+	// CoAuthor is the co-author trailer of agents' commits. Off when absent.
+	CoAuthor WebCoAuthor `json:"coauthor,omitzero"`
 	// WorktreesDir is the absolute folder new Thread worktrees go in;
 	// ~/.uam/worktrees when empty.
 	WorktreesDir string `json:"worktrees_dir,omitempty"`
@@ -842,6 +848,13 @@ type WebSettings struct {
 	DrawIO WebDrawIO `json:"drawio,omitzero"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebCoAuthor is the co-author setting: whether agents' commits carry a
+// Co-authored-by trailer, and its value; the provider picks one when empty.
+type WebCoAuthor struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Name    string `json:"name,omitempty"`
 }
 
 // WebDrawIO is the draw.io editor setting.
@@ -1085,6 +1098,8 @@ var knownWebSettingsFields = map[string]struct{}{
 	"github_mcp":              {},
 	"gitlab_auto_investigate": {},
 	"gitlab_mr_prompt":        {},
+	"commit_prompt":           {},
+	"coauthor":                {},
 	"worktrees_dir":           {},
 	"worktree_roots":          {},
 	"drawio":                  {},

@@ -32,14 +32,14 @@ const (
 	mrTemplatePath     = ".gitlab/merge_request_templates/Default.md"
 )
 
-// defaultMRPrompt is the prompt when Settings → GitLab leaves it empty.
-const defaultMRPrompt = `Write the description of a GitLab merge request from the commits and changed files shown.
-Use these sections, in this order, as level-2 Markdown headings: Summary, Changes, How it was tested, Notes.
-- Summary: one or two sentences on what the merge request does and why.
-- Changes: a short bullet list of the notable changes.
-- How it was tested: only the tests or checks the commits mention; write "Not stated in the commits." when they mention none. Never invent tests.
-- Notes: risks, follow-ups or hints for reviewers; leave the section out when there are none.
-Be concise and concrete. Plain Markdown, no other headings, no filler.`
+// defaultMRPrompt is the pull and merge request instructions when Settings
+// leaves them empty. Agents get them (git_rules.go), and so does the Utility
+// model writing a GitLab merge request description.
+const defaultMRPrompt = `- Title: one short line in plain, professional words that names the outcome, in the style of the repository's commits (Conventional Commits when it uses them).
+- Description: two or three short lines in plain words on what changes and why. No headings, no list of every change, no filler.`
+
+// mrDescriptionTask comes before the prompt, whichever it is.
+const mrDescriptionTask = "Write the description of a GitLab merge request from the commits and changed files shown, following these instructions:\n"
 
 // mrDescriptionRules always follow the prompt, whichever it is.
 const mrDescriptionRules = `
@@ -207,7 +207,7 @@ func (m *Manager) writeMRDescription(ctx context.Context, s *webSession, gate gl
 	}
 	stat := repo.mrRead(ctx, maxMRStatBytes, "diff", "--stat=100", noColor, noExtDiff, base+"...HEAD")
 	m.mu.Lock()
-	title, id, projectID, system := firstNonEmpty(s.name, s.title), s.id, s.projectID, m.settings.mrPrompt()+"\n"+mrDescriptionRules
+	title, id, projectID, system := firstNonEmpty(s.name, s.title), s.id, s.projectID, mrDescriptionTask+m.settings.mrPrompt()+"\n"+mrDescriptionRules
 	runner, model, err := m.startUtilityLocked()
 	m.mu.Unlock()
 	if err != nil {

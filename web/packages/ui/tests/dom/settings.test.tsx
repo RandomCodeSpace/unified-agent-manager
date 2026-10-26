@@ -71,8 +71,8 @@ describe('settings', () => {
   });
 
   test('project location saves a normalized path and clearing restores home', async () => {
-    const { user } = await openSettings('UAM and access', 'Project folders');
-    const folders = await section('Project folders');
+    const { user } = await openSettings('Projects & worktrees', 'Folders');
+    const folders = await section('Folders');
     const input = folders.getByRole('textbox', { name: 'Default project location' });
     expect(folders.queryByRole('button', { name: 'Save project location' })).toBeNull();
     await user.type(input, '/home/user/projects/');
@@ -85,8 +85,8 @@ describe('settings', () => {
   });
 
   test('project location saves the chosen folder immediately, including a newly created folder', async () => {
-    const { user } = await openSettings('UAM and access', 'Project folders');
-    const card = await section('Project folders');
+    const { user } = await openSettings('Projects & worktrees', 'Folders');
+    const card = await section('Folders');
     const input = card.getByRole('textbox', { name: 'Default project location' });
     const browse = card.getByRole('button', { name: 'Browse' });
     await user.click(browse);
@@ -121,8 +121,8 @@ describe('settings', () => {
       return filter || !path?.endsWith('/projects') ? listing : { ...listing, entries: listing.entries.filter((e) => e.name !== 'archive'), truncated: true };
     });
     try {
-      const { user } = await openSettings('UAM and access', 'Project folders');
-      const card = await section('Project folders');
+      const { user } = await openSettings('Projects & worktrees', 'Folders');
+      const card = await section('Folders');
       await user.click(card.getByRole('button', { name: 'Browse' }));
       const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
       await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
@@ -138,8 +138,8 @@ describe('settings', () => {
   });
 
   test('project location keeps a refused folder choice for retry without replacing the saved default', async () => {
-    const { user } = await openSettings('UAM and access', 'Project folders');
-    const card = await section('Project folders');
+    const { user } = await openSettings('Projects & worktrees', 'Folders');
+    const card = await section('Folders');
     const input = card.getByRole('textbox', { name: 'Default project location' });
     await user.click(card.getByRole('button', { name: 'Browse' }));
     const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
@@ -158,8 +158,8 @@ describe('settings', () => {
   });
 
   test('project location keeps a refused draft and the previously saved location', async () => {
-    const { user } = await openSettings('UAM and access', 'Project folders');
-    const folders = await section('Project folders');
+    const { user } = await openSettings('Projects & worktrees', 'Folders');
+    const folders = await section('Folders');
     const input = folders.getByRole('textbox', { name: 'Default project location' });
     await user.type(input, 'relative/projects');
     await user.keyboard('{Enter}');
@@ -172,9 +172,9 @@ describe('settings', () => {
     const auth = vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true });
     const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined);
     try {
-      const { user } = await openSettings('UAM and access', 'Shell access');
+      const { user } = await openSettings('UAM and access', 'Access');
       expect(within(screen.getByRole('navigation', { name: 'Threads' })).queryByRole('button', { name: 'Log out' })).toBeNull();
-      expect((await section('Session')).getByRole('button', { name: 'Log out' })).toBeTruthy();
+      expect((await section('Access')).getByRole('button', { name: 'Log out' })).toBeTruthy();
       await user.click(page_('Custom providers'));
       expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
       await user.click(page_('UAM and access'));
@@ -185,7 +185,7 @@ describe('settings', () => {
   });
 
   test('UAM and access omits Log out when the server does not require sign in', async () => {
-    await openSettings('UAM and access', 'Shell access');
+    await openSettings('UAM and access', 'Access');
     expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Session', exact: true })).toBeNull();
   });
@@ -337,7 +337,7 @@ describe('settings', () => {
     // The mock's openrouter key is not set, and its Background AI used all 40 calls today.
     await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Background AI', description: 'Background AI is paused for today' })).toBeTruthy());
     expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Custom providers', description: 'API key missing: openrouter' })).toBeTruthy();
-    expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Composer', description: '' })).toBeTruthy();
+    expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Conversation', description: '' })).toBeTruthy();
   });
 
   test('sections keep an unfinished provider draft when navigating away and back', async () => {
@@ -345,9 +345,9 @@ describe('settings', () => {
     const models = await section('Custom providers');
     await user.click(models.getByRole('button', { name: 'Add provider' }));
     await user.type(models.getByRole('textbox', { name: 'Provider name' }), 'draft-provider');
-    await user.click(page_('Composer'));
+    await user.click(page_('Conversation'));
     expect(screen.queryByRole('region', { name: 'Custom providers', exact: true })).toBeNull();
-    expect(page_('Composer').getAttribute('aria-current')).toBe('page');
+    expect(page_('Conversation').getAttribute('aria-current')).toBe('page');
     await user.click(page_('Custom providers'));
     expect((models.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement).value).toBe('draft-provider');
   });
@@ -379,7 +379,7 @@ describe('settings', () => {
   });
 
   test('the Enter default switches between steer and queue, saved on the service', async () => {
-    const { user } = await openSettings('Composer');
+    const { user } = await openSettings('Conversation', 'Composer');
     const composer = await section('Composer');
     const steer = composer.getByRole('radio', { name: 'Send now' });
     expect(steer.getAttribute('aria-checked')).toBe('true');
@@ -569,8 +569,8 @@ describe('settings', () => {
   });
 
   test('the terminal switch and this browser\'s theme and motion without an activity selector', async () => {
-    const { user } = await openSettings('UAM and access', 'Shell access');
-    const shell = await section('Shell access');
+    const { user } = await openSettings('UAM and access', 'Access');
+    const shell = await section('Access');
     await user.click(shell.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(shell.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
     await user.click(page_('Appearance & alerts'));

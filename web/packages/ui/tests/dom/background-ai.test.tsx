@@ -122,7 +122,7 @@ describe('Background AI', () => {
     await openLog(card, user);
     expect(card.getByText(/^Paused until tomorrow \(midnight on the server, .+ here\) after repeated unusable answers: Suggested replies\./)).toBeTruthy();
     const rail = within(screen.getByRole('navigation', { name: 'Settings sections' }));
-    await user.click(await rail.findByRole('button', { name: 'Composer', description: 'Suggested replies are paused for today' }));
+    await user.click(await rail.findByRole('button', { name: 'Conversation', description: 'Suggested replies are paused for today' }));
     const composer = within(await screen.findByRole('region', { name: 'Composer' }));
     expect(composer.getByText(/^Paused until tomorrow \(midnight on the server, .+ here\) after repeated unusable answers from the Utility model\./)).toBeTruthy();
   });

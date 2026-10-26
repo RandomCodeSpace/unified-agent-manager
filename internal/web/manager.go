@@ -817,8 +817,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
-		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
 	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
+	m.setGitRules(m.settings)
 	m.setPolicy(m.settings)
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
@@ -1726,6 +1727,10 @@ type SettingsPatch struct {
 	// GitLabMRPrompt sets the merge request description prompt; "" or the
 	// default itself puts the default back.
 	GitLabMRPrompt *string
+	// CommitPrompt sets the commit message instructions the same way.
+	CommitPrompt *string
+	// CoAuthor sets the co-author trailer; a name must fit on one line.
+	CoAuthor *store.WebCoAuthor
 	// WorktreesDir sets the folder new worktrees go in; "" puts the
 	// default back. A leading ~ is the home folder.
 	WorktreesDir *string
@@ -1828,6 +1833,22 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			mrPrompt = ""
 		}
 	}
+	var commitPrompt string
+	if p.CommitPrompt != nil {
+		if commitPrompt = strings.TrimSpace(*p.CommitPrompt); utf8.RuneCountInString(commitPrompt) > maxMRPromptRunes {
+			return Settings{}, newError(http.StatusBadRequest, "commit_prompt must be at most %d characters", maxMRPromptRunes)
+		}
+		if commitPrompt == defaultCommitPrompt {
+			commitPrompt = ""
+		}
+	}
+	var coauthor store.WebCoAuthor
+	if p.CoAuthor != nil {
+		coauthor = store.WebCoAuthor{Enabled: p.CoAuthor.Enabled, Name: strings.TrimSpace(p.CoAuthor.Name)}
+		if utf8.RuneCountInString(coauthor.Name) > maxCoAuthorRunes || strings.ContainsFunc(coauthor.Name, unicode.IsControl) {
+			return Settings{}, newError(http.StatusBadRequest, "coauthor name must be one line of at most %d characters", maxCoAuthorRunes)
+		}
+	}
 	var defaults TaskDefaults
 	if p.TaskDefaults != nil {
 		var err error
@@ -1919,6 +1940,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.GitLabMRPrompt != nil {
 		next.GitLabMRPrompt = mrPrompt
 	}
+	if p.CommitPrompt != nil {
+		next.CommitPrompt = commitPrompt
+	}
+	if p.CoAuthor != nil {
+		next.CoAuthor = coauthor
+	}
 	if p.GitHubMCP != nil {
 		next.GitHubMCP = *p.GitHubMCP
 	}
@@ -1966,7 +1993,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.CommitPrompt == current.CommitPrompt && next.CoAuthor == current.CoAuthor && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	var oldRoots []string
@@ -1983,6 +2010,8 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
 		cfg.WebSettings.GitLabMRPrompt = next.GitLabMRPrompt
+		cfg.WebSettings.CommitPrompt = next.CommitPrompt
+		cfg.WebSettings.CoAuthor = next.CoAuthor
 		cfg.WebSettings.DrawIO = store.WebDrawIO(next.DrawIO)
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
@@ -2009,6 +2038,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if next.GitHubMCP != current.GitHubMCP {
 		m.setGitHubMCP(next.GitHubMCP)
 	}
+	m.setGitRules(next)
 	m.setPolicy(next)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2105,6 +2135,16 @@ func (m *Manager) setSubagentModels(byProvider map[string][]string) {
 	for _, name := range m.order {
 		if u, ok := m.providers[name].(agentapi.SubagentModelUser); ok {
 			u.SetSubagentModels(byProvider[name])
+		}
+	}
+}
+
+// setGitRules gives s's git rules to each provider whose agents commit.
+func (m *Manager) setGitRules(s Settings) {
+	rules, providerCoAuthor := s.gitRules()
+	for _, name := range m.order {
+		if u, ok := m.providers[name].(agentapi.GitRulesUser); ok {
+			u.SetGitRules(rules, providerCoAuthor)
 		}
 	}
 }

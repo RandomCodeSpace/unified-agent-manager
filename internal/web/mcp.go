@@ -39,7 +39,7 @@ var (
 	mcpNameExpr   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 	envKeyExpr    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	headerKeyExpr = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
-	errStdioOff   = newError(http.StatusForbidden, "a server that runs a command needs Settings → Shell access → Terminal on; add a remote (HTTP or SSE) server instead")
+	errStdioOff   = newError(http.StatusForbidden, "a server that runs a command needs Settings → UAM and access → Terminal on; add a remote (HTTP or SSE) server instead")
 )
 
 // MCPSecret is one env variable or header: its name and whether a value is

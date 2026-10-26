@@ -55,14 +55,15 @@ func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
 }
 
 // Every Task session, created or resumed, appends the Task rules
-// (taskSystem) to Copilot's system message and turns the CLI's
-// co-author trailer off; a utility session keeps only its own message.
+// (taskSystem) and the git rules to Copilot's system message and turns the
+// CLI's co-author trailer off until the owner hands it the trailer; a
+// utility session keeps only its own message.
 func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	h := openWeb(t)
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	want := copilot.SystemMessageConfig{Mode: "append", Content: taskSystem}
+	want := copilot.SystemMessageConfig{Mode: "append", Content: taskSystem + "\n\n" + noAttribution}
 	if got := h.fc.create[0].SystemMessage; got == nil || !reflect.DeepEqual(*got, want) {
 		t.Fatalf("create system message = %+v", got)
 	}
@@ -84,18 +85,28 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	if got := h.fc.create[1].SystemMessage; got == nil || got.Mode != "replace" || got.Content != "Write a title." {
 		t.Fatalf("utility system message = %+v", got)
 	}
+	h.p.SetGitRules("Commit messages:\nBe brief.", true)
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-3", Workdir: "/work", Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	last := h.fc.create[len(h.fc.create)-1]
+	if got := last.SystemMessage; got == nil || got.Content != taskSystem+"\n\nCommit messages:\nBe brief." {
+		t.Fatalf("system message with git rules = %+v", got)
+	}
+	if got := last.CoauthorEnabled; got == nil || !*got {
+		t.Fatalf("CoauthorEnabled = %v, want true", got)
+	}
 }
 
 // taskSystem carries the rules every turn needs, since an agent rarely loads
 // the uam skill on its own: results in the reply, the pointer to the skill,
-// the ask_user conventions the composer reads, and no agent attribution.
+// and the ask_user conventions the composer reads.
 func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 	for _, rule := range []string{
 		"folded away. Put what the owner needs in your reply",
 		"Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.",
 		"as its own entry in choices",
 		` (Recommended)"`,
-		"no Co-authored-by trailer",
 		"\n\nFor work with more than two steps, keep a todo list in the session's `todos` table with the sql tool",
 		"tell it in its prompt to insert its own row in the same `todos` table",
 		"not in Markdown files in the project, unless the owner asks for a file.",

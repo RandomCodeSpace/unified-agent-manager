@@ -83,7 +83,7 @@ describe('settings help', () => {
 
   test('settings rows and sections expose help beside labels while service warnings remain visible', async () => {
     const { user } = renderApp('#settings');
-    await user.click(await screen.findByRole('button', { name: 'Composer', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Conversation', exact: true }));
     const help = await screen.findByRole('button', { name: 'About Suggest replies' });
     const composer = within(screen.getByRole('region', { name: 'Composer' }));
     const toggle = composer.getByRole('switch', { name: 'Suggest replies' });

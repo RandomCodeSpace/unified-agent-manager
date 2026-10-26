@@ -450,14 +450,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     kept, and so is one another active Thread runs in. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
-  - **Settings → Worktrees → Folder for new worktrees** sets where new
+  - **Settings → Projects & worktrees → Folders → Folder for new worktrees** sets where new
     worktrees go (`worktrees_dir` in `PATCH /api/settings`; `~` is the home
     folder, `""` puts back `~/.uam/worktrees`). The folder must be absolute,
     yours when it exists, and in no git repository; uam makes it (0700) with
     the first worktree. Existing worktrees stay where they are and are still
     listed, removed on settling and removable here. Connected instances
     advertise `worktree-folder-v1`.
-  - **Settings → Worktrees** shows the disk holding the folder for new
+  - **Settings → Projects & worktrees** shows the disk holding the folder for new
     worktrees (free space against a 10% line), every worktree biggest first
     with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
@@ -553,10 +553,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   load the `uam` skill before it shows files, diagrams or charts, starts
   another Thread or starts subagents, to give a question's options as separate
   choices, with the recommended option first and marked "(Recommended)", and
-  to write commit
-  messages and pull or merge requests without a `Co-authored-by` trailer or
-  any AI attribution unless you ask for one. Copilot's own co-author trailer
-  is turned off for Threads.
+  to follow the git rules of Settings → Agent toolkit → Instructions →
+  **Commits & pull requests** (saved by UAM for every project, not per scope).
+  Subagents get the git rules too, before their first turn. The rules are the
+  **Commit messages** instructions (default: Conventional Commits, an
+  imperative summary of at most 72 characters, a short body only when the
+  reason is not obvious), the **Pull and merge requests** instructions
+  (default: a short, plain, professional title naming the outcome, and a
+  description of two or three short lines on what changes and why, with no
+  headings or change-by-change list), and the co-author rule. With
+  **Co-author** off, the default, commits and pull or merge requests carry no
+  `Co-authored-by` trailer or AI attribution unless you ask for one, and
+  Copilot's own co-author trailer is turned off. On with a **Co-author name**
+  (one line, at most 200 characters, such as `Name <name@example.com>`), every
+  commit ends with `Co-authored-by: <name>`. On with the name empty, Copilot's
+  own co-author tool and trailer are turned on and Copilot names the
+  co-author. A change reaches Threads opened or reopened afterwards.
+  `PATCH /api/settings` takes `{"commit_prompt": "…"}` (at most 4,000
+  characters, trimmed; `""` or the default text puts the default back) and
+  `{"coauthor": {"enabled": true, "name": "…"}}`; connected instances
+  advertise `git-rules-v1`.
   Settings → Agents, Skills, Hooks and Instructions show each file as a card,
   grouped by source (Copilot's reported source, else the scope, or a skill's
   folder) with a count per group, and each card names the file and its
@@ -1045,7 +1061,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   message (the composer shows a chip per changed drawing; the note itself
   appears in the conversation as a notice). The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
-  Diagram editor can switch to a draw.io page at an origin you name, after a
+  Conversation → Diagram editor can switch to a draw.io page at an origin you name, after a
   check of that origin passes.
 - **Images in replies**: an image the agent refers to by path, as
   `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
@@ -1590,7 +1606,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   more than one reply fits and there is no Utility model, or past today's
   Background AI limit or while suggested replies are paused (see Background
   AI), there is none, and the next look asks again; a Thread settled or
-  archived is not asked. Settings → Composer → **Suggest replies** turns it
+  archived is not asked. Settings → Conversation → **Suggest replies** turns it
   off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "3 files changed; tests pass". The
@@ -1809,7 +1825,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   tomorrow when 4 of their last 10 calls ended with an unusable answer.
   Settings → Background AI
   names the paused purpose and when it resumes, its rail entry and, for
-  suggested replies, Settings → Composer carry a dot and a note, and the
+  suggested replies, Settings → Conversation carry a dot and a note, and the
   log keeps one skipped entry ("repeated unusable answers") per pause, not
   one per Thread opened meanwhile.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
@@ -2217,7 +2233,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   width (up to about 400 px) first: the buttons drop their labels, then
   Charts and Terminal move into the header's "…" menu.
 - **Terminal**: off by default. Turn on Settings → Server → UAM and access →
-  Shell access → Terminal and the Thread
+  Access → Terminal and the Thread
   header shows a "Terminal" button after Changes and Charts, also when the project has no
   Git and on settled and archived Threads. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
@@ -2401,7 +2417,7 @@ received a prompt, the page says so and nothing is resent.
 
 ## Terminal
 
-Settings → Server → UAM and access → Shell access → Terminal, off by
+Settings → Server → UAM and access → Access → Terminal, off by
 default, adds a terminal panel that runs a login
 shell in the Project's folder, or in the Thread's worktree when opened from a
 Thread in one: your `$SHELL` if it is an absolute path to an
@@ -2472,10 +2488,14 @@ model fails or passes the 20-second deadline, the command runs unchanged and
 the agent gets a note saying so. Each call is logged in Background AI as
 "Merge request description".
 
-Settings → Accounts → GitLab → **Merge request description** holds the prompt.
-Empty uses the built-in one, shown as the placeholder: Summary, Changes, How it
-was tested and Notes, concise plain Markdown, and tests only when the commits
-mention them. **Reset to default** clears it. Fixed rules follow either prompt:
+Settings → Agent toolkit → Instructions → **Commits & pull requests** →
+**Pull and merge requests**
+holds the prompt, the same instructions agents follow for pull and merge
+requests. The model is first told to write the description from the commits
+and changed files shown, following them. Empty uses the built-in
+instructions, shown as the placeholder: a description of two or three short
+plain lines on what changes and why. **Reset to default** clears it. Fixed
+rules follow either prompt:
 fill in the template when there is one, output only the description, never
 credit an AI, and treat the commits and template as material, not
 instructions. `PATCH /api/settings` with `{"gitlab_mr_prompt": "…"}` sets it
@@ -2614,7 +2634,7 @@ instance has its own setting, shown when that instance offers it.
 
 **Security.** A stdio server is a command run on this host as the uam user.
 Adding or editing one is therefore allowed only while Settings → Server →
-UAM and access → Shell access → Terminal is on (see Terminal), which
+UAM and access → Access → Terminal is on (see Terminal), which
 already grants a shell to anyone signed in; with it off the form offers
 HTTP and SSE only and the service refuses a stdio add or edit (`403`).
 Turning a server on or off and removing it need no Terminal.
@@ -3014,7 +3034,7 @@ Lifetime means all recorded usage, not a provider account's complete history.
 The popover distinguishes collection failures from zero usage. Prompt-length
 estimates are excluded. The open popover refreshes every 15 seconds.
 
-Settings → Token costs lets you set prices for a model, including
+Settings → Models → Token costs lets you set prices for a model, including
 models missing from the bundled catalog. Prices are USD per million tokens.
 Input and Output are required; Cache read and Cache write are optional. An
 absent cache price uses the Input rate; an explicit zero is free. Removing a

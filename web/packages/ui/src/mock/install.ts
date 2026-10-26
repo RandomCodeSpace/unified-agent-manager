@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, DEFAULT_MR_PROMPT, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type ModelCalls, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, DEFAULT_COMMIT_PROMPT, DEFAULT_MR_PROMPT, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type ModelCalls, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
 import { worktreesMock } from './worktrees';
@@ -815,7 +815,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'commit_prompt' && key !== 'coauthor' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
       if (body.drawio !== undefined) {
         const drawio = body.drawio as { origin?: unknown; enabled?: unknown } | null;
         if (!drawio || typeof drawio.origin !== 'string' || typeof drawio.enabled !== 'boolean') return fail(400, 'drawio must be {origin, enabled}');
@@ -883,6 +883,21 @@ export function install(): { received: Received[] } {
         const prompt = body.gitlab_mr_prompt.trim();
         if ([...prompt].length > 4000) return fail(400, 'gitlab_mr_prompt must be at most 4000 characters');
         st.settings = { ...st.settings, gitlab_mr_prompt: prompt && prompt !== DEFAULT_MR_PROMPT ? prompt : undefined };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.commit_prompt !== undefined) {
+        if (typeof body.commit_prompt !== 'string') return fail(400, 'commit_prompt must be a string');
+        const prompt = body.commit_prompt.trim();
+        if ([...prompt].length > 4000) return fail(400, 'commit_prompt must be at most 4000 characters');
+        st.settings = { ...st.settings, commit_prompt: prompt && prompt !== DEFAULT_COMMIT_PROMPT ? prompt : undefined };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.coauthor !== undefined) {
+        const coauthor = body.coauthor as { enabled?: unknown; name?: unknown } | null;
+        if (typeof coauthor !== 'object' || coauthor === null || typeof (coauthor.name ?? '') !== 'string') return fail(400, 'coauthor must be an object with enabled and name');
+        const name = String(coauthor.name ?? '').trim();
+        if ([...name].length > 200 || /\p{Cc}/u.test(name)) return fail(400, 'coauthor name must be one line of at most 200 characters');
+        st.settings = { ...st.settings, coauthor: coauthor.enabled || name ? { enabled: !!coauthor.enabled, ...(name && { name }) } : undefined };
         broadcast('settings', { settings: st.settings });
       }
       if (body.task_defaults !== undefined) {

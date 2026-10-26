@@ -292,6 +292,14 @@ type GitHubMCPUser interface {
 	SetGitHubMCP(on bool)
 }
 
+// GitRulesUser is implemented by a provider whose agents commit and open
+// pull or merge requests. SetGitRules gives conversations opened or reopened
+// afterwards, and the subagents they start, the owner's rules for them;
+// providerCoAuthor lets the runtime add its own co-author trailer instead.
+type GitRulesUser interface {
+	SetGitRules(rules string, providerCoAuthor bool)
+}
+
 // CustomModel is an OpenAI-compatible model the owner brought. Its model ID
 // is SelectionID. APIKey holds a saved key, or APIKeyEnv names the service
 // environment variable the provider reads when it needs the key.
