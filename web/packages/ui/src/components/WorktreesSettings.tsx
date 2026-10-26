@@ -257,7 +257,7 @@ function FolderCard({ list, onChanged, projectFolder }: Readonly<{ list: Worktre
       {api.supports('worktree-folder-v1') && <>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
-          <h3 className="text-ui font-medium text-ink">Folder for new worktrees</h3>
+          <h3 className="text-caption text-muted">Folder for new worktrees</h3>
           <p className="text-caption text-muted">Existing worktrees stay where they are.</p>
         </div>
         <code className="min-w-0 truncate font-mono text-code-sm text-body" title={list.root}>{homePath(list.root, list.default_root)}</code>
