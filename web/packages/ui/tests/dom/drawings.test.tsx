@@ -152,6 +152,11 @@ test('a flowchart offers Edit as drawing, a gantt does not, and converting swaps
     expect(await (await cardOf('diagram-d2-0.excalidraw')).findByText('Agent’s v1')).toBeTruthy();
     // The click that made the drawing also opens its editor; Done closes it and the conversation is reachable again.
     const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' }));
+    // Full screen takes the whole viewport and comes back.
+    await user.click(editor.getByRole('button', { name: 'Full screen' }));
+    expect(editor.getByRole('button', { name: 'Exit full screen' }).getAttribute('aria-pressed')).toBe('true');
+    await user.click(editor.getByRole('button', { name: 'Exit full screen' }));
+    expect(editor.getByRole('button', { name: 'Full screen' }).getAttribute('aria-pressed')).toBe('false');
     await user.click(editor.getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' })).toBeNull());
     expect(screen.queryByRole('button', { name: 'Edit as drawing' })).toBeNull();
