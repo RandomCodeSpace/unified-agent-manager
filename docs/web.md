@@ -553,7 +553,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   load the `uam` skill before it shows files, diagrams or charts, starts
   another Thread or starts subagents, to give a question's options as separate
   choices, with the recommended option first and marked "(Recommended)", and
-  to follow the git rules of Settings → Threads → **Commits & pull requests**.
+  to follow the git rules of Settings → Agent toolkit → Instructions →
+  **Commits & pull requests** (saved by UAM for every project, not per scope).
   Subagents get the git rules too, before their first turn. The rules are the
   **Commit messages** instructions (default: Conventional Commits, an
   imperative summary of at most 72 characters, a short body only when the
@@ -2487,7 +2488,8 @@ model fails or passes the 20-second deadline, the command runs unchanged and
 the agent gets a note saying so. Each call is logged in Background AI as
 "Merge request description".
 
-Settings → Threads → **Commits & pull requests** → **Pull and merge requests**
+Settings → Agent toolkit → Instructions → **Commits & pull requests** →
+**Pull and merge requests**
 holds the prompt, the same instructions agents follow for pull and merge
 requests. The model is first told to write the description from the commits
 and changed files shown, following them. Empty uses the built-in

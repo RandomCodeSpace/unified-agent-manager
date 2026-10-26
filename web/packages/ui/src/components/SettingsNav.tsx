@@ -15,7 +15,6 @@ export const SETTINGS_GROUPS = [
   { label: 'Threads', scope: 'service', pages: [
     { id: 'new-tasks', label: 'New threads', blurb: 'The model, effort, mode and compaction a new thread starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
     { id: 'composer', label: 'Conversation', blurb: 'What Enter does while a thread runs, suggested replies, and the diagram editor.', keywords: 'composer enter send now after this turn queue steer suggest suggested replies keyboard drawing drawings diagram diagrams mermaid excalidraw draw.io drawio origin embed editor edit as drawing' },
-    { id: 'git', label: 'Commits & pull requests', blurb: "Instructions for agents' commits and pull or merge requests, and a co-author.", keywords: 'git commit commits message conventional pull request pr merge request mr title description instructions prompt co-author coauthor co-authored-by trailer attribution' },
     { id: 'worktrees', label: 'Projects & worktrees', blurb: 'Where projects and worktrees go, and the disk worktrees use.', keywords: 'default project location folder folders directory home path worktree worktrees disk space free size branch remove clean settle' },
     { id: 'archived', label: 'Archived', blurb: 'Archived threads, read-only for good.', keywords: 'archive archived read-only delete export run again old threads' },
   ] },
@@ -32,7 +31,7 @@ export const SETTINGS_GROUPS = [
     { id: 'agents', label: 'Agents', blurb: 'Named agents a thread can switch to.', keywords: 'custom agent persona' },
     { id: 'skills', label: 'Skills', blurb: 'Know-how and scripts agents load when they need them.', keywords: 'skill npx install SKILL.md' },
     { id: 'hooks', label: 'Hooks', blurb: 'Commands that run on agent events.', keywords: 'hook event pre tool post command' },
-    { id: 'instructions', label: 'Instructions', blurb: 'AGENTS.md and copilot-instructions.md.', keywords: 'agents.md copilot-instructions system prompt rules' },
+    { id: 'instructions', label: 'Instructions', blurb: 'AGENTS.md, copilot-instructions.md, and rules for commits and pull requests.', keywords: 'agents.md copilot-instructions system prompt rules git commit commits message conventional pull request pr merge request mr title description co-author coauthor co-authored-by trailer attribution' },
     { id: 'mcp', label: 'MCP servers', blurb: 'Tools agents call from other programs and services.', keywords: 'mcp server servers tools http sse command github' },
   ] },
   { label: 'Server', scope: 'service', pages: [

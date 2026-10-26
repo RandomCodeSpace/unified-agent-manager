@@ -6,7 +6,7 @@ import { renderApp } from './render';
 async function openPage() {
   const { user } = renderApp('#settings');
   const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
-  await user.click(rail.getByRole('button', { name: 'Commits & pull requests' }));
+  await user.click(rail.getByRole('button', { name: 'Instructions' }));
   return user;
 }
 

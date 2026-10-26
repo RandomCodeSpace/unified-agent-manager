@@ -508,7 +508,6 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
   return {
     'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
     composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'} · ${settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw'}`,
-    git: settings.coauthor?.enabled ? `Co-author: ${settings.coauthor.name || 'chosen by Copilot'}` : 'No co-author',
     models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
     'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
     copilot: accountSummary(accounts, cliUpdate),
@@ -801,9 +800,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // then stay mounted, hidden.
   const cards: Record<SettingsPage, ReactNode> = {
     gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
-    git: loaded ? <Section id="git" title="Commits & pull requests" help="What agents follow when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
-      {api.supports('git-rules-v1') ? <GitSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="commit and pull request instructions" />}
-    </Section> : <PendingSection id="git" title="Commits & pull requests" label="Loading settings…" />,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New threads" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
       <Section id="new-tasks" title="New threads" help="What a new thread starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
@@ -989,6 +985,13 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     </Section>,
   };
   for (const kind of ['agents', 'skills', 'hooks', 'instructions'] as const) cards[kind] = <Section id={kind} title={SETTINGS_PAGES.find((p) => p.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} scope={toolkitScope} onScope={setToolkitScope} heldBy={held.find((k) => k !== kind)} onHold={hold} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>;
+  // UAM's own rules for commits and pull requests, beside the instruction files but saved on the server for every project.
+  cards.instructions = <>
+    {cards.instructions}
+    {loaded ? <Section id="git" title="Commits & pull requests" help="UAM's own rules for every project, whatever the scope above. Agents and their subagents follow them when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
+      {api.supports('git-rules-v1') ? <GitSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="commit and pull request instructions" />}
+    </Section> : <PendingSection id="git" title="Commits & pull requests" label="Loading settings…" />}
+  </>;
 
   return (
     <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>
