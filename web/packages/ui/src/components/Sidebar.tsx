@@ -6,7 +6,7 @@ import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
-import { filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
+import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
 import { BADGE_TEXT, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
@@ -821,10 +821,10 @@ export const Sidebar = memo(function Sidebar({
       const own = m.active ? { projects, sessions } : m.state;
       const projectMap = new Map(own.projects.map((project) => [project.id, project]));
       return sidebarTasks(own.projects, own.sessions, chosen ? chosen.id : null, query).map((task) => ({ key: encodeEntity(m.id || null, task.id), task, project: projectMap.get(task.project_id)!, machine: m }));
-    }).sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
+    }).sort((a, b) => byActivity(a.task, b.task));
   }, [machines, projects, sessions, actions.filter, query, chosen, filterMachine]);
   const { active, settled } = useSidebarGroups(rows, list);
-  // Newest first, whatever their state: a row never moves because its Task changed.
+  // Latest activity first, whatever their state; only the shelf placement waits for a quiet list.
   const unsettled = active;
   const here = machines?.find((m) => m.active);
   const selectedKey = selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId;

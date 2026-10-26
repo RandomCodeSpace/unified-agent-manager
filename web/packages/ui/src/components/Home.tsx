@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import type { Project, SessionSummary } from '../api';
 import type { Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
-import { taskStatus, type Unread } from '../lib/tasks';
+import { byActivity, taskStatus, type Unread } from '../lib/tasks';
 import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, relTime, useMinuteTick } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
@@ -32,7 +32,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
     .flatMap(({ machine, projects: projectById, sessions: list }) => list
       .filter((session) => session.stage !== 'archived' && projectById.has(session.project_id))
       .map((session) => ({ machine, session, project: projectById.get(session.project_id)! })))
-    .sort((a, b) => b.session.updated_at.localeCompare(a.session.updated_at) || b.session.created_at.localeCompare(a.session.created_at))
+    .sort((a, b) => byActivity(a.session, b.session))
     .slice(0, 6), [own]);
   const projectCount = own.reduce((n, m) => n + m.projects.size, 0);
   const hasProjects = projectCount > 0;

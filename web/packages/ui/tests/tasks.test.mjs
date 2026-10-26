@@ -62,10 +62,10 @@ test('flat sidebar retains every lifecycle, filters projects and searches withou
   const { sidebarTasks } = await import('../src/lib/tasks.ts');
   const projects = [{ id: 'a', name: 'Alpha', dir: '/a', branch: 'main' }, { id: 'b', name: 'Beta', dir: '/b', branch: 'topic' }];
   const sessions = [
-    { id: 'old', project_id: 'a', title: 'Older', created_at: '2026-01-01', stage: 'active' },
-    { id: 'new', project_id: 'b', title: 'Newest', created_at: '2026-03-01', stage: 'settled' },
-    { id: 'archived', project_id: 'a', title: 'Archive', created_at: '2026-02-01', stage: 'archived' },
-    { id: 'orphan', project_id: 'missing', title: 'Unavailable', created_at: '2026-04-01' },
+    { id: 'old', project_id: 'a', title: 'Older', created_at: '2026-01-01', updated_at: '2026-01-01', stage: 'active' },
+    { id: 'new', project_id: 'b', title: 'Newest', created_at: '2026-03-01', updated_at: '2026-03-01', stage: 'settled' },
+    { id: 'archived', project_id: 'a', title: 'Archive', created_at: '2026-02-01', updated_at: '2026-02-01', stage: 'archived' },
+    { id: 'orphan', project_id: 'missing', title: 'Unavailable', created_at: '2026-04-01', updated_at: '2026-04-01' },
   ];
   assert.deepEqual(sidebarTasks(projects, sessions, null).map((t) => t.id), ['new', 'archived', 'old']);
   assert.deepEqual(sidebarTasks(projects, sessions, 'a').map((t) => t.id), ['archived', 'old']);
@@ -164,15 +164,16 @@ test('the Tasks that need the user: a waiting request, or a failure not opened s
   assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
 });
 
-test('the Task list keeps creation order whatever the state', async () => {
+test('the Task list puts the latest activity first whatever the state, newest first on a tie', async () => {
   const { sidebarTasks } = await import('../src/lib/tasks.ts');
   const projects = [{ id: 'p1', name: 'P', dir: '/p' }];
   const list = [
     s('old-asks', 'p1', '2026-10-05T08:00:00Z', { state: 'awaiting_answer', updated_at: '2026-10-05T12:00:00Z' }),
     s('new-idle', 'p1', '2026-10-05T10:00:00Z', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' }),
     s('mid-works', 'p1', '2026-10-05T09:00:00Z', { state: 'working', updated_at: '2026-10-05T11:00:00Z' }),
+    s('tie', 'p1', '2026-10-05T07:00:00Z', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' }),
   ];
-  assert.deepEqual(sidebarTasks(projects, list, null).map((t) => t.id), ['new-idle', 'mid-works', 'old-asks']);
+  assert.deepEqual(sidebarTasks(projects, list, null).map((t) => t.id), ['old-asks', 'mid-works', 'new-idle', 'tie']);
 });
 
 test('a Task row says in plain words what it needs or how it stands', async () => {
