@@ -1,11 +1,10 @@
-// The drawing editor (DESIGN.md Drawing editor): the anchored reader under a drawing card's head.
+// The drawing editor (DESIGN.md Drawing editor): a centred modal over the conversation, full screen on request.
 // Loaded on the first open (Drawing.tsx `lazy`), so the conversation's cold start carries only the
 // cards. Yours is Excalidraw (ExcalidrawCanvas, its own chunk) or the draw.io embed; Agent's and
 // Changes are read-only pictures.
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { ArrowUp, X } from 'lucide-react';
+import { ArrowUp, Maximize2, Minimize2, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus } from '../api';
 import { cn } from '../lib/cn';
@@ -17,7 +16,7 @@ import { DrawingsContext, type DrawingView, type OpenDrawing } from './Drawing';
 import { Figure, fileName, useBackground, useDrawioPicture, useParsed, usePicture } from './DrawingCards';
 import type { ExcalidrawImperativeAPI } from './ExcalidrawCanvas';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
+import { BottomSheet } from './Subagents';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { backdropClass, readerPopupClass } from './ui/dialog';
@@ -35,15 +34,16 @@ const DESCRIPTION: Record<DrawingView, string> = {
 type Save = { state: 'saved' } | { state: 'saving' } | { state: 'failed'; error: string } | { state: 'conflict' };
 
 /**
- * The editor: the anchored reader under the card's head (the whole viewport's height below it,
- * or above the anchor when there is no room; a bottom sheet on a phone). Yours is Excalidraw
- * or the draw.io embed; Agent's and Changes are pictures.
+ * The editor: a centred modal on the backdrop (most of the viewport; the whole of it in full
+ * screen; a bottom sheet on a phone). Yours is Excalidraw or the draw.io embed; Agent's and
+ * Changes are pictures.
  */
 export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ target: OpenDrawing & { open: boolean; phone: boolean }; onClose: () => void; onClosed: () => void }>) {
   const d = useContext(DrawingsContext)!;
   const id = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const [view, setView] = useState<DrawingView>(target.view);
+  const [full, setFull] = useState(false);
   const [save, setSave] = useState<Save>({ state: 'saved' });
   const state = d.doc(target.path);
   const doc = state?.doc;
@@ -283,10 +283,14 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
       </BottomSheet>
     );
   }
+  const toggleFull = (
+    <Button size="icon-sm" aria-label={full ? 'Exit full screen' : 'Full screen'} aria-pressed={full} className="text-muted" onClick={() => { setFull((f) => !f); setTimeout(fit, 60); }}>
+      {full ? <Minimize2 /> : <Maximize2 />}
+    </Button>
+  );
   return (
-    <BasePopover.Root
+    <BaseDialog.Root
       open={target.open}
-      modal
       onOpenChange={(o, details) => {
         // Escape inside the canvas ends a text edit or a selection; only a second one, outside it, closes
         // the editor. Excalidraw removes its text editor on Escape, so a detached target was its too.
@@ -296,27 +300,25 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
       }}
       onOpenChangeComplete={(o) => !o && onClosed()}
     >
-      <BasePopover.Portal>
-        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-        <LiftedRow row={target.anchor} />
-        <BasePopover.Positioner anchor={target.anchor} side="bottom" align="start" sideOffset={6} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className={cn(backdropClass, 'duration-160')} />
+        <BaseDialog.Viewport className={cn('fixed inset-0 z-50 grid place-items-center', !full && 'p-4')}>
+          <BaseDialog.Popup
             ref={popup}
             id={id}
             data-popup=""
             aria-label={label}
-            aria-modal="true"
             initialFocus={heading}
             finalFocus={back}
-            className={cn('flex h-[calc(var(--available-height)-8px)] min-h-80 w-(--anchor-width) max-w-(--available-width)', readerPopupClass)}
+            className={cn('flex w-full', full ? 'h-full rounded-none' : 'h-[calc(var(--app-height,100dvh)-32px)] max-w-[1440px]', readerPopupClass)}
           >
-            {head(null, false)}
+            {head(toggleFull, false)}
             {body}
             {foot(false)}
-          </BasePopover.Popup>
-        </BasePopover.Positioner>
-      </BasePopover.Portal>
-    </BasePopover.Root>
+          </BaseDialog.Popup>
+        </BaseDialog.Viewport>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
   );
 }
 
