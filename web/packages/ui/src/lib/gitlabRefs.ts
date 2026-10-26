@@ -259,26 +259,48 @@ const TEXT_REF = /\b(?:MR|merge request) ?!(\d+)\b|(?<![\w!&#/])!(\d+)\b|\bpipel
 
 interface MdNode { type: string; value?: string; url?: string; children?: MdNode[] }
 
+const WHOLE_REF = new RegExp(`^(?:${TEXT_REF.source})$`, 'i');
+
+function textRef(m: RegExpMatchArray): GitLabRef | null {
+  const id = Number(m[1] ?? m[2] ?? m[3]);
+  return Number.isSafeInteger(id) && id > 0 ? { kind: m[3] ? 'pipeline' : 'mr', id } : null;
+}
+
 /**
  * A remark plugin: merge requests and pipelines a reply names in its text link to the Thread's
- * GitLab project. Text inside links and code stays as written.
+ * GitLab project. Text inside links and code stays as written. A name right before a link to the
+ * same item that reads as its address or its name ("MR !36: <address>") is left out, so the item
+ * shows once.
  */
 export function remarkGitLabRefs(origin: GitLabOrigin) {
+  const repeats = (link: MdNode | undefined, ref: GitLabRef) => {
+    if (link?.type !== 'link' || !sameRef(parseGitLabUrl(link.url ?? '', origin), ref)) return false;
+    const label = (link.children ?? []).map((c) => c.value ?? '').join('').trim();
+    const named = WHOLE_REF.exec(label);
+    return /^https?:\/\//i.test(label) || (!!named && sameRef(textRef(named), ref));
+  };
   const visit = (node: MdNode) => {
     if (!node.children || node.type === 'link' || node.type === 'linkReference') return;
-    node.children = node.children.flatMap((child): MdNode[] => {
+    const children = node.children;
+    node.children = children.flatMap((child, i): MdNode[] => {
       if (child.type !== 'text' || !child.value) { visit(child); return [child]; }
+      const value = child.value;
       const out: MdNode[] = [];
       let at = 0;
-      for (const m of child.value.matchAll(TEXT_REF)) {
-        const id = Number(m[1] ?? m[2] ?? m[3]);
-        if (!Number.isSafeInteger(id) || id <= 0) continue;
-        const ref: GitLabRef = { kind: m[3] ? 'pipeline' : 'mr', id };
-        out.push({ type: 'text', value: child.value.slice(at, m.index) }, { type: 'link', url: gitLabUrl(ref, origin), children: [{ type: 'text', value: m[0] }] });
-        at = m.index + m[0].length;
+      for (const m of value.matchAll(TEXT_REF)) {
+        const ref = textRef(m);
+        if (!ref) continue;
+        const end = m.index + m[0].length;
+        if (/^[\s:\u2013\u2014-]*$/.test(value.slice(end)) && repeats(children[i + 1], ref)) {
+          out.push({ type: 'text', value: value.slice(at, m.index) });
+          at = value.length;
+          break;
+        }
+        out.push({ type: 'text', value: value.slice(at, m.index) }, { type: 'link', url: gitLabUrl(ref, origin), children: [{ type: 'text', value: m[0] }] });
+        at = end;
       }
       if (!out.length) return [child];
-      out.push({ type: 'text', value: child.value.slice(at) });
+      out.push({ type: 'text', value: value.slice(at) });
       return out.filter((n) => n.type !== 'text' || n.value);
     });
   };

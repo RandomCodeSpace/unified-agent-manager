@@ -100,6 +100,23 @@ test('a reply names merge requests and pipelines as links with GitLab\'s mark; a
   expect(open).toHaveBeenCalledExactlyOnceWith([{ kind: 'mr', id: 2 }], { kind: 'mr', id: 2 });
 });
 
+test('a name right before a link to the same item shows the item once; other links keep the name', () => {
+  const items: Item[] = [
+    { id: 'owner', kind: 'user', text: 'status?', time: at },
+    { id: 'reply', kind: 'assistant', text: `Done. MR !2: ${P}/merge_requests/2\n\nRan pipeline #91 \u2014 [pipeline #91](${P}/pipelines/91)\n\nSee MR !2: [the fix](${P}/merge_requests/2) and MR !3: ${P}/merge_requests/2\n\nLast: MR !4`, time: at },
+  ];
+  render(<ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context(vi.fn())}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const para = (start: RegExp) => screen.getByText(start).closest('p')!;
+  const links = (p: HTMLElement) => [...p.querySelectorAll('a')].map((a) => a.textContent);
+  expect(para(/^Done/).textContent).toBe('Done. MR !2');
+  expect(links(para(/^Done/))).toEqual(['MR !2']);
+  expect(links(para(/^Ran/))).toEqual(['pipeline #91']);
+  expect(links(para(/^See/))).toEqual(['MR !2', 'the fix', 'MR !3', 'MR !2']);
+  expect(links(para(/^Last/))).toEqual(['MR !4']);
+});
+
 test('the panel steps between the turn items; another MR reads without writes, the Thread own MR keeps them', async () => {
   mockItems();
   const reviews = vi.spyOn(api, 'gitlabReview').mockResolvedValue(review);
