@@ -150,6 +150,8 @@ test('a flowchart offers Edit as drawing, a gantt does not, and converting swaps
     await waitFor(() => expect(put).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.excalidraw', expect.objectContaining({ origin: 'convert', item_id: 'd2', fence_index: 0, format: 'excalidraw' })));
     await waitFor(() => expect(document.querySelector('[data-drawing$="diagram-d2-0.excalidraw"]')).toBeTruthy());
     expect(await (await cardOf('diagram-d2-0.excalidraw')).findByText('Agent’s v1')).toBeTruthy();
+    // The click that made the drawing also opens its editor.
+    expect(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Edit as drawing' })).toBeNull();
     expect(log().getAllByText('mermaid')).toHaveLength(1);
   } finally {
