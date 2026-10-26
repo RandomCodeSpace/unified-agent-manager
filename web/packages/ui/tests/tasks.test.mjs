@@ -62,10 +62,10 @@ test('flat sidebar retains every lifecycle, filters projects and searches withou
   const { sidebarTasks } = await import('../src/lib/tasks.ts');
   const projects = [{ id: 'a', name: 'Alpha', dir: '/a', branch: 'main' }, { id: 'b', name: 'Beta', dir: '/b', branch: 'topic' }];
   const sessions = [
-    { id: 'old', project_id: 'a', title: 'Older', created_at: '2026-01-01', stage: 'active' },
-    { id: 'new', project_id: 'b', title: 'Newest', created_at: '2026-03-01', stage: 'settled' },
-    { id: 'archived', project_id: 'a', title: 'Archive', created_at: '2026-02-01', stage: 'archived' },
-    { id: 'orphan', project_id: 'missing', title: 'Unavailable', created_at: '2026-04-01' },
+    { id: 'old', project_id: 'a', title: 'Older', created_at: '2026-01-01', updated_at: '2026-01-01', stage: 'active' },
+    { id: 'new', project_id: 'b', title: 'Newest', created_at: '2026-03-01', updated_at: '2026-03-01', stage: 'settled' },
+    { id: 'archived', project_id: 'a', title: 'Archive', created_at: '2026-02-01', updated_at: '2026-02-01', stage: 'archived' },
+    { id: 'orphan', project_id: 'missing', title: 'Unavailable', created_at: '2026-04-01', updated_at: '2026-04-01' },
   ];
   assert.deepEqual(sidebarTasks(projects, sessions, null).map((t) => t.id), ['new', 'archived', 'old']);
   assert.deepEqual(sidebarTasks(projects, sessions, 'a').map((t) => t.id), ['archived', 'old']);
@@ -273,4 +273,15 @@ test('only a Thread in its own worktree has its folder\'s work stop Settle', asy
   assert.equal(putAwayWork(s('a', 'p1', '1', pending)), null);
   assert.deepEqual(putAwayWork(s('a', 'p1', '1', { ...pending, worktree: { path: '/wt', branch: 'uam/x' } })), pending.git_pending);
   assert.equal(putAwayWork(s('a', 'p1', '1', { worktree: { path: '/wt', branch: 'uam/x' } })), null);
+});
+
+test('the sidebar lists the latest activity first, then the newest', async () => {
+  const { sidebarTasks } = await import('../src/lib/tasks.ts');
+  const projects = [{ id: 'a', name: 'Alpha', dir: '/a' }];
+  const sessions = [
+    { id: 'old-busy', project_id: 'a', created_at: '2026-01-01', updated_at: '2026-06-01' },
+    { id: 'new-quiet', project_id: 'a', created_at: '2026-03-01', updated_at: '2026-03-01' },
+    { id: 'tie', project_id: 'a', created_at: '2026-02-01', updated_at: '2026-03-01' },
+  ];
+  assert.deepEqual(sidebarTasks(projects, sessions, null).map((t) => t.id), ['old-busy', 'new-quiet', 'tie']);
 });

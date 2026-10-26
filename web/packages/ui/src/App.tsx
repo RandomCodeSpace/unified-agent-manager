@@ -18,7 +18,7 @@ import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, putAwayWork, sidebarTasks, tasksOf } from './lib/tasks';
+import { byActivity, cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, putAwayWork, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -1011,7 +1011,7 @@ export default function App() {
       const own = m.active ? { projects: state.projects, sessions: state.sessions } : m.state;
       const unread = m.active ? hasNews : m.hasNews;
       return sidebarTasks(own.projects, own.sessions, chosen ? chosen.project : null).filter((s) => !readOnly(s) && needsYouNow(s, unread)).map((s) => ({ key: encodeEntity(m.id || null, s.id), s }));
-    }).sort((a, b) => b.s.created_at.localeCompare(a.s.created_at)).map((entry) => entry.key);
+    }).sort((a, b) => byActivity(a.s, b.s)).map((entry) => entry.key);
   }, [machines, machineFilter, state.projects, state.sessions, filter, hasNews]);
   const selectedId = state.selectedId;
   // Read at the key press, so a press right after the rows commit (before passive effects run) sees them.

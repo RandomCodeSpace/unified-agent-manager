@@ -251,5 +251,8 @@ export function sidebarTasks(projects: Project[], sessions: SessionSummary[], fi
   return sessions.filter((task) => {
     const project = visible.get(task.project_id);
     return !!project && matchesTask(task, project, query);
-  }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }).sort(byActivity);
 }
+
+/** Latest activity first (`updated_at` moves on durable state, item and queue changes, not on viewing), then newest first. */
+export const byActivity = (a: SessionSummary, b: SessionSummary): number => b.updated_at.localeCompare(a.updated_at) || b.created_at.localeCompare(a.created_at);
