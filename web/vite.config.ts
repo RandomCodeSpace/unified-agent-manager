@@ -147,23 +147,28 @@ const EXCALIDRAW_DIST = 'node_modules/@excalidraw/excalidraw/dist/prod';
 /** Where the build puts Excalidraw's fonts; `EXCALIDRAW_ASSETS` in lib/drawings.ts says the same. */
 const EXCALIDRAW_ASSETS = 'assets/excalidraw/';
 const CDN = '`https://esm.sh/';
+/** The package's own Firebase web config (its collaboration service); never used here, and a secret scanner trips on its key. */
+const FIREBASE = /VITE_APP_FIREBASE_CONFIG:'\{[^']*\}'/;
 
 /**
  * Excalidraw stays on this origin: its fonts (every family but Xiaolai, 13 MB of CJK glyphs) are
  * copied into the build under a stable path, named by content as the package ships them, and
  * its hardcoded esm.sh fallback for a font it cannot load is pointed at the same origin, where it
  * fails quietly. The build stops when the fallback string is gone from the package, so an upgrade
- * cannot bring the CDN back unseen. Excalidraw's own lazy import of the mermaid parser (its
+ * cannot bring the CDN back unseen. Its Firebase config is emptied the same way, and the build
+ * stops when that is gone too. Excalidraw's own lazy import of the mermaid parser (its
  * text-to-diagram dialog) is a stub here: conversion runs in the diagram frame, and a second
  * Mermaid in the page's chunks would double the embedded build.
  */
 /** The stub and the CDN rewrite alone: the build's plugin and the dev pre-bundle both run them. */
-function excalidrawOnOrigin(): Plugin & { rewrote(): boolean } {
+function excalidrawOnOrigin(): Plugin & { rewrote(): boolean; stripped(): boolean } {
   let rewrote = false;
+  let stripped = false;
   const stub = '\0uam-excalidraw-no-mermaid';
   return {
     name: 'uam-excalidraw-on-origin',
     rewrote: () => rewrote,
+    stripped: () => stripped,
     resolveId(source, importer) {
       if (source === '@excalidraw/mermaid-to-excalidraw' && importer?.includes('/node_modules/@excalidraw/excalidraw/')) return stub;
       return null;
@@ -173,9 +178,17 @@ function excalidrawOnOrigin(): Plugin & { rewrote(): boolean } {
       return 'export const parseMermaidToExcalidraw = () => Promise.reject(new Error("Mermaid conversion runs in the diagram frame"));';
     },
     transform(code, id) {
-      if (!id.includes('/node_modules/@excalidraw/excalidraw/') || !code.includes(CDN)) return null;
-      rewrote = true;
-      return { code: code.replaceAll(CDN, '`${location.origin}/' + EXCALIDRAW_ASSETS + 'no-cdn/'), map: null };
+      if (!id.includes('/node_modules/@excalidraw/excalidraw/')) return null;
+      let out = code;
+      if (out.includes(CDN)) {
+        rewrote = true;
+        out = out.replaceAll(CDN, '`${location.origin}/' + EXCALIDRAW_ASSETS + 'no-cdn/');
+      }
+      if (FIREBASE.test(out)) {
+        stripped = true;
+        out = out.replace(FIREBASE, "VITE_APP_FIREBASE_CONFIG:'{}'");
+      }
+      return out === code ? null : { code: out, map: null };
     },
   };
 }
@@ -194,6 +207,7 @@ function excalidrawAssets(): Plugin {
     generateBundle() {
       if (config.command !== 'build') return;
       if (!origin.rewrote()) throw new Error(`excalidraw: the ${CDN} fallback was not found; check the package before trusting it to stay on this origin`);
+      if (!origin.stripped()) throw new Error('excalidraw: the Firebase config was not found; check what the package ships before trusting the bundle to carry no third-party keys');
       const fs = nodeFs();
       const dir = `${config.root}/${EXCALIDRAW_DIST}/fonts`;
       let copied = 0;
