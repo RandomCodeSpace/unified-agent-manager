@@ -8,6 +8,7 @@ import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { GitLabSettings } from './GitLabSettings';
+import { GitSettings } from './GitSettings';
 import { restartOffered, UamService } from './UamService';
 import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
@@ -507,6 +508,7 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
   return {
     'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
     composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
+    git: settings.coauthor?.enabled ? `Co-author: ${settings.coauthor.name || 'chosen by Copilot'}` : 'No co-author',
     drawings: settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw (built in)',
     models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
     'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
@@ -765,7 +767,10 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Each page's cards. Token costs, Archived, Connected instances, GitLab and Worktrees mount only while on screen;
   // Background AI from the start (the rail's dot reads it); the rest from their first showing, then stay mounted, hidden.
   const cards: Record<SettingsPage, ReactNode> = {
-    gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} mrPrompt={api.supports('gitlab-mr-prompt-v1') && loaded ? { saved: settings.gitlab_mr_prompt ?? '', saving, onSave: (gitlab_mr_prompt) => void save({ gitlab_mr_prompt }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
+    gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
+    git: loaded ? <Section id="git" title="Commits & pull requests" help="What agents follow when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
+      {api.supports('git-rules-v1') ? <GitSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="commit and pull request instructions" />}
+    </Section> : <PendingSection id="git" title="Commits & pull requests" label="Loading settings…" />,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New threads" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
       <Section id="new-tasks" title="New threads" help="What a new thread starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}

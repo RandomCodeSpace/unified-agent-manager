@@ -553,10 +553,25 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   load the `uam` skill before it shows files, diagrams or charts, starts
   another Thread or starts subagents, to give a question's options as separate
   choices, with the recommended option first and marked "(Recommended)", and
-  to write commit
-  messages and pull or merge requests without a `Co-authored-by` trailer or
-  any AI attribution unless you ask for one. Copilot's own co-author trailer
-  is turned off for Threads.
+  to follow the git rules of Settings → Threads → **Commits & pull requests**.
+  Subagents get the git rules too, before their first turn. The rules are the
+  **Commit messages** instructions (default: Conventional Commits, an
+  imperative summary of at most 72 characters, a short body only when the
+  reason is not obvious), the **Pull and merge requests** instructions
+  (default: a short, plain, professional title naming the outcome, and a
+  description of two or three short lines on what changes and why, with no
+  headings or change-by-change list), and the co-author rule. With
+  **Co-author** off, the default, commits and pull or merge requests carry no
+  `Co-authored-by` trailer or AI attribution unless you ask for one, and
+  Copilot's own co-author trailer is turned off. On with a **Co-author name**
+  (one line, at most 200 characters, such as `Name <name@example.com>`), every
+  commit ends with `Co-authored-by: <name>`. On with the name empty, Copilot's
+  own co-author tool and trailer are turned on and Copilot names the
+  co-author. A change reaches Threads opened or reopened afterwards.
+  `PATCH /api/settings` takes `{"commit_prompt": "…"}` (at most 4,000
+  characters, trimmed; `""` or the default text puts the default back) and
+  `{"coauthor": {"enabled": true, "name": "…"}}`; connected instances
+  advertise `git-rules-v1`.
   Settings → Agents, Skills, Hooks and Instructions show each file as a card,
   grouped by source (Copilot's reported source, else the scope, or a skill's
   folder) with a count per group, and each card names the file and its
@@ -2472,10 +2487,13 @@ model fails or passes the 20-second deadline, the command runs unchanged and
 the agent gets a note saying so. Each call is logged in Background AI as
 "Merge request description".
 
-Settings → Accounts → GitLab → **Merge request description** holds the prompt.
-Empty uses the built-in one, shown as the placeholder: Summary, Changes, How it
-was tested and Notes, concise plain Markdown, and tests only when the commits
-mention them. **Reset to default** clears it. Fixed rules follow either prompt:
+Settings → Threads → **Commits & pull requests** → **Pull and merge requests**
+holds the prompt, the same instructions agents follow for pull and merge
+requests. The model is first told to write the description from the commits
+and changed files shown, following them. Empty uses the built-in
+instructions, shown as the placeholder: a description of two or three short
+plain lines on what changes and why. **Reset to default** clears it. Fixed
+rules follow either prompt:
 fill in the template when there is one, output only the description, never
 credit an AI, and treat the commits and template as material, not
 instructions. `PATCH /api/settings` with `{"gitlab_mr_prompt": "…"}` sets it

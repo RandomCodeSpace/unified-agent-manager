@@ -737,6 +737,18 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "github_mcp must be true or false")
 				return
 			}
+		case "commit_prompt":
+			patch.CommitPrompt = new(string)
+			if json.Unmarshal(raw, patch.CommitPrompt) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "commit_prompt must be a string")
+				return
+			}
+		case "coauthor":
+			patch.CoAuthor = new(store.WebCoAuthor)
+			if json.Unmarshal(raw, patch.CoAuthor) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "coauthor must be an object with enabled and name")
+				return
+			}
 		case "drawio":
 			patch.DrawIO = new(DrawIOSettings)
 			if json.Unmarshal(raw, patch.DrawIO) != nil || string(raw) == "null" {

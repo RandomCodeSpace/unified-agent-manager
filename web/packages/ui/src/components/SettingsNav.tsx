@@ -15,6 +15,7 @@ export const SETTINGS_GROUPS = [
   { label: 'Threads', scope: 'service', pages: [
     { id: 'new-tasks', label: 'New threads', blurb: 'The model, effort, mode and compaction a new thread starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
     { id: 'composer', label: 'Composer', blurb: 'What Enter does while a thread runs, and suggested replies.', keywords: 'enter send now after this turn queue steer suggest suggested replies keyboard' },
+    { id: 'git', label: 'Commits & pull requests', blurb: "Instructions for agents' commits and pull or merge requests, and a co-author.", keywords: 'git commit commits message conventional pull request pr merge request mr title description instructions prompt co-author coauthor co-authored-by trailer attribution' },
     { id: 'drawings', label: 'Diagram editor', blurb: 'Excalidraw, built in, or a draw.io page at an origin you name.', keywords: 'drawing drawings diagram diagrams mermaid excalidraw draw.io drawio origin embed editor edit as drawing' },
     { id: 'worktrees', label: 'Worktrees', blurb: 'Worktrees of Threads on their own branch, and the disk they use.', keywords: 'worktree worktrees disk space free size branch remove clean settle' },
     { id: 'archived', label: 'Archived', blurb: 'Archived threads, read-only for good.', keywords: 'archive archived read-only delete export run again old threads' },
@@ -26,7 +27,7 @@ export const SETTINGS_GROUPS = [
   ] },
   { label: 'Accounts', scope: 'service', pages: [
     { id: 'copilot', label: 'GitHub Copilot', blurb: 'Sign-in and the Copilot CLI on the server.', keywords: 'sign in sign out login token account link unlink cli update version' },
-    { id: 'gitlab', label: 'GitLab', blurb: 'Pipeline investigation, merge request descriptions and glab access.', keywords: 'glab gitlab pipeline commit investigate automatic utility merge request mr description prompt account host instance token scopes permissions expiry expires access authentication' },
+    { id: 'gitlab', label: 'GitLab', blurb: 'Pipeline investigation and glab access.', keywords: 'glab gitlab pipeline commit investigate automatic utility account host instance token scopes permissions expiry expires access authentication' },
     { id: 'providers', label: 'Custom providers', blurb: 'Your own OpenAI-compatible endpoints and keys.', keywords: 'byom api key keys endpoint openai compatible base url provider ollama environment variable custom models' },
   ] },
   { label: 'Agent toolkit', scope: 'copilot', pages: [

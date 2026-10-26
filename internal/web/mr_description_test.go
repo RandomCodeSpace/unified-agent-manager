@@ -137,7 +137,7 @@ func TestMRDescriptionHook(t *testing.T) {
 		t.Fatalf("file mode=%v err=%v", info, err)
 	}
 	reqs := g.prov.UtilityRequests()
-	if len(reqs) != 1 || reqs[0].Purpose != purposeMRDescription || reqs[0].Model != "b" || !strings.HasPrefix(reqs[0].System, defaultMRPrompt) || !strings.Contains(reqs[0].System, "untrusted") {
+	if len(reqs) != 1 || reqs[0].Purpose != purposeMRDescription || reqs[0].Model != "b" || !strings.HasPrefix(reqs[0].System, mrDescriptionTask+defaultMRPrompt) || !strings.Contains(reqs[0].System, "untrusted") {
 		t.Fatalf("requests=%+v", reqs)
 	}
 	for _, part := range []string{"<thread_title>Fix the parser</thread_title>", "<target_branch>main</target_branch>", "feat: add the parser\nCovered by go test ./parser.", "parser.go", "<template>\n## What\n\n## Why\n</template>"} {
@@ -163,7 +163,7 @@ func TestMRDescriptionHook(t *testing.T) {
 		t.Fatalf("settings = %d %s", w.Code, w.Body)
 	}
 	got = g.m.preToolUse(t.Context(), s, use("glab mr create -f -y -b main"))
-	if reqs := g.prov.UtilityRequests(); got.Args == nil || len(reqs) != 2 || !strings.HasPrefix(reqs[1].System, "Write one short paragraph.\n") || !strings.Contains(reqs[1].System, "untrusted") {
+	if reqs := g.prov.UtilityRequests(); got.Args == nil || len(reqs) != 2 || !strings.HasPrefix(reqs[1].System, mrDescriptionTask+"Write one short paragraph.\n") || !strings.Contains(reqs[1].System, "untrusted") {
 		t.Fatalf("custom prompt verdict=%+v", got)
 	}
 	// A model failure, or Background AI off, leaves the command alone and says so.
