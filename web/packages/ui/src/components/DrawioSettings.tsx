@@ -20,6 +20,8 @@ export function DrawioSettings({ value, saving, onSave, onProblem }: Readonly<{ 
   const api = useApi();
   const id = useId();
   const [editor, setEditor] = useState<Editor>(value?.enabled ? 'drawio' : 'excalidraw');
+  // The page's security policy admits the origin's frame only from the next load.
+  const [turnedOn, setTurnedOn] = useState(false);
   const [origin, setOrigin] = useState(value?.origin ?? '');
   const [check, setCheck] = useState<{ origin: string; busy: boolean; result?: DrawioCheck; error?: string } | null>(null);
   // The server stores the origin lower-cased without a trailing slash: the check and Enable use that spelling.
@@ -86,8 +88,14 @@ export function DrawioSettings({ value, saving, onSave, onProblem }: Readonly<{ 
               <span className="text-ui font-medium text-ink">Enable</span>
               <Note id={`${id}-enable-help`}>{ok ? 'Drawings open in draw.io at this origin.' : 'Check the origin first; Enable waits for a check that passed.'}</Note>
             </div>
-            <Switch aria-label="Enable draw.io" aria-describedby={`${id}-enable-help`} checked={!!value?.enabled && value.origin === trimmed} disabled={saving || !ok} onCheckedChange={(on) => onSave({ origin: trimmed, enabled: on })} className="mt-0.5" />
+            <Switch aria-label="Enable draw.io" aria-describedby={`${id}-enable-help`} checked={!!value?.enabled && value.origin === trimmed} disabled={saving || !ok} onCheckedChange={(on) => { onSave({ origin: trimmed, enabled: on }); setTurnedOn(on); }} className="mt-0.5" />
           </div>
+          {turnedOn && value?.enabled && (
+            <Note tone="warn" className="flex items-center gap-3">
+              Reload the page to open drawings in draw.io: the page admits the origin from its next load.
+              <Button size="sm" variant="secondary" onClick={() => globalThis.location.reload()}>Reload</Button>
+            </Note>
+          )}
         </form>
       )}
     </div>
