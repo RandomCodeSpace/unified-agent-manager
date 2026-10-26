@@ -479,7 +479,7 @@ describe('activity', () => {
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled' };
     const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" liveCard />;
-    const ring = () => view.container.querySelector('.animate-spin');
+    const ring = () => view.container.querySelector('[data-step-mark]');
     const view = render(draw([stopped], false));
     expect(ring()).toBeNull();
     // The Task works before the next turn's timing comes, then before its message lands.
@@ -496,12 +496,12 @@ describe('activity', () => {
   test('a call waiting to start is still in its row and turns only as the step in progress', () => {
     const item: Item = { id: 'c1', kind: 'tool', time: '2026-10-05T10:00:02Z', tool: { name: 'bash', status: 'pending', input: JSON.stringify({ command: 'ls' }) } };
     const row = render(<ToolRow item={item} live sessionId="s" />);
-    expect(row.container.querySelector('.animate-spin')).toBeNull();
+    expect(row.container.querySelector('[data-step-mark]')).toBeNull();
     expect(row.container.querySelector('.lucide-circle-dashed')).not.toBeNull();
     row.unmount();
     const items: Item[] = [{ id: 'u1', kind: 'user', time: '2026-10-05T10:00:00Z', text: 'List' }, item];
     const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: '2026-10-05T10:00:00Z', state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
-    expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+    expect(view.container.querySelectorAll('[data-step-mark]')).toHaveLength(1);
   });
 
   test('a stopped turn keeps its end and its outcome while the next turn starts', () => {
@@ -530,7 +530,7 @@ describe('activity', () => {
     // A restart or close cut the turn off: the service marks it unknown, without an end.
     const cut: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'unknown' };
     const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" liveCard />;
-    const ring = () => view.container.querySelector('.animate-spin');
+    const ring = () => view.container.querySelector('[data-step-mark]');
     const view = render(draw([cut], false));
     expect(ring()).toBeNull();
     // You reopen the Task with a message: it works before the next turn's timing comes, then before its message lands.
@@ -741,8 +741,8 @@ describe('turn card', () => {
     expect(head.textContent).toContain('4.1K tokens · 52 tok/s');
     expect(within(head).getByText('1 failed').className).toContain('text-error');
     expect(head.textContent).not.toContain('go test');
-    // One ring: the running step's, at the foot.
-    expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+    // One step mark: the running step's dots, at the foot.
+    expect(view.container.querySelectorAll('[data-step-mark]')).toHaveLength(1);
   });
 
   test("a turn's end folds once: its timing ending before the state flips brings no Working row under its Took, and the next start, the queue's included, keeps its own", async () => {

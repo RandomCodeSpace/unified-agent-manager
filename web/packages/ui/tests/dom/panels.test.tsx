@@ -575,12 +575,12 @@ describe('one working ring per place', () => {
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
     expect(rings(strip)).toHaveLength(0);
-    // The live rows of the running ones: a still `accent` dot, "running" in their names.
+    // The live rows of the running ones: the step dots (no ring), "running" in their names.
     const live = screen.getByRole('region', { name: 'Subagents at work' });
     expect(rings(live)).toHaveLength(0);
     const running = within(live).getAllByRole('button', { name: /, running/ });
     expect(running.length).toBeGreaterThanOrEqual(2);
-    expect(running.every((row) => row.querySelector('.bg-accent'))).toBe(true);
+    expect(running.every((row) => row.querySelector('[data-step-mark]'))).toBe(true);
     // Their `task` calls are no step at the foot in Compact (the live set shows them), so the conversation does not turn.
     expect(rings(screen.getByRole('region', { name: 'Conversation' }))).toHaveLength(0);
     // Changed files keep a steady amber dot (once the changes load), and the status line's dot is still: nothing in the pane pulses.
@@ -592,19 +592,18 @@ describe('one working ring per place', () => {
     expect(pane.querySelectorAll('.animate-breathe').length).toBeLessThanOrEqual(1);
   });
 
-  test('a running subagent\'s step moves nothing: its running call\'s ring is held still, its thought streams unlabelled; its head says "Running", still', async () => {
+  test('a running subagent\'s step turns no ring: its running call carries the step dots, its thought streams unlabelled; its head says "Running"', async () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
     const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
     expect(within(dialog).getByText('Running')).toBeTruthy();
-    // First its bash call is the step: its ring is the only one, held still (the strip's live line has the one moving mark).
-    const held = (root: ParentNode) => rings(root).every((ring) => ring.closest('[class*="[&_.animate-spin]:animate-none"]'));
-    expect(rings(dialog).length).toBeLessThanOrEqual(1);
-    expect(held(dialog)).toBe(true);
-    // Then a thought streams (the mock's): the foot has no "Thinking…" label and no ring.
-    await waitFor(() => expect(rings(dialog)).toHaveLength(0), { timeout: 3000 });
+    // First its bash call is the step: the step dots, never a ring (the strip's live line has the one ring).
+    expect(rings(dialog)).toHaveLength(0);
+    expect(transcript.querySelectorAll('[data-step-mark]').length).toBeLessThanOrEqual(1);
+    // Then a thought streams (the mock's): the foot has no "Thinking…" label and no step mark.
+    await waitFor(() => expect(transcript.querySelector('[data-step-mark]')).toBeNull(), { timeout: 3000 });
     expect(within(transcript).queryByText('Thinking…')).toBeNull();
   });
 
