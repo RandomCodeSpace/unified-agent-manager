@@ -134,7 +134,7 @@ export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instance
   lift?: Element | null;
   liftClassName?: string;
   label: string;
-  side?: 'top' | 'bottom';
+  side?: 'top' | 'bottom' | 'right';
   align?: 'start' | 'end';
   sideOffset?: number;
   surface?: string;

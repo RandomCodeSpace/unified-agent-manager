@@ -1,13 +1,14 @@
 import { Cpu, Terminal } from 'lucide-react';
-import { lazy, Suspense, useContext, useEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, useContext, useEffect, useId, useState } from 'react';
 import type { ModelCalls, Quota } from '../api';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { Skeleton, useApp } from './common';
 import { ModelCallsContext, modelCallsLines } from './ModelPhase';
 import { Button } from './ui/button';
+import { PHONE } from './ui/dialog';
 import { Meter } from './ui/meter';
-import { Popover } from './ui/popover';
+import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
 // The popover's content (Usage.tsx) loads apart from the app: with its first opening, or once the page is
@@ -87,43 +88,48 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
   const word = quota ? CHIP_PACE[pace.label] : undefined;
   const description = quota ? `${allowanceName(quota)}: ${quotaFace(quota)}. ${pace.label}${!quota.unlimited && pace.daysUntilReset !== null ? `. Resets in ${daysText(pace.daysUntilReset)}` : ''}` : 'Account usage unavailable';
   const descriptionId = useId();
-  const [open, setOpen] = useState(false);
-  const popup = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  // The phone sheet or the anchored reader, chosen as it opens, so a resize does not remount it.
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
+  const open = !!reader?.open;
   // Chosen as it opens: turning from the lazy wrapper to the module while open would remount the content.
   const [UsageContent, setUsageContent] = useState(() => usageModule?.UsageContent ?? UsageContentLazy);
-  const onOpenChange = (next: boolean) => {
-    if (next) setUsageContent(() => usageModule?.UsageContent ?? UsageContentLazy);
-    setOpen(next);
+  const close = () => setReader((r) => r && { ...r, open: false });
+  const show = () => {
+    if (open) return close();
+    setUsageContent(() => usageModule?.UsageContent ?? UsageContentLazy);
+    setReader({ open: true, phone: window.matchMedia(PHONE).matches });
   };
   const meter = known && !quota.unlimited;
   const lines = calls ? modelCallsLines(calls) : [];
   const count = calls ? callsInFlight(calls) : undefined;
   const label = calls ? 'Usage and AI' : 'Usage';
   const tip = <><span className="block">Usage · {description}</span>{lines.map((line) => <span key={line} className="block text-on-primary/70">{line}</span>)}</>;
-  return <Popover.Root open={open} onOpenChange={onOpenChange}>
+  const opener = { ref: setAnchor, 'data-account-usage': true, 'data-model-calls': count, 'aria-label': label, 'aria-describedby': descriptionId, 'aria-haspopup': 'dialog' as const, 'aria-expanded': open, 'aria-controls': open ? id : undefined, onClick: show };
+  return <>
     <Tip label={tip} side={side} disabled={open}>
       {variant === 'chip' ? (
         // 28px like the buttons beside it; a touch's hit area grows to 44px (`sm`).
-        <Popover.Trigger render={<Button data-account-usage data-model-calls={count} size="sm" aria-label={label} aria-describedby={descriptionId} className={cn('min-w-0 gap-1.5 px-2 text-caption font-normal data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
+        <Button {...opener} size="sm" className={cn('min-w-0 gap-1.5 px-2 text-caption font-normal aria-expanded:bg-tint-selected [&_svg]:size-3.5', className)}>
           {meter && <Meter share={(pace.remaining ?? 0) / 100} fill={QUOTA_FILLS[pace.tone]} className="w-7 shrink-0" />}
           <span className={cn('shrink-0 font-medium tabular-nums', known ? 'text-ink' : 'text-muted')}>{known ? (quota.unlimited ? 'Unlimited' : `${share} left`) : 'Usage'}</span>
           {word && <span className={cn('min-w-0 truncate', QUOTA_TONES[pace.tone])}>{word}</span>}
           {calls && <><span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-hairline-strong" /><CallsFace calls={calls} /></>}
-        </Popover.Trigger>
+        </Button>
       ) : (
         // The rail's: the share left in words over a short meter, then the work in flight, as wide as the rail allows.
-        <Popover.Trigger render={<Button data-account-usage data-model-calls={count} aria-label={label} aria-describedby={descriptionId} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5 text-caption leading-none data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
+        <Button {...opener} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5 text-caption leading-none aria-expanded:bg-tint-selected [&_svg]:size-3.5', className)}>
           <span className={cn('font-medium tabular-nums', pace.tone === 'healthy' ? 'text-ink' : QUOTA_TONES[pace.tone])}>{share}</span>
           {meter ? <Meter share={(pace.remaining ?? 0) / 100} fill={QUOTA_FILLS[pace.tone]} className="w-6" /> : <span aria-hidden="true" className="block h-1" />}
           {calls && <CallsFace calls={calls} rail />}
-        </Popover.Trigger>
+        </Button>
       )}
     </Tip>
     <span id={descriptionId} className="sr-only">{[description, ...lines].join('. ')}</span>
-    {/* As tall as its content up to 50rem, room for Now above the allowance and the top five models, so a short model list leaves no blank space; past that only the model list scrolls. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-h-[min(50rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
-      {/* No open gate: the Portal mounts only while the popup is open or leaving, so the content stays through the exit. */}
-      <Suspense fallback={<Skeleton label="Loading usage…" rows={3} className="p-4" />}><UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} /></Suspense>
-    </Popover.Content>
-  </Popover.Root>;
+    {/* As tall as its content up to 50rem, room for Now above the allowance and the top five models, so a short model list leaves no blank space; past that only the model list scrolls. Usage has its own close button. */}
+    {reader && <AnchoredReader id={id} open={reader.open} sheet={reader.phone} anchor={anchor} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} label="Usage" className="w-[36rem] max-h-[min(50rem,calc(100dvh-2rem),var(--available-height))]" initialFocus={() => document.getElementById(id)} finalFocus={() => anchor} onClose={close} onClosed={() => setReader(null)}>
+      {() => <Suspense fallback={<Skeleton label="Loading usage…" rows={3} className="p-4" />}><UsageContent now={now} onClose={close} onAddPrices={onAddPrices} /></Suspense>}
+    </AnchoredReader>}
+  </>;
 }
