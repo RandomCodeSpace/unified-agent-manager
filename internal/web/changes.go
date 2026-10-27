@@ -676,7 +676,7 @@ func (m *Manager) kickBranchLocked(projectID string) {
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("branch refresh")
+		defer log.Recover("branch refresh", &m.mu)
 		defer m.wg.Done()
 		m.refreshBranches(m.ctx, true, projectID)
 	}()

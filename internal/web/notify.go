@@ -144,7 +144,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	m.count("notices_pushed")
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("push notification")
+		defer log.Recover("push notification", &m.mu)
 		defer m.wg.Done()
 		m.push.send(m.ctx, payload)
 	}()

@@ -1041,7 +1041,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 		p := m.providers[name]
 		wg.Add(1)
 		go func() {
-			defer log.Recover("provider check")
+			defer log.Recover("provider check", &m.mu)
 			defer wg.Done()
 			info := ProviderInfo{Name: p.Name(), DisplayName: p.DisplayName(), Capabilities: p.Capabilities(), Available: true, Models: []agentapi.Model{}}
 			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
@@ -1127,7 +1127,7 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 			empty.Add(1)
 		}
 		go func() {
-			defer log.Recover("model load")
+			defer log.Recover("model load", &m.mu)
 			defer m.wg.Done()
 			defer all.Done()
 			if wait {
@@ -2378,7 +2378,7 @@ func (m *Manager) flushLaterLocked() {
 // for the life of the service.
 func (m *Manager) supervise(what string, loop func()) {
 	defer m.wg.Done()
-	log.Supervise(m.ctx, what, loop)
+	log.Supervise(m.ctx, what, loop, &m.mu)
 }
 
 func (m *Manager) persistLoop() {
@@ -2575,7 +2575,6 @@ func (m *Manager) imageLoop() {
 			}
 		case job := <-m.imageJobs:
 			m.storeImages(job)
-			m.imageWG.Done()
 		}
 	}
 }
@@ -2583,6 +2582,7 @@ func (m *Manager) imageLoop() {
 // storeImages stores one job's images and puts them on their item, unless
 // the conversation they came from is gone.
 func (m *Manager) storeImages(job imageJob) {
+	defer m.imageWG.Done() // also after a panic
 	m.mu.Lock()
 	stale := job.s.gen != job.gen || m.closed
 	m.mu.Unlock()
@@ -3260,7 +3260,7 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 	m.changedLocked(s, before)
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("session open")
+		defer log.Recover("session open", &m.mu)
 		defer m.wg.Done()
 		s.op.Lock()
 		defer s.op.Unlock()
@@ -3290,7 +3290,7 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
 	go func(dir string) {
-		defer log.Recover("glab gate")
+		defer log.Recover("glab gate", &m.mu)
 		m.glab.gate(m.ctx, dir)
 	}(req.Workdir)
 	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
@@ -4048,7 +4048,7 @@ func (m *Manager) kickDrainLocked(s *webSession) {
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("queue drain")
+		defer log.Recover("queue drain", &m.mu)
 		defer m.wg.Done()
 		m.drain(s)
 	}()
@@ -5030,7 +5030,7 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 	ix.answering, ix.yolo, ix.assisted = true, true, assisted
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("automatic approval")
+		defer log.Recover("automatic approval", &m.mu)
 		defer m.wg.Done()
 		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
 			log.Warn("web automatic approval failed", "session", s.id, "interaction", id, "error", err)

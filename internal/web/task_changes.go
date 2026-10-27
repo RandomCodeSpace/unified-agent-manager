@@ -124,7 +124,7 @@ func (m *Manager) kickDiffLocked(s *webSession) {
 }
 
 func (m *Manager) recountDiff(s *webSession) {
-	defer log.Recover("diff recount")
+	defer log.Recover("diff recount", &m.mu)
 	defer m.wg.Done()
 	timer := time.NewTimer(diffDelay)
 	defer timer.Stop()

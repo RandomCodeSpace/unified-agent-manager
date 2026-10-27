@@ -223,7 +223,7 @@ func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
 			m.mu.Unlock()
 			log.Warn("harness usage collector stopped", "error", err)
 		}
-	})
+	}, &m.mu)
 }
 
 // requestHarnessUsage asks for a fresh pass because someone reads the totals.

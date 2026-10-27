@@ -1001,7 +1001,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		// not hold the call, its slot and the CLI restart forever.
 		detached := make(chan error, 1)
 		go func() {
-			defer log.Recover("copilot utility disconnect")
+			defer log.Recover("copilot utility disconnect", &p.mu)
 			detached <- sess.Disconnect()
 		}()
 		select {
@@ -1961,7 +1961,7 @@ func (p *webProvider) startUtility(ctx context.Context) (client sdkClient, done 
 // A ping that fails ends it at once; one that times out does only after
 // webPingMisses in a row, since a busy CLI can miss one and recover.
 func (p *webProvider) watch(c sdkClient, stop <-chan struct{}) {
-	defer log.Recover("copilot watchdog")
+	defer log.Recover("copilot watchdog", &p.mu)
 	t := time.NewTicker(p.pingEvery)
 	defer t.Stop()
 	misses := 0
@@ -3199,7 +3199,7 @@ func (c *conversation) release(ctx context.Context, perms []string, detached fun
 	}
 	done := make(chan error, 1)
 	go func() {
-		defer log.Recover("copilot conversation release")
+		defer log.Recover("copilot conversation release", &c.mu, &c.p.mu)
 		defer detached()
 		err := c.sess.Disconnect()
 		if err == nil {
@@ -3415,7 +3415,7 @@ func (c *conversation) checkTasksLocked() {
 }
 
 func (c *conversation) readTasks(sess sdkSession) {
-	defer log.Recover("copilot tasks read")
+	defer log.Recover("copilot tasks read", &c.mu, &c.p.mu)
 	for {
 		c.taskRPC.Lock()
 		// Only a read started after the idle can show the CLI still defers it.

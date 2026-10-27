@@ -74,7 +74,7 @@ func (m *Manager) kickGitPendingLocked(dirs []string) {
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("pending work refresh")
+		defer log.Recover("pending work refresh", &m.mu)
 		defer m.wg.Done()
 		m.refreshGitPending(m.ctx, dirs...)
 	}()

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -403,6 +404,51 @@ func TestSuperviseRestartsAPanickedLoop(t *testing.T) {
 	Supervise(cancelled, "panics after stop", func() { runs++; panic("boom") })
 	if runs != 1 {
 		t.Fatalf("a loop that panics after its context ended ran %d times", runs)
+	}
+}
+
+// A panic that leaves a probed mutex held exits the process; one that leaves
+// it free restarts the loop and never exits.
+func TestSuperviseExitsWhenAPanicLeavesALockHeld(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	wait, held, oldExit := superviseWait, lockWait, exit
+	t.Cleanup(func() { superviseWait, lockWait, exit = wait, held, oldExit })
+	superviseWait, lockWait = time.Millisecond, 30*time.Millisecond
+	exits := 0
+	exit = func(code int) {
+		if code != 1 {
+			t.Errorf("exit code %d", code)
+		}
+		exits++
+	}
+
+	var mu sync.Mutex
+	runs := 0
+	Supervise(context.Background(), "free lock", func() {
+		runs++
+		if runs == 1 {
+			mu.Lock()
+			defer mu.Unlock()
+			panic("boom")
+		}
+	}, &mu)
+	if runs != 2 || exits != 0 {
+		t.Fatalf("free lock: runs=%d exits=%d", runs, exits)
+	}
+
+	runs = 0
+	Supervise(context.Background(), "held lock", func() {
+		runs++
+		if runs == 1 {
+			mu.Lock()
+			panic("boom")
+		}
+	}, &mu)
+	if exits != 1 || !strings.Contains(buf.String(), "a lock was left held after a panic") {
+		t.Fatalf("held lock: exits=%d logs=%s", exits, buf.String())
 	}
 }
 

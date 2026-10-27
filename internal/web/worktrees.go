@@ -661,7 +661,7 @@ func (m *Manager) kickPlaceNameLocked(s *webSession) {
 	dir, old := s.workdir, s.place.Branch
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("branch naming")
+		defer log.Recover("branch naming", &m.mu)
 		defer m.wg.Done()
 		renamed := nameBranch(m.ctx, dir, old, branchPrefix+want)
 		m.mu.Lock()

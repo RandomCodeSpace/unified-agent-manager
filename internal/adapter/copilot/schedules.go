@@ -69,7 +69,7 @@ func (c *conversation) refreshActiveSchedulesLocked() {
 }
 
 func (c *conversation) readSchedules(runtime scheduleSession) {
-	defer log.Recover("copilot schedules read")
+	defer log.Recover("copilot schedules read", &c.mu, &c.p.mu)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		c.mu.Lock()

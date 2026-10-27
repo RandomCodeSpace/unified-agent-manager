@@ -193,8 +193,8 @@ func (t *terminal) run(conn *websocket.Conn, cols, rows uint16) {
 	go func() {
 		defer log.Recover("terminal input")
 		defer close(input)
+		defer socketGone() // also after a panic
 		readInput(conn, ptmx)
-		socketGone()
 	}()
 
 	shellExited := false

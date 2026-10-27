@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -61,6 +62,26 @@ func TestToolImagesPastTheWaitingCapAreLeftOutWithANote(t *testing.T) {
 	}
 	if last, ok := itemByID(d, fmt.Sprintf("t%d", maxImageJobs)); !ok || len(last.Images) != 1 {
 		t.Fatalf("last queued item = %+v", last)
+	}
+}
+
+// A panic while one job's images are stored is logged, the job still counts
+// as finished, and the image goroutine starts again for the next job.
+func TestToolImagePanicRestartsTheImageGoroutine(t *testing.T) {
+	m, _, sum, conv, _ := uploadTask(t, "docs")
+	img := pngBytes(t)
+	var calls atomic.Int32
+	m.storeImageHook = func() {
+		if calls.Add(1) == 1 {
+			panic("boom")
+		}
+	}
+	conv.EmitItem(toolItem("t0", "", toolImage("shot.png", img)))
+	m.imageWG.Wait()
+	conv.EmitItem(toolItem("t1", "", toolImage("shot.png", img)))
+	m.imageWG.Wait()
+	if it, ok := itemByID(detail(t, m, sum.ID), "t1"); !ok || len(it.Images) != 1 || calls.Load() != 2 {
+		t.Fatalf("after the panic: %+v, %d stores", it, calls.Load())
 	}
 }
 

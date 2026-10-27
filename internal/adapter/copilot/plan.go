@@ -374,7 +374,7 @@ func (c *conversation) checkPlanLocked() {
 	}
 	c.planReading = true
 	go func() {
-		defer log.Recover("copilot plan read")
+		defer log.Recover("copilot plan read", &c.mu, &c.p.mu)
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
 			plan, err := runtime.ReadPlan(ctx)

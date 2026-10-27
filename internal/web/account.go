@@ -217,7 +217,7 @@ func (m *Manager) kickSignedOutLocked(s *webSession, detail string) {
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("account sign-in check")
+		defer log.Recover("account sign-in check", &m.mu)
 		defer m.wg.Done()
 		ctx, cancel := context.WithTimeout(m.ctx, checkTimeout)
 		defer cancel()
@@ -357,7 +357,7 @@ func (m *Manager) StartDeviceSignIn(ctx context.Context, name string) (DeviceSig
 }
 
 func (m *Manager) runDeviceSignIn(ctx context.Context, p agentapi.Provider, dm agentapi.DeviceSignInManager, d *deviceSignIn) {
-	defer log.Recover("device sign-in")
+	defer log.Recover("device sign-in", &m.mu)
 	defer m.wg.Done()
 	defer d.cancel()
 	acct, err := dm.DeviceSignIn(ctx, func(c agentapi.DeviceCode) {
@@ -501,7 +501,7 @@ func (m *Manager) adoptAccount(name string, link store.AccountLink, from string)
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("account verify")
+		defer log.Recover("account verify", &m.mu)
 		defer m.wg.Done()
 		_ = m.verifyAccount(name, true)
 	}()

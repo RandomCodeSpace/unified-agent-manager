@@ -109,7 +109,7 @@ func (c *conversation) checkExecutionLocked() {
 		return
 	}
 	go func() {
-		defer log.Recover("copilot commands")
+		defer log.Recover("copilot commands", &c.mu, &c.p.mu)
 		c.control.Lock()
 		defer c.control.Unlock()
 		if c.isClosed() {

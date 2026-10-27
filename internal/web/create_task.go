@@ -275,7 +275,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	m.wg.Add(1)
 	m.mu.Unlock()
 	go func() {
-		defer log.Recover("create task")
+		defer log.Recover("create task", &m.mu)
 		defer m.wg.Done()
 		_, err := m.createChecked(req, prov, workdir, mode)
 		m.mu.Lock()

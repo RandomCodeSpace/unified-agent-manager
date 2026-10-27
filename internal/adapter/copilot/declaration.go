@@ -461,7 +461,7 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 func (d *toolGate) proveFirst(session sdkSession, originals []copilot.Tool) {
 	d.proof.Lock()
 	go func() {
-		defer log.Recover("copilot tool catalog")
+		defer log.Recover("copilot tool catalog", &d.mu)
 		defer d.proof.Unlock()
 		err := d.catalog(d.stopCtx, session, originals...)
 		d.mu.Lock()

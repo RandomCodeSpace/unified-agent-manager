@@ -187,7 +187,7 @@ func (h *connectedNotices) close() {
 }
 
 func (h *connectedNotices) run(state *noticeSourceState) {
-	defer log.Recover("connected notices")
+	defer log.Recover("connected notices", &h.mu)
 	defer h.wg.Done()
 	if state.source.Context != nil {
 		stop := context.AfterFunc(state.source.Context, state.cancel)
@@ -368,7 +368,7 @@ func (h *connectedNotices) accept(state *noticeSourceState, name string, event s
 // Sending to a slow push service must not stall the upstream event reader.
 // Each source has one bounded delivery queue, canceled with its generation.
 func (h *connectedNotices) deliver(state *noticeSourceState) {
-	defer log.Recover("connected notice delivery")
+	defer log.Recover("connected notice delivery", &h.mu)
 	defer h.wg.Done()
 	for {
 		select {

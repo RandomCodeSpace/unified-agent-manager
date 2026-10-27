@@ -293,7 +293,7 @@ func (m *Manager) measureLocked(paths []string) {
 	m.worktrees.measuring = true
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("worktree measure")
+		defer log.Recover("worktree measure", &m.mu)
 		defer m.wg.Done()
 		for {
 			m.mu.Lock()
@@ -395,7 +395,7 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	size, known := m.worktrees.sizes[path]
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("worktree remove")
+		defer log.Recover("worktree remove", &m.mu)
 		defer m.wg.Done()
 		m.worktrees.ops.Lock()
 		defer m.worktrees.ops.Unlock()

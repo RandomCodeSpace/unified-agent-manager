@@ -142,7 +142,7 @@ func (m *Manager) budgetStopLocked(s *webSession, why string) {
 	id := s.id
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("budget stop")
+		defer log.Recover("budget stop", &m.mu)
 		defer m.wg.Done()
 		_, _ = m.cancelBecause(id, stopBudget, why)
 		m.mu.Lock()
@@ -371,7 +371,7 @@ func (m *Manager) sendWrapPromptLocked(s *webSession, w *budgetWrap) {
 	}
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("budget wrap-up")
+		defer log.Recover("budget wrap-up", &m.mu)
 		defer m.wg.Done()
 		s.op.Lock()
 		defer s.op.Unlock()
@@ -453,7 +453,7 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 	in.failed = failedTools(s.items, w.turnStart, w.before)
 	m.wg.Add(1)
 	go func() {
-		defer log.Recover("budget handoff")
+		defer log.Recover("budget handoff", &m.mu)
 		defer m.wg.Done()
 		ctx, cancel := context.WithTimeout(m.ctx, handoffReadWait)
 		files, filesErr := handoffFiles(ctx, in.workdir, in.edits, in.turnStart)

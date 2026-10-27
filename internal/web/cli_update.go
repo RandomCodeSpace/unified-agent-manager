@@ -305,7 +305,7 @@ func (m *Manager) StartCLIUpdate(ctx context.Context, name string) (ProviderCLI,
 // runCLIUpdate installs target over from, then restarts the CLI onto it at
 // once when no Task works or waits, else as soon as none does.
 func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, target, from string) {
-	defer log.Recover("cli update")
+	defer log.Recover("cli update", &m.mu)
 	defer m.wg.Done()
 	name := p.Name()
 	err := u.UpdateCLI(m.ctx, target)

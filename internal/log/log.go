@@ -223,10 +223,43 @@ func Error(msg string, args ...any) { current.Error(msg, args...) }
 
 // Recover, deferred first thing in a background goroutine, logs a panic there
 // with its stack and ends only that goroutine, so the daemon and every other
-// session keep running: `defer log.Recover("what")`.
-func Recover(what string) {
+// session keep running: `defer log.Recover("what", &m.mu)`. locks are the
+// mutexes the goroutine's code may hold without a deferred unlock; one still
+// held after the panic would hang every later caller, so the process exits
+// instead, as an unrecovered panic would have.
+func Recover(what string, locks ...Lock) {
 	if r := recover(); r != nil {
 		current.Error("background goroutine panicked", "goroutine", what, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+		checkLocks(what, r, locks)
+	}
+}
+
+// Lock is a mutex a recovered panic may have left held.
+type Lock interface {
+	TryLock() bool
+	Unlock()
+}
+
+// exit and lockWait are replaced by tests.
+var (
+	exit     = os.Exit
+	lockWait = 10 * time.Second
+)
+
+// checkLocks waits up to lockWait for each lock to be free and exits the
+// process when one is not.
+func checkLocks(what string, r any, locks []Lock) {
+	deadline := time.Now().Add(lockWait)
+	for _, l := range locks {
+		for !l.TryLock() {
+			if time.Now().After(deadline) {
+				current.Error("a lock was left held after a panic; exiting so the service can be restarted", "goroutine", what, "panic", fmt.Sprint(r))
+				exit(1)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		l.Unlock()
 	}
 }
 
@@ -235,11 +268,11 @@ func Recover(what string) {
 var superviseWait, superviseMaxWait = time.Second, time.Minute
 
 // Supervise runs fn, a long-running loop, until it returns or ctx ends. A
-// panic in fn is logged as Recover does and fn runs again after a backoff,
+// panic in fn is handled as Recover does and fn runs again after a backoff,
 // so a loop the service depends on is never left stopped.
-func Supervise(ctx context.Context, what string, fn func()) {
+func Supervise(ctx context.Context, what string, fn func(), locks ...Lock) {
 	wait := superviseWait
-	for panicked(what, fn) && ctx.Err() == nil {
+	for panicked(what, fn, locks) && ctx.Err() == nil {
 		current.Warn("restarting background goroutine after a panic", "goroutine", what, "in", wait.String())
 		t := time.NewTimer(wait)
 		select {
@@ -253,9 +286,9 @@ func Supervise(ctx context.Context, what string, fn func()) {
 }
 
 // panicked runs fn and reports whether it ended in a panic, logged by Recover.
-func panicked(what string, fn func()) (p bool) {
+func panicked(what string, fn func(), locks []Lock) (p bool) {
 	p = true
-	defer Recover(what)
+	defer Recover(what, locks...)
 	fn()
 	return false
 }
