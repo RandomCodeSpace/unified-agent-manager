@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@base-ui/react": "1.8.0",
+    "@base-ui/react": "1.9.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@excalidraw/mermaid-to-excalidraw": "2.3.0",
     "@fontsource-variable/figtree": "5.3.0",
@@ -20,8 +20,8 @@
     "diff": "9.0.0",
     "echarts": "6.1.0",
     "lowlight": "3.3.0",
-    "lucide-react": "1.48.0",
-    "mermaid": "11.17.2",
+    "lucide-react": "1.61.0",
+    "mermaid": "12.2.0",
     "react-markdown": "10.1.0",
     "rehype-raw": "7.0.0",
     "rehype-sanitize": "6.0.0",
