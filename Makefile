@@ -7,7 +7,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell scripts/version 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-e2e cover lint tidy clean web check-web
+.PHONY: all build install run test test-race test-e2e cover lint tidy clean web check-web
 
 all: build
 
@@ -40,6 +40,10 @@ run: build
 
 test: web
 	go test ./...
+
+# Same command as the CI test-race job.
+test-race: web
+	go test -race -count=1 ./...
 
 # Exercise the authenticated daemon lifecycle with the built binary. Test
 # directories and tokens are disposable; no provider model calls are made.
