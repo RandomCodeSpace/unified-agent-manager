@@ -22,6 +22,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const (
@@ -675,6 +676,7 @@ func (m *Manager) kickBranchLocked(projectID string) {
 	}
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("branch refresh", &m.mu)
 		defer m.wg.Done()
 		m.refreshBranches(m.ctx, true, projectID)
 	}()

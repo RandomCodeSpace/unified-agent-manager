@@ -185,14 +185,16 @@ func (t *terminal) run(conn *websocket.Conn, cols, rows uint16) {
 	socketGone := func() { goneOnce.Do(func() { close(gone) }) }
 	output := make(chan struct{})
 	go func() {
+		defer log.Recover("terminal output")
 		defer close(output)
 		sendOutput(conn, ptmx, socketGone)
 	}()
 	input := make(chan struct{})
 	go func() {
+		defer log.Recover("terminal input")
 		defer close(input)
+		defer socketGone() // also after a panic
 		readInput(conn, ptmx)
-		socketGone()
 	}()
 
 	shellExited := false

@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -33,6 +34,33 @@ func TestWebTokenUsageIncludesSubagentsAndDeduplicates(t *testing.T) {
 	}
 	if got[0].NanoAIU != 1684250000 || got[1].NanoAIU != 165385000 {
 		t.Fatalf("deduplicated call charges: %+v", got)
+	}
+}
+
+// The dedupe set keeps only the last maxTokenSeen usage IDs: a recent
+// redelivery is still dropped, one older than that counts again.
+func TestWebTokenUsageDedupeIsBounded(t *testing.T) {
+	h := openWeb(t)
+	call := func(i int) {
+		h.fs.onEvent(ev(fmt.Sprintf("usage-%d", i), &rpc.AssistantUsageData{Model: "gpt-6-luna", InputTokens: new(int64(1))}))
+	}
+	for i := range maxTokenSeen + 1 {
+		call(i)
+	}
+	call(maxTokenSeen)
+	call(0)
+	tokens := 0
+	for _, ev := range h.sink.all() {
+		if ev.Kind == agentapi.EventTokens {
+			tokens++
+		}
+	}
+	c := h.conv.(*conversation)
+	c.mu.Lock()
+	seen, order := len(c.tokenSeen), len(c.tokenOrder)
+	c.mu.Unlock()
+	if tokens != maxTokenSeen+2 || seen != maxTokenSeen || order != maxTokenSeen {
+		t.Fatalf("token events=%d seen=%d order=%d", tokens, seen, order)
 	}
 }
 

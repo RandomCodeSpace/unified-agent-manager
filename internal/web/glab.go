@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const glabTTL = 10 * time.Minute
@@ -65,6 +67,7 @@ func (g *glabGovernor) gate(ctx context.Context, dir string) (glabGate, bool) {
 }
 
 func (g *glabGovernor) refresh(ctx context.Context, dir string) {
+	defer log.Recover("glab refresh", &g.mu)
 	gate, ok := glabOrigin(ctx, dir)
 	if ok {
 		ok = g.authenticated(ctx, gate)

@@ -69,7 +69,7 @@ func (p *webProvider) DeviceSignIn(ctx context.Context, show func(agentapi.Devic
 	err := deviceLogin(ctx, show)
 	if errors.Is(err, errTokenNotSaved) {
 		if serr := allowPlaintextToken(); serr != nil {
-			return agentapi.Account{}, fmt.Errorf("%w, and %s. Set \"storeTokenPlaintext\": true in it, then sign in again", errTokenNotSaved, serr)
+			return agentapi.Account{}, fmt.Errorf("%w, and %w. Set \"storeTokenPlaintext\": true in it, then sign in again", errTokenNotSaved, serr)
 		}
 		log.Info("copilot sign-in: no system keychain, turned on plaintext token storage")
 		err = deviceLogin(ctx, func(c agentapi.DeviceCode) {
@@ -147,25 +147,22 @@ func copilotSettings() (string, error) {
 
 // allowPlaintextToken turns on the CLI's storeTokenPlaintext setting and
 // keeps its others, so a sign-in on a system with no keychain is stored in
-// the CLI's own config file, which only its user can read.
+// the CLI's own config file, which only its user can read: it is rewritten
+// with mode 0600 whatever its mode was.
 func allowPlaintextToken() error {
 	path, err := copilotSettings()
 	if err != nil {
 		return fmt.Errorf("its settings file could not be found: %s", errText(err))
 	}
 	settings := map[string]json.RawMessage{}
-	mode := fs.FileMode(0o600)
 	data, err := os.ReadFile(path) // #nosec G304 -- the CLI's own settings file in the service user's Copilot home.
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
-		return fmt.Errorf("%s could not be read", path)
+		return fmt.Errorf("%s could not be read: %w", path, err)
 	default:
 		if json.Unmarshal(data, &settings) != nil || settings == nil {
 			return fmt.Errorf("%s is not plain JSON", path)
-		}
-		if info, err := os.Stat(path); err == nil {
-			mode = info.Mode().Perm()
 		}
 	}
 	settings["storeTokenPlaintext"] = json.RawMessage("true")
@@ -174,17 +171,22 @@ func allowPlaintextToken() error {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("%s could not be written", path)
+		return fmt.Errorf("%s could not be written: %w", path, err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "settings.json.tmp.*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), "settings.json.tmp.*") // created 0600
 	if err != nil {
-		return fmt.Errorf("%s could not be written", path)
+		return fmt.Errorf("%s could not be written: %w", path, err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }() // gone after the rename; left only by a failure
-	_, werr := tmp.Write(append(out, '\n'))
-	cerr := tmp.Close()
-	if werr != nil || cerr != nil || os.Chmod(tmp.Name(), mode) != nil || os.Rename(tmp.Name(), path) != nil {
-		return fmt.Errorf("%s could not be written", path)
+	_, err = tmp.Write(append(out, '\n'))
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if err = errors.Join(err, tmp.Close()); err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		return fmt.Errorf("%s could not be written: %w", path, err)
 	}
 	return nil
 }

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -83,7 +85,7 @@ func TestDeviceSignInWithoutAKeychainStoresInPlaintextAfterASecondCode(t *testin
 	if json.Unmarshal(data, &settings) != nil || settings["storeTokenPlaintext"] != true || settings["model"] != "gpt-6-luna" {
 		t.Fatalf("settings.json = %s", data)
 	}
-	if info, err := os.Stat(filepath.Join(home, "settings.json")); err != nil || info.Mode().Perm() != 0o644 {
+	if info, err := os.Stat(filepath.Join(home, "settings.json")); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("settings.json mode = %v, %v", info.Mode(), err)
 	}
 }
@@ -98,6 +100,28 @@ func TestDeviceSignInWithoutAKeychainAndUnreadableSettingsSaysWhatToSet(t *testi
 	_, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) {})
 	if !errors.Is(err, agentapi.ErrSignInRejected) || !strings.Contains(err.Error(), "is not plain JSON") || !strings.Contains(err.Error(), `"storeTokenPlaintext": true`) || *runs != 1 {
 		t.Fatalf("DeviceSignIn error = %v after %d runs", err, *runs)
+	}
+}
+
+// A settings file that cannot be read or written keeps its cause in the
+// error.
+func TestAllowPlaintextTokenKeepsTheCause(t *testing.T) {
+	home := t.TempDir()
+	accountProvider(t, map[string]string{"COPILOT_HOME": home})
+	if err := os.Mkdir(filepath.Join(home, "settings.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := allowPlaintextToken(); !errors.Is(err, syscall.EISDIR) || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("directory settings: %v", err)
+	}
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	accountProvider(t, map[string]string{"COPILOT_HOME": locked})
+	if err := allowPlaintextToken(); !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "could not be written") {
+		t.Fatalf("unwritable settings: %v", err)
 	}
 }
 

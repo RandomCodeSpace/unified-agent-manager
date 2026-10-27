@@ -233,3 +233,28 @@ func TestWorktreeThreadForkSaysWhy(t *testing.T) {
 		t.Fatalf("fork = %v", err)
 	}
 }
+
+// A removed log that cannot be read is kept as it is: a removal is listed
+// in memory but does not overwrite the file and lose its history. A missing
+// file is only an empty log.
+func TestRemovedLogKeepsAnUnreadableFile(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	path := m.removedLogPath()
+	m.logRemoved(RemovedWorktree{Path: "/first"})
+	if data, err := os.ReadFile(path); err != nil || !strings.Contains(string(data), "/first") {
+		t.Fatalf("missing log not written: %q %v", data, err)
+	}
+
+	other, _, _ := newTestManager(t)
+	bad := []byte("{not json")
+	if err := os.WriteFile(other.removedLogPath(), bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other.logRemoved(RemovedWorktree{Path: "/second"})
+	if got := other.removedLog(); len(got) != 1 || got[0].Path != "/second" {
+		t.Fatalf("removed = %+v", got)
+	}
+	if data, err := os.ReadFile(other.removedLogPath()); err != nil || string(data) != string(bad) {
+		t.Fatalf("unreadable log overwritten: %q %v", data, err)
+	}
+}

@@ -74,6 +74,7 @@ func (p *webProvider) disabledMCPServers() []string {
 // runs, after any earlier switch of c ended. mcpSwitchTimeout bounds it, not
 // ctx's cancellation.
 func (c *conversation) syncGitHubMCP(ctx context.Context) {
+	defer log.Recover("copilot github mcp sync", &c.mu, &c.p.mu)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mcpSwitchTimeout)
 	defer cancel()
 	c.githubSwitch.Lock()

@@ -867,23 +867,23 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	m.wg.Add(5)
-	go m.gitlabLoop()
-	go m.persistLoop()
-	go m.sweepLoop()
-	go m.routineLoop()
+	go m.supervise("gitlab loop", m.gitlabLoop)
+	go m.supervise("persist loop", m.persistLoop)
+	go m.supervise("sweep loop", m.sweepLoop)
+	go m.supervise("routine loop", m.routineLoop)
 	if usage {
 		m.wg.Add(1)
-		go m.usageLoop()
+		go m.supervise("usage loop", m.usageLoop)
 	}
 	if len(cliNames) > 0 {
 		m.wg.Add(1)
-		go m.cliLoop(cliNames)
+		go m.supervise("cli loop", func() { m.cliLoop(cliNames) })
 	}
 	if m.binary != nil {
 		m.wg.Add(1)
-		go m.binaryLoop()
+		go m.supervise("binary loop", m.binaryLoop)
 	}
-	go m.imageLoop()
+	go m.supervise("image loop", m.imageLoop)
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -1041,6 +1041,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 		p := m.providers[name]
 		wg.Add(1)
 		go func() {
+			defer log.Recover("provider check", &m.mu)
 			defer wg.Done()
 			info := ProviderInfo{Name: p.Name(), DisplayName: p.DisplayName(), Capabilities: p.Capabilities(), Available: true, Models: []agentapi.Model{}}
 			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
@@ -1126,6 +1127,7 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 			empty.Add(1)
 		}
 		go func() {
+			defer log.Recover("model load", &m.mu)
 			defer m.wg.Done()
 			defer all.Done()
 			if wait {
@@ -2371,8 +2373,15 @@ func (m *Manager) flushLaterLocked() {
 	})
 }
 
-func (m *Manager) persistLoop() {
+// supervise runs one of the Manager's loops until the Manager stops,
+// running it again after a panic so saves, routines and the rest never stop
+// for the life of the service.
+func (m *Manager) supervise(what string, loop func()) {
 	defer m.wg.Done()
+	log.Supervise(m.ctx, what, loop, &m.mu)
+}
+
+func (m *Manager) persistLoop() {
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -2553,7 +2562,6 @@ func (m *Manager) queueImages(job imageJob) {
 // imageLoop stores queued tool images one job at a time until the manager
 // stops; jobs still queued then are released unstored.
 func (m *Manager) imageLoop() {
-	defer m.wg.Done()
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -2567,7 +2575,6 @@ func (m *Manager) imageLoop() {
 			}
 		case job := <-m.imageJobs:
 			m.storeImages(job)
-			m.imageWG.Done()
 		}
 	}
 }
@@ -2575,6 +2582,7 @@ func (m *Manager) imageLoop() {
 // storeImages stores one job's images and puts them on their item, unless
 // the conversation they came from is gone.
 func (m *Manager) storeImages(job imageJob) {
+	defer m.imageWG.Done() // also after a panic
 	m.mu.Lock()
 	stale := job.s.gen != job.gen || m.closed
 	m.mu.Unlock()
@@ -3252,6 +3260,7 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 	m.changedLocked(s, before)
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("session open", &m.mu)
 		defer m.wg.Done()
 		s.op.Lock()
 		defer s.op.Unlock()
@@ -3280,7 +3289,10 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // any, the built-in skills and the compaction threshold to req. The caller
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
-	go m.glab.gate(m.ctx, req.Workdir)
+	go func(dir string) {
+		defer log.Recover("glab gate", &m.mu)
+		m.glab.gate(m.ctx, dir)
+	}(req.Workdir)
 	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
 	req.Hooks.Failed = func(ctx context.Context, use agentapi.ToolUse, failure string) string {
 		return m.failedToolUse(ctx, s, use, failure)
@@ -4036,6 +4048,7 @@ func (m *Manager) kickDrainLocked(s *webSession) {
 	}
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("queue drain", &m.mu)
 		defer m.wg.Done()
 		m.drain(s)
 	}()
@@ -5017,6 +5030,7 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 	ix.answering, ix.yolo, ix.assisted = true, true, assisted
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("automatic approval", &m.mu)
 		defer m.wg.Done()
 		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
 			log.Warn("web automatic approval failed", "session", s.id, "interaction", id, "error", err)

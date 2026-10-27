@@ -165,19 +165,7 @@ func writeStateFile(dir string, st DaemonState) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, stateFileName+".tmp.*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), statePath(dir))
+	return writeFileAtomic(statePath(dir), stateFileName+".tmp.*", data)
 }
 
 // lockDaemon takes the single-instance lock for the service's lifetime.

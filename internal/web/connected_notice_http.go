@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const noticesUnavailable = "connected notifications unavailable"
@@ -19,6 +21,7 @@ func (s *Server) initConnectedNotifications() {
 	h := s.notices
 	h.wg.Add(1)
 	go func() {
+		defer log.Recover("connected notice sources", &h.mu)
 		defer h.wg.Done()
 		for {
 			changed := s.connections.Changed()

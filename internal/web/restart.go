@@ -321,7 +321,6 @@ func (m *Manager) updatingCLI() bool {
 // pending, begins it once no Task works or waits: on each Task change and
 // every restartTick.
 func (m *Manager) binaryLoop() {
-	defer m.wg.Done()
 	w := m.binary
 	poll := time.NewTicker(binaryPoll)
 	defer poll.Stop()

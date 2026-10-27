@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -354,4 +355,125 @@ func TestCacheDirFallbacks(t *testing.T) {
 	}
 	UseStderr(nil)
 	Debug("stderr fallback debug path")
+}
+
+// A supervised loop that panics runs again after a doubling pause, and stops
+// for good when it returns or its context ends.
+func TestSuperviseRestartsAPanickedLoop(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	wait, maxWait := superviseWait, superviseMaxWait
+	superviseWait, superviseMaxWait = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { superviseWait, superviseMaxWait = wait, maxWait })
+
+	runs := 0
+	Supervise(context.Background(), "flaky loop", func() {
+		runs++
+		if runs <= 2 {
+			panic("boom")
+		}
+	})
+	if runs != 3 || strings.Count(buf.String(), "background goroutine panicked") != 2 || strings.Count(buf.String(), "restarting background goroutine") != 2 {
+		t.Fatalf("runs=%d logs=%s", runs, buf.String())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	superviseWait = time.Hour
+	runs = 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Supervise(ctx, "always panics", func() { runs++; panic("boom") })
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Supervise did not stop on cancel")
+	}
+	if runs != 1 {
+		t.Fatalf("runs after cancel = %d", runs)
+	}
+
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	runs = 0
+	Supervise(cancelled, "panics after stop", func() { runs++; panic("boom") })
+	if runs != 1 {
+		t.Fatalf("a loop that panics after its context ended ran %d times", runs)
+	}
+}
+
+// A panic that leaves a probed mutex held exits the process; one that leaves
+// it free restarts the loop and never exits.
+func TestSuperviseExitsWhenAPanicLeavesALockHeld(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	wait, held, oldExit := superviseWait, lockWait, exit
+	t.Cleanup(func() { superviseWait, lockWait, exit = wait, held, oldExit })
+	superviseWait, lockWait = time.Millisecond, 30*time.Millisecond
+	exits := 0
+	exit = func(code int) {
+		if code != 1 {
+			t.Errorf("exit code %d", code)
+		}
+		exits++
+	}
+
+	var mu sync.Mutex
+	runs := 0
+	Supervise(context.Background(), "free lock", func() {
+		runs++
+		if runs == 1 {
+			mu.Lock()
+			defer mu.Unlock()
+			panic("boom")
+		}
+	}, &mu)
+	if runs != 2 || exits != 0 {
+		t.Fatalf("free lock: runs=%d exits=%d", runs, exits)
+	}
+
+	runs = 0
+	Supervise(context.Background(), "held lock", func() {
+		runs++
+		if runs == 1 {
+			mu.Lock()
+			panic("boom")
+		}
+	}, &mu)
+	if exits != 1 || !strings.Contains(buf.String(), "a lock was left held after a panic") {
+		t.Fatalf("held lock: exits=%d logs=%s", exits, buf.String())
+	}
+}
+
+// A panicking background goroutine is logged with its stack and ends alone:
+// the test process, standing in for the daemon, keeps running.
+func TestRecoverLogsPanicAndKeepsProcess(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer Recover("test loop")
+		panic("boom")
+	}()
+	<-done
+	Recover("no panic") // a goroutine that ends normally logs nothing
+	var entry struct {
+		Msg, Goroutine, Panic, Stack string
+	}
+	if err := json.Unmarshal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), &entry); err != nil {
+		t.Fatalf("want one panic record, got %q: %v", buf.String(), err)
+	}
+	if entry.Msg != "background goroutine panicked" || entry.Goroutine != "test loop" || entry.Panic != "boom" || !strings.Contains(entry.Stack, "TestRecoverLogsPanicAndKeepsProcess") {
+		t.Fatalf("panic record = %+v", entry)
+	}
 }

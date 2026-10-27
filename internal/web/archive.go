@@ -493,6 +493,7 @@ func (m *Manager) refreshBodyLocked(s *webSession, it agentapi.Item) {
 	key, changed := itemKey(it.AgentID, it.ID), s.itemSeq[itemKey(it.AgentID, it.ID)]
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("archive read", &m.mu)
 		defer m.wg.Done()
 		w, err := m.readArchive(read)
 		if err != nil {

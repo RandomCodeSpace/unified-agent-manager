@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -579,6 +581,26 @@ func TestGitLabInvestigationAssociationScope(t *testing.T) {
 				t.Fatal("invalid association fetched GitLab data")
 			}
 		})
+	}
+}
+
+// A pass that cannot load the store says so instead of skipping silently.
+func TestGitLabMonitorLogsAStoreLoadFailure(t *testing.T) {
+	logs := &lockedBuffer{}
+	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+	m, _, st := newTestManager(t)
+	// A directory in the store's place cannot be read.
+	if err := os.Remove(st.Path()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(st.Path(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(st.Path()) }) // let the closing flush write again
+	m.gitLabMonitorPass(t.Context())
+	if !strings.Contains(logs.String(), "GitLab monitor could not load the store") {
+		t.Fatalf("logs = %s", logs)
 	}
 }
 

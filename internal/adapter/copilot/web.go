@@ -60,6 +60,9 @@ const (
 	// outputs of the events it drains.
 	webReadResults = 4096
 	webResultBytes = 512
+	// shortcut: a redelivered usage event older than the last maxTokenSeen
+	// would count again; raise it if the CLI ever replays further back.
+	maxTokenSeen = 4096
 )
 
 var (
@@ -997,7 +1000,10 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		// The SDK's detach has no deadline: a CLI that never answers it must
 		// not hold the call, its slot and the CLI restart forever.
 		detached := make(chan error, 1)
-		go func() { detached <- sess.Disconnect() }()
+		go func() {
+			defer log.Recover("copilot utility disconnect", &p.mu)
+			detached <- sess.Disconnect()
+		}()
 		select {
 		case err := <-detached:
 			if err != nil {
@@ -1955,6 +1961,7 @@ func (p *webProvider) startUtility(ctx context.Context) (client sdkClient, done 
 // A ping that fails ends it at once; one that times out does only after
 // webPingMisses in a row, since a busy CLI can miss one and recover.
 func (p *webProvider) watch(c sdkClient, stop <-chan struct{}) {
+	defer log.Recover("copilot watchdog", &p.mu)
 	t := time.NewTicker(p.pingEvery)
 	defer t.Stop()
 	misses := 0
@@ -2069,7 +2076,10 @@ func stopClient(ctx context.Context, c sdkClient) error {
 	ctx, cancel := context.WithTimeout(ctx, webStopTimeout)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- c.Stop() }()
+	go func() {
+		defer log.Recover("copilot cli stop")
+		done <- c.Stop()
+	}()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -2096,6 +2106,9 @@ type conversation struct {
 	closed    bool
 	pending   map[string]*interaction
 	tokenSeen map[string]bool
+	// tokenOrder holds tokenSeen's IDs oldest first, so only the last
+	// maxTokenSeen usage events stay remembered for the conversation.
+	tokenOrder []string
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
 	elicits          elicitLinks // elicitation.requested events with elicitation callbacks
@@ -3186,6 +3199,7 @@ func (c *conversation) release(ctx context.Context, perms []string, detached fun
 	}
 	done := make(chan error, 1)
 	go func() {
+		defer log.Recover("copilot conversation release", &c.mu, &c.p.mu)
 		defer detached()
 		err := c.sess.Disconnect()
 		if err == nil {
@@ -3401,6 +3415,7 @@ func (c *conversation) checkTasksLocked() {
 }
 
 func (c *conversation) readTasks(sess sdkSession) {
+	defer log.Recover("copilot tasks read", &c.mu, &c.p.mu)
 	for {
 		c.taskRPC.Lock()
 		// Only a read started after the idle can show the CLI still defers it.
@@ -3732,6 +3747,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 				c.tokenSeen = map[string]bool{}
 			}
 			c.tokenSeen[ev.ID] = true
+			c.tokenOrder = append(c.tokenOrder, ev.ID)
+			if len(c.tokenOrder) > maxTokenSeen {
+				delete(c.tokenSeen, c.tokenOrder[0])
+				c.tokenOrder = c.tokenOrder[1:]
+			}
 		}
 		if tokens := modelTokens(ev, d); tokens != nil {
 			if d.IsByok != nil && *d.IsByok {

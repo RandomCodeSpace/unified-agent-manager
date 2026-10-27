@@ -12,6 +12,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // Unsaved git work (docs/web.md): for each repository holding a Task's
@@ -73,6 +74,7 @@ func (m *Manager) kickGitPendingLocked(dirs []string) {
 	}
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("pending work refresh", &m.mu)
 		defer m.wg.Done()
 		m.refreshGitPending(m.ctx, dirs...)
 	}()

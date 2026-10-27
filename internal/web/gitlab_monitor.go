@@ -540,7 +540,6 @@ func (m *Manager) gitLabStillSelected(ctx context.Context, key, taskID string) e
 }
 
 func (m *Manager) gitlabLoop() {
-	defer m.wg.Done()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	for {
@@ -578,6 +577,7 @@ func (m *Manager) gitLabMonitorPass(ctx context.Context) {
 	m.reconcileGitLabCommits(ctx)
 	cfg, err := m.store.Load()
 	if err != nil {
+		log.Warn("GitLab monitor could not load the store", "error", err)
 		return
 	}
 	if len(staleGitLabCommits(&cfg)) > 0 {
