@@ -74,3 +74,12 @@ test('one label paragraph, or one without a value, stays a paragraph', () => {
   const { container } = render(<Markdown text={'**Note:** only one.\n\n**Already done:**\n\n- a'} />);
   expect(container.querySelector('dl')).toBeNull();
 });
+
+test('one paragraph of label lines becomes facts; short figures become tiles', () => {
+  const { container } = render(<Markdown text={'**Tracked files:** 5\n**Python files:** 2\n**Lines of Python:** 62\n\nThen **Branch:** main\nand more.'} />);
+  const grids = container.querySelectorAll('dl');
+  expect(grids).toHaveLength(1);
+  expect(grids[0].className).toBe('md-facts md-tiles');
+  expect([...grids[0].querySelectorAll('dd')].map(d => d.textContent)).toEqual(['5', '2', '62']);
+  expect(container.textContent).toContain('Then Branch: main');
+});

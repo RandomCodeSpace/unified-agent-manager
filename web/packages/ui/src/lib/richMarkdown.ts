@@ -94,7 +94,24 @@ function factList(list: MdNode) {
   return true;
 }
 
-/** Two or more paragraphs in a row that each open `**Label:** value`: one facts grid in their place. */
+/** A paragraph's phrasing split at its line breaks (soft newlines in text, and hard breaks). */
+function lines(nodes: MdNode[]): MdNode[][] {
+  const out: MdNode[][] = [[]];
+  for (const n of nodes) {
+    if (n.type === 'break') out.push([]);
+    else if (n.type !== 'text' || !n.value?.includes('\n')) out.at(-1)!.push(n);
+    else n.value.split('\n').forEach((part, i) => {
+      if (i) out.push([]);
+      if (part) out.at(-1)!.push({ ...n, value: part });
+    });
+  }
+  return out;
+}
+
+/**
+ * Facts in their place: two or more paragraphs in a row that each open `**Label:** value`,
+ * or one paragraph whose every line (two or more) does.
+ */
 function factParagraphs(parent: MdNode) {
   const out: MdNode[] = [];
   let run: Fact[] = [];
@@ -107,6 +124,14 @@ function factParagraphs(parent: MdNode) {
     run = [];
   };
   for (const child of parent.children ?? []) {
+    const rows = child.type === 'paragraph' ? lines(child.children ?? []).map((line) => labelled({ type: 'paragraph', children: line })) : [];
+    if (rows.length >= 2 && rows.every((r) => r?.value.length)) {
+      flush();
+      const node: MdNode = { type: 'facts' };
+      factsNode(node, rows.map((r) => ({ ...r!, rest: [] })));
+      out.push(node);
+      continue;
+    }
     const row = labelled(child);
     if (row?.value.length) run.push({ ...row, rest: [] });
     else flush();

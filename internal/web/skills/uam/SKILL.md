@@ -92,7 +92,7 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
   - a GitHub alert (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
     `[!CAUTION]`) is a toned callout with its title;
   - a bullet list where every item starts with `**Label:**` (or
-    `**Label**:`), or two or more paragraphs in a row that do, is a
+    `**Label**:`), or two or more paragraphs or lines in a row that do, is a
     label/value grid; two to four that are each one short figure
     (`**Tests:** 742`, `**Coverage:** 81%`) are stat tiles;
   - put risks, caveats and what you did not verify in `> [!WARNING]`;
