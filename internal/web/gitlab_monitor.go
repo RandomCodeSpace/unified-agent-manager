@@ -540,8 +540,6 @@ func (m *Manager) gitLabStillSelected(ctx context.Context, key, taskID string) e
 }
 
 func (m *Manager) gitlabLoop() {
-	defer log.Recover("gitlab loop")
-	defer m.wg.Done()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	for {

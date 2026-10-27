@@ -1,6 +1,7 @@
 package log
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"runtime/debug"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -226,6 +228,36 @@ func Recover(what string) {
 	if r := recover(); r != nil {
 		current.Error("background goroutine panicked", "goroutine", what, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
 	}
+}
+
+// superviseWait is the first pause before a panicked loop runs again; each
+// further panic doubles it up to superviseMaxWait.
+var superviseWait, superviseMaxWait = time.Second, time.Minute
+
+// Supervise runs fn, a long-running loop, until it returns or ctx ends. A
+// panic in fn is logged as Recover does and fn runs again after a backoff,
+// so a loop the service depends on is never left stopped.
+func Supervise(ctx context.Context, what string, fn func()) {
+	wait := superviseWait
+	for panicked(what, fn) && ctx.Err() == nil {
+		current.Warn("restarting background goroutine after a panic", "goroutine", what, "in", wait.String())
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		wait = min(wait*2, superviseMaxWait)
+	}
+}
+
+// panicked runs fn and reports whether it ended in a panic, logged by Recover.
+func panicked(what string, fn func()) (p bool) {
+	p = true
+	defer Recover(what)
+	fn()
+	return false
 }
 
 func cacheDir() string {

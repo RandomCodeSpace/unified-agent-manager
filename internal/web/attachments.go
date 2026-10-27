@@ -408,8 +408,6 @@ func (s *webSession) queuedUpload(id string) bool {
 // read-only transcripts and closes idle conversations while the service
 // runs.
 func (m *Manager) sweepLoop() {
-	defer log.Recover("sweep loop")
-	defer m.wg.Done()
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
 	h := time.NewTicker(historySweep)

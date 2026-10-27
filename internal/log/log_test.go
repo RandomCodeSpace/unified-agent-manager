@@ -356,6 +356,56 @@ func TestCacheDirFallbacks(t *testing.T) {
 	Debug("stderr fallback debug path")
 }
 
+// A supervised loop that panics runs again after a doubling pause, and stops
+// for good when it returns or its context ends.
+func TestSuperviseRestartsAPanickedLoop(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	wait, maxWait := superviseWait, superviseMaxWait
+	superviseWait, superviseMaxWait = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { superviseWait, superviseMaxWait = wait, maxWait })
+
+	runs := 0
+	Supervise(context.Background(), "flaky loop", func() {
+		runs++
+		if runs <= 2 {
+			panic("boom")
+		}
+	})
+	if runs != 3 || strings.Count(buf.String(), "background goroutine panicked") != 2 || strings.Count(buf.String(), "restarting background goroutine") != 2 {
+		t.Fatalf("runs=%d logs=%s", runs, buf.String())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	superviseWait = time.Hour
+	runs = 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Supervise(ctx, "always panics", func() { runs++; panic("boom") })
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Supervise did not stop on cancel")
+	}
+	if runs != 1 {
+		t.Fatalf("runs after cancel = %d", runs)
+	}
+
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	runs = 0
+	Supervise(cancelled, "panics after stop", func() { runs++; panic("boom") })
+	if runs != 1 {
+		t.Fatalf("a loop that panics after its context ended ran %d times", runs)
+	}
+}
+
 // A panicking background goroutine is logged with its stack and ends alone:
 // the test process, standing in for the daemon, keeps running.
 func TestRecoverLogsPanicAndKeepsProcess(t *testing.T) {

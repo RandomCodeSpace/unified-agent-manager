@@ -867,23 +867,23 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	m.wg.Add(5)
-	go m.gitlabLoop()
-	go m.persistLoop()
-	go m.sweepLoop()
-	go m.routineLoop()
+	go m.supervise("gitlab loop", m.gitlabLoop)
+	go m.supervise("persist loop", m.persistLoop)
+	go m.supervise("sweep loop", m.sweepLoop)
+	go m.supervise("routine loop", m.routineLoop)
 	if usage {
 		m.wg.Add(1)
-		go m.usageLoop()
+		go m.supervise("usage loop", m.usageLoop)
 	}
 	if len(cliNames) > 0 {
 		m.wg.Add(1)
-		go m.cliLoop(cliNames)
+		go m.supervise("cli loop", func() { m.cliLoop(cliNames) })
 	}
 	if m.binary != nil {
 		m.wg.Add(1)
-		go m.binaryLoop()
+		go m.supervise("binary loop", m.binaryLoop)
 	}
-	go m.imageLoop()
+	go m.supervise("image loop", m.imageLoop)
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -2373,9 +2373,15 @@ func (m *Manager) flushLaterLocked() {
 	})
 }
 
-func (m *Manager) persistLoop() {
-	defer log.Recover("persist loop")
+// supervise runs one of the Manager's loops until the Manager stops,
+// running it again after a panic so saves, routines and the rest never stop
+// for the life of the service.
+func (m *Manager) supervise(what string, loop func()) {
 	defer m.wg.Done()
+	log.Supervise(m.ctx, what, loop)
+}
+
+func (m *Manager) persistLoop() {
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -2556,8 +2562,6 @@ func (m *Manager) queueImages(job imageJob) {
 // imageLoop stores queued tool images one job at a time until the manager
 // stops; jobs still queued then are released unstored.
 func (m *Manager) imageLoop() {
-	defer log.Recover("image loop")
-	defer m.wg.Done()
 	for {
 		select {
 		case <-m.ctx.Done():

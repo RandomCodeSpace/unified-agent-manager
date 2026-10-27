@@ -138,8 +138,6 @@ func (m *Manager) cliUpdater(name string) (agentapi.Provider, agentapi.CLIUpdate
 // cliCheckEvery, and looks for a CLI replaced outside uam every
 // cliRestartEvery.
 func (m *Manager) cliLoop(names []string) {
-	defer log.Recover("cli loop")
-	defer m.wg.Done()
 	check := time.NewTicker(cliCheckEvery)
 	defer check.Stop()
 	look := time.NewTicker(cliRestartEvery)

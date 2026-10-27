@@ -250,8 +250,6 @@ func (m *Manager) saveRoutinesLocked(ids ...string) {
 }
 
 func (m *Manager) routineLoop() {
-	defer log.Recover("routine loop")
-	defer m.wg.Done()
 	ticker := time.NewTicker(routineTick)
 	defer ticker.Stop()
 	for {

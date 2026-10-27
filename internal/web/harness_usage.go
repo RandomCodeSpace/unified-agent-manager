@@ -190,7 +190,6 @@ func (m *Manager) copilotOwnedAtLocked(id string, at time.Time) bool {
 }
 
 func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
-	defer log.Recover("harness usage loop")
 	defer m.wg.Done()
 	// A timed-out Shutdown must not close an active reader.
 	defer func() {
@@ -198,30 +197,33 @@ func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
 			log.Warn("close harness usage ledger failed", "error", err)
 		}
 	}()
-	err := collect.Run(m.ctx, harnessUsageInterval, m.harness.adapters, usageOnlyStore{Ledger: ledger, m: m}, adapter.DiscoverConfig{Home: m.usageHome},
-		collect.WithoutRaw(), collect.WithTrigger(m.harness.wake), collect.WithMinInterval(harnessUsageViewInterval),
-		collect.WithCycleCallback(func(stats collect.CycleStats, cycleErr error) {
-			if m.ctx.Err() != nil {
-				return
-			}
-			if err := m.refreshHarnessUsage(m.ctx, ledger.Reader, len(stats.Errors) > 0 || cycleErr != nil); err != nil {
-				m.mu.Lock()
-				m.harness.collection.Status = "partial"
-				m.mu.Unlock()
-				log.Warn("summarize harness usage failed", "error", err)
-			}
-			if cycleErr != nil || len(stats.Errors) > 0 {
-				// Source errors may contain local paths. Keep the browser's
-				// status small and never copy source payloads into its response.
-				log.Warn("harness usage collection incomplete", "sources", stats.Sources, "failed", stats.SourcesFailed, "errors", len(stats.Errors))
-			}
-		}))
-	if err != nil {
-		m.mu.Lock()
-		m.harness.collection.Status = "unavailable"
-		m.mu.Unlock()
-		log.Warn("harness usage collector stopped", "error", err)
-	}
+	// The collector runs again after a panic; the ledger closes once, at the end.
+	log.Supervise(m.ctx, "harness usage loop", func() {
+		err := collect.Run(m.ctx, harnessUsageInterval, m.harness.adapters, usageOnlyStore{Ledger: ledger, m: m}, adapter.DiscoverConfig{Home: m.usageHome},
+			collect.WithoutRaw(), collect.WithTrigger(m.harness.wake), collect.WithMinInterval(harnessUsageViewInterval),
+			collect.WithCycleCallback(func(stats collect.CycleStats, cycleErr error) {
+				if m.ctx.Err() != nil {
+					return
+				}
+				if err := m.refreshHarnessUsage(m.ctx, ledger.Reader, len(stats.Errors) > 0 || cycleErr != nil); err != nil {
+					m.mu.Lock()
+					m.harness.collection.Status = "partial"
+					m.mu.Unlock()
+					log.Warn("summarize harness usage failed", "error", err)
+				}
+				if cycleErr != nil || len(stats.Errors) > 0 {
+					// Source errors may contain local paths. Keep the browser's
+					// status small and never copy source payloads into its response.
+					log.Warn("harness usage collection incomplete", "sources", stats.Sources, "failed", stats.SourcesFailed, "errors", len(stats.Errors))
+				}
+			}))
+		if err != nil {
+			m.mu.Lock()
+			m.harness.collection.Status = "unavailable"
+			m.mu.Unlock()
+			log.Warn("harness usage collector stopped", "error", err)
+		}
+	})
 }
 
 // requestHarnessUsage asks for a fresh pass because someone reads the totals.
