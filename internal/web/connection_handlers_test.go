@@ -168,6 +168,15 @@ func TestConnectionManagementPairingAndRepair(t *testing.T) {
 	if w := home.do("POST", "/api/connections", createBody(strings.Repeat("x", 64), true), withCookie(home)); w.Code != 424 {
 		t.Fatalf("remote auth could sign out home: %d", w.Code)
 	}
+	remote.srv.signIns.mu.Lock()
+	remote.srv.signIns.global = signInCount{start: time.Now(), n: signInGlobal}
+	remote.srv.signIns.mu.Unlock()
+	if w := home.do("POST", "/api/connections", createBody(testToken, true), withCookie(home)); w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), `"rate_limited"`) {
+		t.Fatalf("limited target = %d %s", w.Code, w.Body)
+	}
+	remote.srv.signIns.mu.Lock()
+	remote.srv.signIns.global = signInCount{}
+	remote.srv.signIns.mu.Unlock()
 	w := home.do("POST", "/api/connections", createBody(testToken, true), withCookie(home))
 	var c Connection
 	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &c) != nil {

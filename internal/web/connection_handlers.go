@@ -268,6 +268,8 @@ func (s *Server) pairConnection(parent context.Context, target connectionTarget,
 	switch response.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return target, nil, connectionError(424, "remote_auth_required", "the target refused the supplied access key")
+	case http.StatusTooManyRequests:
+		return target, nil, connectionError(http.StatusTooManyRequests, "rate_limited", "the target is limiting pairing attempts; try again later")
 	case http.StatusConflict:
 		if err := s.pairAccountRefusal(response.Body, target.Label); err != nil {
 			return target, nil, err
@@ -375,10 +377,16 @@ func (s *Server) handleFederationPair(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	if wait := s.signIns.admit(r); wait > 0 {
+		setRetryAfter(w, wait)
+		writeFailure(w, connectionError(http.StatusTooManyRequests, "rate_limited", "too many pairing attempts; try again later"))
+		return
+	}
 	if subtle.ConstantTimeCompare([]byte(credentialHash(strings.TrimSpace(body.Token))), []byte(credentialHash(s.token))) != 1 {
 		writeFailure(w, connectionError(401, "remote_auth_required", "invalid access key"))
 		return
 	}
+	s.signIns.succeeded(r)
 	if !validInstanceID(body.ClientInstanceID) {
 		writeFailure(w, connectionError(400, "invalid_connection", "invalid client instance identity"))
 		return

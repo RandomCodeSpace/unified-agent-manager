@@ -26,7 +26,9 @@ export function Login({ onLoggedIn }: Readonly<{ onLoggedIn: () => void }>) {
       setToken('');
       onLoggedIn();
     } catch (err) {
-      setError(isStatus(err, 401) ? 'That token was not accepted.' : describeError(err));
+      if (isStatus(err, 401)) setError('That token was not accepted.');
+      else if (isStatus(err, 429)) setError('Too many sign-in attempts. Wait a few minutes, then try again.');
+      else setError(describeError(err));
     } finally {
       setBusy(false);
     }
