@@ -119,7 +119,7 @@ export function RewindPanel({ session, userItemId, anchor, onClose, onRewound }:
   const title = later === 0 ? 'Undo this turn?' : 'Rewind to before this prompt?';
   return (
     <Popover.Root open onOpenChange={open => { if (!open && !busy) onClose(); }} modal={false}>
-      <Popover.Content anchor={anchor} side="bottom" className="w-96 max-w-[calc(100vw-16px)] max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
+      <Popover.Content anchor={anchor} side="bottom" className="w-96 max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
         <Popover.Title>{receipt ? 'Rewind' : title}</Popover.Title>
         {receipt ? <>
           <Note tone={receipt.state === 'uncertain' ? 'warn' : receipt.state === 'done' && !rewound(receipt) ? 'muted' : 'info'} role="status">{rewindOutcome(receipt)}</Note>

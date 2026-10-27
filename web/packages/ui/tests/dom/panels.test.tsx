@@ -617,11 +617,12 @@ describe('one working ring per place', () => {
     expect(rings(dialog)).toHaveLength(0);
   });
 
-  test('a running background shell reads "Running" beside a still dot', async () => {
+  test('a running background shell reads "Running" in plain words, with no chip or dot', async () => {
     const { user } = await openTask('t1');
     await user.click(screen.getByRole('button', { name: 'Background tasks: 1 running' }));
     const dialog = await screen.findByRole('dialog', { name: 'Background tasks' });
-    expect(within(dialog).getByText('Running').querySelector('.bg-accent')).not.toBeNull();
+    expect(within(dialog).getByText('Running').querySelector('.bg-accent')).toBeNull();
+    expect(dialog.querySelector('.bg-accent')).toBeNull();
     expect(rings(dialog)).toHaveLength(0);
   });
 });

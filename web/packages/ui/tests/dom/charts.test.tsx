@@ -276,7 +276,7 @@ describe('charts', () => {
     expect(await commits.findByText(/less than a minute ago/)).toBeTruthy();
 
     await user.click(commits.getByRole('button', { name: 'Unpin Commits per day, September' }));
-    await user.click(within(await screen.findByRole('dialog', { name: 'Unpin this chart?' })).getByRole('button', { name: 'Unpin' }));
+    await user.click(within(await screen.findByRole('alertdialog', { name: 'Unpin this chart?' })).getByRole('button', { name: 'Unpin' }));
     await waitFor(() => expect(panel.queryByRole('region', { name: 'Commits per day, September' })).toBeNull());
   });
 });

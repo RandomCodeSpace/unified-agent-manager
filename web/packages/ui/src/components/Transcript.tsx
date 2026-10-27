@@ -32,6 +32,7 @@ import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
+import { PHONE } from './ui/dialog';
 import { ContextMenu, Menu, useLazyContextMenu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -507,12 +508,12 @@ function RawLines({ text: raw, className }: Readonly<{ text: string; className?:
   const lines = text.split('\n').length;
   return (
     <>
-      <pre translate="no" className={cn('m-0 font-mono text-code-sm leading-[18px] whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[54px] overflow-hidden', className)}>{text}</pre>
+      <pre translate="no" className={cn('m-0 font-mono text-code-sm whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[3lh] overflow-hidden', className)}>{text}</pre>
       {lines > 3 && (
-        <button type="button" aria-expanded={all} className="flex h-[22px] w-fit items-center gap-1 rounded-xs text-caption text-accent hover:underline" onClick={() => setAll((a) => !a)}>
+        <Button variant="link" aria-expanded={all} className="w-fit" onClick={() => setAll((a) => !a)}>
           <ChevronDown aria-hidden="true" className={cn('size-3', all && 'rotate-180')} />
           {all ? 'Show less' : `Show all ${lines} lines`}
-        </button>
+        </Button>
       )}
     </>
   );
@@ -833,7 +834,7 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
   const timing = end?.timing;
   // Only captured changes with something in them make a chip; "unavailable" or none says nothing.
   const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
-  const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
+  const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia(PHONE).matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
   const openEdits = edits?.onOpen && (() => edits.onOpen!({ files: edits.files, latest: edits.latest }));
   const at = (pick?: (userItemId: string, anchor: HTMLElement | null) => void) => (end?.userItemId && pick ? () => pick(end.userItemId, anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) : undefined);
   const branch = at(replyActions?.branch);
@@ -1010,7 +1011,7 @@ function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; liv
   if (live) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
     <>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia('(max-width: 639px)').matches })}>
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
         {words}
       </button>
       {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
@@ -1170,7 +1171,7 @@ function WholeNote({ whole }: Readonly<{ whole: WholeText }>) {
   return (
     <p className="text-caption text-muted">
       Shortened here to save memory.{' '}
-      <button type="button" onClick={whole.show} className="rounded-xs text-accent hover:underline">Show full message</button>
+      <Button variant="link" onClick={whole.show} className="h-auto">Show full message</Button>
     </p>
   );
 }
@@ -1627,7 +1628,7 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
   return (
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
-        {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-z-90')} />}
+        {streaming ? <span aria-hidden="true" className="mx-0.75 size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-z-90')} />}
         <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>

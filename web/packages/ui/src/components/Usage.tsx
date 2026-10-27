@@ -10,7 +10,6 @@ import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeToken
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
 import { Button } from './ui/button';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
-import { Popover } from './ui/popover';
 import { Select } from './ui/select';
 import { HelpTip, Tip } from './ui/tooltip';
 import { ModelCallsContext, modelCallsLines } from './ModelPhase';
@@ -128,7 +127,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
     {sources.map((source) => !source.down && <UsageReader key={source.id} id={source.id} client={source.client} retry={retry} onRead={onRead} />)}
     <PanelHead scrolled={scrolled} className="px-4 pt-3 pb-2">
       <div className="flex items-center gap-1">
-        <Popover.Title className="text-display-sm text-ink">Usage</Popover.Title>
+        <h2 className="text-display-sm text-ink">Usage</h2>
         {report && <HelpTip label="Usage">
           <span className="block">Since {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })} · server time</span>
           {report.collection && <>

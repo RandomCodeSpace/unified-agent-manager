@@ -11,6 +11,7 @@ import { Spinner } from './spinner';
  * 32px on a fine pointer, 44px on a coarse one; md and lg grow to 44px themselves.
  * `aria-disabled` looks disabled but keeps its tooltip (the reason stays reachable).
  * The filled and outlined buttons (an action) also press to 0.97 (`fast`); the quiet ones only tint.
+ * `link` is a 24px `caption` action in words, the same at every size.
  */
 const press = 'not-aria-disabled:active:scale-[0.97]';
 
@@ -26,6 +27,8 @@ export const buttonVariants = cva(
         danger: `text-error hover:bg-error-wash active:bg-error-wash ${press}`,
         // Sits inside a raised surface: the same step, so the hover reads on white too.
         subtle: 'text-body not-aria-disabled:hover:bg-tint-hover not-aria-disabled:hover:text-ink active:bg-hairline data-open:bg-tint-hover data-open:text-ink',
+        // An inline action in words ("Show all 12 lines"): `accent`, underlined on hover; its look is in compoundVariants, over any size.
+        link: '',
       },
       size: {
         sm: 'h-7 px-2 after:inset-x-0 after:-inset-y-0.5 pointer-coarse:after:-inset-y-2',
@@ -40,6 +43,8 @@ export const buttonVariants = cva(
         true: 'disabled:opacity-100',
       },
     },
+    // 24px `caption` at any size, no padding, with the small sizes' invisible hit area instead of a taller box.
+    compoundVariants: [{ variant: 'link', className: 'h-6 gap-1 rounded-xs px-0 text-caption font-normal text-accent hover:underline after:inset-x-0 after:-inset-y-1 pointer-coarse:min-h-0 pointer-coarse:after:-inset-y-2.5 [&_svg]:size-3' }],
     defaultVariants: { variant: 'ghost', size: 'md' },
   },
 );

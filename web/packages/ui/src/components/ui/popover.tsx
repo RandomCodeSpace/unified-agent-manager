@@ -7,7 +7,8 @@ import { popupClass } from './menu';
  * A small non-modal popover on Base UI for a value a chip cannot carry in full (the context
  * ring, the credits chip, the cost estimate): the level 2 floating surface of DESIGN.md,
  * opened above its trigger by a click or a tap, closed by Esc or a click outside. The
- * trigger keeps its own accessible name; the popup reads from its `Title` down.
+ * trigger keeps its own accessible name; the popup reads from its `Title` down. It is never
+ * wider than the viewport less 8px each side; the caller gives its width (else it fits its content).
  */
 export const Popover = {
   Root: BasePopover.Root,
@@ -25,7 +26,7 @@ export const Popover = {
     return (
       <BasePopover.Portal>
         <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionBoundary={collisionBoundary} anchor={anchor} collisionPadding={8} className="z-50 outline-hidden">
-          <BasePopover.Popup data-popup="" className={cn(popupClass, 'flex max-w-72 flex-col gap-1 px-3 py-2 text-ui text-body', className)} {...props}>
+          <BasePopover.Popup data-popup="" className={cn(popupClass, 'flex max-w-[calc(100vw-16px)] flex-col gap-1 px-3 py-2 text-ui text-body', className)} {...props}>
             {children}
           </BasePopover.Popup>
         </BasePopover.Positioner>

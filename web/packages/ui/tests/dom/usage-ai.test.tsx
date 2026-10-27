@@ -51,7 +51,7 @@ describe('the Usage and AI button', () => {
     expect(said()).toMatch(/^AI credits: 96% left\. .*No model calls now$/);
     // No surface or shadow at rest; the Settings gear's tint on hover and while open.
     const classes = button().className.split(' ');
-    expect(classes).toEqual(expect.arrayContaining(['not-aria-disabled:hover:bg-tint-hover', 'data-popup-open:bg-tint-selected', 'h-7']));
+    expect(classes).toEqual(expect.arrayContaining(['not-aria-disabled:hover:bg-tint-hover', 'aria-expanded:bg-tint-selected', 'h-7']));
     expect(classes.some((c) => c.startsWith('bg-raised') || c.startsWith('shadow-'))).toBe(false);
     // Still 44px tall to a touch.
     expect(classes).toContain('pointer-coarse:after:-inset-y-2');

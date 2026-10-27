@@ -1,15 +1,10 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { X } from 'lucide-react';
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type TurnChanges, type TurnTiming } from '../api';
-import { cn } from '../lib/cn';
 import { SessionContext } from './common';
-import { BottomSheet, LiftedRow } from './Subagents';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 
 const REASON = {
   unknown: 'The provider could not prove this turn’s captured changes before another activity began.',
@@ -67,24 +62,12 @@ export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClos
       {!!counts?.omitted && <p className="mt-2 text-caption text-muted">{counts.omitted} more captured files not shown.</p>}
       <p className="mt-3 text-caption text-muted">These are historical facts. The files may have changed since. Individual edit patches are available from their tool rows when recorded.</p>
     </div>
-    <PanelFoot>
-      <span>Read only</span><span className="flex-1" />
-      {onThreadChanges && <button type="button" className="text-accent hover:underline" onClick={() => { onClose(); onThreadChanges(); }}>Thread changes · current files</button>}
-    </PanelFoot>
+    {onThreadChanges && <PanelFoot>
+      <span className="flex-1" />
+      <Button variant="link" onClick={() => { onClose(); onThreadChanges(); }}>Open current changes</Button>
+    </PanelFoot>}
   </>;
-  const back = () => anchor;
-  if (phone || !anchor) return <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="This turn's changes" initialFocus={heading} finalFocus={back} className="duration-160" backdropClassName="duration-160">
-    {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-  </BottomSheet>;
-  return <BasePopover.Root open={open} modal onOpenChange={o => !o && onClose()} onOpenChangeComplete={o => !o && onClosed()}>
-    <BasePopover.Portal>
-      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-      {anchor.isConnected && <LiftedRow row={anchor} />}
-      <BasePopover.Positioner anchor={anchor} side="bottom" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} data-popup="" aria-label="This turn's changes" aria-modal="true" initialFocus={heading} finalFocus={back} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[520px] max-w-(--available-width)', readerPopupClass)}>
-          {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-        </BasePopover.Popup>
-      </BasePopover.Positioner>
-    </BasePopover.Portal>
-  </BasePopover.Root>;
+  return <AnchoredReader id={id} open={open} sheet={phone} anchor={anchor} label="This turn's changes" className="w-[520px]" initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
+    {body}
+  </AnchoredReader>;
 }

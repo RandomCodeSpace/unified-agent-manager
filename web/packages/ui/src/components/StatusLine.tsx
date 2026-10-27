@@ -14,7 +14,6 @@
 // or the transcript. The progress line's mark is the pane's one animated element; everything else
 // on the strip is still. A subagent's retry stands under its row instead (`SubagentRetry`).
 
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, History, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
@@ -29,14 +28,16 @@ import { BreathingDot, Markdown, WorkingMark, clockTime } from './common';
 import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
 import { LiveOutput } from './LiveOutput';
-import { BottomSheet, LiftedRow, SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
-import { PHONE, Reader, type ReaderParts } from './Todos';
+import { SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
+import { Reader, type ReaderParts } from './Todos';
 import { Appear } from './ui/appear';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { popupClass } from './ui/menu';
 import { PanelHead } from './ui/panel';
+import { plural } from './TimeSplit';
+import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
 /** What the line says. */
@@ -94,7 +95,6 @@ export const PEEK_DELAY_MS = 250;
 export const PEEK_LINES = 6;
 
 const READS = new Set(['view', 'read', 'list']);
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * The live line from what the service says the turn waits on (`turn_activity.phase`) and the main agent's newest
@@ -482,42 +482,26 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
     </div>
   );
-  if (phone) {
-    return (
-      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="Subagents" className="h-[70dvh] duration-160" backdropClassName="duration-160" initialFocus={initialFocus} finalFocus={finalFocus}>
-        {content(
-          <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-            <X />
-          </BaseDialog.Close>,
-        )}
-      </BottomSheet>
-    );
-  }
   return (
-    <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
-      <BasePopover.Portal>
-        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-        {lift?.isConnected && <LiftedRow row={lift} />}
-        {/* The same place and size whoever opened it: never beside a row in the conversation. */}
-        <BasePopover.Positioner anchor={stripEnd(row)} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup
-            id={id}
-            data-popup=""
-            aria-label="Subagents"
-            aria-modal="true"
-            initialFocus={initialFocus}
-            finalFocus={finalFocus}
-            className="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 starting:translate-y-2 starting:opacity-0"
-          >
-            {content(
-              <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-                <X />
-              </BasePopover.Close>,
-            )}
-          </BasePopover.Popup>
-        </BasePopover.Positioner>
-      </BasePopover.Portal>
-    </BasePopover.Root>
+    // The same place and size whoever opened it: never beside a row in the conversation, so it rises from the strip rather than scaling from an anchor.
+    <AnchoredReader
+      id={id}
+      open={open}
+      sheet={phone}
+      anchor={stripEnd(row)}
+      lift={lift}
+      side="top"
+      align="end"
+      label="Subagents"
+      surface="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 starting:translate-y-2 starting:opacity-0"
+      sheetClassName="h-[70dvh]"
+      initialFocus={initialFocus}
+      finalFocus={finalFocus}
+      onClose={onClose}
+      onClosed={onClosed}
+    >
+      {content}
+    </AnchoredReader>
   );
 }
 
@@ -689,11 +673,11 @@ function Paused({ text }: Readonly<{ text: string }>) {
 }
 
 /** A running subagent's model call being retried, under its row: "Retrying, attempt 2 · HTTP 429 · rate limited". It leaves once the call goes through. */
-export function SubagentRetry({ retry, indent }: Readonly<{ retry: Retry; /** Where the row's name starts, so the line sits under it. */ indent: number }>) {
+export function SubagentRetry({ retry, className }: Readonly<{ retry: Retry; /** Where the row's name starts (its left padding), so the line sits under it. */ className?: string }>) {
   const { lead, parts } = retryWords(retry);
   const text = [lead, ...parts].join(' · ');
   return (
-    <p className="flex min-w-0 items-center gap-1.5 pr-2 pb-1 text-caption text-muted" style={{ paddingLeft: `${indent}px` }}>
+    <p className={cn('flex min-w-0 items-center gap-1.5 pr-2 pb-1 text-caption text-muted', className)}>
       <RotateCw aria-hidden="true" className="size-3 shrink-0" />
       <span className="min-w-0 truncate" title={text}>
         {text}

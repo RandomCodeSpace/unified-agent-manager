@@ -5,7 +5,7 @@ import { ApiContext } from '../../src/ApiContext';
 import { api, type Item, type TurnChanges, type TurnTiming } from '../../src/api';
 import { Transcript } from '../../src/components/Transcript';
 import { SessionContext } from '../../src/components/common';
-import { LiftedRow } from '../../src/components/Subagents';
+import { LiftedRow } from '../../src/components/ui/reader';
 import { DetailVisibility } from '../../src/components/Details';
 
 const at = '2026-10-09T12:00:00Z';
@@ -53,7 +53,7 @@ test('the reply menu opens the readonly historical reader, which leads on to the
   const menu = await screen.findByRole('menu');
   expect(within(menu).queryByRole('menuitem', { name: /All changes|Rewind|Branch|Edit and resend/ })).toBeNull();
   await user.click(within(menu).getByRole('menuitem', { name: "This turn's changes" }));
-  await user.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: 'Thread changes · current files' }));
+  await user.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: 'Open current changes' }));
   await waitFor(() => expect(f.all).toHaveBeenCalledTimes(1));
 });
 

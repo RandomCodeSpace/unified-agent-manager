@@ -1,18 +1,15 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
 import { diffLines } from 'diff';
-import { FileText, X } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type Item, type PlanAction, type PlanReview, type PlanDraft } from '../api';
 import { cn } from '../lib/cn';
 import { Markdown, Note } from './common';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 
 export const PLAN_ACTION_LABEL: Record<PlanAction, string> = {
   autopilot: 'Implement in autopilot',
@@ -71,31 +68,19 @@ export function ReadPlan({ plan, sessionId, planVersion = 0, draftAvailable = tr
     setReader((r) => r && { ...r, open: false });
   }
   return <>
-    <button ref={setAnchor} type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} onClick={show} className="inline-flex h-7 shrink-0 items-center gap-1 rounded-sm px-1.5 text-caption text-muted hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11">
-      <FileText aria-hidden="true" className="size-3.5" />Read plan
-    </button>
+    <Button ref={setAnchor} size="sm" variant="subtle" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} onClick={show} className="gap-1 px-1.5 text-caption text-muted [&_svg]:size-3.5">
+      <FileText aria-hidden="true" />Read plan
+    </Button>
     {reader && <PlanReader id={id} open={reader.open} phone={reader.phone} anchor={anchor} plan={snapshot} error={error} current={current} draft={draft?.version === planVersion ? draft.value ?? null : null} draftError={!draftAvailable ? 'The current draft is unavailable while this Thread is closed.' : draft?.version === planVersion ? draft.error ?? '' : ''} onCurrent={sessionId ? () => { setCurrent((value) => !value); setDraft(null); } : undefined} onClose={close} onClosed={() => { setReader(null); setSnapshot(null); setDraft(null); }} />}
   </>;
 }
 
 function PlanReader({ id, open, phone, anchor, plan, error, current, draft, draftError, onCurrent, onClose, onClosed }: Readonly<{ id: string; open: boolean; phone: boolean; anchor: HTMLElement | null; plan: PlanReview | null; error: string; current: boolean; draft: PlanDraft | null; draftError: string; onCurrent?: () => void; onClose: () => void; onClosed: () => void }>) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const back = () => anchor;
-  const body = (close: ReactNode) => <PlanBody plan={plan} error={error} current={current} draft={draft} draftError={draftError} onCurrent={onCurrent} heading={heading} close={close} sheet={phone || !anchor} />;
-  if (phone || !anchor) return <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="Plan" className="h-[85dvh] duration-160" backdropClassName="duration-160" initialFocus={heading} finalFocus={back}>
-    {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-  </BottomSheet>;
-  return <BasePopover.Root open={open} modal onOpenChange={(value) => !value && onClose()} onOpenChangeComplete={(value) => !value && onClosed()}>
-    <BasePopover.Portal>
-      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-      {anchor.isConnected && <LiftedRow row={anchor} />}
-      <BasePopover.Positioner anchor={anchor} side="top" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} aria-label="Plan" aria-modal="true" initialFocus={heading} finalFocus={back} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[600px] max-w-(--available-width)', readerPopupClass)}>
-          {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-        </BasePopover.Popup>
-      </BasePopover.Positioner>
-    </BasePopover.Portal>
-  </BasePopover.Root>;
+  const sheet = phone || !anchor;
+  return <AnchoredReader id={id} open={open} sheet={sheet} anchor={anchor} side="top" label="Plan" className="w-[600px]" sheetClassName="h-[85dvh]" initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
+    {(close) => <PlanBody plan={plan} error={error} current={current} draft={draft} draftError={draftError} onCurrent={onCurrent} heading={heading} close={close} sheet={sheet} />}
+  </AnchoredReader>;
 }
 
 function PlanBody({ plan, error, current, draft, draftError, onCurrent, heading, close, sheet }: Readonly<{ plan: PlanReview | null; error: string; current: boolean; draft: PlanDraft | null; draftError: string; onCurrent?: () => void; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; sheet: boolean }>) {
@@ -107,8 +92,9 @@ function PlanBody({ plan, error, current, draft, draftError, onCurrent, heading,
       <div className="flex min-h-7 min-w-0 items-center gap-2">
         <FileText aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">Plan{!current && plan?.revision ? <span className="ml-2 text-caption text-muted">Revision {plan.revision}</span> : null}</h2>
-        {onCurrent && <button type="button" aria-pressed={current} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={onCurrent}>{current ? 'Reviewed snapshot' : 'Current draft'}</button>}
-        {!current && plan?.previous && <button type="button" aria-pressed={changes} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={() => setChanges((value) => !value)}>{changes ? 'Read plan' : 'Show changes'}</button>}
+        {/* Toggles with fixed names: pressed shows the draft or the changes, released goes back to the reviewed plan. */}
+        {onCurrent && <Button size="sm" aria-pressed={current} className="text-caption text-muted" onClick={onCurrent}>Current draft</Button>}
+        {!current && plan?.previous && <Button size="sm" aria-pressed={changes} className="text-caption text-muted" onClick={() => setChanges((value) => !value)}>Show changes</Button>}
         {close}
       </div>
     </PanelHead>

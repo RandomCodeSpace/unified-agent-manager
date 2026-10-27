@@ -13,9 +13,9 @@ import { EChart } from './EChart';
 import { Note, Skeleton, Spinner, timeAgo, useMedia } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
+import { AlertDialog, PHONE, useConfirm } from './ui/dialog';
 import { Popover } from './ui/popover';
 
-const PHONE = '(width < 40rem)';
 /** Pinned charts refresh on their own when the panel opens, at most this often (the service holds the same line). */
 const AUTO_EVERY = 60 * 60_000;
 
@@ -214,7 +214,8 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
 
 function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ chart: PinnedChart; busy: boolean; notice?: string; onRefresh: () => void; onUnpin: () => void }>) {
   const [expanded, setExpanded] = useState(false);
-  const [confirm, setConfirm] = useState(false);
+  // Unpinning removes the saved rows, so it is confirmed first (DESIGN.md Confirmations); Pin keeps its popover, which shows the command.
+  const unpin = useConfirm<true>();
   const [box, width] = useDrawWidth(560);
   const head = headline(chart);
   const refreshed = chart.labels.length ? timeAgo(chart.at) : 'not read yet';
@@ -230,19 +231,16 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
         ) : (
           <span className="px-1.5 text-meta text-muted">Snapshot, {refreshed}</span>
         )}
-        <Popover.Root open={confirm} onOpenChange={setConfirm}>
-          <Popover.Trigger render={<Button size="icon" aria-label={`Unpin ${chart.title}`} className="text-muted" />}>
-            <PinOff />
-          </Popover.Trigger>
-          <Popover.Content side="bottom" align="end" className="gap-2">
-            <Popover.Title>Unpin this chart?</Popover.Title>
-            <Popover.Description>{chart.command ? 'Its saved command and rows are removed. The chart stays in its thread.' : 'Its rows are removed. The chart stays in its thread.'}</Popover.Description>
-            <div className="flex justify-end gap-1.5 pt-1">
-              <Button size="md" onClick={() => setConfirm(false)}>Cancel</Button>
-              <Button size="md" variant="danger" onClick={() => { setConfirm(false); onUnpin(); }}>Unpin</Button>
-            </div>
-          </Popover.Content>
-        </Popover.Root>
+        <Button size="icon" aria-label={`Unpin ${chart.title}`} className="text-muted" onClick={() => unpin.ask(true)}>
+          <PinOff />
+        </Button>
+        <AlertDialog
+          {...unpin.props}
+          title="Unpin this chart?"
+          description={chart.command ? 'Its saved command and rows are removed. The chart stays in its thread.' : 'Its rows are removed. The chart stays in its thread.'}
+          confirmLabel="Unpin"
+          onConfirm={() => { unpin.close(); onUnpin(); }}
+        />
       </div>
       {head && (
         <p className="flex min-w-0 items-baseline gap-2">

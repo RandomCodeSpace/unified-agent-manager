@@ -359,20 +359,20 @@ test('task navigation uses machine text initials and removes disabled sources', 
   const { user, replaceRegistry } = federated('', records);
   const rows = await taskRows();
   const remote = await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
-  const remoteBadge = within(remote).getByTitle('Workstation B');
-  expect(remoteBadge.textContent).toBe('WB');
+  // The initials alone, hidden from screen readers (the row's description names the machine) and with no native title.
+  const remoteBadge = within(remote).getByText('WB');
+  expect(remoteBadge.hasAttribute('title')).toBe(false);
   expect(remoteBadge.getAttribute('aria-hidden')).toBe('true');
   expect(within(remote).queryByText('Workstation B')).toBeNull();
   const local = await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Main Server' });
-  expect(within(local).getByTitle('Main Server').textContent).toBe('MS');
+  expect(within(local).getByText('MS').getAttribute('aria-hidden')).toBe('true');
   expect(within(local).queryByText('Main Server')).toBeNull();
   const filter = screen.getByRole('button', { name: /^Instance: All instances/ });
   expect(filter.closest('header')).toBeTruthy();
   expect(filter.textContent).toBe('');
   await user.click(filter);
   const reader = within(await screen.findByRole('dialog', { name: 'Instances' }));
-  const badge = within(reader.getByRole('button', { name: /^Workstation B,/ })).getByTitle('Workstation B');
-  expect(badge.textContent).toBe(remoteBadge.textContent);
+  expect(within(reader.getByRole('button', { name: /^Workstation B,/ })).getByText('WB').textContent).toBe(remoteBadge.textContent);
   await user.keyboard('{Escape}');
   expect(document.activeElement).toBe(filter);
   expect(screen.queryByRole('combobox', { name: 'Thread instance filter' })).toBeNull();
@@ -539,10 +539,10 @@ test('the instance switcher scopes the Task list, Home and the Project filter to
   expect(scoped.queryAllByRole('button', { description: 'Workstation C' })).toHaveLength(0);
   const row = await scoped.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   expect(within(row).queryByText('Workstation B')).toBeNull();
-  expect(within(row).queryByTitle('Workstation B')).toBeNull();
+  expect(within(row).queryByText('WB')).toBeNull();
   const filter = screen.getByRole('button', { name: /^Instance: Workstation B/ });
   expect(filter.closest('header')).toBeTruthy();
-  expect(within(filter).getByTitle('Workstation B').textContent).toBe('WB');
+  expect(within(filter).getByText('WB')).toBeTruthy();
   expect(await screen.findByText('On Workstation B')).toBeTruthy();
   await waitFor(() => expect(calls.some((call) => call.owner === 'b' && call.path === '/api/meta')).toBe(true));
   // The Project filter offers B's Projects alone, and All projects keeps the scope.

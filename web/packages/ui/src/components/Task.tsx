@@ -16,6 +16,7 @@ import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollS
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
+import { PHONE } from './ui/dialog';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
@@ -103,8 +104,6 @@ const BOTTOM_SLACK = 32;
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
 /** The gap left above a row the view lands on. */
 const LAND_MARGIN = 16;
-/** Tailwind's `max-sm`: a phone-width column. */
-const PHONE = '(width < 40rem)';
 
 /** The title's width the header keeps before its buttons get their labels: a longer title truncates. */
 const TITLE_ROOM = { min: 112, max: 400 };
@@ -253,7 +252,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
               <TriangleAlert />
               <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
             </Popover.Trigger>
-            <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+            <Popover.Content className="w-80 gap-2">
               <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
               <Popover.Description>
                 {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has no Changes view.

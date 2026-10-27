@@ -1,6 +1,4 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Package, X } from 'lucide-react';
+import { Package } from 'lucide-react';
 import { useId, useRef, type ReactNode } from 'react';
 import type { TurnTiming } from '../api';
 import { cn } from '../lib/cn';
@@ -8,12 +6,9 @@ import { compactTokens, formatCredits } from '../lib/cost';
 import { completedDuration, formatMs } from '../lib/transcript';
 import { clockTime } from './common';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
-import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { plural } from './TimeSplit';
 import { PanelFoot, PanelHead } from './ui/panel';
-
-const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`;
+import { AnchoredReader } from './ui/reader';
 
 /** One line per section from the timing alone; a section without a figure is left out. `nano_aiu` is in billionths of an AI credit. */
 function lines(timing: TurnTiming): { label: string; value: ReactNode }[] {
@@ -72,19 +67,7 @@ export function TurnWaybill({ timing, anchor, phone, open, onClose, onClosed }: 
       ? <p className="flex min-h-11 shrink-0 items-center px-4 pb-2 text-caption text-muted">Counted by uam from the provider’s usage</p>
       : <PanelFoot><span className="flex items-center gap-1.5"><Key>Esc</Key>close</span><span className="flex-1" /><span>Counted by uam from the provider’s usage</span></PanelFoot>}
   </div>;
-  const back = () => anchor;
-  if (sheet) return <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="This turn's waybill" initialFocus={heading} finalFocus={back} className="duration-160" backdropClassName="duration-160">
-    {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-  </BottomSheet>;
-  return <BasePopover.Root open={open} modal onOpenChange={o => !o && onClose()} onOpenChangeComplete={o => !o && onClosed()}>
-    <BasePopover.Portal>
-      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-      {anchor.isConnected && <LiftedRow row={anchor} />}
-      <BasePopover.Positioner anchor={anchor} side="bottom" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} data-popup="" aria-label="This turn's waybill" aria-modal="true" initialFocus={heading} finalFocus={back} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[420px] max-w-(--available-width)', readerPopupClass)}>
-          {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-        </BasePopover.Popup>
-      </BasePopover.Positioner>
-    </BasePopover.Portal>
-  </BasePopover.Root>;
+  return <AnchoredReader id={id} open={open} sheet={sheet} anchor={anchor} label="This turn's waybill" className="w-[420px]" initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
+    {body}
+  </AnchoredReader>;
 }

@@ -15,6 +15,9 @@ import { PanelHead } from './panel';
  * popup so app-level Esc handlers stand back while one is open.
  */
 
+/** The phone-width column (Tailwind's `max-sm`), where readers and pickers become bottom sheets. */
+export const PHONE = '(width < 40rem)';
+
 // `starting:` (CSS @starting-style) repeats each `data-starting-style` value: Base UI sets that attribute only when a mounted Root opens, so a popup that mounts open enters through it.
 export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0 starting:opacity-0';
 
@@ -186,7 +189,7 @@ const onScreen = (el: Element | null | undefined): el is Element => !!el?.isConn
 
 /** Where a confirmation anchors: the last activated element while it is on screen and the screen is not a phone's, else nowhere (the centred dialog). */
 function confirmAnchor(): Element | null {
-  if (window.matchMedia('(width < 40rem)').matches) return null;
+  if (window.matchMedia(PHONE).matches) return null;
   return onScreen(lastActivated) ? lastActivated : null;
 }
 
@@ -212,7 +215,7 @@ export function AlertDialog(props: Readonly<AlertDialogProps>) {
   if (props.open !== wasOpen) {
     setWasOpen(props.open);
     if (props.open && props.anchor === undefined) setAnchor(confirmAnchor());
-    else if (props.open) setAnchor(!window.matchMedia('(width < 40rem)').matches && onScreen(props.anchor) ? props.anchor : null);
+    else if (props.open) setAnchor(!window.matchMedia(PHONE).matches && onScreen(props.anchor) ? props.anchor : null);
   }
   const onClosed = () => {
     setAnchor(undefined);
