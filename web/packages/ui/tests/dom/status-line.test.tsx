@@ -267,6 +267,27 @@ test('the todo button opens a reader of its own beside it: sections by state, th
   expect(line.getAttribute('aria-expanded')).toBe('false');
 });
 
+test('a list whose rows wait on others is one list in its own order with rails beside it; each row says what it waits on and how often it was reopened', async () => {
+  const user = userEvent.setup();
+  const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'], reopened: 2 }, { depends_on: ['c'] }]);
+  render(draw(withTodos(listOf(todos))));
+  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  // No stage sections: the provider's order, which status changes never move.
+  expect(within(reader).queryAllByRole('region')).toEqual([]);
+  expect(within(reader).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    'Plan the pages, Done',
+    'Build the index pagenow, by Index page writer, In progress, waits on Plan the pages',
+    'Build the about page2, reopened 2 times, In progress, waits on Plan the pages, Sign in to the registry',
+    'Sign in to the registryNo token on this machine, Blocked, waits on Build the about page',
+  ]);
+  expect(within(reader).getByText(/1 loop/)).toBeTruthy();
+  // Four links: two in the loop (about ⇄ registry), two plain from the plan.
+  const rails = reader.querySelectorAll('svg[aria-hidden] > g');
+  expect(rails.length).toBe(4);
+  expect([...rails].filter((g) => g.getAttribute('class')?.includes('text-accent')).length).toBe(2);
+});
+
 test('a phone gets the list as a sheet that repeats the blocks, with a close button and no key hints', async () => {
   const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
   happy.setViewport({ width: 390, height: 844 });

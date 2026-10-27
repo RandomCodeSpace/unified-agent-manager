@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { KEPT_SNAPSHOTS, METER_ROWS, keepSnapshot, ledgerSections, ledgerStamp, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoLedger, todoLine, todoSections, todoSentence, todoTally, todoWord, turnTodoName } from '../src/lib/todos.ts';
+import { KEPT_SNAPSHOTS, MAX_LANES, METER_ROWS, keepSnapshot, ledgerSections, ledgerStamp, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoLedger, todoLine, todoLinks, todoSections, todoSentence, todoTally, todoWord, turnTodoName } from '../src/lib/todos.ts';
 
 const row = (id, status, extra = {}) => ({ id, title: `Row ${id}`, status, ...extra });
 const view = (todos, extra = {}) => {
@@ -123,8 +123,9 @@ test('the ledger merges every row the turns kept by id: the latest state wins, t
     ['a', 'in_progress', 'Row a, renamed', at(52), 2, false],
     ['b', 'done', 'Row b', at(41), 1, false],
     ['c', 'blocked', 'Row c', at(53), 2, false],
-    ['d', 'done', 'Row d', at(57), 2, true],
+    // In the live list's order, then the rows it no longer has.
     ['e', 'in_progress', 'Row e', at(63), undefined, false],
+    ['d', 'done', 'Row d', at(57), 2, true],
   ]);
   assert.equal(todoLedger({ live, turns }, timings)[2].todo.note, 'no token');
   // The live list changing a kept row's status stamps its time without a turn.
@@ -151,4 +152,72 @@ test('a ledger row\'s stamp: its state and time, the turn that changed it; the s
   const ledger = (id, status, at, turn) => ({ todo: row(id, status), at, turn, removed: false });
   const sections = ledgerSections([ledger('a', 'done', at(41), 1), ledger('b', 'done', at(58), 2), ledger('c', 'in_progress', at(52), 2), ledger('d', 'in_progress', undefined), ledger('e', 'pending', at(40), 1)]);
   assert.deepEqual(sections.map((s) => [s.label, s.todos.map((t) => t.id)]), [['In progress', ['d', 'c']], ['To do', ['e']], ['Done', ['b', 'a']]]);
+});
+
+test('rails: none without a dependency between rows of the list, nor for one on itself or a row not there', () => {
+  assert.equal(todoLinks([row('a', 'done'), row('b', 'pending')]), null);
+  assert.equal(todoLinks([row('a', 'done', { depends_on: ['a', 'gone'] })]), null);
+});
+
+test('rails: one lane per row waited on, loops beside the rows, a blocked row\'s wait on an open row in its own kind', () => {
+  // The r20 fixture: contrast and tokens wait on each other; lint is blocked on install and alt; summary waits on four.
+  const todos = [
+    row('plan', 'done'),
+    row('alt', 'in_progress', { depends_on: ['plan'] }),
+    row('headings', 'done', { depends_on: ['plan'] }),
+    row('contrast', 'in_progress', { depends_on: ['plan', 'tokens'] }),
+    row('tokens', 'done', { depends_on: ['contrast'] }),
+    row('install', 'pending'),
+    row('lint', 'blocked', { depends_on: ['install', 'alt'] }),
+    row('summary', 'pending', { depends_on: ['alt', 'headings', 'contrast', 'lint'] }),
+  ];
+  const r = todoLinks(todos);
+  assert.equal(r.loops, 1);
+  assert.equal(r.hidden, 0);
+  const kind = (from, to) => r.links.find((l) => l.from === from && l.to === to)?.kind;
+  assert.equal(kind(3, 4), 'loop');
+  assert.equal(kind(4, 3), 'loop');
+  assert.equal(kind(5, 6), 'wait');
+  assert.equal(kind(1, 6), 'wait');
+  assert.equal(kind(0, 1), 'link');
+  assert.equal(kind(6, 7), 'link');
+  assert.equal(r.links.length, 11);
+  // The loop links take the lanes beside the rows; the links from one row share a lane; overlapping spans never do.
+  assert.deepEqual([...new Set(r.links.filter((l) => l.kind === 'loop').map((l) => l.lane))].sort(), [0, 1]);
+  for (const from of [0, 1, 3]) assert.equal(new Set(r.links.filter((l) => l.from === from && l.kind !== 'loop').map((l) => l.lane)).size, 1, `row ${from} trunk`);
+  const spans = new Map();
+  for (const l of r.links) {
+    const key = l.kind === 'loop' ? `${l.from}>${l.to}` : `${l.from}`;
+    const s = spans.get(key) ?? { lane: l.lane, lo: l.from, hi: l.from };
+    spans.set(key, { lane: l.lane, lo: Math.min(s.lo, l.to), hi: Math.max(s.hi, l.to) });
+  }
+  const all = [...spans.values()];
+  for (const a of all) for (const b of all) if (a !== b && a.lane === b.lane) assert.ok(a.hi < b.lo || b.hi < a.lo, `lane ${a.lane} overlaps`);
+  assert.equal(r.lanes, Math.max(...all.map((s) => s.lane)) + 1);
+});
+
+test('rails: a ring through three rows is one loop; links past the lanes are counted, not drawn', () => {
+  const ring = todoLinks([row('a', 'pending', { depends_on: ['c'] }), row('b', 'pending', { depends_on: ['a'] }), row('c', 'pending', { depends_on: ['b'] })]);
+  assert.equal(ring.loops, 1);
+  assert.ok(ring.links.every((l) => l.kind === 'loop'));
+  // Nested spans, each overlapping all the others: a lane each, then hidden.
+  const n = MAX_LANES + 2;
+  const wide = Array.from({ length: 2 * n }, (_, i) => row(`r${i}`, 'pending'));
+  for (let i = 0; i < n; i++) wide[2 * n - 1 - i].depends_on = [`r${i}`];
+  const r = todoLinks(wide);
+  assert.equal(r.lanes, MAX_LANES);
+  assert.equal(r.links.length + r.hidden, MAX_LANES + 2);
+  assert.equal(r.hidden, 2);
+});
+
+test('the ledger counts a row seen done in one turn and open in a later one as reopened, unless uam counted more', () => {
+  const rec = (id, todos) => ({ timing_id: id, ended_at: '2026-10-27T10:00:00Z', todos, counts: {} });
+  const history = {
+    live: { known: true, touched: false, todos: [row('a', 'in_progress'), row('b', 'done', { reopened: 3 })], counts: {} },
+    turns: [rec('t1', [row('a', 'done'), row('b', 'done')]), rec('t2', [row('a', 'in_progress'), row('b', 'in_progress')]), rec('t3', [row('a', 'done'), row('b', 'done')])],
+  };
+  const ledger = new Map(todoLedger(history).map((r) => [r.todo.id, r.todo.reopened]));
+  assert.equal(ledger.get('a'), 2);
+  assert.equal(ledger.get('b'), 3);
+  assert.equal(todoLedger({ live: null, turns: [rec('t1', [row('c', 'done')])] })[0].todo.reopened, undefined);
 });

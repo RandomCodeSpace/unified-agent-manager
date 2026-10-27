@@ -137,7 +137,7 @@ type sdkSession interface {
 	// ListTasks returns the tasks the CLI tracks, subagents included.
 	ListTasks(ctx context.Context) ([]rpc.TaskInfo, error)
 	// ReadTodos reads the rows of the session's todo list (todos.go).
-	ReadTodos(ctx context.Context) ([]rpc.PlanSQLTodosRow, error)
+	ReadTodos(ctx context.Context) (*rpc.PlanReadSQLTodosWithDependenciesResult, error)
 	// MessageSubagent sends a follow-up to one agent task.
 	MessageSubagent(ctx context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error)
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
@@ -1174,7 +1174,7 @@ Make replies easy to scan: uam turns these Markdown shapes into rich blocks, so 
 
 When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 
-For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes. Keep plans and step lists there, not in Markdown files in the project, unless the owner asks for a file.
+For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, with a row in ` + "`todo_deps`" + ` (todo_id, depends_on) for each step that needs another finished first, in the same sql call; then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes. Keep plans and step lists there, not in Markdown files in the project, unless the owner asks for a file.
 
 Narrow broad shell output with grep, head or tail, or a command's own filters, before it reaches you. Output over 8 KB is saved to a file and you get a preview and the file's path; read that file in parts rather than all at once.`
 

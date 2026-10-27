@@ -1635,6 +1635,17 @@ type Todo struct {
 	// ChangedAt is when its status last changed, as far as uam saw it;
 	// zero when it was first seen on opening the conversation.
 	ChangedAt time.Time `json:"changed_at,omitzero"`
+	// DependsOn holds the ids of the rows it waits on, from the session's
+	// todo_deps table; only rows in the same list.
+	DependsOn []string `json:"depends_on,omitempty"`
+	// Reopened counts the times uam saw it leave done.
+	Reopened int `json:"reopened,omitempty"`
+}
+
+// Equal reports whether t and o are the same row in the same state.
+func (t Todo) Equal(o Todo) bool {
+	return t.ID == o.ID && t.Title == o.Title && t.Status == o.Status && t.Note == o.Note && t.AgentID == o.AgentID &&
+		t.ChangedAt.Equal(o.ChangedAt) && t.Reopened == o.Reopened && slices.Equal(t.DependsOn, o.DependsOn)
 }
 
 // Todo statuses.

@@ -693,8 +693,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'tt-t8-3', user_item_id: 'h3', started_at: ago(22), ended_at: ago(16), state: 'completed', todo: { total: 4, blocked: 1, in_progress: 2, pending: 1, open: 3 } },
         { id: 'tt-t8-4', user_item_id: 'i1', started_at: ago(12), state: 'working' },
       ],
-      // The agents' todo list in all four stages: two subagents' rows in progress, one blocked, one to do.
-      // The main agent and one subagent wait on the model.
+      // The agents' todo list in all four stages: two subagents' rows in progress, one blocked, two to do. Its
+      // rows wait on others: contrast and tokens on each other (a loop, contrast reopened twice), the linter on
+      // axe-core and the survey. The main agent and one subagent wait on the model.
       turn_activity: {
         phase: { kind: 'model', since: ago(0.25), model: 'claude-haiku-4.5', calls: 2, subagents: 1 },
         todos: {
@@ -702,13 +703,15 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           touched: true,
           todos: [
             { id: 'plan', title: 'Split the audit into markup and contrast', status: 'done', changed_at: ago(11) },
-            { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'in_progress', agent_id: 'a1', changed_at: ago(10) },
-            { id: 'contrast', title: 'Check contrast of the theme tokens', status: 'in_progress', agent_id: 'a2', changed_at: ago(1) },
-            { id: 'lint', title: 'Run the accessibility linter', status: 'blocked', note: 'axe-core is not installed in this project.', agent_id: 'a3', changed_at: ago(10) },
-            { id: 'headings', title: 'Fix the heading order', status: 'done', agent_id: 'a4', changed_at: ago(9) },
-            { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending' },
+            { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'in_progress', agent_id: 'a1', changed_at: ago(10), depends_on: ['plan'] },
+            { id: 'headings', title: 'Fix the heading order', status: 'done', agent_id: 'a4', changed_at: ago(9), depends_on: ['plan'] },
+            { id: 'contrast', title: 'Check contrast of the theme tokens', status: 'in_progress', agent_id: 'a2', changed_at: ago(1), depends_on: ['plan', 'tokens'], reopened: 2 },
+            { id: 'tokens', title: 'Fix low-contrast tokens', status: 'done', changed_at: ago(2), depends_on: ['contrast'] },
+            { id: 'install', title: 'Install axe-core', status: 'pending' },
+            { id: 'lint', title: 'Run the accessibility linter', status: 'blocked', note: 'axe-core is not installed in this project.', agent_id: 'a3', changed_at: ago(10), depends_on: ['install', 'alt'] },
+            { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending', depends_on: ['alt', 'headings', 'contrast', 'lint'] },
           ],
-          counts: { done: 2, total: 6, blocked: 1, in_progress: 2, pending: 1, open: 3 },
+          counts: { done: 3, total: 8, blocked: 1, in_progress: 2, pending: 2, open: 4 },
           now: 'contrast',
         },
       },

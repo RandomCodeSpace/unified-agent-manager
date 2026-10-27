@@ -125,7 +125,7 @@ func (c *conversation) readTodos(sess sdkSession) {
 		held := t.held
 		c.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
-		rows, err := sess.ReadTodos(ctx)
+		res, err := sess.ReadTodos(ctx)
 		cancel()
 		c.mu.Lock()
 		switch {
@@ -138,7 +138,7 @@ func (c *conversation) readTodos(sess sdkSession) {
 				c.emitTodosLocked(list)
 			}
 		default:
-			c.emitTodosLocked(t.apply(rows))
+			c.emitTodosLocked(t.apply(res.Rows, res.Dependencies))
 		}
 		if held != nil && t.held == held {
 			c.releaseTurnLocked()
@@ -156,9 +156,11 @@ func (c *conversation) readTodos(sess sdkSession) {
 // apply maps a read's rows, in the provider's order, and remembers them. A
 // row's owner is fixed when it is first seen; its ChangedAt moves to the
 // latest change of the read's window when its status differs from the last
-// read. Rows first seen by a read without changes, as on opening the
-// conversation, get neither.
-func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow) agentapi.TodoList {
+// read, and its Reopened count grows when it leaves done. Rows first seen
+// by a read without changes, as on opening the conversation, get neither.
+// Each row keeps the dependencies on other rows of the list, in the
+// provider's order.
+func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow, deps []rpc.PlanSQLTodoDependency) agentapi.TodoList {
 	list := agentapi.TodoList{Known: true, Todos: make([]agentapi.Todo, 0, min(len(rows), maxTodos))}
 	seen := make(map[string]agentapi.Todo, len(list.Todos))
 	for _, row := range rows {
@@ -170,15 +172,33 @@ func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow) agentapi.TodoList {
 			break
 		}
 		if prev, ok := t.rows[todo.ID]; ok {
-			todo.AgentID, todo.ChangedAt = prev.AgentID, prev.ChangedAt
+			todo.AgentID, todo.ChangedAt, todo.Reopened = prev.AgentID, prev.ChangedAt, prev.Reopened
 			if prev.Status != todo.Status {
 				todo.ChangedAt = t.flight.at
+				if prev.Status == agentapi.TodoDone {
+					todo.Reopened++
+				}
 			}
 		} else {
 			todo.AgentID, todo.ChangedAt = t.flight.owner(), t.flight.at
 		}
 		seen[todo.ID] = todo
 		list.Todos = append(list.Todos, todo)
+	}
+	at := make(map[string]int, len(list.Todos))
+	for i, todo := range list.Todos {
+		at[todo.ID] = i
+	}
+	for _, d := range deps {
+		on := clipRuneCount(d.DependsOn, maxTodoTitleRunes)
+		i, ok := at[clipRuneCount(d.TodoID, maxTodoTitleRunes)]
+		if _, known := at[on]; !ok || !known || on == list.Todos[i].ID || slices.Contains(list.Todos[i].DependsOn, on) {
+			continue
+		}
+		list.Todos[i].DependsOn = append(list.Todos[i].DependsOn, on)
+	}
+	for _, todo := range list.Todos {
+		seen[todo.ID] = todo
 	}
 	t.rows = seen
 	return list
@@ -205,7 +225,7 @@ func todoOf(row rpc.PlanSQLTodosRow) agentapi.Todo {
 // emitTodosLocked emits list unless it is the one last emitted.
 func (c *conversation) emitTodosLocked(list agentapi.TodoList) {
 	t := &c.todos
-	if t.last != nil && t.last.Known == list.Known && slices.Equal(t.last.Todos, list.Todos) {
+	if t.last != nil && t.last.Known == list.Known && slices.EqualFunc(t.last.Todos, list.Todos, agentapi.Todo.Equal) {
 		return
 	}
 	t.last = &list
@@ -260,10 +280,10 @@ func (c *conversation) releaseTurnLocked() {
 // ReadTodos reads the session's todo rows through the experimental plan
 // RPCs: with their dependencies, else, from a CLI that refuses that, the
 // rows alone.
-func (a sdkSessionAdapter) ReadTodos(ctx context.Context) ([]rpc.PlanSQLTodosRow, error) {
+func (a sdkSessionAdapter) ReadTodos(ctx context.Context) (*rpc.PlanReadSQLTodosWithDependenciesResult, error) {
 	res, err := a.s.RPC.Plan.ReadSqlTodosWithDependencies(ctx)
 	if err == nil {
-		return res.Rows, nil
+		return res, nil
 	}
 	if !isRPCError(err) {
 		return nil, err
@@ -272,5 +292,5 @@ func (a sdkSessionAdapter) ReadTodos(ctx context.Context) ([]rpc.PlanSQLTodosRow
 	if err != nil {
 		return nil, err
 	}
-	return rows.Rows, nil
+	return &rpc.PlanReadSQLTodosWithDependenciesResult{Rows: rows.Rows}, nil
 }

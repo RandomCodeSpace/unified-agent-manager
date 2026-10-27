@@ -155,12 +155,28 @@ func todoView(list agentapi.TodoList) TodoView {
 	if len(rows) > maxTodoRows {
 		rows, v.Omitted = rows[:maxTodoRows:maxTodoRows], len(rows)-maxTodoRows
 	}
+	// A row keeps only the dependencies on rows the browser gets.
+	shown := make(map[string]bool, len(rows))
+	for _, t := range rows {
+		shown[t.ID] = true
+	}
+	for i := range rows {
+		rows[i].DependsOn = slices.DeleteFunc(rows[i].DependsOn, func(id string) bool { return !shown[id] })
+		if len(rows[i].DependsOn) == 0 {
+			rows[i].DependsOn = nil
+		}
+	}
 	v.Todos, v.Now = rows, todoNow(rows)
 	return v
 }
 
 func cleanTodo(t agentapi.Todo) agentapi.Todo {
 	t.ID, t.AgentID = clampText(t.ID, maxLabelText), clampText(t.AgentID, maxLabelText)
+	deps := make([]string, 0, len(t.DependsOn))
+	for _, id := range t.DependsOn {
+		deps = append(deps, clampText(id, maxLabelText))
+	}
+	t.DependsOn = deps
 	t.Title = clipRunes(strings.TrimSpace(displaytext.Sanitize(t.Title)), maxTodoTitleRunes)
 	switch t.Status {
 	case agentapi.TodoInProgress, agentapi.TodoDone, agentapi.TodoBlocked:
@@ -238,5 +254,5 @@ func latestTodoChange(rows []agentapi.Todo) time.Time {
 }
 
 func (v TodoView) equal(o TodoView) bool {
-	return v.Known == o.Known && v.Touched == o.Touched && v.Omitted == o.Omitted && v.Counts == o.Counts && v.Now == o.Now && slices.Equal(v.Todos, o.Todos)
+	return v.Known == o.Known && v.Touched == o.Touched && v.Omitted == o.Omitted && v.Counts == o.Counts && v.Now == o.Now && slices.EqualFunc(v.Todos, o.Todos, agentapi.Todo.Equal)
 }
