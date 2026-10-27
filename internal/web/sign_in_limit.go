@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,8 +16,11 @@ const (
 	// an owner mistyping the token a few times stays well below it.
 	signInPerClient = 10
 	// signInGlobal is the attempts all clients together may make per window,
-	// so many addresses (or a proxy that hides them) cannot guess at speed.
-	signInGlobal = 100
+	// so many addresses cannot guess at speed. 300 per 10 minutes is about
+	// 43,000 guesses a day, hopeless against even a minimum 24-character
+	// token, yet far above what real sign-ins reach, so it only trips under
+	// a brute-force run and never as a routine lockout.
+	signInGlobal = 300
 )
 
 // signInLimiter counts token checks (sign-in and pairing) per client address
@@ -50,13 +54,27 @@ func (c *signInCount) wait(now time.Time, limit int) time.Duration {
 	return c.start.Add(signInWindow).Sub(now)
 }
 
-// signInClient keys a request by its peer address; the server reads no
-// forwarding headers, so behind a proxy every client shares one key.
+// signInClient keys a request by its peer address. Behind a reverse proxy on
+// loopback every peer is the proxy, so there the key is the rightmost
+// X-Forwarded-For entry, the hop that proxy appended; any other peer's
+// header is ignored, since a remote client could write anything in it.
 func signInClient(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if peer := net.ParseIP(host); peer == nil || !peer.IsLoopback() {
 		return host
 	}
-	return r.RemoteAddr
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return host
+	}
+	hops := strings.Split(values[len(values)-1], ",")
+	if client := net.ParseIP(strings.TrimSpace(hops[len(hops)-1])); client != nil {
+		return client.String()
+	}
+	return host
 }
 
 // admit records an attempt by r's client and returns 0, or returns how long

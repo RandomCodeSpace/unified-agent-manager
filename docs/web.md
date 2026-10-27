@@ -90,6 +90,10 @@ Sign-in attempts are limited per client address and for the server as a
 whole, counted together with connected-instance pairing. Past the limit the
 sign-in page says so and the server answers 429 with `Retry-After` until the
 10-minute window ends; a successful sign-in clears that address's count.
+When the request comes from a reverse proxy on the same machine (a loopback
+address), the client address is the last `X-Forwarded-For` entry, the one
+that proxy added; from any other address the header is ignored. A proxy on
+another machine therefore counts as one client.
 
 **Log out** (Settings → Server → UAM and access) ends that session on the
 server as well as in the browser: the cookie is recorded as signed out in

@@ -80,11 +80,26 @@ func TestSignInLimiterGlobalAndBounded(t *testing.T) {
 }
 
 func TestSignInClientAndRetryAfter(t *testing.T) {
-	if got := signInClient(signInRequest("[2001:db8::1]:443")); got != "2001:db8::1" {
-		t.Fatalf("ipv6 client = %q", got)
-	}
-	if got := signInClient(signInRequest("pipe")); got != "pipe" {
-		t.Fatalf("portless client = %q", got)
+	for _, tc := range []struct {
+		name, remote string
+		forwarded    []string
+		want         string
+	}{
+		{"ipv6 peer", "[2001:db8::1]:443", nil, "2001:db8::1"},
+		{"portless peer", "pipe", []string{"203.0.113.9"}, "pipe"},
+		{"spoofed header from a remote peer", "192.0.2.1:1000", []string{"203.0.113.9"}, "192.0.2.1"},
+		{"loopback proxy", "127.0.0.1:5000", []string{"203.0.113.9"}, "203.0.113.9"},
+		{"loopback proxy keeps the hop it appended", "[::1]:5000", []string{"10.9.9.9, 198.51.100.4", "203.0.113.9, 2001:db8::7 "}, "2001:db8::7"},
+		{"loopback without header", "127.0.0.1:5000", nil, "127.0.0.1"},
+		{"loopback with unparseable header", "127.0.0.1:5000", []string{"203.0.113.9, unknown"}, "127.0.0.1"},
+	} {
+		r := signInRequest(tc.remote)
+		for _, v := range tc.forwarded {
+			r.Header.Add("X-Forwarded-For", v)
+		}
+		if got := signInClient(r); got != tc.want {
+			t.Errorf("%s: client = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 	w := httptest.NewRecorder()
 	setRetryAfter(w, 1500*time.Millisecond)
@@ -118,5 +133,24 @@ func TestLoginAndPairingAreLimited(t *testing.T) {
 	}
 	if len(ts.srv.connections.data.Grants) != 0 {
 		t.Fatal("limited pairing created a grant")
+	}
+}
+
+func TestLoginBehindLoopbackProxyKeysForwardedClient(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	via := func(client string) reqOpt {
+		return func(r *http.Request) {
+			r.RemoteAddr = "127.0.0.1:40000"
+			r.Header.Set("X-Forwarded-For", client)
+		}
+	}
+	for range signInPerClient {
+		ts.do(http.MethodPost, "/api/login", `{"token":"wrong"}`, via("203.0.113.9"))
+	}
+	if w := ts.do(http.MethodPost, "/api/login", `{"token":"wrong"}`, via("203.0.113.9")); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("forwarded client over the limit = %d", w.Code)
+	}
+	if w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, via("198.51.100.4")); w.Code != http.StatusNoContent {
+		t.Fatalf("another forwarded client shared the bucket: %d", w.Code)
 	}
 }
