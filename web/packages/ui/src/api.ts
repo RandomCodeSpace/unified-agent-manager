@@ -846,6 +846,8 @@ export interface Project {
   no_git?: 'not_installed' | 'not_repository';
   /** How many charts are pinned to the Project; absent when none. */
   charts?: number;
+  /** An https address with `{branch}` where the branch name goes, detected from origin or set in Edit project; '' once cleared (no link), absent until detected. */
+  branch_link?: string;
 }
 
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
@@ -901,6 +903,9 @@ export interface SessionSummary {
   real_workdir?: string;
   /** The branch checked out in the Thread's working folder; absent on a detached head and from older servers (the Project's branch stands in). */
   branch?: string;
+  /** The Project's branch link filled with `branch_link_branch`: `branch` once origin has it, else origin's default branch. Both absent without a link, a branch, or until the Thread was opened. */
+  branch_link_url?: string;
+  branch_link_branch?: string;
   /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
   worktree?: { path: string; branch: string; /** Bytes on disk, once measured in the background. */ size_bytes?: number };
   /** Work in the Thread's working tree saved nowhere else, shared by every Thread in its repository: changed tracked files and commits on no remote; absent outside a repository or before the first read. */
@@ -2321,7 +2326,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
     createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
-    updateProject: (id: string, body: { name: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
+    updateProject: (id: string, body: { name: string; branch_link?: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
+    detectBranchLink: (id: string) => call<{ branch_link: string }>('POST', `/api/projects/${enc(id)}/branch-link/detect`),
     deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
     /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
     listDirs: (path?: string, hidden = false, filter = '') => call<DirList>('GET', `/api/fs/dirs${dirsQuery(path, hidden, filter)}`),

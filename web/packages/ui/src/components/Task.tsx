@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, CircleStop, Ellipsis, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
@@ -12,7 +12,7 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
+import { GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
@@ -43,7 +43,7 @@ import { FileReferencesProvider } from './FileReferences';
 import { registerRealWorkdir } from '../lib/markdown';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -173,7 +173,14 @@ function HeaderState({ session, state, failures, label }: Readonly<{ session: Se
   return <StateMark state={state} label={label} text={text} icon={icon} title={title} className="shrink-0" />;
 }
 
-/** The Thread's 44px header: its name and state, the Changes, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
+/** The branch link's mark: GitHub's or GitLab's by its address (GitLab's tree paths have `/-/`), a plain external link otherwise. */
+function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
+  if (href.startsWith('https://github.com/')) return <GitHubMark />;
+  if (/^https:\/\/[^/]*gitlab/i.test(href) || href.includes('/-/')) return <GitLabMark />;
+  return <ExternalLink />;
+}
+
+/** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
 const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
@@ -200,6 +207,11 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
   const fold = phone || room === 'tight';
   const folded: ActionItem[] = [];
   const pinned = project?.charts ?? 0;
+  // The server fills the Project's branch link with the Thread's branch, or origin's default one while it is not pushed.
+  const branchHref = session.branch_link_url;
+  const branch = session.branch ?? project?.branch;
+  const branchLabel = session.branch_link_branch === branch ? `Open ${branch} on the web` : `${branch} is not pushed: open ${session.branch_link_branch}`;
+  if (fold && branchHref) folded.push({ key: 'branch-link', label: branchLabel, icon: <BranchLinkIcon href={branchHref} />, onSelect: () => window.open(branchHref, '_blank', 'noopener,noreferrer') });
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
   if (fold && terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
@@ -266,6 +278,13 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
         <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
           {vcs}
         </div>
+      )}
+      {branchHref && !fold && (
+        <Tip label={branchLabel}>
+          <a id="branch-link" href={branchHref} target="_blank" rel="noopener noreferrer" aria-label={branchLabel} className={buttonVariants({ size: 'icon-md', className: 'text-muted' })}>
+            <BranchLinkIcon href={branchHref} />
+          </a>
+        </Tip>
       )}
       {pinned > 0 && !fold && (
         <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>

@@ -93,26 +93,37 @@ func glabOrigin(ctx context.Context, dir string) (glabGate, bool) {
 	if err != nil {
 		return glabGate{}, false
 	}
+	host, path, ok := parseRemote(remote)
+	if !ok || host == "github.com" {
+		return glabGate{}, false
+	}
+	return glabGate{Host: host, Path: path, Dir: dir, executable: bin}, true
+}
+
+// parseRemote reads a git remote URL (https, http, ssh or git's scp
+// spelling) as its lower-case host and owner/repository path, without any
+// user, password or port.
+func parseRemote(remote string) (host, path string, ok bool) {
 	raw := strings.TrimSpace(remote)
 	if !strings.Contains(raw, "://") {
 		// Git's scp spelling requires an explicit user and host.
 		_, hostPath, ok := strings.Cut(raw, "@")
 		host, path, colon := strings.Cut(hostPath, ":")
 		if !ok || !colon {
-			return glabGate{}, false
+			return "", "", false
 		}
 		raw = "ssh://" + host + "/" + path
 	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "ssh") || u.Hostname() == "" {
-		return glabGate{}, false
+		return "", "", false
 	}
-	host := strings.ToLower(u.Hostname())
-	path := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
-	if host == "github.com" || !strings.Contains(path, "/") || strings.ContainsAny(path, "\x00\r\n") {
-		return glabGate{}, false
+	host = strings.ToLower(u.Hostname())
+	path = strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	if !strings.Contains(path, "/") || strings.ContainsAny(path, "\x00\r\n") {
+		return "", "", false
 	}
-	return glabGate{Host: host, Path: path, Dir: dir, executable: bin}, true
+	return host, path, true
 }
 
 func (g *glabGovernor) authenticated(ctx context.Context, gate glabGate) bool {

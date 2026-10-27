@@ -218,6 +218,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
 	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
+	mux.HandleFunc("POST /api/projects/{id}/branch-link/detect", s.handleDetectBranchLink)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("GET /api/glab", s.handleGlabStatus)
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
@@ -636,16 +637,17 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name *string `json:"name"`
+		Name       *string `json:"name"`
+		BranchLink *string `json:"branch_link"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil {
-		writeError(w, http.StatusBadRequest, "name is required")
+	if body.Name == nil && body.BranchLink == nil {
+		writeError(w, http.StatusBadRequest, "name or branch_link is required")
 		return
 	}
-	p, err := s.m.UpdateProject(r.PathValue("id"), *body.Name)
+	p, err := s.m.patchProject(r.PathValue("id"), body.Name, body.BranchLink)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -940,6 +942,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	s.m.checkBranchLink(r.Context(), id)
 	if r.URL.Query().Get("view") == compactRepresentation {
 		d, err := s.m.CompactDetail(id)
 		if err != nil {

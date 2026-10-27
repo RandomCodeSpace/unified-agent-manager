@@ -373,8 +373,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   not show) asks the server, which searches every folder in it. A directory
   has one Project; adding it again points you to the existing one. "Edit
   project" (the gear beside the Project in the sidebar's filter list) renames
-  it and offers "Previous sessions" and "Remove project". Editing a Project
-  changes only its record in UAM. Web sessions from before Projects existed are placed in
+  it, sets its **Branch link**, and offers "Previous sessions" and "Remove
+  project". Editing a Project changes only its record in UAM. Web sessions from before Projects existed are placed in
   a Project for their directory, named after it, when the service starts.
   Each Project has a badge of two characters on a colour: the first letter or
   digit of its name and the last one (`CG` for config), then a random remaining
@@ -405,6 +405,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   size, so New thread does not fail on a stale default. A provider that is not installed or
   not compatible is reported with the reason. The Thread runs in the Project's
   directory.
+- **Branch link**: an https address with `{branch}` where the branch name
+  goes (`https://github.com/org/repo/tree/{branch}`), with no user name or
+  password, at most 2,048 characters. UAM detects it once from the `origin`
+  remote when the Project is added, or the first time one of its Threads is
+  opened: `github.com` gets GitHub's `/tree/{branch}`, every other host
+  GitLab's `/-/tree/{branch}`. **Detect from git remote** in Edit project
+  fills the field again from `origin` without saving it
+  (`POST /api/projects/{id}/branch-link/detect`); clearing the field turns
+  the link off, and it is not detected again. The Thread header then links
+  the Thread's branch on the web. A branch with no `origin/<branch>`
+  remote-tracking ref (not pushed yet) links origin's default branch
+  (`origin/HEAD`, else `main`) and says so; UAM reads this from local refs
+  when the Thread is opened, never from the network.
 - **Branches and worktrees**: a new Thread runs in the Project's folder, on
   its current branch, on a new branch or on another existing branch, or in a
   new git worktree. The choice is made with the first message (`place` in

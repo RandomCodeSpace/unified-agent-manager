@@ -156,14 +156,20 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
   // A reload is a service restart: a new instance, while archive cursors stay valid.
   const epoch = `mock-${Date.now().toString(36)}`;
 
+  // The branch link as the server fills it: a worktree's branch is not pushed yet, so it opens main.
+  const branchLink = (t: MockTask) => {
+    const project = st.projects.find((p) => p.id === t.project_id);
+    const opens = t.worktree ? 'main' : t.branch ?? project?.branch;
+    return project?.branch_link && opens ? { branch_link_url: project.branch_link.replace('{branch}', opens.split('/').map(encodeURIComponent).join('/')), branch_link_branch: opens } : {};
+  };
   const summary = (t: MockTask): SessionSummary => {
     const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, representation: _r, detail_stream: _d, ...rest } = t;
-    return { ...rest, ask: askOf(t.interactions) };
+    return { ...rest, ...branchLink(t), ask: askOf(t.interactions) };
   };
   // A compact Task's detail carries its newest page and a cursor for the rest.
   const detail = (t: MockTask): SessionDetail => {
     const { agentItems: _a, ...rest } = t;
-    const withDrawings = { ...rest, drawings: drawings.list(t.id) };
+    const withDrawings = { ...rest, ...branchLink(t), drawings: drawings.list(t.id) };
     if (t.representation !== 'compact-v1') return withDrawings;
     const start = Math.max(0, t.items.length - PAGE);
     const older = t.recordSubagents?.length && t.subagents.length ? { subagents_before: `a.${itemCursor(t.subagents[0].id)}` } : {};
@@ -951,12 +957,22 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       broadcast('project', { project: p });
       return json(201, p);
     }
+    if ((r = m(/^\/api\/projects\/([^/]+)\/branch-link\/detect$/)) && method === 'POST') {
+      const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
+      if (!p) return fail(404, 'project not found');
+      if (p.no_git) return fail(422, 'git has no origin remote here that uam can read');
+      return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}` });
+    }
     if ((r = m(/^\/api\/projects\/([^/]+)$/))) {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        if (body.name === undefined) return fail(400, 'name is required');
-        p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        if (body.name === undefined && body.branch_link === undefined) return fail(400, 'name or branch_link is required');
+        const link = body.branch_link === undefined ? p.branch_link : String(body.branch_link).trim();
+        if (link && (!link.startsWith('https://') || link.split('{branch}').length !== 2)) return fail(400, 'the branch link must contain {branch} exactly once, where the branch name goes');
+        if (body.name !== undefined) p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        p.branch_link = link;
+        for (const t of st.tasks) if (t.project_id === p.id) broadcast('session', { session: summary(t) });
         broadcast('project', { project: p });
         return json(200, p);
       }
