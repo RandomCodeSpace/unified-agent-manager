@@ -18,11 +18,8 @@ import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
-
-/** The narrow layout, where the reader is a sheet (as the subagents' is). */
-export const PHONE = '(max-width: 639px)';
 
 /** Each stage's colour, the same on every surface: its words, numbers and glyph (`text`) and its meter segments (`fill`). */
 const TONE: Record<TodoStatus, { text: string; fill: string }> = {

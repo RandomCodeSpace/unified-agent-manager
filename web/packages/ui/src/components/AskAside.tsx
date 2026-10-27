@@ -9,9 +9,8 @@ import { cn } from '../lib/cn';
 import { Markdown, clockTime, dateTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { HelpTip } from './ui/tooltip';
 

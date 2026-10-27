@@ -681,9 +681,9 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all,
             {shown.filter((r) => r !== pinned).map((r) => render(r, true))}
           </ul>
           {rows.length > SHELF_CAP && (
-            <button type="button" data-nav={`more:${label}`} tabIndex={tabStop === `more:${label}` ? 0 : -1} className="mt-px flex h-7 w-full items-center rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11" onClick={onAll}>
+            <Button size="sm" variant="subtle" data-nav={`more:${label}`} tabIndex={tabStop === `more:${label}` ? 0 : -1} className="mt-px w-full justify-start text-caption font-normal text-muted focus-visible:-outline-offset-2 pointer-coarse:h-11" onClick={onAll}>
               {all ? 'Show fewer' : `Show all ${rows.length}`}
-            </button>
+            </Button>
           )}
         </div>
       </Collapse>

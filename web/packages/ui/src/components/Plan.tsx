@@ -9,9 +9,8 @@ import { cn } from '../lib/cn';
 import { Markdown, Note } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 
 export const PLAN_ACTION_LABEL: Record<PlanAction, string> = {
@@ -71,9 +70,9 @@ export function ReadPlan({ plan, sessionId, planVersion = 0, draftAvailable = tr
     setReader((r) => r && { ...r, open: false });
   }
   return <>
-    <button ref={setAnchor} type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} onClick={show} className="inline-flex h-7 shrink-0 items-center gap-1 rounded-sm px-1.5 text-caption text-muted hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11">
-      <FileText aria-hidden="true" className="size-3.5" />Read plan
-    </button>
+    <Button ref={setAnchor} size="sm" variant="subtle" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} onClick={show} className="gap-1 px-1.5 text-caption text-muted [&_svg]:size-3.5">
+      <FileText aria-hidden="true" />Read plan
+    </Button>
     {reader && <PlanReader id={id} open={reader.open} phone={reader.phone} anchor={anchor} plan={snapshot} error={error} current={current} draft={draft?.version === planVersion ? draft.value ?? null : null} draftError={!draftAvailable ? 'The current draft is unavailable while this Thread is closed.' : draft?.version === planVersion ? draft.error ?? '' : ''} onCurrent={sessionId ? () => { setCurrent((value) => !value); setDraft(null); } : undefined} onClose={close} onClosed={() => { setReader(null); setSnapshot(null); setDraft(null); }} />}
   </>;
 }
@@ -107,8 +106,9 @@ function PlanBody({ plan, error, current, draft, draftError, onCurrent, heading,
       <div className="flex min-h-7 min-w-0 items-center gap-2">
         <FileText aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">Plan{!current && plan?.revision ? <span className="ml-2 text-caption text-muted">Revision {plan.revision}</span> : null}</h2>
-        {onCurrent && <button type="button" aria-pressed={current} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={onCurrent}>{current ? 'Reviewed snapshot' : 'Current draft'}</button>}
-        {!current && plan?.previous && <button type="button" aria-pressed={changes} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={() => setChanges((value) => !value)}>{changes ? 'Read plan' : 'Show changes'}</button>}
+        {/* Toggles with fixed names: pressed shows the draft or the changes, released goes back to the reviewed plan. */}
+        {onCurrent && <Button size="sm" aria-pressed={current} className="text-caption text-muted" onClick={onCurrent}>Current draft</Button>}
+        {!current && plan?.previous && <Button size="sm" aria-pressed={changes} className="text-caption text-muted" onClick={() => setChanges((value) => !value)}>Show changes</Button>}
         {close}
       </div>
     </PanelHead>

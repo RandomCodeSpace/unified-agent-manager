@@ -37,7 +37,7 @@ describe('native plan review', () => {
     expect(draft).toHaveBeenCalledTimes(1);
     view.rerender(<ReadPlan plan={plan} sessionId="task" draftAvailable={false} />);
     expect(reader.getByText('The current draft is unavailable while this Thread is closed.')).toBeTruthy();
-    await user.click(reader.getByRole('button', { name: 'Reviewed snapshot' }));
+    await user.click(reader.getByRole('button', { name: 'Current draft', pressed: true }));
     expect(reader.getByText('Reviewed')).toBeTruthy();
   });
   test('current draft is explicit, refreshes only while open, and never replaces the reviewed choice', async () => {
@@ -56,7 +56,7 @@ describe('native plan review', () => {
     view.rerender(<ReadPlan plan={plan} sessionId="task" planVersion={1} />);
     await reader.findByRole('heading', { name: 'Updated draft' });
     expect(draft).toHaveBeenCalledTimes(2);
-    await user.click(reader.getByRole('button', { name: 'Reviewed snapshot' }));
+    await user.click(reader.getByRole('button', { name: 'Current draft', pressed: true }));
     expect(reader.getByText('Reviewed')).toBeTruthy();
     expect(reader.getByText('Revision 1')).toBeTruthy();
     view.rerender(<ReadPlan plan={plan} sessionId="task" planVersion={2} />);
@@ -77,7 +77,7 @@ describe('native plan review', () => {
     const reader = within(await screen.findByRole('dialog', { name: 'Plan' }));
     await user.click(reader.getByRole('button', { name: 'Current draft' }));
     await reader.findByText(state === 'error' ? 'Current draft read failed' : state === 'empty' ? 'The current draft is empty.' : 'The current draft is missing or was deleted. The reviewed snapshot is still available.');
-    await user.click(reader.getByRole('button', { name: 'Reviewed snapshot' }));
+    await user.click(reader.getByRole('button', { name: 'Current draft', pressed: true }));
     expect(reader.getByText('Validate it.')).toBeTruthy();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Plan' })).toBeNull());
@@ -161,8 +161,10 @@ describe('native plan review', () => {
     expect(reader.getByRole('region', { name: 'Reviewed plan' })).toBeTruthy();
     expect(reader.getByText('Esc').tagName).toBe('KBD');
     expect(screen.getByRole('dialog', { name: 'Plan' }).querySelector('.border-b, .border-t')).toBeNull();
-    await user.click(reader.getByRole('button', { name: 'Show changes' }));
+    await user.click(reader.getByRole('button', { name: 'Show changes', pressed: false }));
     expect(reader.getByText(/\+ 2\. Validate it\./)).toBeTruthy();
+    // The toggle keeps its name; pressed says the changes are shown.
+    expect(reader.getByRole('button', { name: 'Show changes', pressed: true })).toBeTruthy();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Plan' })).toBeNull());
     expect(document.activeElement).toBe(trigger);

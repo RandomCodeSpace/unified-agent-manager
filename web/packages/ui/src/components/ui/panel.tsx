@@ -1,6 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
+import { Button } from './button';
 
 /**
  * The parts of a floating panel (DESIGN.md Floating panels): a head on the panel's surface that
@@ -60,10 +61,10 @@ export function Clamp({ noun, height = 84, surface, className, children }: Reado
         {children}
       </div>
       {long && (
-        <button type="button" aria-expanded={open} className="flex h-6 items-center gap-1 rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => setOpen((o) => !o)}>
+        <Button variant="link" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? `Show less` : `Show the whole ${noun}`}
           <ChevronDown aria-hidden="true" className={cn('size-3 transition-transform duration-160', open && 'rotate-z-180')} />
-        </button>
+        </Button>
       )}
     </div>
   );

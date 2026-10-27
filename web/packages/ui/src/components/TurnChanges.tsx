@@ -67,10 +67,10 @@ export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClos
       {!!counts?.omitted && <p className="mt-2 text-caption text-muted">{counts.omitted} more captured files not shown.</p>}
       <p className="mt-3 text-caption text-muted">These are historical facts. The files may have changed since. Individual edit patches are available from their tool rows when recorded.</p>
     </div>
-    <PanelFoot>
-      <span>Read only</span><span className="flex-1" />
-      {onThreadChanges && <button type="button" className="text-accent hover:underline" onClick={() => { onClose(); onThreadChanges(); }}>Thread changes · current files</button>}
-    </PanelFoot>
+    {onThreadChanges && <PanelFoot>
+      <span className="flex-1" />
+      <Button variant="link" onClick={() => { onClose(); onThreadChanges(); }}>Open current changes</Button>
+    </PanelFoot>}
   </>;
   const back = () => anchor;
   if (phone || !anchor) return <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="This turn's changes" initialFocus={heading} finalFocus={back} className="duration-160" backdropClassName="duration-160">

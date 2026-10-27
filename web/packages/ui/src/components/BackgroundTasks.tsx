@@ -2,9 +2,7 @@ import { useApi } from '../ApiContext';
 import { Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { describeError, type BackgroundTasks as Snapshot } from '../api';
-import { Dot } from './common';
 import { Button } from './ui/button';
-import { Chip } from './ui/chip';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
@@ -12,8 +10,11 @@ import { Tip } from './ui/tooltip';
 /**
  * The Task's background shells in the composer toolbar (DESIGN.md Background tasks): the
  * terminal glyph, `accent` and how many run while any runs (else the glyph alone), and on a
- * click a popover listing each with its status (a still dot and "Running"), command and Stop.
+ * click a popover listing each with its status in words, command and Stop.
  */
+/** The provider's task statuses in words; another reported word shows as it came. */
+const STATUS: Record<string, string> = { running: 'Running', idle: 'Idle', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
+
 /** Why Stop is disabled, or what it does. */
 function stopTip(locked: boolean, known: boolean): string {
   if (locked) return 'This thread is read-only.';
@@ -56,7 +57,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
             {active && running}
           </Popover.Trigger>
         </Tip>
-        <Popover.Content className="w-96 max-w-[calc(100vw-16px)] gap-2">
+        <Popover.Content className="w-96 gap-2">
           <Popover.Title>Background tasks</Popover.Title>
           <Popover.Description>{shown.known ? status : 'Last reported tasks. Their current status is unavailable.'}</Popover.Description>
           <ul className="max-h-64 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain text-caption text-muted">
@@ -64,14 +65,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
               <li key={task.id} className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
-                  {shown.known && task.status === 'running' ? (
-                    <Chip tone="accent">
-                      <Dot tone="accent" />
-                      Running
-                    </Chip>
-                  ) : (
-                    <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
-                  )}
+                  <span className="shrink-0">{shown.known ? STATUS[task.status] ?? task.status : 'Unknown'}</span>
                   {task.status === 'running' && <Tip label={stopTip(locked, shown.known)}>
                     <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
                       {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}

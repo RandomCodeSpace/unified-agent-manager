@@ -1,5 +1,6 @@
 import { createContext } from 'react';
 import type { ModelCalls } from '../api';
+import { plural } from './TimeSplit';
 
 /**
  * The service's model calls in flight across its Threads (`model_calls`); null until a snapshot carries them, as from
@@ -7,7 +8,6 @@ import type { ModelCalls } from '../api';
  */
 export const ModelCallsContext = createContext<ModelCalls | null>(null);
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The Usage and AI button's words for the work in flight, line by line: whether a model works now, for what, and what runs locally. */
 export function modelCallsLines(calls: ModelCalls): string[] {

@@ -234,18 +234,19 @@ function FilterList({ projects, filter, input, onPick, onEdit, onRoutines, group
           {row.current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
         </div>
         {p && row.onRoutines && (
-          <Button
-            size="icon-sm"
-            aria-label={`Routines of ${p.name}`}
-            title="Routines"
-            className="text-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              row.onRoutines!();
-            }}
-          >
-            <Clock />
-          </Button>
+          <Tip label="Routines">
+            <Button
+              size="icon-sm"
+              aria-label={`Routines of ${p.name}`}
+              className="text-muted"
+              onClick={(e) => {
+                e.stopPropagation();
+                row.onRoutines!();
+              }}
+            >
+              <Clock />
+            </Button>
+          </Tip>
         )}
         {p && row.onEdit && (
           <Button

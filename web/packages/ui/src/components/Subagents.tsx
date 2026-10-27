@@ -5,7 +5,7 @@ import { isSubagentCall, subagentSummary, duration, windowInteractions } from '.
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, CornerDownRight, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -425,6 +425,9 @@ export function SubagentChip({ subagents, calls, tones, reply }: Readonly<{ suba
   );
 }
 
+/** A note under a subagent row (a failed stop, a retry) starts where its name does: 32px in, 18px more a level (`--depth` on the row). */
+const UNDER_NAME = 'pl-[calc(var(--spacing)*(8+var(--depth)*4.5))]';
+
 /**
  * One subagent (DESIGN.md subagent row), the same in the transcript and the sheet's list: its state
  * glyph, identity dot (while its reply has at most five), name, caption (what it is doing now, the
@@ -442,7 +445,8 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const text = caption || (s.status === 'cancelled' ? 'Stopped' : '');
   const parentId = s.parent_tool_call_id;
   return (
-    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className="flex flex-col">
+    // `--depth` indents the row 18px a level; its notes start under its name, 24px further in.
+    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className="flex flex-col" style={{ '--depth': depth } as CSSProperties}>
       <button
         type="button"
         data-subagent-toggle=""
@@ -450,8 +454,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         aria-haspopup="dialog"
         aria-current={selected || undefined}
         aria-label={`${name}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
-        className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11', selected && 'bg-tint-selected hover:bg-tint-selected')}
-        style={{ paddingLeft: `${8 + depth * 18}px` }}
+        className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', selected && 'bg-tint-selected hover:bg-tint-selected')}
         onClick={() => (onOpen ? onOpen(s.id) : actions.open({ agent: s.id }))}
       >
         {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
@@ -469,11 +472,11 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? compactTokens(s.tokens) : ''}</span>
       </button>
       {stopError && (
-        <p role="alert" className="pr-2 pb-1 text-caption text-error" style={{ paddingLeft: `${32 + depth * 18}px` }}>
+        <p role="alert" className={cn('pr-2 pb-1 text-caption text-error', UNDER_NAME)}>
           Could not stop it: {stopError}
         </p>
       )}
-      {s.status === 'running' && s.retry && <SubagentRetry retry={s.retry} indent={32 + depth * 18} />}
+      {s.status === 'running' && s.retry && <SubagentRetry retry={s.retry} className={UNDER_NAME} />}
     </div>
   );
 });
@@ -553,11 +556,11 @@ function SubagentDetail({ id, order, phone, onList, onOpen }: Readonly<{ id: str
       </div>
       <PanelHead scrolled={scrolled} className="px-4 pb-3">
         {spawner && (
-          <button type="button" title="Open the subagent that spawned it" className="-ml-1.5 flex h-6 w-fit max-w-full items-center gap-1.5 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11" onClick={() => onOpen(spawner.id)}>
-            <Workflow aria-hidden="true" className="size-3.5 shrink-0" />
+          <Button size="sm" variant="subtle" title="Open the subagent that spawned it" className="-ml-1.5 h-6 w-fit max-w-full px-1.5 text-caption font-normal text-muted [&_svg]:size-3.5" onClick={() => onOpen(spawner.id)}>
+            <Workflow aria-hidden="true" />
             <span className="truncate">{spawner.name || 'Subagent'}</span>
-            <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint" />
-          </button>
+            <ChevronRight aria-hidden="true" className="size-3! text-faint" />
+          </Button>
         )}
         <div className="mt-0.5 flex min-w-0 items-center gap-2">
           <span className="flex size-5 shrink-0 items-center justify-center">
@@ -699,9 +702,9 @@ export function LiveSubagents() {
           ))}
         </ul>
         {rows.length > limit && (
-          <button type="button" className="flex h-7 w-fit items-center px-2 text-left text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => setLimit(limit + PAGE_ROWS)}>
+          <Button variant="link" className="h-7 w-fit px-2" onClick={() => setLimit(limit + PAGE_ROWS)}>
             Show {Math.min(PAGE_ROWS, rows.length - limit)} more
-          </button>
+          </Button>
         )}
       </section>
     </>
@@ -847,9 +850,9 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                     <Counts c={{ ...countSubagents(g.matched), done: 0, stopped: 0 }} lead={`${g.matched.length}`} />
                   </span>
                   {g.key && (
-                    <button type="button" aria-label={`Jump to the subagents of ${title}`} className="shrink-0 rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => actions.jumpToReply(g.key)}>
+                    <Button variant="link" aria-label={`Jump to the subagents of ${title}`} onClick={() => actions.jumpToReply(g.key)}>
                       Jump
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <ul className="flex flex-col">

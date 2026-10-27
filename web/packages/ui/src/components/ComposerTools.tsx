@@ -12,9 +12,8 @@ import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
 import { UsageTab } from './TaskUsage';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 

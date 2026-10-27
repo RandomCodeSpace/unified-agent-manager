@@ -6,6 +6,7 @@ import { accountQuota, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { Skeleton, useApp } from './common';
 import { ModelCallsContext, modelCallsLines } from './ModelPhase';
 import { Button } from './ui/button';
+import { Meter } from './ui/meter';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
 
@@ -34,15 +35,6 @@ export function allowanceName(quota: Pick<Quota, 'type' | 'unit'>): string {
 
 /** Pace words worth a place on the chip: anything but the calm ones, which the tip carries. */
 const CHIP_PACE: Record<string, string> = { 'Ahead of pace': 'ahead', 'Allowance exhausted': 'used up', 'Previous quota; refresh failed': 'stale', 'Waiting for the refreshed allowance': 'resetting' };
-
-/** A short meter of what is left: `hairline` track, the fill in the pace tone, drawn with `scaleX`. */
-function Meter({ remaining, tone, className }: Readonly<{ remaining: number; tone: keyof typeof QUOTA_FILLS; className?: string }>) {
-  return (
-    <span aria-hidden="true" className={cn('relative block h-1 overflow-hidden rounded-full bg-hairline', className)}>
-      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-240', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${remaining / 100})` }} />
-    </span>
-  );
-}
 
 /** The model calls in flight the button counts: the Threads' main agents, their subagents and Background AI. */
 export const callsInFlight = (calls: ModelCalls) => calls.threads + calls.subagents + calls.background;
@@ -113,7 +105,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
       {variant === 'chip' ? (
         // 28px like the buttons beside it; a touch's hit area grows to 44px (`sm`).
         <Popover.Trigger render={<Button data-account-usage data-model-calls={count} size="sm" aria-label={label} aria-describedby={descriptionId} className={cn('min-w-0 gap-1.5 px-2 text-caption font-normal data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
-          {meter && <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-7 shrink-0" />}
+          {meter && <Meter share={(pace.remaining ?? 0) / 100} fill={QUOTA_FILLS[pace.tone]} className="w-7 shrink-0" />}
           <span className={cn('shrink-0 font-medium tabular-nums', known ? 'text-ink' : 'text-muted')}>{known ? (quota.unlimited ? 'Unlimited' : `${share} left`) : 'Usage'}</span>
           {word && <span className={cn('min-w-0 truncate', QUOTA_TONES[pace.tone])}>{word}</span>}
           {calls && <><span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-hairline-strong" /><CallsFace calls={calls} /></>}
@@ -122,14 +114,14 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
         // The rail's: the share left in words over a short meter, then the work in flight, as wide as the rail allows.
         <Popover.Trigger render={<Button data-account-usage data-model-calls={count} aria-label={label} aria-describedby={descriptionId} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5 text-caption leading-none data-popup-open:bg-tint-selected [&_svg]:size-3.5', className)} />}>
           <span className={cn('font-medium tabular-nums', pace.tone === 'healthy' ? 'text-ink' : QUOTA_TONES[pace.tone])}>{share}</span>
-          {meter ? <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-6" /> : <span aria-hidden="true" className="block h-1" />}
+          {meter ? <Meter share={(pace.remaining ?? 0) / 100} fill={QUOTA_FILLS[pace.tone]} className="w-6" /> : <span aria-hidden="true" className="block h-1" />}
           {calls && <CallsFace calls={calls} rail />}
         </Popover.Trigger>
       )}
     </Tip>
     <span id={descriptionId} className="sr-only">{[description, ...lines].join('. ')}</span>
     {/* As tall as its content up to 50rem, room for Now above the allowance and the top five models, so a short model list leaves no blank space; past that only the model list scrolls. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-w-[calc(100vw-1rem)] max-h-[min(50rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
+    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} className="w-[36rem] max-h-[min(50rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
       {/* No open gate: the Portal mounts only while the popup is open or leaving, so the content stays through the exit. */}
       <Suspense fallback={<Skeleton label="Loading usage…" rows={3} className="p-4" />}><UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} /></Suspense>
     </Popover.Content>

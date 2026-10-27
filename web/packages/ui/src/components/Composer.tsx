@@ -19,7 +19,6 @@ import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput'
 import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
 import { DrawingChips } from './Drawing';
-import { PHONE } from './Todos';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
@@ -35,7 +34,7 @@ import { EditStrip, type Editing } from './EditResend';
 import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
-import { AlertDialog, useConfirm } from './ui/dialog';
+import { AlertDialog, PHONE, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu, type ActionItem } from './ui/menu';
 import { PanelHead, PanelSection } from './ui/panel';

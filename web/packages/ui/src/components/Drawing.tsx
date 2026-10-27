@@ -8,7 +8,7 @@ import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useM
 import { useApi } from '../ApiContext';
 import { describeError, taskName, type Drawing, type DrawingDoc, type DrawingPut, type DrawingSaved, type SessionDetail } from '../api';
 import { useApp } from './common';
-import { PHONE } from './Todos';
+import { PHONE } from './ui/dialog';
 
 // Everything that draws (the cards, the chips, the editor, Excalidraw behind them) loads on the
 // first drawing shown or made; this module keeps only the Thread's list and the loaders.

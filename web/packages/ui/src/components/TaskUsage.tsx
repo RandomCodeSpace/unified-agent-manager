@@ -8,6 +8,7 @@ import { Note } from './common';
 import { plural, shares, time, ToolTimes, useTimeSplit } from './TimeSplit';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Meter } from './ui/meter';
 import { PanelSection } from './ui/panel';
 import { HelpTip } from './ui/tooltip';
 
@@ -55,10 +56,6 @@ function Tile({ label, value, sub, muted }: Readonly<{ label: string; value: str
     <p className={cn('text-title tabular-nums', muted ? 'text-muted' : 'text-ink')}>{value}</p>
     {sub && <p className="text-caption tabular-nums text-muted">{sub}</p>}
   </div>;
-}
-
-function Meter({ share, className, fill }: Readonly<{ share: number; className: string; fill: string }>) {
-  return <div aria-hidden="true" className={cn('w-full overflow-hidden rounded-full bg-hairline', className)}><div className={cn('h-full rounded-full', fill)} style={{ width: `${Math.min(100, Math.max(0, share * 100))}%` }} /></div>;
 }
 
 /** An agent row's name: the main agent, else what its subagent was asked to do with its kind beside it, else the reported name and ID. */

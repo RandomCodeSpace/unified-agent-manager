@@ -61,7 +61,7 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
   };
   return (
     <Popover.Root open onOpenChange={open => { if (!open && !busy && !dismissing) onClose(); }} modal={false}>
-      <Popover.Content anchor={anchor} className="w-80 max-w-[calc(100vw-16px)] max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
+      <Popover.Content anchor={anchor} className="w-80 max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
         <Popover.Title>Branch from here</Popover.Title>
         <Popover.Description>
           Copies the conversation through this reply into a new thread. Both threads use the same project and current files. No message is sent until you continue.

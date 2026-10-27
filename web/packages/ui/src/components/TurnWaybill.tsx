@@ -9,11 +9,10 @@ import { completedDuration, formatMs } from '../lib/transcript';
 import { clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
+import { plural } from './TimeSplit';
 import { Button } from './ui/button';
 import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
-
-const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`;
 
 /** One line per section from the timing alone; a section without a figure is left out. `nano_aiu` is in billionths of an AI credit. */
 function lines(timing: TurnTiming): { label: string; value: ReactNode }[] {

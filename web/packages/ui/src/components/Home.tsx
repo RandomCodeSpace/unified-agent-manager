@@ -4,7 +4,7 @@ import type { Project, SessionSummary } from '../api';
 import type { Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
 import { byActivity, taskStatus, type Unread } from '../lib/tasks';
-import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, relTime, useMinuteTick } from './common';
+import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, timeAgo, useMinuteTick } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
 import { InstanceBadge } from './InstanceBadge';
@@ -71,7 +71,6 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
             <ul>
               {recent.map(({ machine, session, project }) => {
                 const status = taskStatus(session, machine.hasNews(session));
-                const updated = relTime(session.updated_at);
                 return (
                   <li key={machines ? `${machine.id}\n${session.id}` : session.id}>
                     <button
@@ -89,7 +88,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
                         <Sep />{status.text}
                       </span>
                       <time dateTime={session.updated_at} title={dateTime(session.updated_at)} className="col-start-3 row-start-1 text-right text-meta text-muted tabular-nums min-[960px]:col-start-4">
-                        <Sep />{updated === 'now' ? 'now' : `${updated} ago`}
+                        <Sep />{timeAgo(session.updated_at)}
                       </time>
                     </button>
                   </li>

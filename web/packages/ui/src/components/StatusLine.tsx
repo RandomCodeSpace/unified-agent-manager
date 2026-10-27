@@ -30,13 +30,14 @@ import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
 import { LiveOutput } from './LiveOutput';
 import { BottomSheet, LiftedRow, SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
-import { PHONE, Reader, type ReaderParts } from './Todos';
+import { Reader, type ReaderParts } from './Todos';
 import { Appear } from './ui/appear';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
+import { backdropClass, PHONE } from './ui/dialog';
 import { popupClass } from './ui/menu';
 import { PanelHead } from './ui/panel';
+import { plural } from './TimeSplit';
 import { Tip } from './ui/tooltip';
 
 /** What the line says. */
@@ -94,7 +95,6 @@ export const PEEK_DELAY_MS = 250;
 export const PEEK_LINES = 6;
 
 const READS = new Set(['view', 'read', 'list']);
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * The live line from what the service says the turn waits on (`turn_activity.phase`) and the main agent's newest
@@ -689,11 +689,11 @@ function Paused({ text }: Readonly<{ text: string }>) {
 }
 
 /** A running subagent's model call being retried, under its row: "Retrying, attempt 2 · HTTP 429 · rate limited". It leaves once the call goes through. */
-export function SubagentRetry({ retry, indent }: Readonly<{ retry: Retry; /** Where the row's name starts, so the line sits under it. */ indent: number }>) {
+export function SubagentRetry({ retry, className }: Readonly<{ retry: Retry; /** Where the row's name starts (its left padding), so the line sits under it. */ className?: string }>) {
   const { lead, parts } = retryWords(retry);
   const text = [lead, ...parts].join(' · ');
   return (
-    <p className="flex min-w-0 items-center gap-1.5 pr-2 pb-1 text-caption text-muted" style={{ paddingLeft: `${indent}px` }}>
+    <p className={cn('flex min-w-0 items-center gap-1.5 pr-2 pb-1 text-caption text-muted', className)}>
       <RotateCw aria-hidden="true" className="size-3 shrink-0" />
       <span className="min-w-0 truncate" title={text}>
         {text}

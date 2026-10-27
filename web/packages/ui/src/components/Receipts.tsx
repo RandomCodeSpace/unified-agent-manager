@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import { MAX_STAMPS, settle, type Stamp } from '../lib/receipts';
 import { useBodyRead } from './Details';
 import { useLocateItem } from './Subagents';
+import { Button } from './ui/button';
 
 // Receipts (DESIGN.md Receipts): under a turn's last reply, the claims its record proves wrong,
 // each stamped with what the record shows. Silent otherwise: a claim that holds, or one the turn
@@ -58,9 +59,9 @@ export function Receipts({ stamps }: Readonly<{ stamps: readonly Stamp[] }>) {
       })}
       {more > 0 && (
         <li>
-          <button type="button" className="h-6 rounded-sm px-1.5 text-meta text-accent hover:underline pointer-coarse:min-h-11" onClick={() => setAll(true)}>
+          <Button variant="link" className="px-1.5 text-meta" onClick={() => setAll(true)}>
             {`Show ${more} more`}
-          </button>
+          </Button>
         </li>
       )}
     </ul>

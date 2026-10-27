@@ -5,9 +5,8 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass, readerPopupClass } from './ui/dialog';
+import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
 
 /**

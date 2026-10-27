@@ -90,7 +90,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
                   {/* One small control per column; its hit area grows to 44px on a coarse pointer without taking width. */}
                   <Popover.Root open={menu === index} onOpenChange={open => setMenu(open ? index : null)}>
                     <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn(selected || filter ? 'text-accent' : 'text-muted', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
-                    <Popover.Content side="bottom" align="end">
+                    <Popover.Content side="bottom" align="end" className="max-w-72">
                       <Popover.Title>{column.name}</Popover.Title>
                       <div className="flex flex-col">
                         <Button size="md" aria-pressed={selected && !sort.descending} className="justify-start px-2" onClick={() => order({ column: index, descending: false })}><ArrowUp />Sort ascending</Button>

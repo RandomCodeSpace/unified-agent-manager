@@ -47,7 +47,7 @@ export function Schedules({ snapshot, open }: Readonly<{ snapshot: ScheduleSnaps
         <CalendarClock aria-hidden="true" className="text-faint" />
         <span className="max-sm:hidden">Scheduled in this Thread ·</span> {count}
       </Popover.Trigger>
-      <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+      <Popover.Content className="w-80 gap-2">
         <Popover.Title>Scheduled in this Thread</Popover.Title>
         <Popover.Description>
           {snapshot.known ? 'The provider runs these while this conversation is open.' : `Showing the first ${entries.length}; this list is incomplete.`}
