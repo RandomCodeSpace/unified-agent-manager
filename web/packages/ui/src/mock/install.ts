@@ -764,6 +764,36 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         { key: 'tool_failures.view', value: '6' },
         { key: 'tool_failures.apply_patch', value: '4' },
         { key: 'tool_failures.edit', value: '2' },
+        { key: 'approvals.wait_median_s', value: '0.0' },
+        { key: 'approvals.wait_p90_s', value: '0.4' },
+        { key: 'approvals.wait_total_s', value: '5210' },
+        { key: 'turns.median_s', value: '8.4' },
+        { key: 'turns.p90_s', value: '41.2' },
+        { key: 'turns.tool_calls_median', value: '1' },
+        { key: 'turns.per_prompt_median', value: '2' },
+        ...(['total', 'user', 'subagent', 'other'] as const).flatMap((g, i) => {
+          const share = [1, 0.12, 0.35, 0.53][i];
+          return [['calls', 1480], ['input', 61e6], ['output', 1.1e6], ['cache_read', 54e6], ['cache_write', 2.9e6], ['reasoning', 0.4e6], ['cost', 3920]].map(([k, v]) => ({ key: `tokens.${g}_${k}`, value: k === 'cost' ? (Number(v) * share).toFixed(2) : String(Math.round(Number(v) * share)) }));
+        }),
+        { key: 'models.ttfb_median_ms', value: '5310' },
+        { key: 'models.ttfb_p90_ms', value: '16200' },
+        { key: 'model_calls.gpt-5.6-luna', value: '702' },
+        { key: 'model_calls.gpt-5.6-sol', value: '511' },
+        { key: 'model_calls.claude-opus-5', value: '214' },
+        { key: 'model_calls.Qwen3.8-27B', value: '53' },
+        { key: 'model_changes.model_picker', value: '6' },
+        { key: 'uam.settle', value: '12' },
+        { key: 'config.threads', value: '18' },
+        { key: 'config.threads_yolo', value: '18' },
+      ],
+      // The last 7 days: the journal counts at about a fifth of the whole.
+      recent: [
+        { key: 'scan.at', value: '2026-10-16T09:00:00Z' },
+        ...[['sessions.total', 41], ['work.prompts', 120], ['work.tool_calls', 330], ['friction.tool_failures', 19], ['friction.tool_failure_pct', 5], ['friction.permission_prompts', 204], ['permissions.approved', 198], ['permissions.cancelled', 6],
+          ['tools.bash', 140], ['tools.view', 61], ['tools.web_fetch', 22], ['tool_failures.bash', 11], ['tool_failures.web_fetch', 8], ['turns.median_s', 6.9], ['turns.p90_s', 30.5], ['models.ttfb_median_ms', 3900], ['models.ttfb_p90_ms', 11800],
+          ['tokens.total_cost', 801], ['tokens.user_cost', 90], ['tokens.subagent_cost', 300], ['tokens.other_cost', 411], ['tokens.user_calls', 40], ['tokens.subagent_calls', 210], ['tokens.other_calls', 60],
+          ['tokens.user_input', 4e6], ['tokens.user_cache_read', 3.1e6], ['tokens.subagent_input', 6e6], ['tokens.subagent_cache_read', 5.6e6], ['tokens.other_input', 7e6], ['tokens.other_cache_read', 6.2e6],
+          ['model_calls.gpt-5.6-luna', 180], ['model_calls.gpt-5.6-sol', 104], ['model_calls.claude-opus-5', 26]].map(([key, value]) => ({ key: String(key), value: String(value) })),
       ],
     });
     const worktreed = worktrees.route(method, path, body);

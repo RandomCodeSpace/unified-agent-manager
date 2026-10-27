@@ -31,6 +31,9 @@ const (
 	sessionStatsTopModels   = 5
 )
 
+// sessionStatsRecent is the window of SessionStats.Recent.
+const sessionStatsRecent = 7 * 24 * time.Hour
+
 // stallRetrySource marks uam's continuation of a stalled request on its user
 // message in the journal (the Copilot adapter's stallSource).
 const stallRetrySource = "uam-stall-retry"
@@ -45,11 +48,13 @@ type SessionStat struct {
 }
 
 // SessionStats is GET /api/session-stats: counts over every Copilot session
-// journal on this server, uam's own counts and its configuration. It holds no
-// prompt, reply, command or tool output text.
+// journal on this server, uam's own counts and its configuration. Recent is the
+// journal counts again over the events of the last 7 days. It holds no prompt,
+// reply, command or tool output text.
 type SessionStats struct {
-	Path  string        `json:"path"`
-	Stats []SessionStat `json:"stats"`
+	Path   string        `json:"path"`
+	Stats  []SessionStat `json:"stats"`
+	Recent []SessionStat `json:"recent"`
 }
 
 // journalEvent is the part of an events.jsonl line the counts read. Command
@@ -145,46 +150,81 @@ func newSessionTally() sessionTally {
 
 // SessionStats scans every session journal under COPILOT_HOME, adds uam's own
 // counts and configuration (extra first among them), writes the summary to
-// sessionStatsFile and returns it.
+// sessionStatsFile, the recent counts after it as "7d."-prefixed lines, and
+// returns it.
 func (m *Manager) SessionStats(ctx context.Context, extra ...SessionStat) (SessionStats, error) {
 	scope, err := m.configurationScope("")
 	if err != nil {
 		return SessionStats{}, err
 	}
 	journals, _ := filepath.Glob(filepath.Join(scope.base, "session-state", "*", "events.jsonl"))
-	t := newSessionTally()
+	now := time.Now()
+	t, recent := newSessionTally(), newSessionTally()
 	for _, path := range journals {
 		if err := ctx.Err(); err != nil {
 			return SessionStats{}, err
 		}
-		t.scan(path)
+		t.scan(path, &recent, now.Add(-sessionStatsRecent))
 	}
-	stats := append(t.stats(time.Now()), m.uamStats()...)
+	stats := append(t.stats(now), m.uamStats()...)
 	stats = append(append(stats, extra...), m.configStats()...)
-	out := SessionStats{Path: filepath.Join(filepath.Dir(m.store.Path()), sessionStatsFile), Stats: stats}
+	out := SessionStats{Path: filepath.Join(filepath.Dir(m.store.Path()), sessionStatsFile), Stats: stats, Recent: recent.stats(now)}
 	var b strings.Builder
-	for _, s := range out.Stats {
-		b.WriteString(s.Key)
-		b.WriteByte('=')
-		b.WriteString(s.Value)
-		b.WriteByte('\n')
+	write := func(prefix string, list []SessionStat) {
+		for _, s := range list {
+			b.WriteString(prefix)
+			b.WriteString(s.Key)
+			b.WriteByte('=')
+			b.WriteString(s.Value)
+			b.WriteByte('\n')
+		}
 	}
+	write("", out.Stats)
+	write("7d.", slices.DeleteFunc(slices.Clone(out.Recent), func(s SessionStat) bool { return strings.HasPrefix(s.Key, "scan.") }))
 	if err := writeFileAtomic(out.Path, ".session-stats-*", []byte(b.String())); err != nil {
 		return SessionStats{}, err
 	}
 	return out, nil
 }
 
-func (t *sessionTally) scan(path string) {
+// journalCount is one tally's state while a journal is read; seen is whether
+// the journal counts as one of its sessions.
+type journalCount struct {
+	t              *sessionTally
+	js             *journalScan
+	seen, prompted bool
+}
+
+func newJournalCount(t *sessionTally, seen bool) *journalCount {
+	return &journalCount{t: t, seen: seen, js: &journalScan{tools: map[string]string{}, asked: map[string]time.Time{}, commands: map[[32]byte]bool{}, turns: map[string]*openTurn{}, turnsSince: -1, shell: map[string]map[[32]byte]bool{}}}
+}
+
+func (c *journalCount) add(e *journalEvent) {
+	c.seen = true
+	c.prompted = c.t.add(e, c.js) || c.prompted
+}
+
+func (c *journalCount) done() {
+	if !c.seen {
+		return
+	}
+	c.t.sessions++
+	c.t.withPrompts += b2i(c.prompted)
+	if c.js.turnsSince >= 0 {
+		c.t.promptTurns = append(c.t.promptTurns, float64(c.js.turnsSince))
+	}
+}
+
+// scan counts one journal into t, and its events at or after since into
+// recent, which counts it as a session only when one of them is.
+func (t *sessionTally) scan(path string, recent *sessionTally, since time.Time) {
 	f, err := os.Open(path) // #nosec G304 -- a journal under the service's own COPILOT_HOME.
 	if err != nil {
 		t.skipped++
 		return
 	}
 	defer func() { _ = f.Close() }()
-	t.sessions++
-	prompted := false
-	js := &journalScan{tools: map[string]string{}, asked: map[string]time.Time{}, commands: map[[32]byte]bool{}, turns: map[string]*openTurn{}, turnsSince: -1, shell: map[string]map[[32]byte]bool{}}
+	all, last := newJournalCount(t, true), newJournalCount(recent, false)
 	r := bufio.NewReader(f)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -193,7 +233,10 @@ func (t *sessionTally) scan(path string) {
 			if json.Unmarshal(line, &e) != nil {
 				t.skipped++
 			} else {
-				prompted = t.add(&e, js) || prompted
+				all.add(&e)
+				if at, err := time.Parse(time.RFC3339Nano, e.Timestamp); err == nil && !at.Before(since) {
+					last.add(&e)
+				}
 			}
 		}
 		if err != nil {
@@ -203,12 +246,8 @@ func (t *sessionTally) scan(path string) {
 			break
 		}
 	}
-	if prompted {
-		t.withPrompts++
-	}
-	if js.turnsSince >= 0 {
-		t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
-	}
+	all.done()
+	last.done()
 }
 
 // add counts one event; it reports whether the event is a user prompt.

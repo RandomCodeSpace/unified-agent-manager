@@ -511,6 +511,8 @@ export interface RemovedWorktree {
 export interface SessionStats {
   path: string;
   stats: { key: string; value: string }[];
+  /** The journal counts over the last 7 days' events (no uam or config keys); absent from older servers. */
+  recent?: { key: string; value: string }[];
 }
 
 /** GET /api/worktrees: biggest first, from every folder worktrees went in. */
