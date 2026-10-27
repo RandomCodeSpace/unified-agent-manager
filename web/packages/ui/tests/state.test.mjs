@@ -140,6 +140,19 @@ test('usage follows snapshots and frames while retaining explicit stale state', 
   assert.equal(state.usage, null);
 });
 
+test('a failed save follows snapshots and save_status frames until one clears it', () => {
+  let state = reducer(initialState, { type: 'snapshot', data: { seq: 10, projects: [], sessions: [], session: null, save_error: 'disk full' } });
+  assert.equal(state.saveError, 'disk full');
+  state = update(state, { name: 'save_status', seq: 9 });
+  assert.equal(state.saveError, 'disk full');
+  state = update(state, { name: 'save_status', seq: 11 });
+  assert.equal(state.saveError, '');
+  state = update(state, { name: 'save_status', seq: 12, save_error: 'read-only' });
+  assert.equal(state.saveError, 'read-only');
+  state = reducer(state, { type: 'snapshot', data: { seq: 13, projects: [], sessions: [], session: null } });
+  assert.equal(state.saveError, '');
+});
+
 test('a summary without usage clears the previous task estimate', () => {
   let state = { ...initialState, selectedId: 'task', detail: { id: 'task', usage: { ai_units: 3 }, context: { used: 31, limit: 200 } } };
   state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'closed' } });

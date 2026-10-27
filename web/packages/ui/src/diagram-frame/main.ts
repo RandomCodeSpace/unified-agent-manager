@@ -89,5 +89,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   const req = parseRequest(e.data);
   if (!req) return;
   const work = 'convert' in req ? convert(req.id, req.convert) : handle(req.id, req.source, req.theme);
-  void work.then((reply) => window.parent.postMessage(reply, e.origin));
+  const reply = (r: DiagramReply) => window.parent.postMessage(r, e.origin);
+  // A reply the browser cannot post (it does not clone) still answers, with why.
+  void work.then(reply).catch((err: unknown) => reply({ id: req.id, error: err instanceof Error ? err.message : String(err) }));
 });

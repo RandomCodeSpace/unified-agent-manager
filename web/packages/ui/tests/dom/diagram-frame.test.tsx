@@ -90,4 +90,21 @@ describe('diagram frame', () => {
     converter.parseMermaidToExcalidraw.mockRejectedValueOnce(new Error('Unsupported diagram type: gantt'));
     expect(await convert('c2', 'gantt\n  title x')).toEqual({ id: 'c2', error: 'Unsupported diagram type: gantt' });
   });
+
+  test.each([
+    ['an Error', new DOMException('could not be cloned', 'DataCloneError'), 'could not be cloned'],
+    ['a value', 'refused', 'refused'],
+  ])('a reply the browser cannot post answers with why (%s thrown)', async (_kind, thrown, error) => {
+    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements: [{ type: 'rectangle', id: 'a' }] });
+    const reply = await new Promise<unknown>((resolve) => {
+      const post = vi.spyOn(window.parent, 'postMessage')
+        .mockImplementationOnce(() => { throw thrown; })
+        .mockImplementationOnce((r: unknown) => {
+          post.mockRestore();
+          resolve(r);
+        });
+      window.dispatchEvent(new MessageEvent('message', { data: { id: 'c3', convert: 'flowchart LR\n  a --> b' }, source: window.parent, origin: 'http://localhost' }));
+    });
+    expect(reply).toEqual({ id: 'c3', error });
+  });
 });
