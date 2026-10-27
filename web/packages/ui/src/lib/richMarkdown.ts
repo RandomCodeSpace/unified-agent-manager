@@ -45,44 +45,75 @@ function boldLead(item: MdNode): MdNode | null {
 
 const plain = (nodes: MdNode[] = []): string => nodes.map((n) => n.value ?? plain(n.children)).join('');
 
-/**
- * Every item `**Label:** value` (colon inside or right after the bold): a list of facts, as a
- * label/value grid; two to four facts that are each one short figure: stat tiles.
- */
-function facts(list: MdNode) {
-  const items = list.children ?? [];
-  if (list.ordered || items.length < 2 || items.some((i) => i.checked != null)) return false;
-  const rows: { label: MdNode[]; value: MdNode[]; rest: MdNode[] }[] = [];
-  for (const item of items) {
-    const lead = boldLead(item);
-    if (!lead) return false;
-    const after = item.children![0].children!.slice(1);
-    const label = [...(lead.children ?? [])];
-    const last = label.at(-1);
-    let value: MdNode[];
-    if (last?.type === 'text' && last.value?.trimEnd().endsWith(':')) {
-      label[label.length - 1] = { ...last, value: last.value.trimEnd().slice(0, -1) };
-      value = after;
-    } else if (after[0]?.type === 'text' && after[0].value?.startsWith(':')) {
-      value = [{ ...after[0], value: after[0].value.slice(1) }, ...after.slice(1)];
-    } else return false;
-    if (value[0]?.type === 'text') value[0] = { ...value[0], value: value[0].value!.trimStart() };
-    value = value.filter((n) => n.type !== 'text' || n.value);
-    const rest = item.children!.slice(1);
-    if (!plain(label).trim() || (!value.length && !rest.length)) return false;
-    rows.push({ label, value, rest });
-  }
+interface Fact { label: MdNode[]; value: MdNode[]; rest: MdNode[] }
+
+/** A paragraph that opens `**Label:** value` (the colon inside or right after the bold), split into its label and value. */
+function labelled(para: MdNode | undefined): Omit<Fact, 'rest'> | null {
+  const lead = para?.type === 'paragraph' ? para.children?.[0] : undefined;
+  if (lead?.type !== 'strong') return null;
+  const after = para!.children!.slice(1);
+  const label = [...(lead.children ?? [])];
+  const last = label.at(-1);
+  let value: MdNode[];
+  if (last?.type === 'text' && last.value?.trimEnd().endsWith(':')) {
+    label[label.length - 1] = { ...last, value: last.value.trimEnd().slice(0, -1) };
+    value = after;
+  } else if (after[0]?.type === 'text' && after[0].value?.startsWith(':')) {
+    value = [{ ...after[0], value: after[0].value.slice(1) }, ...after.slice(1)];
+  } else return null;
+  if (value[0]?.type === 'text') value[0] = { ...value[0], value: value[0].value!.trimStart() };
+  return plain(label).trim() ? { label, value: value.filter((n) => n.type !== 'text' || n.value) } : null;
+}
+
+/** Facts as a label/value grid; two to four that are each one short figure: stat tiles. */
+function factsNode(node: MdNode, rows: Fact[]) {
   const tiles = rows.length <= 4 && rows.every((r) => !r.rest.length && r.value.length === 1 && r.value[0].type === 'text' && FIGURE.test(r.value[0].value!.trim()));
-  markProps(list, { className: tiles ? ['md-facts', 'md-tiles'] : ['md-facts'] }, 'dl');
-  rows.forEach((row, i) => {
-    const item = items[i];
-    item.data = { ...item.data, hName: 'div' };
-    item.children = [
+  markProps(node, { className: tiles ? ['md-facts', 'md-tiles'] : ['md-facts'] }, 'dl');
+  node.children = rows.map((row) => ({
+    type: 'fact',
+    data: { hName: 'div' },
+    children: [
       { type: 'paragraph', data: { hName: 'dt' }, children: row.label },
       { type: 'paragraph', data: { hName: 'dd' }, children: [...row.value, ...row.rest] },
-    ];
-  });
+    ],
+  }));
+}
+
+/** A bullet list whose every item opens `**Label:** value`: facts. */
+function factList(list: MdNode) {
+  const items = list.children ?? [];
+  if (list.ordered || items.length < 2 || items.some((i) => i.checked != null)) return false;
+  const rows: Fact[] = [];
+  for (const item of items) {
+    const row = labelled(item.children?.[0]);
+    const rest = item.children?.slice(1) ?? [];
+    if (!row || (!row.value.length && !rest.length)) return false;
+    rows.push({ ...row, rest });
+  }
+  factsNode(list, rows);
   return true;
+}
+
+/** Two or more paragraphs in a row that each open `**Label:** value`: one facts grid in their place. */
+function factParagraphs(parent: MdNode) {
+  const out: MdNode[] = [];
+  let run: Fact[] = [];
+  const flush = () => {
+    if (run.length >= 2) {
+      const node: MdNode = { type: 'facts' };
+      factsNode(node, run);
+      out.splice(out.length - run.length, run.length, node);
+    }
+    run = [];
+  };
+  for (const child of parent.children ?? []) {
+    const row = labelled(child);
+    if (row?.value.length) run.push({ ...row, rest: [] });
+    else flush();
+    out.push(child);
+  }
+  flush();
+  parent.children = out;
 }
 
 /** A numbered list whose every item opens with bold text: steps. */
@@ -103,10 +134,19 @@ export function remarkRich() {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
-    else if (node.type === 'list' && !facts(node)) {
+    if (node.type === 'list' && !factList(node)) {
       steps(node);
       tasks(node);
     }
   };
-  return (tree: MdNode) => visit(tree);
+  return (tree: MdNode) => {
+    visit(tree);
+    const paragraphs = (node: MdNode) => {
+      // A facts grid's own rows are done; a value that opens in bold is not another fact.
+      if (node.data?.hName === 'dl' || !node.children) return;
+      factParagraphs(node);
+      node.children.forEach(paragraphs);
+    };
+    paragraphs(tree);
+  };
 }

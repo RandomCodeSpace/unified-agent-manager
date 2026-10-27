@@ -137,3 +137,7 @@ test('an absolute path through the Task folder\'s real path names the same file'
   assert.deepEqual(taskFile('/home/dev/linked/src/a.ts', '/home/dev/linked'), { path: 'src/a.ts', hash: '' });
   assert.equal(taskFile('/real/other/a.ts', '/home/dev/linked'), null);
 });
+
+test('a run of label paragraphs stays one block', () => {
+  assert.deepEqual(splitBlocks('a\n\n**A:** 1\n\n**B**: 2\n\nc'), ['a', '**A:** 1\n\n**B**: 2', 'c']);
+});

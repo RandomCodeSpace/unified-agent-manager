@@ -55,3 +55,22 @@ test('rich blocks wait for a streaming block to finish', () => {
   rerender(<Markdown text={text} />);
   expect(screen.getByRole('note').dataset.callout).toBe('note');
 });
+
+test('label paragraphs in a row become one facts grid, also after streaming split the text', () => {
+  const text = 'Intro.\n\n**Contents:** a playground.\n\n**Git**: on `main`.\n\n**Risks:** the CSV header changed.\n\nAfter.';
+  for (const streamed of [false, true]) {
+    const { container, rerender, unmount } = render(<Markdown text={text} streaming={streamed} />);
+    if (streamed) rerender(<Markdown text={text} />);
+    const grids = container.querySelectorAll('dl.md-facts');
+    expect(grids).toHaveLength(1);
+    expect([...grids[0].querySelectorAll('dt')].map(d => d.textContent)).toEqual(['Contents', 'Git', 'Risks']);
+    expect(grids[0].querySelectorAll('dd')[1].textContent).toBe('on main.');
+    expect([...container.querySelectorAll('.md > p, .md p')].map(p => p.textContent)).toEqual(['Intro.', 'After.']);
+    unmount();
+  }
+});
+
+test('one label paragraph, or one without a value, stays a paragraph', () => {
+  const { container } = render(<Markdown text={'**Note:** only one.\n\n**Already done:**\n\n- a'} />);
+  expect(container.querySelector('dl')).toBeNull();
+});
