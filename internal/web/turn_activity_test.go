@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -202,8 +203,15 @@ func TestTurnActivityTodosCountsNowAndCap(t *testing.T) {
 	for i := range maxTodoRows {
 		rows = append(rows, agentapi.Todo{ID: "r" + strings.Repeat("x", i), Title: "Row", Status: agentapi.TodoDone})
 	}
+	// Dependencies on rows past the cap are dropped with them.
+	cut := rows[len(rows)-1].ID
+	rows[1].DependsOn = []string{"a", cut}
+	rows[2].DependsOn = []string{cut}
 	conv.Emit(todosEvent(true, rows...))
 	v := detail(t, m, sum.ID).TurnActivity.Todos
+	if b, c := v.Todos[1], v.Todos[2]; !slices.Equal(b.DependsOn, []string{"a"}) || c.DependsOn != nil {
+		t.Fatalf("depends on: b %v, c %v", b.DependsOn, c.DependsOn)
+	}
 	if !v.Known || v.Touched || len(v.Todos) != maxTodoRows || v.Omitted != len(rows)-maxTodoRows {
 		t.Fatalf("view: known %v touched %v rows %d omitted %d", v.Known, v.Touched, len(v.Todos), v.Omitted)
 	}

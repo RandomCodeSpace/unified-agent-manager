@@ -316,6 +316,7 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
       view.omitted ? `${view.omitted} more not shown` : '',
     ].filter(Boolean),
     sections: todoSections(view),
+    rows: view.todos,
     now: working ? view.now : undefined,
     foot: 'Read only · to change it, ask in the chat',
     name: (t) => names.get(t.agent_id ?? ''),
@@ -331,6 +332,7 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     right: <span className="shrink-0 text-caption tabular-nums text-muted">{`${plural(ledger.length, 'row')} · ${plural(kept?.data?.turns.length ?? turns.length, 'turn')}`}</span>,
     facts: [kept?.data ? 'Every row the agents kept, with when it changed; rows they removed stay here' : (kept?.error ?? '…')],
     sections: ledgerSections(ledger),
+    rows: ledger.map((r) => r.todo),
     foot: 'Kept by uam when each turn ended',
     name: (t) => byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? ''),
     stamp: (t) => {

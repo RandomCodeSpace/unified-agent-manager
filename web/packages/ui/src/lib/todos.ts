@@ -123,14 +123,18 @@ export interface LedgerRow { todo: Todo & { agent?: string }; at?: string; turn?
  * latest status, title, note and agent, with `at` (the row's `changed_at`, else the record's end)
  * and `turn` from the record that last changed its status or first saw it; then the live list,
  * the newest state, whose rows no record holds stamp without a turn (the running turn has no
- * record yet). `removed`: the live list is known, whole, and the row is not in it.
+ * record yet). `removed`: the live list is known, whole, and the row is not in it. Rows come in the
+ * live list's order, the one its rails follow, then the rows only the records hold.
  */
 export function todoLedger(history: TodoHistory, timings: readonly TurnTiming[] = []): LedgerRow[] {
   const rows = new Map<string, LedgerRow>();
+  // A row a record or the live list shows open after an earlier one showed it done was reopened between
+  // them; uam's own count (`reopened`) also has reopens within a turn, so the larger one stands.
   const take = (t: Todo & { agent?: string }, at?: string, turn?: number) => {
     const was = rows.get(t.id);
-    if (was && was.todo.status === t.status) was.todo = { ...was.todo, ...t };
-    else rows.set(t.id, { todo: { ...was?.todo, ...t }, at, turn, removed: false });
+    const reopened = Math.max(t.reopened ?? 0, (was?.todo.reopened ?? 0) + (was?.todo.status === 'done' && t.status !== 'done' ? 1 : 0)) || undefined;
+    if (was && was.todo.status === t.status) was.todo = { ...was.todo, ...t, reopened };
+    else rows.set(t.id, { todo: { ...was?.todo, ...t, reopened }, at, turn, removed: false });
   };
   for (const rec of history.turns) {
     const turn = timings.findIndex((t) => t.id === rec.timing_id) + 1 || undefined;
@@ -144,6 +148,9 @@ export function todoLedger(history: TodoHistory, timings: readonly TurnTiming[] 
       const kept = new Set(live.todos.map((t) => t.id));
       for (const row of rows.values()) row.removed = !kept.has(row.todo.id);
     }
+    const order = new Map(live.todos.map((t, i) => [t.id, i]));
+    const last = live.todos.length;
+    return [...rows.values()].sort((a, b) => (order.get(a.todo.id) ?? last) - (order.get(b.todo.id) ?? last));
   }
   return [...rows.values()];
 }
@@ -160,6 +167,91 @@ export function ledgerStamp(row: LedgerRow, clock: string): string {
 export function ledgerSections(rows: readonly LedgerRow[]): TodoSection[] {
   const when = (r: LedgerRow) => (r.at ? Date.parse(r.at) : Number.MAX_SAFE_INTEGER);
   return stageSections([...rows].sort((a, b) => when(b) - when(a)).map((r) => r.todo));
+}
+
+/** One dependency drawn beside the list: from the row waited on to the row that waits (indexes in the list), on its lane (0 beside the rows), as a `loop` (both rows wait on each other, through any rows), a `wait` (a blocked row waits on an open one) or a plain `link`. */
+export interface TodoLink { from: number; to: number; lane: number; kind: 'loop' | 'wait' | 'link' }
+
+/** Lanes beside the list; dependencies past them go undrawn and are counted. */
+export const MAX_LANES = 8;
+
+/**
+ * A list's dependencies as rails beside its rows, in the list's order, which status changes never
+ * move: null when no row waits on another. The links from one row share a lane, a trunk from it past
+ * its last dependent; each loop link has its own. Loops take the lanes beside the rows first, then
+ * the shortest trunks, which crosses the fewest. `loops` counts the rings of rows waiting on each
+ * other; `hidden` the links past `MAX_LANES`.
+ */
+export function todoLinks(todos: readonly Todo[]): { links: TodoLink[]; lanes: number; loops: number; hidden: number } | null {
+  const at = new Map(todos.map((t, i) => [t.id, i]));
+  const next: number[][] = todos.map(() => []);
+  const edges: { from: number; to: number }[] = [];
+  todos.forEach((t, to) => {
+    for (const id of t.depends_on ?? []) {
+      const from = at.get(id);
+      if (from === undefined || from === to) continue;
+      next[from].push(to);
+      edges.push({ from, to });
+    }
+  });
+  if (!edges.length) return null;
+  const ring = rings(next);
+  const sizes = new Map<number, number>();
+  for (const r of ring) sizes.set(r, (sizes.get(r) ?? 0) + 1);
+  const kindOf = (e: { from: number; to: number }): TodoLink['kind'] =>
+    ring[e.from] === ring[e.to] ? 'loop' : todos[e.to].status === 'blocked' && todos[e.from].status !== 'done' ? 'wait' : 'link';
+  const groups = new Map<string, { edges: { from: number; to: number; kind: TodoLink['kind'] }[]; lo: number; hi: number; loop: boolean }>();
+  for (const e of edges) {
+    const kind = kindOf(e);
+    const key = kind === 'loop' ? `${e.from}>${e.to}` : `${e.from}`;
+    const g = groups.get(key) ?? { edges: [], lo: e.from, hi: e.from, loop: kind === 'loop' };
+    g.edges.push({ ...e, kind });
+    g.lo = Math.min(g.lo, e.to);
+    g.hi = Math.max(g.hi, e.to);
+    groups.set(key, g);
+  }
+  const order = [...groups.values()].sort((a, b) => Number(b.loop) - Number(a.loop) || a.hi - a.lo - (b.hi - b.lo) || a.lo - b.lo);
+  const taken: { lo: number; hi: number }[][] = [];
+  const links: TodoLink[] = [];
+  let hidden = 0;
+  for (const g of order) {
+    let lane = 0;
+    while (lane < MAX_LANES && taken[lane]?.some((o) => g.lo <= o.hi && o.lo <= g.hi)) lane++;
+    if (lane === MAX_LANES) {
+      hidden += g.edges.length;
+      continue;
+    }
+    (taken[lane] ??= []).push(g);
+    for (const e of g.edges) links.push({ ...e, lane });
+  }
+  return { links, lanes: taken.length, loops: [...sizes.values()].filter((n) => n > 1).length, hidden };
+}
+
+/** Each row's ring (Tarjan's strongly connected components) over `next`, the rows waiting on it: rows in one ring wait on each other. */
+function rings(next: readonly number[][]): number[] {
+  const index: number[] = [], low: number[] = [], ring: number[] = [], stack: number[] = [], on: boolean[] = [];
+  let n = 0, rings = 0;
+  const visit = (v: number) => {
+    index[v] = low[v] = n++;
+    stack.push(v);
+    on[v] = true;
+    for (const w of next[v]) {
+      if (index[w] === undefined) {
+        visit(w);
+        low[v] = Math.min(low[v], low[w]);
+      } else if (on[w]) low[v] = Math.min(low[v], index[w]);
+    }
+    if (low[v] !== index[v]) return;
+    let w: number;
+    do {
+      w = stack.pop()!;
+      on[w] = false;
+      ring[w] = rings;
+    } while (w !== v);
+    rings++;
+  };
+  next.forEach((_, v) => index[v] === undefined && visit(v));
+  return ring;
 }
 
 /** How many turn lists stay in memory: one never changes once its turn ended, and none is kept anywhere else. */

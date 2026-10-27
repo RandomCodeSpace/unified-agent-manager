@@ -272,6 +272,7 @@ type fakeSession struct {
 	taskLists         int
 	tasksErr          error
 	todoRows          []rpc.PlanSQLTodosRow
+	todoDeps          []rpc.PlanSQLTodoDependency
 	todoReads         int
 	todosErr          error
 	todoHook          func() // runs while the todos are being read
@@ -453,14 +454,17 @@ func (s *fakeSession) ListTasks(context.Context) ([]rpc.TaskInfo, error) {
 	return append([]rpc.TaskInfo(nil), s.tasks...), s.tasksErr
 }
 
-func (s *fakeSession) ReadTodos(context.Context) ([]rpc.PlanSQLTodosRow, error) {
+func (s *fakeSession) ReadTodos(context.Context) (*rpc.PlanReadSQLTodosWithDependenciesResult, error) {
 	if s.todoHook != nil {
 		s.todoHook()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.todoReads++
-	return slices.Clone(s.todoRows), s.todosErr
+	if s.todosErr != nil {
+		return nil, s.todosErr
+	}
+	return &rpc.PlanReadSQLTodosWithDependenciesResult{Rows: slices.Clone(s.todoRows), Dependencies: slices.Clone(s.todoDeps)}, nil
 }
 
 func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {

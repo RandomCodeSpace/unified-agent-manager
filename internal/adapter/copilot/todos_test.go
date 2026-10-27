@@ -210,7 +210,7 @@ func TestWebTodosReadFailureMarksTheListUnknown(t *testing.T) {
 	h.fs.onEvent(todosChanged("e4", "", 103))
 	waitFor(t, "the known list", func() bool { return len(todoLists(h, n)) == 3 })
 	got := todoLists(h, n)
-	if got[1].Known || len(got[1].Todos) != 1 || !got[2].Known || got[2].Todos[0] != got[0].Todos[0] {
+	if got[1].Known || len(got[1].Todos) != 1 || !got[2].Known || !got[2].Todos[0].Equal(got[0].Todos[0]) {
 		t.Fatalf("lists = %+v", got)
 	}
 }
@@ -230,7 +230,7 @@ func TestWebOpenResumeReadsTheTodosOnce(t *testing.T) {
 	waitFor(t, "the list", func() bool { return len(todoLists(h, 0)) == 1 })
 	time.Sleep(2 * todosDebounce)
 	// A row first seen on opening has no owner and no time of change.
-	if got := todoLists(h, 0); h.fs.todoReadCount() != 1 || len(got) != 1 || !got[0].Known || len(got[0].Todos) != 1 || got[0].Todos[0] != (agentapi.Todo{ID: "a", Title: "Left open", Status: agentapi.TodoInProgress}) {
+	if got := todoLists(h, 0); h.fs.todoReadCount() != 1 || len(got) != 1 || !got[0].Known || len(got[0].Todos) != 1 || !got[0].Todos[0].Equal(agentapi.Todo{ID: "a", Title: "Left open", Status: agentapi.TodoInProgress}) {
 		t.Fatalf("reads %d, lists %+v", h.fs.todoReadCount(), got)
 	}
 }
@@ -239,15 +239,15 @@ func TestSDKSessionReadTodosFallsBack(t *testing.T) {
 	rt := startFakeRuntime(t)
 	s := openFakeSDKSession(t, rt)
 	ctx := context.Background()
-	rt.set("session.plan.readSqlTodosWithDependencies", `{"rows":[{"id":"a","title":"Step","status":"done"}],"dependencies":[]}`)
-	if rows, err := s.ReadTodos(ctx); err != nil || len(rows) != 1 || *rows[0].ID != "a" || rt.last("session.plan.readSqlTodos") != nil {
-		t.Fatalf("ReadTodos = %+v, %v", rows, err)
+	rt.set("session.plan.readSqlTodosWithDependencies", `{"rows":[{"id":"a","title":"Step","status":"done"}],"dependencies":[{"todoId":"a","dependsOn":"b"}]}`)
+	if res, err := s.ReadTodos(ctx); err != nil || len(res.Rows) != 1 || *res.Rows[0].ID != "a" || len(res.Dependencies) != 1 || res.Dependencies[0].DependsOn != "b" || rt.last("session.plan.readSqlTodos") != nil {
+		t.Fatalf("ReadTodos = %+v, %v", res, err)
 	}
 	// A CLI that refuses the read with dependencies is asked for the rows alone.
 	rt.fail("session.plan.readSqlTodosWithDependencies", "unknown method")
 	rt.set("session.plan.readSqlTodos", `{"rows":[{"id":"b","title":"Other"}]}`)
-	if rows, err := s.ReadTodos(ctx); err != nil || len(rows) != 1 || *rows[0].ID != "b" || rows[0].Status != nil {
-		t.Fatalf("fallback ReadTodos = %+v, %v", rows, err)
+	if res, err := s.ReadTodos(ctx); err != nil || len(res.Rows) != 1 || *res.Rows[0].ID != "b" || res.Rows[0].Status != nil || len(res.Dependencies) != 0 {
+		t.Fatalf("fallback ReadTodos = %+v, %v", res, err)
 	}
 	rt.fail("session.plan.readSqlTodos", "unknown method")
 	if _, err := s.ReadTodos(ctx); err == nil {
@@ -396,5 +396,39 @@ func TestWebTurnEndIsReleasedByAStallTheNextTurnAndClose(t *testing.T) {
 	}
 	if got := turnEndOrder(h, n); !slices.Equal(got, []string{"completed"}) {
 		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestTodoApplyKeepsDependenciesAndCountsReopens(t *testing.T) {
+	dep := func(id, on string) rpc.PlanSQLTodoDependency {
+		return rpc.PlanSQLTodoDependency{TodoID: id, DependsOn: on}
+	}
+	var reads todoReads
+	list := reads.apply(
+		[]rpc.PlanSQLTodosRow{todoRow("check", "Check contrast", "done"), todoRow("fix", "Fix tokens", "in_progress"), todoRow("sum", "Summarise", "pending")},
+		// A loop, a duplicate, a row on itself and a row not in the list.
+		[]rpc.PlanSQLTodoDependency{dep("fix", "check"), dep("check", "fix"), dep("sum", "check"), dep("sum", "fix"), dep("sum", "check"), dep("sum", "sum"), dep("sum", "gone"), dep("gone", "sum")},
+	)
+	want := map[string][]string{"check": {"fix"}, "fix": {"check"}, "sum": {"check", "fix"}}
+	for _, todo := range list.Todos {
+		if !slices.Equal(todo.DependsOn, want[todo.ID]) || todo.Reopened != 0 {
+			t.Fatalf("%s: depends on %v, reopened %d", todo.ID, todo.DependsOn, todo.Reopened)
+		}
+	}
+	// Leaving done counts a reopen; other changes do not, and the count stays.
+	rows := func(check string) []rpc.PlanSQLTodosRow {
+		return []rpc.PlanSQLTodosRow{todoRow("check", "Check contrast", check), todoRow("fix", "Fix tokens", "done"), todoRow("sum", "Summarise", "pending")}
+	}
+	for i, step := range []struct {
+		check string
+		want  int
+	}{{"in_progress", 1}, {"blocked", 1}, {"done", 1}, {"in_progress", 2}} {
+		list = reads.apply(rows(step.check), nil)
+		if got := list.Todos[0]; got.Reopened != step.want || len(got.DependsOn) != 0 {
+			t.Fatalf("step %d (%s): %+v", i, step.check, got)
+		}
+		if list.Todos[1].Reopened != 0 {
+			t.Fatalf("step %d: fix reopened %d", i, list.Todos[1].Reopened)
+		}
 	}
 }

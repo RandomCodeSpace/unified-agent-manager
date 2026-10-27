@@ -2,15 +2,16 @@
 // button (see StatusLine), and the list as a turn left it, opened from its reply's foot
 // (`TurnTodo`). Both are the one anchored reader (`Reader`): a modal popover beside what opened
 // it, that lifted above the dim, a compact head with the count and meter, eyebrow sections by
-// stage and a keycap foot. A phone gets a sheet from the bottom. The owner changes the list by
-// asking in the chat.
+// stage and a keycap foot. A phone gets a sheet from the bottom. A list whose rows wait on others
+// shows as one list in its own order instead, with the dependencies drawn as rails beside it
+// (`RailList`). The owner changes the list by asking in the chat.
 
-import { Ban, Check, Circle, CircleDot, ListChecks, type LucideIcon } from 'lucide-react';
-import { useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Ban, Check, Circle, CircleDot, ListChecks, RotateCw, type LucideIcon } from 'lucide-react';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Todo, type TodoCounts, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection } from '../lib/todos';
+import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoLinks, todoWord, turnTodoName, type TodoLink, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { DOT as IDENTITY_DOT, useSubagentReplies } from './Subagents';
@@ -60,10 +61,10 @@ function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: str
 
 const sameWords = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** One row: its stage's glyph, its title ("now" after the row the work is at), the blocked reason under it, the ledger's stamp under that, and the subagent that first wrote it. */
-function TodoRow({ todo, name, now = false, quietName = false, stamp }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean; stamp?: ReactNode }>) {
+/** One row: its stage's glyph, its title ("now" after the row the work is at, then how many times it was reopened), the blocked reason under it, the ledger's stamp under that, and the subagent that first wrote it. `waits` names the rows it waits on, for those who cannot see the rails. */
+function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, ...li }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean; stamp?: ReactNode; waits?: string } & Pick<ComponentProps<'li'>, 'onPointerEnter' | 'onPointerLeave' | 'onPointerDown'>>) {
   return (
-    <li className="flex min-h-7 items-start gap-2 py-1 pointer-coarse:min-h-9">
+    <li className="flex min-h-7 items-start gap-2 py-1 pointer-coarse:min-h-9" {...li}>
       <span className="flex h-5 w-4 shrink-0 items-center justify-center">
         <TodoMark status={todo.status} />
       </span>
@@ -71,23 +72,102 @@ function TodoRow({ todo, name, now = false, quietName = false, stamp }: Readonly
         <span className={cn('text-ui break-words', todo.status === 'done' ? 'text-muted' : todo.status === 'in_progress' ? 'font-medium text-ink' : 'text-body')}>
           {todo.title}
           {now && <span className="ml-1.5 text-caption font-normal text-accent">now</span>}
+          {!!todo.reopened && (
+            <span className="ml-1.5 inline-flex items-center gap-0.5 align-[-1px] text-caption font-normal tabular-nums text-accent">
+              <RotateCw aria-hidden="true" className="size-3" />
+              <span aria-hidden="true">{todo.reopened}</span>
+              <span className="sr-only">, reopened {todo.reopened === 1 ? 'once' : `${todo.reopened} times`}</span>
+            </span>
+          )}
         </span>
         {todo.status === 'blocked' && todo.note && <span className="text-caption break-words text-warning">{todo.note}</span>}
         {stamp && <span className="text-caption tabular-nums text-muted">{stamp}</span>}
       </span>
       {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} />}
-      <span className="sr-only">, {todoWord(todo.status)}</span>
+      <span className="sr-only">, {todoWord(todo.status)}{waits && `, waits on ${waits}`}</span>
     </li>
   );
 }
 
-/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. */
-export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
+/** A rail's colour: a loop in the accent, a blocked row's wait in the warning tone, any other link quiet. */
+const RAIL: Record<TodoLink['kind'], string> = { loop: 'text-accent', wait: 'text-warning', link: 'text-faint' };
+/** Quiet links first, so a loop or a wait sharing a trunk draws over them. */
+const RAIL_ORDER: Record<TodoLink['kind'], number> = { link: 0, wait: 1, loop: 2 };
+/** A lane's width, and the y of a row's glyph centre below the row's top (its `py-1` plus half its 20 px line). */
+const LANE = 7;
+const GLYPH_Y = 14;
+
+/**
+ * The list in its own order with each dependency drawn beside it, from the row waited on to the
+ * arrow at the row that waits (`todoLinks`). Rows never move as their status changes; pointing at a
+ * row (a tap on a phone) lights its links and dims the others.
+ */
+function RailList({ rows, links, lanes, now, name, stamp }: Readonly<{ rows: readonly Todo[]; links: readonly TodoLink[]; lanes: number; now?: string; name: (todo: Todo) => string | undefined; stamp?: (todo: Todo) => ReactNode }>) {
+  const list = useRef<HTMLUListElement>(null);
+  const [ys, setYs] = useState<number[]>([]);
+  const [height, setHeight] = useState(0);
+  const [focus, setFocus] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const ul = list.current;
+    if (!ul) return;
+    const measure = () => {
+      const next = Array.from(ul.children, (li) => (li as HTMLElement).offsetTop + GLYPH_Y);
+      setYs((was) => (was.length === next.length && was.every((y, i) => y === next[i]) ? was : next));
+      setHeight(ul.offsetHeight);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(ul);
+    return () => observer.disconnect();
+  }, [rows]);
+  const gutter = lanes * LANE + 6;
+  const titles = new Map(rows.map((t) => [t.id, t.title]));
+  return (
+    <div className="relative">
+      <svg aria-hidden="true" width={gutter} height={height} className="pointer-events-none absolute top-0 left-0 overflow-visible" fill="none" strokeWidth={1.25} strokeLinecap="round" strokeLinejoin="round">
+        {ys.length === rows.length &&
+          [...links].sort((a, b) => RAIL_ORDER[a.kind] - RAIL_ORDER[b.kind]).map((l) => {
+            const x = gutter - 4 - l.lane * LANE, from = ys[l.from], to = ys[l.to], dir = to > from ? 1 : -1, r = Math.min(4, Math.abs(to - from) / 2);
+            const end = gutter + 2;
+            const lit = focus === null || focus === l.from || focus === l.to;
+            return (
+              <g key={`${l.from}>${l.to}`} stroke="currentColor" className={cn(RAIL[l.kind], 'transition-opacity duration-100', !lit && 'opacity-25')}>
+                <path d={`M${end} ${from} H${x + r} Q${x} ${from} ${x} ${from + dir * r} V${to - dir * r} Q${x} ${to} ${x + r} ${to} H${end}`} />
+                <path d={`M${end - 3} ${to - 2.5} L${end} ${to} L${end - 3} ${to + 2.5}`} />
+              </g>
+            );
+          })}
+      </svg>
+      <ul ref={list} style={{ paddingLeft: gutter + 2 }}>
+        {rows.map((todo, i) => (
+          <TodoRow
+            key={todo.id}
+            todo={todo}
+            now={todo.id === now && todo.status === 'in_progress'}
+            name={todo.agent_id ? name(todo) : undefined}
+            quietName
+            stamp={stamp?.(todo)}
+            waits={todo.depends_on?.map((id) => titles.get(id)).filter(Boolean).join(', ')}
+            onPointerEnter={(e) => e.pointerType === 'mouse' && setFocus(i)}
+            onPointerLeave={(e) => e.pointerType === 'mouse' && setFocus(null)}
+            onPointerDown={(e) => e.pointerType !== 'mouse' && setFocus((f) => (f === i ? null : i))}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the rows in the list's own order the rails need when some wait on others (`rows`), the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. */
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
 
 /** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
 function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; title: string }>) {
   const { done = 0, total = 0 } = parts.counts;
   const Glyph = parts.glyph ?? ListChecks;
+  const rails = parts.rows ? todoLinks(parts.rows) : null;
+  const facts = [...parts.facts, rails?.loops ? (rails.loops === 1 ? '1 loop' : `${rails.loops} loops`) : '', rails?.hidden ? `${rails.hidden} more links not drawn` : ''].filter(Boolean);
   return (
     <div className="flex min-h-0 flex-col">
       <PanelHead className={cn('gap-1 pt-2 pb-2', sheet ? 'pr-2 pl-4' : 'pr-3 pl-4')}>
@@ -106,11 +186,12 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
           )}
           {close}
         </div>
-        {parts.facts.length > 0 && <p className="pl-6 text-caption text-muted">{parts.facts.join(' · ')}</p>}
+        {facts.length > 0 && <p className="pl-6 text-caption text-muted">{facts.join(' · ')}</p>}
       </PanelHead>
       <div className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {sheet && parts.blocks}
-        {parts.sections.map((section) => (
+        {rails && parts.rows && <RailList rows={parts.rows} links={rails.links} lanes={rails.lanes} now={parts.now} name={parts.name} stamp={parts.stamp} />}
+        {!rails && parts.sections.map((section) => (
           <PanelSection
             key={section.status}
             label={section.label}
@@ -212,6 +293,7 @@ export function TurnTodo({ timing, blocks }: Readonly<{ timing: TurnTiming; /** 
     counts: rows?.counts ?? counts,
     facts: rows ? snapshotFacts(rows.counts, clock) : [snap && 'error' in snap ? snap.error : 'Loading the list…'],
     sections: rows ? snapshotSections(rows.todos) : [],
+    rows: rows?.todos,
     foot: 'Kept by uam when the turn ended',
     name: (t) => agents.get(t.id),
   };
