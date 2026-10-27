@@ -48,7 +48,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
       {/* Fills the pane (no centred column); the launcher's heading stays centred above the full-width list. */}
       <div className={cn('w-full px-5 pb-12 min-[960px]:px-10', hasProjects ? 'pt-10 min-[960px]:pt-16' : 'pt-20 min-[960px]:pt-32')}>
         <div className="text-center">
-          <Brand className="mb-6 gap-2.5 min-[960px]:mb-7 [&>svg]:size-[34px] [&>span]:text-lg max-sm:hidden" />
+          <Brand className="mb-6 gap-2.5 min-[960px]:mb-7 [&>svg]:size-[34px] max-sm:hidden" />
           <h1 className="text-[25px] leading-tight font-semibold tracking-[-0.5px] text-ink min-[960px]:text-[28px]">
             {hasProjects ? 'What are you working on?' : 'Start with a project'}
           </h1>

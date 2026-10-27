@@ -279,7 +279,7 @@ export function ChangesSheet({
         </Button>
       </PanelHeader>
       {evidence}
-      {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
+      {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">{data.reason.charAt(0).toUpperCase() + data.reason.slice(1)}.</Note>}
       {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}

@@ -1441,7 +1441,7 @@ export default function App() {
   if (mismatched) {
     // Every view but Settings lands here until the account is fixed there; the next meta read lifts it.
     pane = (
-      <EmptyPane leading={leading} connection={connection}>
+      <EmptyPane leading={leading}>
         <h1 className="text-display-md">Copilot is signed in to another account</h1>
         <p className="text-ui text-muted [overflow-wrap:anywhere]">{mismatched.reason}</p>
         <Button variant="primary" onClick={() => openAccount(mismatched.name)}>
@@ -1486,7 +1486,7 @@ export default function App() {
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
-      <EmptyPane leading={leading} connection={connection}>
+      <EmptyPane leading={leading}>
         <h1 className="text-display-md">This thread no longer exists.</h1>
         <p className="text-ui text-muted">It was deleted, or its project was removed.</p>
         <Button variant="secondary" onClick={() => select(null)}>
@@ -1501,7 +1501,7 @@ export default function App() {
   } else {
     pane = (
       <div className="flex min-h-0 flex-1 flex-col">
-        {leading && <PaneHeader leading={leading} connection={connection} />}
+        {leading && <PaneHeader leading={leading} />}
         <Home
           projects={state.projects}
           sessions={state.sessions}
@@ -1707,26 +1707,20 @@ export default function App() {
 }
 
 /** The header of the non-Task views while the sidebar is a drawer (narrow): its toggle, the brand, the connection. */
-function PaneHeader({ leading, connection }: Readonly<{ leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }>) {
+/** A lost connection is the main pane's banner right above this header, so the header does not repeat it. */
+function PaneHeader({ leading }: Readonly<{ leading: React.ReactNode }>) {
   return (
     <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
       {leading}
       <span className="text-title font-semibold text-ink">UAM</span>
-      <span className="flex-1" />
-      {connection && connection !== 'connected' && (
-        <output className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>
-          <Dot tone={connection === 'offline' ? 'error' : 'warning'} />
-          <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
-        </output>
-      )}
     </header>
   );
 }
 
-function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.ReactNode; connection: keyof typeof CONNECTION_TEXT; children: React.ReactNode }>) {
+function EmptyPane({ leading, children }: Readonly<{ leading: React.ReactNode; children: React.ReactNode }>) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {leading && <PaneHeader leading={leading} connection={connection} />}
+      {leading && <PaneHeader leading={leading} />}
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-16 text-center animate-rise">{children}</div>
     </div>
   );

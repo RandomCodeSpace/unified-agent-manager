@@ -135,7 +135,7 @@ describe('charts', () => {
       await user.click(tools.getByRole('button', { name: 'Copy JSON' }));
       expect(copy).toHaveBeenCalledWith(JSON.stringify(chart.options, null, 2));
       await user.click(tools.getByRole('button', { name: 'Pin to project' }));
-      expect(within(await screen.findByRole('dialog', { name: 'Pin to the project' })).getByText(/The agent supplied this chart’s data/)).toBeTruthy();
+      expect(within(await screen.findByRole('dialog', { name: 'Pin to project' })).getByText(/The agent supplied this chart’s data/)).toBeTruthy();
     } finally {
       read.mockRestore();
       copy.mockRestore();
@@ -242,7 +242,7 @@ describe('charts', () => {
 
     expect(screen.getByRole('button', { name: 'Pinned charts, 2' })).toBeTruthy();
     await user.click(tools.getByRole('button', { name: 'Pin to project' }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Pin to the project' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Pin to project' }));
     expect(dialog.getByText(/no agent and no model call/)).toBeTruthy();
     expect(dialog.getByText(/sort \| uniq -c/)).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Pin' }));

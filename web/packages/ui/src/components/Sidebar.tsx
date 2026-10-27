@@ -964,8 +964,9 @@ export const Sidebar = memo(function Sidebar({
         <OneInstance.Provider value={oneInstance}>{shelvesBody}</OneInstance.Provider>
       </div>
 
+      {/* Only in the narrow layout's drawer, which covers the main pane's banner; side by side, that banner says it once. */}
       {connection !== 'connected' && (
-        <output className={cn('mx-2 mb-2 flex items-start gap-2 rounded-sm px-2 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+        <output className={cn('mx-2 mb-2 flex items-start gap-2 rounded-sm px-2 py-1.5 text-caption min-[960px]:hidden', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
           <Dot tone={conn} className="mt-1.5" />
           {CONNECTION_TEXT[connection]}
         </output>
