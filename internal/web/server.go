@@ -119,6 +119,8 @@ type Server struct {
 	grants        *tempGrants
 	// revoked is the set of session cookies Log out ended before their expiry.
 	revoked *revokedSessions
+	// signIns limits access-token checks by sign-in and pairing.
+	signIns *signInLimiter
 	// terminalOrigins are the public origins as WebSocket origin patterns.
 	terminalOrigins []string
 	// mcpCallbackOrigins are configured HTTPS origins indexed by exact Host.
@@ -145,6 +147,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		m: cfg.Manager, token: cfg.Token, headerLog: cfg.LogHeaders,
 		csrf: http.NewCrossOriginProtection(), assets: cfg.Assets, version: cfg.Version, heartbeat: heartbeatInterval,
+		signIns: newSignInLimiter(),
 	}
 	for _, origin := range cfg.PublicOrigins {
 		normalized, err := NormalizePublicOrigin(origin)
@@ -569,6 +572,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	if wait := s.signIns.admit(r); wait > 0 {
+		log.Warn("web login limited", "remote", r.RemoteAddr)
+		setRetryAfter(w, wait)
+		writeError(w, http.StatusTooManyRequests, "too many sign-in attempts; try again later")
+		return
+	}
 	// Compare digests: ConstantTimeCompare returns early on a length
 	// mismatch, and an owner-set token's length is part of the secret.
 	given, want := sha256.Sum256([]byte(strings.TrimSpace(body.Token))), sha256.Sum256([]byte(s.token))
@@ -577,6 +586,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid access token")
 		return
 	}
+	s.signIns.succeeded(r)
 	s.setCookie(w, r, sessionCookie(s.token, r.Host, time.Now().Add(cookieMaxAge*time.Second).Unix()), cookieMaxAge)
 	w.WriteHeader(http.StatusNoContent)
 }

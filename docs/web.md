@@ -86,6 +86,11 @@ tunnel. If local port 8260 is taken, change only the first number, for example
 Enter the access token printed by `uam web`. The browser keeps an HttpOnly
 session cookie for 30 days; the token itself is not stored in the browser.
 
+Sign-in attempts are limited per client address and for the server as a
+whole, counted together with connected-instance pairing. Past the limit the
+sign-in page says so and the server answers 429 with `Retry-After` until the
+10-minute window ends; a successful sign-in clears that address's count.
+
 **Log out** (Settings → Server → UAM and access) ends that session on the
 server as well as in the browser: the cookie is recorded as signed out in
 `~/.config/uam/web-signed-out.json` (mode 0600, beside the token) until it
