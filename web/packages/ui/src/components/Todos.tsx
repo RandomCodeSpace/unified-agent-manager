@@ -4,13 +4,17 @@
 // it, that lifted above the dim, a compact head with the count and meter, eyebrow sections by
 // stage and a keycap foot. A phone gets a sheet from the bottom. A list whose rows wait on others
 // shows as one list in its own order instead, with the dependencies drawn as rails beside it
-// (`RailList`). The owner changes the list by asking in the chat.
+// (`RailList`), or, when this browser's setting says so, as a Mermaid flowchart (`TodoGraph`). The owner
+// changes the list by asking in the chat.
 
 import { Ban, Check, Circle, CircleDot, ListChecks, RotateCw, type LucideIcon } from 'lucide-react';
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Todo, type TodoCounts, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
+import { renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
+import { useScheme } from '../lib/theme';
+import { loadTodoGraph, todoMermaid, type TodoGroup } from '../lib/todoGraph';
 import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoLinks, todoWord, turnTodoName, type TodoLink, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
@@ -159,8 +163,47 @@ function RailList({ rows, links, lanes, now, name, stamp }: Readonly<{ rows: rea
   );
 }
 
+/**
+ * The dependencies as a Mermaid flowchart (`todoMermaid`), rendered in the sandboxed diagram frame
+ * and shown as an image, as any Mermaid fence. The last drawing stays while the next renders, so
+ * a change never blanks it; one that fails to render says so. The rows stay in a list for screen
+ * readers, each saying what it waits on.
+ */
+function TodoGraph({ rows, links, now, group }: Readonly<{ rows: readonly Todo[]; links: readonly TodoLink[]; now?: string; group?: (todo: Todo) => TodoGroup }>) {
+  const scheme = useScheme();
+  const source = todoMermaid(rows, links, now, group);
+  const [drawn, setDrawn] = useState<{ rendered?: Rendered; error?: string } | null>(null);
+  useEffect(() => {
+    let on = true;
+    renderDiagram(source).then(
+      (rendered) => on && setDrawn({ rendered }),
+      (err: unknown) => on && setDrawn((d) => ({ rendered: d?.rendered, error: err instanceof Error ? err.message : 'Rendering failed' })),
+    );
+    return () => {
+      on = false;
+    };
+  }, [source, scheme]);
+  const titles = new Map(rows.map((t) => [t.id, t.title]));
+  const rendered = drawn?.rendered;
+  return (
+    <>
+      {rendered ? (
+        <img src={svgDataUrl(rendered.svg)} width={rendered.width} height={rendered.height} alt="" decoding="async" className="mx-auto block h-auto max-w-full" />
+      ) : (
+        <p className="py-6 text-center text-caption text-muted">{drawn?.error ? 'The graph could not be drawn' : 'Drawing the graph…'}</p>
+      )}
+      {rendered && drawn?.error && <p className="text-caption text-muted">The graph could not be redrawn; this is the last one</p>}
+      <ul className="sr-only">
+        {rows.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} now={todo.id === now && todo.status === 'in_progress'} waits={todo.depends_on?.map((id) => titles.get(id)).filter(Boolean).join(', ')} />
+        ))}
+      </ul>
+    </>
+  );
+}
+
 /** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the rows in the list's own order the rails need when some wait on others (`rows`), the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. */
-export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; /** Where the graph puts a row: the turn tag and the subagent box. */ group?: (todo: Todo) => TodoGroup; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
 
 /** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
 function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; title: string }>) {
@@ -190,7 +233,9 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
       </PanelHead>
       <div className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {sheet && parts.blocks}
-        {rails && parts.rows && <RailList rows={parts.rows} links={rails.links} lanes={rails.lanes} now={parts.now} name={parts.name} stamp={parts.stamp} />}
+        {rails && parts.rows && (loadTodoGraph() === 'graph'
+          ? <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />
+          : <RailList rows={parts.rows} links={rails.links} lanes={rails.lanes} now={parts.now} name={parts.name} stamp={parts.stamp} />)}
         {!rails && parts.sections.map((section) => (
           <PanelSection
             key={section.status}
@@ -294,6 +339,7 @@ export function TurnTodo({ timing, blocks }: Readonly<{ timing: TurnTiming; /** 
     facts: rows ? snapshotFacts(rows.counts, clock) : [snap && 'error' in snap ? snap.error : 'Loading the list…'],
     sections: rows ? snapshotSections(rows.todos) : [],
     rows: rows?.todos,
+    group: (t) => ({ agent: agents.get(t.id) }),
     foot: 'Kept by uam when the turn ended',
     name: (t) => agents.get(t.id),
   };

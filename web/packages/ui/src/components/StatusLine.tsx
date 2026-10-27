@@ -22,6 +22,7 @@ import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
+import { loadTodoGraph } from '../lib/todoGraph';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
 import { BreathingDot, Markdown, WorkingMark, clockTime } from './common';
@@ -307,6 +308,9 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     </Appear>
   );
   const names = new Map(session.subagents.map((s) => [s.id, s.name]));
+  // The ledger: every row the turns kept, the live list (this page's, when known) as its newest state.
+  const ledger = kept?.data ? todoLedger({ ...kept.data, live: known ?? kept.data.live }, session.turn_timings) : [];
+  const byId = new Map(ledger.map((r) => [r.todo.id, r]));
   const lastTurn = turns.at(-1);
   const parts: ReaderParts | null = view && tally ? {
     todos: view.todos,
@@ -317,14 +321,12 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     ].filter(Boolean),
     sections: todoSections(view),
     rows: view.todos,
+    group: (t) => ({ turn: byId.get(t.id)?.added, agent: names.get(t.agent_id ?? '') }),
     now: working ? view.now : undefined,
     foot: 'Read only · to change it, ask in the chat',
     name: (t) => names.get(t.agent_id ?? ''),
     blocks: <Blocks items={todoBlocks(tally)} className="self-start" />,
   } : null;
-  // The ledger: every row the turns kept, the live list (this page's, when known) as its newest state.
-  const ledger = kept?.data ? todoLedger({ ...kept.data, live: known ?? kept.data.live }, session.turn_timings) : [];
-  const byId = new Map(ledger.map((r) => [r.todo.id, r]));
   const ledgerParts: ReaderParts = {
     todos: [],
     counts: {},
@@ -333,6 +335,7 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
     facts: [kept?.data ? 'Every row the agents kept, with when it changed; rows they removed stay here' : (kept?.error ?? '…')],
     sections: ledgerSections(ledger),
     rows: ledger.map((r) => r.todo),
+    group: (t) => ({ turn: byId.get(t.id)?.added, agent: byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? '') }),
     foot: 'Kept by uam when each turn ended',
     name: (t) => byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? ''),
     stamp: (t) => {
@@ -356,7 +359,11 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
           {view && tally && (
             <button
               type="button"
-              onClick={(e) => setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget })}
+              onClick={(e) => {
+                setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
+                // The graph tags each row with the turn that added it, which only the kept records say.
+                if (loadTodoGraph() === 'graph') read(session.id);
+              }}
               aria-haspopup="dialog"
               aria-expanded={todoReader?.open === true}
               aria-controls={todoReader?.open ? todoId : undefined}

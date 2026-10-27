@@ -29,6 +29,7 @@ import { diskLowText, percentFree, sizeText } from '../lib/worktrees';
 import { purposeLabel, resumeText } from '../lib/utility';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { loadTodoGraph, saveTodoGraph, type TodoGraphStyle } from '../lib/todoGraph';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -643,6 +644,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [error, setError] = useState<string | null>(null);
   const [drawioProblem, setDrawioProblem] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  const [todoGraph, setTodoGraph] = useState(loadTodoGraph);
   const [theme, setTheme] = useState(loadTheme);
   const [scrolled, sentinel] = useScrolled();
   const cliUpdate = meta?.providers.find((p) => p.cli_update)?.cli_update;
@@ -979,6 +981,21 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           items={[
             { value: 'on', label: 'Always on' },
             { value: 'system', label: 'Match system' },
+          ]}
+        />
+      </Row>
+      <Row id="todo-graph" label="Todo dependencies" help="How a todo list whose steps wait on others is drawn: rails beside the list, which keep every row in place, or a flowchart of the steps.">
+        <Segmented
+          aria-labelledby="todo-graph-label"
+          aria-describedby="todo-graph-help"
+          value={todoGraph}
+          onValueChange={(v) => {
+            setTodoGraph(v as TodoGraphStyle);
+            saveTodoGraph(v as TodoGraphStyle);
+          }}
+          items={[
+            { value: 'rails', label: 'Rails' },
+            { value: 'graph', label: 'Graph' },
           ]}
         />
       </Row>
