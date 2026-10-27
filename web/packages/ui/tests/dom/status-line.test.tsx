@@ -8,6 +8,10 @@ import { shownState } from '../../src/lib/tasks';
 
 afterEach(() => vi.useRealTimers());
 
+// The todo graph renders in the sandboxed diagram frame, which a DOM test has none of.
+const renderDiagram = vi.hoisted(() => vi.fn<(source: string) => Promise<{ svg: string; width: number; height: number }>>(async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg"/>', width: 400, height: 300 })));
+vi.mock('../../src/lib/diagram', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../src/lib/diagram')>()), renderDiagram }));
+
 const start = Date.parse('2026-09-28T12:00:00Z');
 const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: new Date(start).toISOString() } as TurnTiming;
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
@@ -286,6 +290,47 @@ test('a list whose rows wait on others is one list in its own order with rails b
   const rails = reader.querySelectorAll('svg[aria-hidden] > g');
   expect(rails.length).toBe(4);
   expect([...rails].filter((g) => g.getAttribute('class')?.includes('text-accent')).length).toBe(2);
+});
+
+test('with the Graph setting the reader draws the dependencies as a flowchart: turn tags from the kept records, a subagent\'s box, the rows still a list for screen readers', async () => {
+  localStorage.setItem('uam.todoGraph', 'graph');
+  const user = userEvent.setup();
+  const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'] }, { depends_on: ['c'] }]);
+  const turns: TodoHistory['turns'] = [{ timing_id: 'turn', ended_at: new Date(start).toISOString(), todos: [todos[0], todos[1]], counts: {} }];
+  const todoHistory = vi.fn(async () => ({ live: listOf(todos), turns }));
+  render(<ApiContext.Provider value={{ ...api, todoHistory }}>{draw(withTodos(listOf(todos)))}</ApiContext.Provider>);
+  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  // The graph needs the turns that added the rows: opening reads the kept records.
+  expect(todoHistory).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy());
+  await waitFor(() => expect(renderDiagram.mock.calls.at(-1)?.[0]).toContain('T1 · Plan the pages'));
+  const source = renderDiagram.mock.calls.at(-1)![0];
+  expect(source).toContain('flowchart TB');
+  expect(source).toMatch(/subgraph g0\["Index page writer"\]\n {4}direction TB\n {4}n1\["◉ T1 · Build the index page"\]:::now/);
+  expect(source).toContain('n2["◉ Build the about page"]');
+  // No rails, no sections: the rows are a list only screen readers reach.
+  expect(reader.querySelectorAll('svg[aria-hidden] > g')).toHaveLength(0);
+  expect(within(reader).queryAllByRole('region')).toEqual([]);
+  expect(reader.querySelector('ul.sr-only')!.textContent).toContain('Sign in to the registryNo token on this machine, Blocked, waits on Build the about page');
+});
+
+test('a graph that cannot be drawn says so, and one that cannot be redrawn keeps the last drawing', async () => {
+  localStorage.setItem('uam.todoGraph', 'graph');
+  const user = userEvent.setup();
+  renderDiagram.mockRejectedValueOnce(new Error('parse error'));
+  const todos = rows([{}, { depends_on: ['a'] }]);
+  const withApi = (todos: Todo[]) => <ApiContext.Provider value={{ ...api, todoHistory: async () => ({ live: null, turns: [] }) }}>{draw(withTodos(listOf(todos)))}</ApiContext.Provider>;
+  const view = render(withApi(todos));
+  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  await waitFor(() => expect(within(reader).getByText('The graph could not be drawn')).toBeTruthy());
+  view.rerender(withApi(rows([{}, { depends_on: ['a'] }, { depends_on: ['a'] }])));
+  await waitFor(() => expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy());
+  renderDiagram.mockRejectedValueOnce(new Error('parse error'));
+  view.rerender(withApi(rows([{ status: 'in_progress' }, { depends_on: ['a'] }, { depends_on: ['a'] }])));
+  await waitFor(() => expect(within(reader).getByText('The graph could not be redrawn; this is the last one')).toBeTruthy());
+  expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy();
 });
 
 test('a phone gets the list as a sheet that repeats the blocks, with a close button and no key hints', async () => {

@@ -38,8 +38,11 @@ const GLYPH: Record<TodoStatus, string> = { done: '✓', in_progress: '◉', blo
  * (`#` first, as the codes start with it), one line. The agents write the titles; the frame
  * renders them as text in a sandbox either way, so this only keeps the source parsing.
  */
-const label = (text: string, max = Infinity) =>
-  [...text.replace(/\s+/g, ' ').trim()].reduce((out, c, i) => (i < max ? out + c : i === max ? out + '…' : out), '').replace(/#/g, '#35;').replace(/"/g, '#quot;').replace(/</g, '#lt;').replace(/>/g, '#gt;');
+function label(text: string, max = Infinity): string {
+  const chars = [...text.replace(/\s+/g, ' ').trim()];
+  const cut = chars.length > max ? chars.slice(0, max).join('') + '…' : chars.join('');
+  return cut.replaceAll('#', '#35;').replaceAll('"', '#quot;').replaceAll('<', '#lt;').replaceAll('>', '#gt;');
+}
 
 /** Where a row sits in the graph: the turn that added it (a tag on the row), and the subagent that wrote it (its box). */
 export interface TodoGroup { turn?: number; agent?: string }
@@ -61,7 +64,9 @@ export function todoMermaid(todos: readonly Todo[], links: readonly TodoLink[], 
   const node = (i: number, indent: string) => {
     const t = todos[i], turn = groups[i].turn;
     const kind = t.id === now && t.status === 'in_progress' ? 'now' : t.status;
-    return `${indent}n${i}["${GLYPH[t.status]} ${turn ? `T${turn} · ` : ''}${label(t.title)}${t.reopened ? ` ↻${t.reopened}` : ''}"]:::${kind}`;
+    const tag = turn ? 'T' + turn + ' · ' : '';
+    const reopened = t.reopened ? ' ↻' + t.reopened : '';
+    return `${indent}n${i}["${GLYPH[t.status]} ${tag}${label(t.title)}${reopened}"]:::${kind}`;
   };
   todos.forEach((_, i) => !groups[i].agent && lines.push(node(i, '  ')));
   const agents = [...new Set(groups.flatMap((g) => (g.agent ? [g.agent] : [])))];
