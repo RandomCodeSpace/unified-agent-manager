@@ -5,9 +5,7 @@
 // stage and a keycap foot. A phone gets a sheet from the bottom. The owner changes the list by
 // asking in the chat.
 
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Ban, Check, Circle, CircleDot, ListChecks, X, type LucideIcon } from 'lucide-react';
+import { Ban, Check, Circle, CircleDot, ListChecks, type LucideIcon } from 'lucide-react';
 import { useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Todo, type TodoCounts, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
@@ -15,11 +13,11 @@ import { cn } from '../lib/cn';
 import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoWord, turnTodoName, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
-import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
+import { DOT as IDENTITY_DOT, useSubagentReplies } from './Subagents';
 import { Blocks, type Block } from './ui/blocks';
-import { Button } from './ui/button';
-import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 
 /** Each stage's colour, the same on every surface: its words, numbers and glyph (`text`) and its meter segments (`fill`). */
 const TONE: Record<TodoStatus, { text: string; fill: string }> = {
@@ -146,9 +144,6 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
   );
 }
 
-/** The 160ms dim behind the reader (the shared one takes 240ms). */
-const dim = cn(backdropClass, 'duration-160');
-
 /**
  * The reader beside `anchor` on its `side`, or on a phone (`phone`, chosen when it opened, so a
  * resize does not remount it) the sheet. It opens on its "Todo" heading and gives focus back to
@@ -167,54 +162,11 @@ export function Reader({ id, open, phone, anchor, side, label, title = 'Todo', p
   onClosed: () => void;
 }>) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const back = () => anchor;
-  if (phone || !anchor) {
-    return (
-      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className="duration-160" backdropClassName="duration-160" initialFocus={heading} finalFocus={back}>
-        <TodoBody
-          title={title}
-          parts={parts}
-          sheet
-          heading={heading}
-          close={
-            <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-              <X />
-            </BaseDialog.Close>
-          }
-        />
-      </BottomSheet>
-    );
-  }
+  const sheet = phone || !anchor;
   return (
-    <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
-      <BasePopover.Portal>
-        <BasePopover.Backdrop className={dim} />
-        {anchor.isConnected && <LiftedRow row={anchor} />}
-        <BasePopover.Positioner anchor={anchor} side={side} align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup
-            id={id}
-            data-popup=""
-            aria-label={label}
-            aria-modal="true"
-            initialFocus={heading}
-            finalFocus={back}
-            className={cn('flex max-h-[min(80vh,var(--available-height))] w-[440px] max-w-(--available-width)', readerPopupClass)}
-          >
-            <TodoBody
-              title={title}
-              parts={parts}
-              sheet={false}
-              heading={heading}
-              close={
-                <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-                  <X />
-                </BasePopover.Close>
-              }
-            />
-          </BasePopover.Popup>
-        </BasePopover.Positioner>
-      </BasePopover.Portal>
-    </BasePopover.Root>
+    <AnchoredReader id={id} open={open} sheet={sheet} anchor={anchor} side={side} label={label} className="w-[440px]" initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
+      {(close) => <TodoBody title={title} parts={parts} sheet={sheet} heading={heading} close={close} />}
+    </AnchoredReader>
   );
 }
 

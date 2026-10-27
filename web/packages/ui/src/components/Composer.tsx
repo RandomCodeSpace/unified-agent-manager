@@ -25,7 +25,6 @@ import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/hi
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Loading, Markdown, Note, useApp, useMedia } from './common';
 import { ExecutionItems } from './ExecutionStatus';
-import { BottomSheet } from './Subagents';
 import { FileIcon } from './FileIcon';
 import { ModelIcon } from './ModelIcon';
 import { InlinePicker, type PickerItem } from './InlinePicker';
@@ -39,6 +38,7 @@ import { Collapse, usePresence } from './ui/collapse';
 import { Menu, type ActionItem } from './ui/menu';
 import { PanelHead, PanelSection } from './ui/panel';
 import { useTaskActions } from './taskActions';
+import { BottomSheet } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
 /** How freely the agent acts, from permissions and execution together (DESIGN.md Permissions and execution): safest to riskiest. */

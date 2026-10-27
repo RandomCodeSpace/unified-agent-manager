@@ -5,7 +5,7 @@ import { ApiContext } from '../../src/ApiContext';
 import { api, type Item, type TurnChanges, type TurnTiming } from '../../src/api';
 import { Transcript } from '../../src/components/Transcript';
 import { SessionContext } from '../../src/components/common';
-import { LiftedRow } from '../../src/components/Subagents';
+import { LiftedRow } from '../../src/components/ui/reader';
 import { DetailVisibility } from '../../src/components/Details';
 
 const at = '2026-10-09T12:00:00Z';

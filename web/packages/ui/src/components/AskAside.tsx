@@ -1,6 +1,4 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Hourglass, MessageCircleQuestion, X } from 'lucide-react';
+import { Hourglass, MessageCircleQuestion } from 'lucide-react';
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ApiClient, type Aside, type AsideAnswer, type Command, type SessionDetail } from '../api';
@@ -8,10 +6,9 @@ import { asideQuestion, asideTurn } from '../lib/aside';
 import { cn } from '../lib/cn';
 import { Markdown, clockTime, dateTime } from './common';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
-import { Button } from './ui/button';
-import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 import { HelpTip } from './ui/tooltip';
 
 /** `/btw <question>`: a question to the open conversation, answered by its current model, kept with the Task and never sent to the agent. A bare `/btw` shows the Task's asides. */
@@ -250,20 +247,9 @@ export function AsideReader({ at, title, facts, rows, empty, newest = false, onC
         {never}
       </PanelFoot>}
   </div>;
-  if (sheet) return <BottomSheet id={id} open={at.open} onClose={onClose} onClosed={onClosed} label={title} initialFocus={heading} finalFocus={finalFocus} className="duration-160" backdropClassName="duration-160">
-    {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-  </BottomSheet>;
-  return <BasePopover.Root open={at.open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
-    <BasePopover.Portal>
-      <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-      {at.lift?.isConnected && <LiftedRow row={at.lift} />}
-      <BasePopover.Positioner anchor={at.anchor} side={at.lift ? 'bottom' : 'top'} align="start" sideOffset={8} collisionPadding={12} className="z-50 outline-hidden">
-        <BasePopover.Popup id={id} data-popup="" aria-label={title} aria-modal="true" initialFocus={heading} finalFocus={finalFocus} className={cn('flex max-h-[min(70vh,var(--available-height))] max-w-(--available-width)', readerPopupClass, at.lift ? 'w-[560px]' : 'w-[min(640px,var(--anchor-width))]')}>
-          {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-        </BasePopover.Popup>
-      </BasePopover.Positioner>
-    </BasePopover.Portal>
-  </BasePopover.Root>;
+  return <AnchoredReader id={id} open={at.open} sheet={sheet} anchor={at.anchor} lift={at.lift ?? null} side={at.lift ? 'bottom' : 'top'} sideOffset={8} label={title} className={cn('max-h-[min(70vh,var(--available-height))]', at.lift ? 'w-[560px]' : 'w-[min(640px,var(--anchor-width))]')} initialFocus={heading} finalFocus={finalFocus} onClose={onClose} onClosed={onClosed}>
+    {body}
+  </AnchoredReader>;
 }
 
 const count = (n: number) => (n === 1 ? '1 aside' : `${n} asides`);

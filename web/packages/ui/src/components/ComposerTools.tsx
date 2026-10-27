@@ -1,7 +1,5 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Tabs } from '@base-ui/react/tabs';
-import { ChevronDown, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useApi } from '../ApiContext';
 import type { Model, SessionDetail } from '../api';
@@ -9,12 +7,12 @@ import { cn } from '../lib/cn';
 import { contextLabel, ContextReport, ContextRing, contextShown } from './ComposerUsage';
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
 import { UsageTab } from './TaskUsage';
 import { Button } from './ui/button';
-import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
 export type Tool = 'context' | 'usage' | 'agent';
@@ -118,20 +116,8 @@ export function ComposerTools({ session, model, agentReason, onAgent, ref }: Rea
         <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
       </Button>
     </Tip>
-    {reader && (sheet
-      ? <BottomSheet id={id} open={reader.open} onClose={close} onClosed={closed} label="Tools" initialFocus={activeTab} finalFocus={() => anchor} className="duration-160" backdropClassName="duration-160">
-        {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-      </BottomSheet>
-      : <BasePopover.Root open={reader.open} modal onOpenChange={(o) => !o && close()} onOpenChangeComplete={(o) => !o && closed()}>
-        <BasePopover.Portal>
-          <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-          {anchor.isConnected && <LiftedRow row={anchor} />}
-          <BasePopover.Positioner anchor={anchor} side="top" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-            <BasePopover.Popup id={id} data-popup="" aria-label="Tools" aria-modal="true" initialFocus={activeTab} finalFocus={() => anchor} className={cn('flex max-h-[min(80vh,var(--available-height))] w-[480px] max-w-(--available-width)', readerPopupClass)}>
-              {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-            </BasePopover.Popup>
-          </BasePopover.Positioner>
-        </BasePopover.Portal>
-      </BasePopover.Root>)}
+    {reader && <AnchoredReader id={id} open={reader.open} sheet={sheet} anchor={anchor} side="top" label="Tools" className="w-[480px]" initialFocus={activeTab} finalFocus={() => anchor} onClose={close} onClosed={closed}>
+      {body}
+    </AnchoredReader>}
   </>;
 }

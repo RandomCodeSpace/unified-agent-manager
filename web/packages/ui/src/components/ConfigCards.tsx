@@ -1,13 +1,9 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { X } from 'lucide-react';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Key } from './InlinePicker';
-import { BottomSheet, LiftedRow } from './Subagents';
-import { Button } from './ui/button';
-import { backdropClass, PHONE, readerPopupClass } from './ui/dialog';
+import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 
 /**
  * Settings → Agents, Skills, Hooks, Instructions and MCP servers (DESIGN.md Settings view): each
@@ -147,41 +143,10 @@ export function ItemReader({ reader, id, label, title, facts, actions, onClose, 
       )}
     </div>
   );
-  if (sheet) {
-    return (
-      <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} initialFocus={heading} finalFocus={back} className="duration-160" backdropClassName="duration-160">
-        {body(
-          <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-            <X />
-          </BaseDialog.Close>,
-        )}
-      </BottomSheet>
-    );
-  }
   return (
-    <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
-      <BasePopover.Portal>
-        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
-        {/* The copy loses a switch's state attributes, so its switch is left out rather than shown wrong. */}
-        {card.isConnected && <LiftedRow row={card} className="[&_.card-aside]:invisible" />}
-        <BasePopover.Positioner anchor={card} side="bottom" align="start" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup
-            id={id}
-            data-popup=""
-            aria-label={label}
-            aria-modal="true"
-            initialFocus={heading}
-            finalFocus={back}
-            className={cn('flex max-h-[min(80vh,var(--available-height))] w-[560px] max-w-(--available-width)', readerPopupClass)}
-          >
-            {body(
-              <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
-                <X />
-              </BasePopover.Close>,
-            )}
-          </BasePopover.Popup>
-        </BasePopover.Positioner>
-      </BasePopover.Portal>
-    </BasePopover.Root>
+    // The lifted copy loses a switch's state attributes, so its switch is left out rather than shown wrong.
+    <AnchoredReader id={id} open={open} sheet={sheet} anchor={card} liftClassName="[&_.card-aside]:invisible" label={label} className="w-[560px]" initialFocus={heading} finalFocus={back} onClose={onClose} onClosed={onClosed}>
+      {body}
+    </AnchoredReader>
   );
 }

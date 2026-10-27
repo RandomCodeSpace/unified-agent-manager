@@ -16,11 +16,11 @@ import { DrawingsContext, type DrawingView, type OpenDrawing } from './Drawing';
 import { Figure, fileName, useBackground, useDrawioPicture, useParsed, usePicture } from './DrawingCards';
 import type { ExcalidrawImperativeAPI } from './ExcalidrawCanvas';
 import { Key } from './InlinePicker';
-import { BottomSheet } from './Subagents';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { backdropClass, readerPopupClass } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { BottomSheet } from './ui/reader';
 import { Segmented } from './ui/segmented';
 
 const ExcalidrawCanvas = lazy(() => import('./ExcalidrawCanvas'));

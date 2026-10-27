@@ -3,9 +3,8 @@ import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
 import { isSubagentCall, subagentSummary, duration, windowInteractions } from '../lib/transcript';
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, CornerDownRight, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -20,7 +19,7 @@ import { BADGE_TEXT, Markdown, Note, Skeleton, Spinner, StepDots, SubagentIdleIc
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
-import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
+import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
@@ -894,106 +893,6 @@ function indexTitle(key: string, text: string): string {
   if (!key) return 'Earlier in the conversation';
   if (key === 'start') return 'Before the first message';
   return text ? `“${text}”` : 'An earlier message';
-}
-
-/**
- * The row an open panel belongs to, drawn again above the dim at the row's place: a still copy
- * (nothing in it is live or focusable), so the panel reads as anchored to it. The conversation
- * holds still under the modal panel; a resize places it again.
- */
-export function LiftedRow({ row, className }: Readonly<{ row: Element; className?: string }>) {
-  const host = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = host.current;
-    if (!el) return;
-    const copyRow = () => {
-      const copy = row.cloneNode(true) as Element;
-      for (const node of [copy, ...copy.querySelectorAll('*')]) {
-        for (const attr of [...node.attributes]) if (attr.name === 'id' || attr.name.startsWith('data-') || attr.name.startsWith('aria-') || attr.name === 'tabindex') node.removeAttribute(attr.name);
-      }
-      el.replaceChildren(copy);
-    };
-    copyRow();
-    // The copy sits in a portal, away from the row's parents: it takes the type they give the row (a turn foot's small stamp text), so it fits the row's box.
-    const from = getComputedStyle(row.parentElement ?? row);
-    Object.assign(el.style, { fontFamily: from.fontFamily, fontSize: from.fontSize, fontWeight: from.fontWeight, lineHeight: from.lineHeight, letterSpacing: from.letterSpacing, fontVariantNumeric: from.fontVariantNumeric, color: from.color });
-    const place = () => {
-      const r = row.getBoundingClientRect();
-      Object.assign(el.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    };
-    place();
-    // The row's time, tokens and line go on changing: the copy shows them, at the row's place and size (a chip's text can change its width).
-    const changes = new MutationObserver(() => { copyRow(); place(); });
-    changes.observe(row, { subtree: true, childList: true, characterData: true });
-    window.addEventListener('resize', place);
-    // A neighbour arriving beside the row (the strip's "Jump to bottom" arrow) moves it without a mutation inside it.
-    const moves = new ResizeObserver(place);
-    if (row.parentElement) moves.observe(row.parentElement);
-    return () => {
-      changes.disconnect();
-      moves.disconnect();
-      window.removeEventListener('resize', place);
-    };
-  }, [row]);
-  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float [&>*]:m-0 [&>*]:size-full', className)} />;
-}
-
-/**
- * A sheet from the bottom over a dimmed page, at most 85% of the screen, under a grab handle:
- * dragging the handle down closes it, as do Esc and a close button inside. A phone opens a
- * subagent and the todo list in it. While the on-screen keyboard is open the sheet rests on it,
- * within what it leaves visible (lib/viewport).
- */
-export function BottomSheet({ open, onClose, onClosed, label, className, backdropClassName, initialFocus, finalFocus, id, children }: Readonly<{ open: boolean; onClose: () => void; onClosed: () => void; label: string; className?: string; backdropClassName?: string; children: ReactNode } & Pick<ComponentProps<typeof BaseDialog.Popup>, 'initialFocus' | 'finalFocus' | 'id'>>) {
-  const popup = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ y: number; dy: number } | null>(null);
-  const follow = (dy: number) => {
-    if (popup.current) popup.current.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
-  };
-  return (
-    <BaseDialog.Root open={open} onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
-      <BaseDialog.Portal>
-        <BaseDialog.Backdrop className={cn(backdropClass, backdropClassName)} />
-        <BaseDialog.Popup
-          ref={popup}
-          id={id}
-          data-popup=""
-          aria-label={label}
-          aria-modal="true"
-          initialFocus={initialFocus}
-          finalFocus={finalFocus}
-          className={cn('fixed inset-x-0 bottom-[var(--app-bottom,0px)] z-50 flex max-h-[min(85dvh,var(--app-height,100dvh))] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', className)}
-        >
-          <div
-            aria-hidden="true"
-            className="flex h-6 shrink-0 touch-none items-center justify-center"
-            onPointerDown={(e) => {
-              drag.current = { y: e.clientY, dy: 0 };
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (!drag.current) return;
-              drag.current.dy = e.clientY - drag.current.y;
-              follow(drag.current.dy);
-            }}
-            onPointerUp={() => {
-              const dy = drag.current?.dy ?? 0;
-              drag.current = null;
-              follow(0);
-              if (dy > 80) onClose();
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-              follow(0);
-            }}
-          >
-            <span className="h-1 w-9 rounded-full bg-hairline-strong" />
-          </div>
-          {children}
-        </BaseDialog.Popup>
-      </BaseDialog.Portal>
-    </BaseDialog.Root>
-  );
 }
 
 /** Subagents only Copilot's record still lists: read a page at a time, only when asked, and merged into the groups above. */
