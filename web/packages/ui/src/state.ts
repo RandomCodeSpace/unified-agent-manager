@@ -71,6 +71,8 @@ export interface State {
   usage: AccountUsage | null;
   /** Model calls in flight across the service's Threads, from the snapshot and `model_calls` frames; null until a snapshot carries them. */
   modelCalls: ModelCalls | null;
+  /** Why the service's latest save of the Threads failed, from the snapshot and `save_status` frames; "" while saves succeed. */
+  saveError: string;
 }
 
 export const initialState: State = {
@@ -94,6 +96,7 @@ export const initialState: State = {
   settings: DEFAULT_SETTINGS,
   usage: null,
   modelCalls: null,
+  saveError: '',
 };
 
 export type Action =
@@ -145,7 +148,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.status, detail };
     }
     case 'snapshot': {
-      const { seq, sessions, session, projects, settings, usage, model_calls } = action.data;
+      const { seq, sessions, session, projects, settings, usage, model_calls, save_error } = action.data;
       const detail = session?.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
@@ -171,6 +174,7 @@ export function reducer(state: State, action: Action): State {
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
         modelCalls: model_calls ?? null,
+        saveError: save_error ?? '',
       };
     }
     case 'settings':
@@ -310,6 +314,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, usage: d.usage };
         case 'model_calls':
           return { ...state, modelCalls: d.model_calls };
+        case 'save_status':
+          return { ...state, saveError: d.save_error ?? '' };
       }
       const detail = state.detail;
       if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;

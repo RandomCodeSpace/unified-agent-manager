@@ -135,7 +135,7 @@ export interface Received {
   body: Json;
 }
 
-export function install(): { received: Received[] } {
+export function install(): { received: Received[]; broadcast: (name: string, payload: Json) => void } {
   const st: MockState = seed();
   const received: Received[] = [];
   // Each Task's kept asides, oldest first; a new one is kept and sent as the service does.
@@ -1607,7 +1607,7 @@ export function install(): { received: Received[] } {
     return next;
   }
 
-  return { received };
+  return { received, broadcast };
 }
 
 /** Mirrors the server's pendingAsk: the first pending permission, else the first pending question, yolo's own left out. */

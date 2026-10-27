@@ -934,3 +934,71 @@ func TestShutdownClosesConversationsWithinItsTime(t *testing.T) {
 		}
 	}
 }
+
+// A failed save reaches the browsers once, and stays in the snapshot until a
+// later save succeeds.
+func TestFailedSaveIsShownUntilASaveSucceeds(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	saveError := func(f frame) string {
+		var msg string
+		if f.data["save_error"] != nil {
+			decodeField(t, f, "save_error", &msg)
+		}
+		return msg
+	}
+	snapshotError := func() string {
+		late, snapshot, err := m.Subscribe("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Unsubscribe(late)
+		return saveError(parseFrame(t, snapshot))
+	}
+	// The store cannot be read: a folder where its file was.
+	path := st.Path()
+	if err := os.Rename(path, path+".kept"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.dirty[sum.ID] = struct{}{}
+	m.mu.Unlock()
+	if err := m.flush(); err == nil {
+		t.Fatal("flush into a folder succeeded")
+	}
+	if msg := saveError(frameOf(t, sub, "save_status")); !strings.Contains(msg, path) {
+		t.Fatalf("save_error = %q", msg)
+	}
+	// The failed patch was queued again; the same failure sends nothing new.
+	if err := m.flush(); err == nil {
+		t.Fatal("retry into a folder succeeded")
+	}
+	noFrame(t, sub, "the same failure again")
+	if msg := snapshotError(); msg == "" {
+		t.Fatal("snapshot lacks the save error")
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".kept", path); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if msg := saveError(frameOf(t, sub, "save_status")); msg != "" {
+		t.Fatalf("frame after a good save = %q", msg)
+	}
+	if msg := snapshotError(); msg != "" {
+		t.Fatalf("snapshot after a good save = %q", msg)
+	}
+}

@@ -1578,6 +1578,12 @@ export default function App() {
                   )}
                 </output>
               ))}
+              {state.saveError && (
+                <output className="flex items-center gap-2 bg-error-wash px-4 py-1 text-caption text-error animate-fade-in">
+                  <Dot tone="error" />
+                  <span className="flex-1">Threads could not be saved: {state.saveError}. UAM tries again with the next change.</span>
+                </output>
+              )}
               {notice && (
                 <p className="flex items-center gap-2 bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>

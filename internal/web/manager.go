@@ -201,6 +201,9 @@ type Manager struct {
 	// pending model_calls frame (phase.go).
 	utilityLive     int
 	modelCallsTimer *time.Timer
+	// saveError is why the latest flush failed, "" once one succeeds; the
+	// snapshot and save_status frames carry it to the browser.
+	saveError string
 	// quotaKick asks the usage loop for a read; quotaTick is how often the
 	// loop checks for a due one (tests set it before Start).
 	quotaKick chan struct{}
@@ -2393,6 +2396,7 @@ type recordPatch struct {
 func (m *Manager) flush() (err error) {
 	m.persistMu.Lock()
 	defer m.persistMu.Unlock()
+	defer func() { m.noteSave(err) }()
 	defer func() { err = errors.Join(err, m.flushTokenLedger()) }()
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
@@ -2480,6 +2484,23 @@ func (m *Manager) flush() (err error) {
 		return err
 	}
 	return nil
+}
+
+// noteSave keeps the latest flush's failure, or clears it, and tells the
+// browsers when that changes: a failed save is retried with the next change,
+// and until one succeeds the owner's latest changes are not on disk.
+func (m *Manager) noteSave(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if msg == m.saveError {
+		return
+	}
+	m.saveError = msg
+	m.broadcastLocked("save_status", "", func(seq uint64) any { return saveStatusEvent{Seq: seq, SaveError: msg} })
 }
 
 // sink routes one conversation's events to its session. gen pins it to that

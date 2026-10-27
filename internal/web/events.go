@@ -56,11 +56,18 @@ type snapshotEvent struct {
 	ModelCalls ModelCalls       `json:"model_calls"`
 	Sessions   []SessionSummary `json:"sessions"`
 	Session    *SessionDetail   `json:"session"`
+	// SaveError is why saving the Threads failed, until a save succeeds.
+	SaveError string `json:"save_error,omitempty"`
 }
 
 type modelCallsEvent struct {
 	Seq        uint64     `json:"seq"`
 	ModelCalls ModelCalls `json:"model_calls"`
+}
+
+type saveStatusEvent struct {
+	Seq       uint64 `json:"seq"`
+	SaveError string `json:"save_error,omitempty"`
 }
 
 type usageEvent struct {
@@ -273,7 +280,7 @@ func (m *Manager) captureSubscription(sessionID string, toolDeltas, recentHistor
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked()}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked(), SaveError: m.saveError}
 	for i := range snapshot.Sessions {
 		snapshot.Sessions[i] = snapshotSummary(snapshot.Sessions[i])
 	}
