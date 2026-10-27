@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionStatsCountsJournalsAndWritesKeyValueFile(t *testing.T) {
@@ -80,6 +81,66 @@ func TestSessionStatsCountsJournalsAndWritesKeyValueFile(t *testing.T) {
 	}
 	if strings.Contains(string(data), "secret") {
 		t.Fatalf("file holds journal text:\n%s", data)
+	}
+}
+
+func TestSessionStatsRecentCountsTheLastSevenDays(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".copilot")
+	t.Setenv("COPILOT_HOME", home)
+	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	for id, lines := range map[string][]string{
+		"old": {
+			`{"type":"user.message","timestamp":"2026-01-01T10:00:00Z","data":{}}`,
+			`{"type":"tool.execution_start","timestamp":"2026-01-01T10:00:01Z","data":{"toolCallId":"c1","toolName":"bash"}}`,
+		},
+		"both": {
+			`{"type":"tool.execution_start","timestamp":"2026-01-02T10:00:01Z","data":{"toolCallId":"c1","toolName":"view"}}`,
+			`{"type":"user.message","timestamp":"` + recent + `","data":{}}`,
+			`{"type":"tool.execution_start","timestamp":"` + recent + `","data":{"toolCallId":"c2","toolName":"bash"}}`,
+		},
+	} {
+		dir := filepath.Join(home, "session-state", id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, _, _ := newTestManager(t)
+
+	got, err := m.SessionStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := func(list []SessionStat) map[string]string {
+		out := map[string]string{}
+		for _, s := range list {
+			out[s.Key] = s.Value
+		}
+		return out
+	}
+	all, last := values(got.Stats), values(got.Recent)
+	for key, want := range map[string][2]string{
+		"sessions.total":  {"2", "1"},
+		"work.prompts":    {"2", "1"},
+		"work.tool_calls": {"3", "1"},
+		"tools.bash":      {"2", "1"},
+		"tools.view":      {"1", ""},
+	} {
+		if all[key] != want[0] || last[key] != want[1] {
+			t.Errorf("%s = %q all, %q recent; want %q, %q", key, all[key], last[key], want[0], want[1])
+		}
+	}
+	if _, ok := last["uam.settle"]; ok || last["config.threads"] != "" {
+		t.Errorf("recent holds uam or config keys: %v", last)
+	}
+	data, err := os.ReadFile(got.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\nwork.prompts=2\n") || !strings.Contains(string(data), "\n7d.work.prompts=1\n") || strings.Contains(string(data), "7d.scan.") {
+		t.Fatalf("file:\n%s", data)
 	}
 }
 
