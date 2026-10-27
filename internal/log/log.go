@@ -1,10 +1,12 @@
 package log
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"syscall"
 )
@@ -216,6 +218,15 @@ func Debug(msg string, args ...any) { current.Debug(msg, args...) }
 func Info(msg string, args ...any)  { current.Info(msg, args...) }
 func Warn(msg string, args ...any)  { current.Warn(msg, args...) }
 func Error(msg string, args ...any) { current.Error(msg, args...) }
+
+// Recover, deferred first thing in a background goroutine, logs a panic there
+// with its stack and ends only that goroutine, so the daemon and every other
+// session keep running: `defer log.Recover("what")`.
+func Recover(what string) {
+	if r := recover(); r != nil {
+		current.Error("background goroutine panicked", "goroutine", what, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+	}
+}
 
 func cacheDir() string {
 	if v := os.Getenv("UAM_CACHE_DIR"); v != "" {

@@ -60,6 +60,7 @@ func (m *Manager) kickTurnChangesLocked(s *webSession, timing TurnTiming) {
 	scope := turnChangeScope{conv: s.conv, convID: s.convID, gen: s.gen, history: s.historyGen, idleEdits: s.idleToolEdits}
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("turn changes")
 		defer m.wg.Done()
 		for attempt := 0; ; attempt++ {
 			if !m.captureTurnChanges(s, reader, timing, &scope, attempt < len(turnChangeRetryWaits)) {

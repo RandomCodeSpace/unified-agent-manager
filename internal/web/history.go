@@ -58,6 +58,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 	gen := s.historyGen
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("history read")
 		defer m.wg.Done()
 		defer cancel()
 		h, err := m.readHistory(ctx, reader, convID, workdir)

@@ -37,7 +37,7 @@ func installSkills(dir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return fmt.Errorf("install skill %s: %w", path.Dir(name), err)
 		}
-		if err := os.WriteFile(target, data, 0o600); err != nil {
+		if err := writeFileAtomic(target, ".skill-*", data); err != nil {
 			return fmt.Errorf("install skill %s: %w", path.Dir(name), err)
 		}
 		return nil

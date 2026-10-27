@@ -190,6 +190,7 @@ func (m *Manager) copilotOwnedAtLocked(id string, at time.Time) bool {
 }
 
 func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
+	defer log.Recover("harness usage loop")
 	defer m.wg.Done()
 	// A timed-out Shutdown must not close an active reader.
 	defer func() {

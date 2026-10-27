@@ -155,6 +155,7 @@ func (m *Manager) startGitLabFailureDecision(itemKey, commitKey string, tracked 
 	m.titles.Add(1)
 	m.mu.Unlock()
 	go func() {
+		defer log.Recover("ci failure kind")
 		defer m.titles.Done()
 		result, err := m.Decide(context.Background(), DecisionRequest{Purpose: "ci-failure-kind",
 			Instructions: "Name what this failed GitLab CI job failed on, from its name, stage and the end of its log.",

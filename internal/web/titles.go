@@ -328,6 +328,7 @@ func (m *Manager) titleAfterReplyLocked(s *webSession) {
 // title runs one title job and gives s the title it makes, over the one s
 // has. A rename made meanwhile wins; without a title the one s has stays.
 func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCandidate, blobs []agentapi.Blob, req agentapi.TitleRequest, call UtilityCall, renames uint64) {
+	defer log.Recover("title")
 	defer m.titles.Done()
 	title, model := m.generateTitle(s.id, s.provider, titler, models, blobs, req, call)
 	req.Model = model

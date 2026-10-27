@@ -355,3 +355,29 @@ func TestCacheDirFallbacks(t *testing.T) {
 	UseStderr(nil)
 	Debug("stderr fallback debug path")
 }
+
+// A panicking background goroutine is logged with its stack and ends alone:
+// the test process, standing in for the daemon, keeps running.
+func TestRecoverLogsPanicAndKeepsProcess(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer Recover("test loop")
+		panic("boom")
+	}()
+	<-done
+	Recover("no panic") // a goroutine that ends normally logs nothing
+	var entry struct {
+		Msg, Goroutine, Panic, Stack string
+	}
+	if err := json.Unmarshal(bytes.TrimSuffix(buf.Bytes(), []byte("\n")), &entry); err != nil {
+		t.Fatalf("want one panic record, got %q: %v", buf.String(), err)
+	}
+	if entry.Msg != "background goroutine panicked" || entry.Goroutine != "test loop" || entry.Panic != "boom" || !strings.Contains(entry.Stack, "TestRecoverLogsPanicAndKeepsProcess") {
+		t.Fatalf("panic record = %+v", entry)
+	}
+}

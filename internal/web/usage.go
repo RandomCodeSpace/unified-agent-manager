@@ -46,6 +46,7 @@ func (m *Manager) quotaReporterLocked(name string) agentapi.QuotaReporter {
 // usageLoop reads account quotas at start, after each turn of a usage
 // provider ends, and every quotaMaxAge at most while a browser is connected.
 func (m *Manager) usageLoop() {
+	defer log.Recover("usage loop")
 	defer m.wg.Done()
 	m.refreshQuota()
 	t := time.NewTicker(m.quotaTick)

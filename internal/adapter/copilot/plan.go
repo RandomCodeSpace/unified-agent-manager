@@ -12,6 +12,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -373,6 +374,7 @@ func (c *conversation) checkPlanLocked() {
 	}
 	c.planReading = true
 	go func() {
+		defer log.Recover("copilot plan read")
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
 			plan, err := runtime.ReadPlan(ctx)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // The task and turn scopes of Changes, and the Task's cached total
@@ -123,6 +124,7 @@ func (m *Manager) kickDiffLocked(s *webSession) {
 }
 
 func (m *Manager) recountDiff(s *webSession) {
+	defer log.Recover("diff recount")
 	defer m.wg.Done()
 	timer := time.NewTimer(diffDelay)
 	defer timer.Stop()

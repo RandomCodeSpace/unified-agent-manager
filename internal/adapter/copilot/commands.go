@@ -9,6 +9,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -108,6 +109,7 @@ func (c *conversation) checkExecutionLocked() {
 		return
 	}
 	go func() {
+		defer log.Recover("copilot commands")
 		c.control.Lock()
 		defer c.control.Unlock()
 		if c.isClosed() {

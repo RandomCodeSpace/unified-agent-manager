@@ -101,6 +101,7 @@ func (c *conversation) abortStartedLocked() {
 	w.send = false
 	sess := c.sess
 	go func() {
+		defer log.Recover("copilot abort")
 		ctx, cancel := context.WithTimeout(context.Background(), w.call)
 		defer cancel()
 		began := time.Now()
@@ -137,6 +138,7 @@ func (c *conversation) leaveAutopilotLater(cause error) {
 		return
 	}
 	go func() {
+		defer log.Recover("copilot stop check")
 		c.control.Lock()
 		defer c.control.Unlock()
 		c.mu.Lock()

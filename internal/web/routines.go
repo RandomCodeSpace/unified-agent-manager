@@ -250,6 +250,7 @@ func (m *Manager) saveRoutinesLocked(ids ...string) {
 }
 
 func (m *Manager) routineLoop() {
+	defer log.Recover("routine loop")
 	defer m.wg.Done()
 	ticker := time.NewTicker(routineTick)
 	defer ticker.Stop()
@@ -448,6 +449,7 @@ func (m *Manager) lastRunBusy(r *store.WebRoutine) bool {
 // startRun creates a run's Task as Create would, with the routine's prompt
 // as its first message, and records the Task, or the failure, on the run.
 func (m *Manager) startRun(start routineStart) {
+	defer log.Recover("routine run")
 	defer m.wg.Done()
 	r := start.routine
 	req := CreateRequest{ProjectID: r.ProjectID, Provider: r.Provider, Model: r.Model, Name: routineTaskName(r.Name, start.run.At), Prompt: r.Prompt, Mode: string(r.Mode), routineID: r.ID, autopilot: r.Autopilot}

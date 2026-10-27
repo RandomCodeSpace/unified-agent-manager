@@ -116,6 +116,7 @@ func (c *conversation) checkTodosLocked() {
 }
 
 func (c *conversation) readTodos(sess sdkSession) {
+	defer log.Recover("copilot todos read")
 	for {
 		c.mu.Lock()
 		t := &c.todos

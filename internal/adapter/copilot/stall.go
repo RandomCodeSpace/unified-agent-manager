@@ -215,6 +215,7 @@ func (c *conversation) subagentToolRunningLocked(agentID string) bool {
 // cancelStalledSubagent cancels the stalled subagent; its parent's task call
 // then ends and the main agent goes on.
 func (c *conversation) cancelStalledSubagent(conv, agentID string) {
+	defer log.Recover("copilot stalled subagent cancel")
 	ctx, cancel := context.WithTimeout(context.Background(), webStopRPCWait)
 	defer cancel()
 	if err := c.CancelSubagent(ctx, agentID); err != nil {
@@ -225,6 +226,7 @@ func (c *conversation) cancelStalledSubagent(conv, agentID string) {
 // abortStalled aborts the stalled request. A failed abort leaves the turn
 // to Stop, and the watch looks again later.
 func (c *conversation) abortStalled(sess sdkSession) {
+	defer log.Recover("copilot stall abort")
 	ctx, cancel := context.WithTimeout(context.Background(), webStopRPCWait)
 	defer cancel()
 	err := sess.Abort(ctx)
@@ -265,6 +267,7 @@ func (c *conversation) continueStalledLocked() bool {
 // silence exceeded bound. A refused continuation ends the turn as stopped,
 // with the reason.
 func (c *conversation) sendContinuation(sess sdkSession, bound time.Duration) {
+	defer log.Recover("copilot stall continuation")
 	ctx, cancel := context.WithTimeout(context.Background(), webStopRPCWait)
 	defer cancel()
 	_, err := sess.Send(ctx, copilot.MessageOptions{Prompt: stallPrompt, DisplayPrompt: fmt.Sprintf(stallRetriedNote, seconds(bound)), Source: stallSource})

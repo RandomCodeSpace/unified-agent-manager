@@ -105,6 +105,9 @@ type worktreeState struct {
 	measuring bool
 	removed   []RemovedWorktree
 	loaded    bool
+	// unreadable is set when the removed log could not be read: the file is
+	// kept as it is, not overwritten with only this run's removals.
+	unreadable bool
 	// keep counts the Threads being made in each worktree (Run again);
 	// removal on settling leaves those.
 	keep map[string]int
@@ -290,6 +293,7 @@ func (m *Manager) measureLocked(paths []string) {
 	m.worktrees.measuring = true
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("worktree measure")
 		defer m.wg.Done()
 		for {
 			m.mu.Lock()
@@ -391,6 +395,7 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	size, known := m.worktrees.sizes[path]
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("worktree remove")
 		defer m.wg.Done()
 		m.worktrees.ops.Lock()
 		defer m.worktrees.ops.Unlock()
@@ -563,12 +568,16 @@ func (m *Manager) loadRemovedLocked() {
 	}
 	m.worktrees.loaded = true
 	data, err := os.ReadFile(m.removedLogPath())
-	if err != nil {
-		return
-	}
 	var list []RemovedWorktree
-	if json.Unmarshal(data, &list) == nil {
+	if err == nil {
+		err = json.Unmarshal(data, &list)
+	}
+	switch {
+	case err == nil:
 		m.worktrees.removed = list[:min(len(list), maxRemovedLog)]
+	case !errors.Is(err, fs.ErrNotExist):
+		m.worktrees.unreadable = true
+		log.Warn("read the removed worktrees failed; the file is kept as it is", "error", err)
 	}
 	if m.worktrees.removed == nil {
 		m.worktrees.removed = []RemovedWorktree{}
@@ -583,7 +592,11 @@ func (m *Manager) logRemoved(r RemovedWorktree) {
 	list := append([]RemovedWorktree{r}, m.worktrees.removed...)
 	m.worktrees.removed = list[:min(len(list), maxRemovedLog)]
 	list = slices.Clone(m.worktrees.removed)
+	unreadable := m.worktrees.unreadable
 	m.mu.Unlock()
+	if unreadable {
+		return
+	}
 	data, err := json.Marshal(list)
 	if err == nil {
 		err = writeFileAtomic(m.removedLogPath(), ".worktrees-*", data)

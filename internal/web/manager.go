@@ -1041,6 +1041,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 		p := m.providers[name]
 		wg.Add(1)
 		go func() {
+			defer log.Recover("provider check")
 			defer wg.Done()
 			info := ProviderInfo{Name: p.Name(), DisplayName: p.DisplayName(), Capabilities: p.Capabilities(), Available: true, Models: []agentapi.Model{}}
 			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
@@ -1126,6 +1127,7 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 			empty.Add(1)
 		}
 		go func() {
+			defer log.Recover("model load")
 			defer m.wg.Done()
 			defer all.Done()
 			if wait {
@@ -2372,6 +2374,7 @@ func (m *Manager) flushLaterLocked() {
 }
 
 func (m *Manager) persistLoop() {
+	defer log.Recover("persist loop")
 	defer m.wg.Done()
 	for {
 		select {
@@ -2553,6 +2556,7 @@ func (m *Manager) queueImages(job imageJob) {
 // imageLoop stores queued tool images one job at a time until the manager
 // stops; jobs still queued then are released unstored.
 func (m *Manager) imageLoop() {
+	defer log.Recover("image loop")
 	defer m.wg.Done()
 	for {
 		select {
@@ -3252,6 +3256,7 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 	m.changedLocked(s, before)
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("session open")
 		defer m.wg.Done()
 		s.op.Lock()
 		defer s.op.Unlock()
@@ -3280,7 +3285,10 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // any, the built-in skills and the compaction threshold to req. The caller
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
-	go m.glab.gate(m.ctx, req.Workdir)
+	go func(dir string) {
+		defer log.Recover("glab gate")
+		m.glab.gate(m.ctx, dir)
+	}(req.Workdir)
 	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
 	req.Hooks.Failed = func(ctx context.Context, use agentapi.ToolUse, failure string) string {
 		return m.failedToolUse(ctx, s, use, failure)
@@ -4036,6 +4044,7 @@ func (m *Manager) kickDrainLocked(s *webSession) {
 	}
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("queue drain")
 		defer m.wg.Done()
 		m.drain(s)
 	}()
@@ -5017,6 +5026,7 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 	ix.answering, ix.yolo, ix.assisted = true, true, assisted
 	m.wg.Add(1)
 	go func() {
+		defer log.Recover("automatic approval")
 		defer m.wg.Done()
 		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
 			log.Warn("web automatic approval failed", "session", s.id, "interaction", id, "error", err)
