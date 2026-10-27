@@ -110,7 +110,8 @@ function TurnTime({ c }: Readonly<{ c: Counts }>) {
     { label: 'first token', p50: num(c, 'models.ttfb_median_ms') / 1000, p90: num(c, 'models.ttfb_p90_ms') / 1000, bar: 'bg-accent', band: 'bg-accent-wash' },
     { label: 'whole turn', p50: num(c, 'turns.median_s'), p90: num(c, 'turns.p90_s'), bar: 'bg-ink', band: 'bg-hairline' },
   ];
-  const max = Math.max(1, ...rows.map((r) => r.p90));
+  // A long p90 tail would flatten the medians: the scale stops at 5× the larger median and a clipped band ends in a notch.
+  const max = Math.max(1, Math.min(Math.max(...rows.map((r) => r.p90)), 5 * Math.max(...rows.map((r) => r.p50))));
   const share = rows[1].p50 ? Math.round((rows[0].p50 * 100) / rows[1].p50) : 0;
   return (
     <Card title="Turn time">
@@ -119,8 +120,9 @@ function TurnTime({ c }: Readonly<{ c: Counts }>) {
           <div key={r.label} className="contents" title={`${r.label}: median ${fmt(r.p50, 1)} s, p90 ${fmt(r.p90, 1)} s`}>
             <span className="text-caption text-body">{r.label}</span>
             <span className="relative h-3.5">
-              <span className={`absolute inset-y-0 left-0 rounded-[3px] ${r.band}`} style={{ width: `${(r.p90 * 100) / max}%` }} />
-              <span className={`absolute inset-y-1 left-0 rounded-[2px] ${r.bar}`} style={{ width: `${(r.p50 * 100) / max}%` }} />
+              <span className={`absolute inset-y-0 left-0 rounded-[3px] ${r.band}`} style={{ width: `${Math.min(100, (r.p90 * 100) / max)}%` }} />
+              {r.p90 > max && <span aria-hidden="true" className="absolute inset-y-0 right-1 w-0.5 bg-raised" />}
+              <span className={`absolute inset-y-1 left-0 rounded-[2px] ${r.bar}`} style={{ width: `${Math.min(100, (r.p50 * 100) / max)}%` }} />
             </span>
             <span className="text-caption tabular-nums text-ink">{fmt(r.p50, 1)} s <span className="text-muted">· p90 {fmt(r.p90, 1)}</span></span>
           </div>
@@ -139,7 +141,15 @@ const PERMISSION_NAMES: Record<string, string> = {
   'denied-interactively-by-user': 'denied by you',
   'denied-no-approval-rule-and-could-not-request-from-user': 'denied, no rule',
 };
-const PERMISSION_TONES = ['bg-badge-blue', 'bg-hairline-strong', 'bg-error', 'bg-badge-amber', 'bg-badge-pink', 'bg-badge-teal'];
+// Each result keeps its colour whatever its rank; results not named here are pink.
+const PERMISSION_TONES: Record<string, string> = {
+  'approved-for-location': 'bg-badge-blue',
+  'approved-for-session': 'bg-badge-teal',
+  cancelled: 'bg-hairline-strong',
+  'denied-interactively-by-user': 'bg-error',
+  'denied-no-approval-rule-and-could-not-request-from-user': 'bg-badge-amber',
+};
+const permissionTone = (name: string) => PERMISSION_TONES[name] ?? 'bg-badge-pink';
 
 /** Permission requests: the plain approvals as one bar, the rest magnified below it. */
 function Permissions({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
@@ -156,12 +166,12 @@ function Permissions({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
       {rest > 0 && (
         <>
           <span className="flex h-2.5 gap-0.5" title={`The other ${fmt(rest)}`}>
-            {others.map(([name, v], i) => <span key={name} className={`rounded-[3px] ${PERMISSION_TONES[i % PERMISSION_TONES.length]}`} style={{ flexGrow: v }} />)}
+            {others.map(([name, v]) => <span key={name} className={`rounded-[3px] ${permissionTone(name)}`} style={{ flexGrow: v }} />)}
           </span>
           <ul className="grid grid-cols-2 gap-x-3 text-caption">
-            {others.map(([name, v], i) => (
+            {others.map(([name, v]) => (
               <li key={name} className="flex items-center gap-1.5 truncate" title={name}>
-                <span aria-hidden="true" className={`size-2 shrink-0 rounded-[2px] ${PERMISSION_TONES[i % PERMISSION_TONES.length]}`} />
+                <span aria-hidden="true" className={`size-2 shrink-0 rounded-[2px] ${permissionTone(name)}`} />
                 <span className="truncate">{PERMISSION_NAMES[name] ?? name.replaceAll('-', ' ')}</span>
                 <b className="font-medium tabular-nums text-ink">{fmt(v)}</b>
               </li>
@@ -256,24 +266,27 @@ function CacheMosaic({ c }: Readonly<{ c: Counts }>) {
 
 const MODEL_TONES = ['bg-badge-blue', 'bg-badge-pink', 'bg-badge-amber'];
 
-/** Model calls as one strip: the three biggest models in colour, the rest grey. */
-function ModelStrip({ c }: Readonly<{ c: Counts }>) {
+/** Model calls as one strip: the three biggest models of all time in colour, the rest grey. */
+function ModelStrip({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
   const models = entries(c, 'model_calls').filter(([, v]) => v > 0);
+  // Colour by the all-time rank, so a model keeps its colour when the window changes.
+  const ranked = entries(all, 'model_calls').map(([name]) => name);
+  const tone = (name: string) => MODEL_TONES[ranked.indexOf(name)] ?? 'bg-hairline-strong';
   const total = models.reduce((a, [, v]) => a + v, 0);
   if (!total) return null;
   return (
     <Card title={`${fmt(total)} model calls, by model`}>
       <div className="flex h-7 gap-0.5" role="img" aria-label="Model calls by model">
-        {models.map(([name, v], i) => (
-          <span key={name} className={`flex min-w-[3px] items-center overflow-hidden rounded-[3px] px-1.5 text-caption font-medium text-on-primary ${MODEL_TONES[i] ?? 'bg-hairline-strong'}`} style={{ flexGrow: v }} title={`${name}: ${fmt(v)} (${pct(v, total, 0)})`}>
+        {models.map(([name, v]) => (
+          <span key={name} className={`flex min-w-[3px] items-center overflow-hidden rounded-[3px] px-1.5 text-caption font-medium text-on-primary ${tone(name)}`} style={{ flexGrow: v }} title={`${name}: ${fmt(v)} (${pct(v, total, 0)})`}>
             {v / total >= 0.15 && <span className="truncate">{pct(v, total, 0)}</span>}
           </span>
         ))}
       </div>
       <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-caption">
-        {models.map(([name, v], i) => (
+        {models.map(([name, v]) => (
           <li key={name} className="flex items-center gap-1.5">
-            <span aria-hidden="true" className={`size-2 rounded-[2px] ${MODEL_TONES[i] ?? 'bg-hairline-strong'}`} />
+            <span aria-hidden="true" className={`size-2 rounded-[2px] ${tone(name)}`} />
             {name} <b className="font-medium tabular-nums text-ink">{fmt(v)}</b>
           </li>
         ))}
@@ -283,14 +296,14 @@ function ModelStrip({ c }: Readonly<{ c: Counts }>) {
   );
 }
 
-function SpendView({ c }: Readonly<{ c: Counts }>) {
+function SpendView({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
   return (
     <div className="@container flex flex-col gap-5">
       <div className="grid gap-5 @lg:grid-cols-2">
         <CostSteps c={c} />
         <CacheMosaic c={c} />
       </div>
-      <ModelStrip c={c} />
+      <ModelStrip c={c} all={all} />
       <p className="text-caption text-muted">“other” is calls the CLI gave no initiator; its documentation says that marks user-initiated calls.</p>
     </div>
   );
@@ -382,7 +395,7 @@ export function SessionStatsSettings() {
       ) : view === 'work' ? (
         <WorkView c={c} all={all} />
       ) : view === 'spend' ? (
-        <SpendView c={c} />
+        <SpendView c={c} all={all} />
       ) : (
         <EveryCounter list={list} allTime={recent ? allTime : new Set()} />
       )}
