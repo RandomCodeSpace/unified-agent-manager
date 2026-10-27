@@ -105,6 +105,8 @@ func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 	for _, rule := range []string{
 		"folded away. Put what the owner needs in your reply",
 		"Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.",
+		"uam turns these Markdown shapes into rich blocks",
+		"Write Markdown only, never HTML.",
 		"as its own entry in choices",
 		` (Recommended)"`,
 		"\n\nFor work with more than two steps, keep a todo list in the session's `todos` table with the sql tool",

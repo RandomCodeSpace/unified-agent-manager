@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
+import { CircleAlert, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -10,6 +10,7 @@ import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
+import { remarkRich, type CalloutKind } from '../lib/richMarkdown';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
 import { FileIcon } from './FileIcon';
@@ -858,10 +859,50 @@ function MdTable({ children }: Readonly<{ children?: ReactNode }>) {
   return <MarkdownTable streaming={streaming}>{children}</MarkdownTable>;
 }
 
+const CALLOUT: Record<CalloutKind, { title: string; Icon: LucideIcon }> = {
+  note: { title: 'Note', Icon: Info },
+  tip: { title: 'Tip', Icon: Lightbulb },
+  important: { title: 'Important', Icon: CircleAlert },
+  warning: { title: 'Warning', Icon: TriangleAlert },
+  caution: { title: 'Caution', Icon: OctagonAlert },
+};
+
+/** A GitHub alert (`> [!WARNING]`, marked by remarkRich) as a toned callout with its title; any other quote as written. */
+function MdQuote({ node, children }: Readonly<{ children?: ReactNode } & ExtraProps>) {
+  const kind = node?.properties.dataCallout as CalloutKind | undefined;
+  const callout = kind && CALLOUT[kind];
+  if (!callout) return <blockquote>{children}</blockquote>;
+  return (
+    <div role="note" className="md-callout" data-callout={kind}>
+      <p className="md-callout-title"><callout.Icon aria-hidden="true" className="size-3.5 shrink-0" />{callout.title}</p>
+      {children}
+    </div>
+  );
+}
+
+/** A task list with how many of its items are done above it (counted by remarkRich). */
+function MdList({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
+  const total = Number(node?.properties.dataTotal);
+  const list = <ul className={className}>{children}</ul>;
+  if (!total) return list;
+  const done = Number(node?.properties.dataDone);
+  return (
+    <>
+      <p className="md-progress">
+        <progress value={done} max={total} aria-label={`${done} of ${total} done`} />
+        <span className="tabular-nums">{done} of {total} done</span>
+      </p>
+      {list}
+    </>
+  );
+}
+
 const mdComponents: Components = {
   a: MdLink,
   img: MdImage,
   table: MdTable,
+  blockquote: MdQuote,
+  ul: MdList,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);
@@ -947,8 +988,10 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, reh
   const origin = useContext(GitLabItemsContext)?.origin;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
-    return origin ? [...base, remarkGitLabRefs(origin)] : base;
-  }, [breaks, origin]);
+    // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
+    const rich = streaming ? base : [...base, remarkRich];
+    return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
+  }, [breaks, origin, streaming]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>

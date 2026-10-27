@@ -1138,12 +1138,16 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 // session, created or resumed, so results land in the reply rather than the
 // folded tool calls, the agent loads the built-in uam skill before using what
 // uam renders or provides (an agent rarely loads it from its description
-// alone), a question's options arrive as choices the composer lists and
+// alone), replies use the Markdown shapes the web UI renders as rich blocks
+// (web/packages/ui/src/lib/richMarkdown.ts; the stored text stays Markdown),
+// a question's options arrive as choices the composer lists and
 // pre-selects, and work of several steps keeps the todo list uam shows
 // (todos.go). The owner's git rules follow it (git_rules.go). Utility
 // sessions replace the message. Subagents do not receive it: subagentStart
 // gives them the todo and git rules.
 const taskSystem = `This conversation is a uam Thread: the owner reads it in a browser, often on a phone, where your tool calls and their output are folded away. Put what the owner needs in your reply: results, the errors that matter, decisions and next steps. Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.
+
+Make replies easy to scan: uam turns these Markdown shapes into rich blocks, so use them where they fit instead of long prose. A GitHub alert (` + "`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`" + `) for what the owner must not miss; a bullet list where every item starts with ` + "`**Label:**`" + ` for facts, which shows as a grid, and as stat tiles when two to four items are each one short figure (` + "`**Tests:** 742`" + `); a numbered list where every item starts with bold text for steps; a task list (` + "`- [x]`" + `) for progress; a table for comparisons; a ` + "`diff`" + ` fence for changes; a ` + "`mermaid`" + ` fence for flows. Write Markdown only, never HTML.
 
 When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 

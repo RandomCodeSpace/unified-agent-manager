@@ -616,6 +616,149 @@
   .md li + li {
     margin-top: 3px;
   }
+  /* Rich blocks (lib/richMarkdown.ts): fixed renderings of exact Markdown shapes, in the app's tones. */
+  .md-callout {
+    margin: 10px 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--callout-wash);
+    box-shadow: inset 2px 0 0 var(--callout-tone);
+  }
+  .md-callout > :last-child {
+    margin-bottom: 0;
+  }
+  .md .md-callout-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-weight: 600;
+    color: var(--callout-tone);
+  }
+  .md-callout[data-callout='note'],
+  .md-callout[data-callout='important'] {
+    --callout-tone: var(--color-accent);
+    --callout-wash: var(--color-accent-wash);
+  }
+  .md-callout[data-callout='tip'] {
+    --callout-tone: var(--color-success);
+    --callout-wash: var(--color-success-wash);
+  }
+  .md-callout[data-callout='warning'] {
+    --callout-tone: var(--color-warning);
+    --callout-wash: var(--color-warning-wash);
+  }
+  .md-callout[data-callout='caution'] {
+    --callout-tone: var(--color-error);
+    --callout-wash: var(--color-error-wash);
+  }
+  .md dl.md-facts {
+    display: grid;
+    grid-template-columns: fit-content(40%) 1fr;
+    margin: 0 0 10px;
+  }
+  .md-facts > div {
+    display: contents;
+  }
+  .md-facts dt,
+  .md-facts dd {
+    margin: 0;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .md-facts dt {
+    padding-right: 16px;
+    color: var(--color-muted);
+  }
+  .md dl.md-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  .md-tiles > div {
+    display: flex;
+    flex-direction: column-reverse;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--color-sunken);
+  }
+  .md-tiles dt,
+  .md-tiles dd {
+    padding: 0;
+    border: 0;
+  }
+  .md-tiles dt {
+    font-size: 12px;
+  }
+  .md-tiles dd {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--color-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .md ol.md-steps {
+    padding-left: 0;
+    list-style: none;
+    counter-reset: md-step;
+  }
+  .md-steps > li {
+    position: relative;
+    padding: 0 0 6px 30px;
+    counter-increment: md-step;
+  }
+  .md-steps > li::before {
+    content: counter(md-step);
+    position: absolute;
+    top: 1px;
+    left: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 9999px;
+    background: var(--color-accent-wash);
+    color: var(--color-accent);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 20px;
+    text-align: center;
+  }
+  .md-steps > li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 24px;
+    bottom: 0;
+    left: 10px;
+    width: 1px;
+    background: var(--color-hairline);
+  }
+  .md .md-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--color-muted);
+  }
+  .md ul.contains-task-list {
+    padding-left: 0;
+    list-style: none;
+  }
+  .md-progress progress {
+    width: 120px;
+    height: 4px;
+    appearance: none;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--color-hairline);
+    overflow: hidden;
+  }
+  .md-progress progress::-webkit-progress-bar {
+    background: var(--color-hairline);
+  }
+  .md-progress progress::-webkit-progress-value {
+    background: var(--color-success);
+  }
+  .md-progress progress::-moz-progress-bar {
+    background: var(--color-success);
+  }
   .md h1,
   .md h2,
   .md h3,
