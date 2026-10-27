@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -177,4 +178,40 @@ func TestEventSocketTargets(t *testing.T) {
 			t.Errorf("eventSocketTarget(%q) = %v, want %v", raw, ok, want)
 		}
 	}
+}
+
+func FuzzEventSocketTarget(f *testing.F) {
+	for _, seed := range []string{
+		"/api/events?session=s1",
+		"/api/connected/c1/api/events/detail",
+		"/api/connected/c1/../api/events",
+		"//host/api/events",
+		"/api/%65vents",
+		"http://x/api/events#f",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		u, ok := eventSocketTarget(raw)
+		if !ok {
+			return
+		}
+		if u.Scheme != "" || u.Host != "" || u.User != nil || u.Fragment != "" || path.Clean(u.Path) != u.Path {
+			t.Fatalf("eventSocketTarget(%q) accepted %#v", raw, u)
+		}
+		switch u.Path {
+		case "/api/events", "/api/events/detail", "/api/connected-notifications/events":
+		default:
+			rest, found := strings.CutPrefix(u.Path, "/api/connected/")
+			id, inner, _ := strings.Cut(rest, "/")
+			if !found || id == "" || (inner != "api/events" && inner != "api/events/detail") {
+				t.Fatalf("eventSocketTarget(%q) accepted path %q", raw, u.Path)
+			}
+		}
+		// The stream is served from RequestURI, so it must name the same target.
+		again, ok := eventSocketTarget(u.RequestURI())
+		if !ok || again.Path != u.Path || again.RawQuery != u.RawQuery {
+			t.Fatalf("eventSocketTarget(%q): RequestURI %q does not round-trip", raw, u.RequestURI())
+		}
+	})
 }
