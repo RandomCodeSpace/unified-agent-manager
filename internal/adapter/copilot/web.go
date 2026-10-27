@@ -459,6 +459,7 @@ func installedCLI() (string, os.FileInfo, error) {
 // export file.
 func sdkClientAt(path string, export bool) sdkClient {
 	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	env = withDefault(env, wsMaxAge, "15")
 	if owner := cliOwner(); owner != "" {
 		env = append(env, cliOwnerEnv+"="+owner)
 	}
@@ -470,6 +471,22 @@ func sdkClientAt(path string, export bool) sdkClient {
 		}
 	}
 	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+}
+
+// wsMaxAge caps the age (seconds) at which the CLI still reuses its model
+// WebSocket. A firewall or proxy that drops an idle tunnel without closing it
+// leaves the CLI sending the next request into a dead socket, where it hangs
+// with no timeout; GitHub's edge closes idle sockets after about 20 s, so a
+// socket older than 15 s at reuse is replaced instead. Undocumented CLI
+// setting (1.0.103); the owner's own value wins.
+const wsMaxAge = "COPILOT_CLI_WEBSOCKET_MAX_CONNECTION_AGE_SECS"
+
+// withDefault returns env with key=value added unless env already sets key.
+func withDefault(env []string, key, value string) []string {
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, key+"=") }) {
+		return env
+	}
+	return append(env, key+"="+value)
 }
 
 // cliFeatureFlags lists the CLI's enabled feature flags, comma-separated.
@@ -1138,12 +1155,16 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 // session, created or resumed, so results land in the reply rather than the
 // folded tool calls, the agent loads the built-in uam skill before using what
 // uam renders or provides (an agent rarely loads it from its description
-// alone), a question's options arrive as choices the composer lists and
+// alone), replies use the Markdown shapes the web UI renders as rich blocks
+// (web/packages/ui/src/lib/richMarkdown.ts; the stored text stays Markdown),
+// a question's options arrive as choices the composer lists and
 // pre-selects, and work of several steps keeps the todo list uam shows
 // (todos.go). The owner's git rules follow it (git_rules.go). Utility
 // sessions replace the message. Subagents do not receive it: subagentStart
 // gives them the todo and git rules.
 const taskSystem = `This conversation is a uam Thread: the owner reads it in a browser, often on a phone, where your tool calls and their output are folded away. Put what the owner needs in your reply: results, the errors that matter, decisions and next steps. Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.
+
+Make replies easy to scan: uam turns these Markdown shapes into rich blocks, so use them where they fit instead of long prose. A GitHub alert (` + "`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`" + `) for what the owner must not miss: put risks, caveats and what you did not verify in a ` + "`> [!WARNING]`" + `, not under a label; bullets or paragraphs that each start with ` + "`**Label:**`" + ` for facts, which show as a grid, and as stat tiles when two to four items are each one short figure (` + "`**Tests:** 742`" + `); a numbered list where every item starts with bold text for steps; a task list (` + "`- [x]`" + `) for progress; a table for comparisons; a ` + "`diff`" + ` fence for changes; a ` + "`mermaid`" + ` fence for flows. Write Markdown only, never HTML.
 
 When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 

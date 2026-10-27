@@ -87,6 +87,18 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
   5 MiB) stand outside the fold.
 - **Markdown** renders with GitHub extensions. A table becomes a sortable,
   filterable table. Raw HTML and math do not render: write formulas as code.
+- **Rich blocks** come from exact Markdown shapes; uam renders them, the
+  text stays Markdown, so never write HTML for them:
+  - a GitHub alert (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
+    `[!CAUTION]`) is a toned callout with its title;
+  - a bullet list where every item starts with `**Label:**` (or
+    `**Label**:`), or two or more paragraphs or lines in a row that do, is a
+    label/value grid; two to four that are each one short figure
+    (`**Tests:** 742`, `**Coverage:** 81%`) are stat tiles;
+  - put risks, caveats and what you did not verify in `> [!WARNING]`;
+  - a numbered list where every item starts with bold text is a step list;
+  - a task list (`- [x]` / `- [ ]`) shows "N of M done" with a bar.
+  One item that breaks the shape makes the whole list ordinary.
 - **Code blocks** wrap long lines, scroll past about 480 px of height and
   have a copy button. Common language tags are highlighted.
 - **The todo list** you keep in the session's `todos` table shows above the

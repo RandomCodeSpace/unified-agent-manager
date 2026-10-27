@@ -15,6 +15,8 @@ const WHOLE = /^ {0,3}(\[[^\]]+\]:|<!--|<\?|<![a-z]|<!\[CDATA\[|<(pre|script|sty
  * indented (a list item's continuation, indented code) nor a list item (a loose list
  * stays one list). The blank lines themselves are dropped.
  */
+const LABEL_LINE = /^\*\*[^*\n]{1,60}(?::\*\*|\*\*:)/;
+
 export function splitBlocks(text: string): string[] {
   if (WHOLE.test(text)) return [text];
   const lines = text.split('\n');
@@ -35,7 +37,9 @@ export function splitBlocks(text: string): string[] {
     }
     // The last line may still be arriving: bare digits may yet become an ordered list item.
     const undecided = i === lines.length - 1 && /^\d{1,9}$/.test(line);
-    if (blank >= 0 && blank > start && !undecided && !/^[ \t]/.test(line) && !LIST_ITEM.test(line)) {
+    // A run of `**Label:** value` paragraphs stays one block: it renders as one facts grid (richMarkdown.ts).
+    const labels = LABEL_LINE.test(line) && LABEL_LINE.test(lines[start]);
+    if (blank >= 0 && blank > start && !undecided && !labels && !/^[ \t]/.test(line) && !LIST_ITEM.test(line)) {
       blocks.push(lines.slice(start, blank).join('\n'));
       start = i;
     }

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { BarChart3, Check, ChevronDown, Copy, Ellipsis, LineChart, Pin, RefreshCw, Table2, X } from 'lucide-react';
+import { BarChart3, Check, ChevronDown, Copy, Ellipsis, LineChart, Pin, PinOff, RefreshCw, Table2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
 import { popupOpen, threadCovered } from '../App';
@@ -105,7 +105,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
         <span>Pin to project</span>
       </Popover.Trigger>
       <Popover.Content side="bottom" align="end" className="max-w-80 gap-2">
-        <Popover.Title>Pin to the project</Popover.Title>
+        <Popover.Title>Pin to project</Popover.Title>
         {chart.command ? (
           <>
             <Popover.Description>Refresh runs this command again in the project folder, with no agent and no model call:</Popover.Description>
@@ -232,7 +232,7 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
         )}
         <Popover.Root open={confirm} onOpenChange={setConfirm}>
           <Popover.Trigger render={<Button size="icon" aria-label={`Unpin ${chart.title}`} className="text-muted" />}>
-            <X />
+            <PinOff />
           </Popover.Trigger>
           <Popover.Content side="bottom" align="end" className="gap-2">
             <Popover.Title>Unpin this chart?</Popover.Title>

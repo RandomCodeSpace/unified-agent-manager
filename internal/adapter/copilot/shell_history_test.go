@@ -41,7 +41,7 @@ func TestSDKShellHistoryDisabled(t *testing.T) {
 	const script = `#!/bin/sh
 exec "$UAM_TEST_BASH" --noprofile --norc -c '
 set -e
-printf "%s\n%s\n%s\n" "$HISTFILE" "$HISTSIZE" "$UAM_TEST_KEEP" > "$UAM_TEST_OUTPUT"
+printf "%s\n%s\n%s\n%s\n" "$HISTFILE" "$HISTSIZE" "$UAM_TEST_KEEP" "$COPILOT_CLI_WEBSOCKET_MAX_CONNECTION_AGE_SECS" > "$UAM_TEST_OUTPUT"
 set -o history
 history -s uam-main-marker
 history -a
@@ -67,7 +67,7 @@ history -w
 		t.Fatalf("shells changed history: %q, %v", data, err)
 	}
 	data, err = os.ReadFile(filepath.Join(dir, "environment"))
-	if want := os.DevNull + "\n0\ninherited\n"; err != nil || string(data) != want {
+	if want := os.DevNull + "\n0\ninherited\n15\n"; err != nil || string(data) != want {
 		t.Fatalf("child environment = %q, %v; want %q", data, err, want)
 	}
 	if os.Getenv("HISTFILE") != history || os.Getenv("HISTSIZE") != "100" {
@@ -271,5 +271,15 @@ func TestSDKCLIEnvironmentEnablesAutoApproval(t *testing.T) {
 	}
 	if os.Getenv("COPILOT_CLI_ENABLED_FEATURE_FLAGS") != "AHP_CLIENT" {
 		t.Fatal("SDK client changed the service environment")
+	}
+}
+
+// The owner's own WebSocket age limit wins over uam's default.
+func TestWithDefaultKeepsSetValue(t *testing.T) {
+	if got := withDefault([]string{wsMaxAge + "=60"}, wsMaxAge, "15"); len(got) != 1 || got[0] != wsMaxAge+"=60" {
+		t.Fatalf("withDefault = %q", got)
+	}
+	if got := withDefault([]string{"A=1"}, wsMaxAge, "15"); len(got) != 2 || got[1] != wsMaxAge+"=15" {
+		t.Fatalf("withDefault = %q", got)
 	}
 }
