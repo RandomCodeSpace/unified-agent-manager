@@ -42,6 +42,8 @@ function token(name: string, fallback: string): string {
   if (!(name in values)) values[name] = (typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim()) || fallback;
   return values[name];
 }
+/** A colour token's value for drawings built outside the theme (the todo graph). */
+export const chartToken = token;
 const seriesColors = () => SERIES_TOKENS.map((name, i) => token(name, SERIES_FALLBACK[i]));
 
 /**

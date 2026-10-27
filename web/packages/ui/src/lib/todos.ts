@@ -115,8 +115,8 @@ export function snapshotFacts(counts: TodoCounts, clock: string): string[] {
 /** The kept list's sections, as the live reader's: In progress, Blocked, To do and Done (newest first), each in the order uam kept them. */
 export const snapshotSections = (todos: readonly Todo[]) => stageSections(todos);
 
-/** A row of the history reader's ledger: its latest state, when its status last changed (`at`) and in which turn (`turn`, 1-based among the Thread's timings; none for the running turn's change), and whether the agents removed it from the live list. */
-export interface LedgerRow { todo: Todo & { agent?: string }; at?: string; turn?: number; removed: boolean }
+/** A row of the history reader's ledger: its latest state, when its status last changed (`at`) and in which turn (`turn`, 1-based among the Thread's timings; none for the running turn's change), the turn whose record first held it (`added`, the same way), and whether the agents removed it from the live list. */
+export interface LedgerRow { todo: Todo & { agent?: string }; at?: string; turn?: number; added?: number; removed: boolean }
 
 /**
  * Every row the Thread's turns kept, merged by id: `turns` oldest to newest, each row keeping the
@@ -134,7 +134,7 @@ export function todoLedger(history: TodoHistory, timings: readonly TurnTiming[] 
     const was = rows.get(t.id);
     const reopened = Math.max(t.reopened ?? 0, (was?.todo.reopened ?? 0) + (was?.todo.status === 'done' && t.status !== 'done' ? 1 : 0)) || undefined;
     if (was && was.todo.status === t.status) was.todo = { ...was.todo, ...t, reopened };
-    else rows.set(t.id, { todo: { ...was?.todo, ...t, reopened }, at, turn, removed: false });
+    else rows.set(t.id, { todo: { ...was?.todo, ...t, reopened }, at, turn, added: was ? was.added : turn, removed: false });
   };
   for (const rec of history.turns) {
     const turn = timings.findIndex((t) => t.id === rec.timing_id) + 1 || undefined;
