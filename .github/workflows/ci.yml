@@ -405,7 +405,7 @@ jobs:
 
       - name: Validate GoReleaser configuration
         if: steps.tooling.outputs.changed == 'true'
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: v2.18.0
@@ -413,7 +413,7 @@ jobs:
 
       # --skip=before: the snapshot embeds the shared bundle instead of rebuilding it.
       - name: Build snapshot archives
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: v2.18.0
