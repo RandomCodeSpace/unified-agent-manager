@@ -388,6 +388,9 @@ type webSession struct {
 	// as last read (refreshBranches), not persisted.
 	place  *store.WebPlace
 	branch string
+	// linkOpens is the branch the Thread's branch link opens, as read for
+	// branch linkFor when the Thread was last opened (checkBranchLink).
+	linkFor, linkOpens string
 	// placeNaming is set while the place's branch takes the Thread's title.
 	placeNaming bool
 	// removed is set once the session was deleted; operations waiting on op
@@ -815,7 +818,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts), BranchLink: loadedBranchLink(p.BranchLink)}
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
@@ -1288,6 +1291,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Branch:       s.branch,
 		TitlePending: s.titling || s.titleWait != nil,
 	}
+	out.BranchLinkURL, out.BranchLinkBranch = m.branchLinkLocked(s)
 	if s.place != nil && s.place.Worktree != "" {
 		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch, SizeBytes: m.worktrees.sizes[s.place.Worktree].bytes}
 	}
@@ -1473,6 +1477,10 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
 	branch, noGit := readBranch(m.ctx, canonical)
+	var link *string
+	if detected, ok := detectBranchLink(m.ctx, canonical); ok {
+		link = &detected
+	}
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1490,7 +1498,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit, BranchLink: link, linkTried: true}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -1503,7 +1511,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 		}
 		badge := newBadge(clean, cfg.WebProjects, m.pick)
 		p.Badge = Badge(badge)
-		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Badge: badge}
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Badge: badge, BranchLink: link}
 		return nil
 	}); err != nil {
 		if existing != "" {
@@ -1527,6 +1535,12 @@ func projectExists(id string) *Error {
 // UpdateProject renames a Project. An empty name resets it to the
 // directory's base name.
 func (m *Manager) UpdateProject(id, name string) (Project, error) {
+	return m.patchProject(id, &name, nil)
+}
+
+// patchProject sets the Project's name and branch link, each when given.
+// An empty branch link turns the link off.
+func (m *Manager) patchProject(id string, name, branchLink *string) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1540,15 +1554,24 @@ func (m *Manager) UpdateProject(id, name string) (Project, error) {
 		return Project{}, errProjectNotFound
 	}
 	var err error
-	if next.Name, err = cleanName(name, filepath.Base(next.Dir)); err != nil {
-		return Project{}, err
+	if name != nil {
+		if next.Name, err = cleanName(*name, filepath.Base(next.Dir)); err != nil {
+			return Project{}, err
+		}
+	}
+	if branchLink != nil {
+		link, err := cleanBranchLink(*branchLink)
+		if err != nil {
+			return Project{}, err
+		}
+		next.BranchLink = &link
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		stored.Name = next.Name
+		stored.Name, stored.BranchLink = next.Name, next.BranchLink
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {
@@ -1559,8 +1582,7 @@ func (m *Manager) UpdateProject(id, name string) (Project, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	*p = next
-	m.publishProjectLocked(*p)
+	m.setProjectLocked(p, next)
 	return *p, nil
 }
 

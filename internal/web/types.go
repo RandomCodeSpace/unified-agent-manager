@@ -119,6 +119,13 @@ type Project struct {
 	NoGit string `json:"no_git,omitempty"`
 	// Charts counts the charts pinned to the Project (chart_pins.go).
 	Charts int `json:"charts,omitempty"`
+	// BranchLink is an https address with {branch} where a branch name goes
+	// (branch_link.go). Nil until detected from origin or set; empty once
+	// the owner cleared it, which turns the link off and is never detected
+	// again.
+	BranchLink *string `json:"branch_link,omitempty"`
+	// linkTried is set once this run tried to detect a nil BranchLink.
+	linkTried bool
 }
 
 // TaskDefaults are the settings a new Task starts with (Settings). The
@@ -372,6 +379,11 @@ type SessionSummary struct {
 	// when HEAD is detached, Workdir is in no git work tree, or git cannot
 	// tell.
 	Branch string `json:"branch,omitempty"`
+	// BranchLinkURL is the Project's branch link filled with
+	// BranchLinkBranch: Branch when origin has it, else origin's default
+	// branch. Both are omitted without a link or a branch.
+	BranchLinkURL    string `json:"branch_link_url,omitempty"`
+	BranchLinkBranch string `json:"branch_link_branch,omitempty"`
 	// Worktree is the git worktree the Thread was started in and the branch
 	// made for it; omitted for a Thread in its Project's folder.
 	Worktree WorktreeInfo `json:"worktree,omitzero"`

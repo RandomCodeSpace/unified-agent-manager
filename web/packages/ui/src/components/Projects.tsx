@@ -238,6 +238,8 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const { meta } = useApp();
   const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
+  const [link, setLink] = useState(project.branch_link ?? '');
+  const [detecting, setDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previous, setPrevious] = useState(false);
@@ -250,12 +252,27 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
     setBusy(true);
     setError(null);
     try {
-      onUpdated(await api.updateProject(project.id, { name: name.trim() }));
+      // An untouched link is not sent, so a rename never turns off one still to be detected.
+      const changed = link.trim() !== (project.branch_link ?? '');
+      onUpdated(await api.updateProject(project.id, { name: name.trim(), ...(changed && { branch_link: link.trim() }) }));
       onClose();
     } catch (err) {
       setError(describeError(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Fills the field with the link the server reads from origin; the owner saves it with Save. */
+  async function detect() {
+    setDetecting(true);
+    setError(null);
+    try {
+      setLink((await api.detectBranchLink(project.id)).branch_link);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setDetecting(false);
     }
   }
 
@@ -286,6 +303,14 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
       <form id="edit-project" className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="edit-name" label="Name">
           <Input id="edit-name" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field id="edit-branch-link" label="Branch link" hint="An https address with {branch} where the branch name goes." hintVisible>
+          <div className="flex items-center gap-2">
+            <Input id="edit-branch-link" className="min-w-0 flex-1" spellCheck={false} aria-describedby="edit-branch-link-hint" placeholder="https://github.com/org/repo/tree/{branch}" value={link} onChange={(e) => setLink(e.target.value)} />
+            <Button variant="secondary" loading={detecting} onClick={() => void detect()}>
+              Detect from git remote
+            </Button>
+          </div>
         </Field>
         {error && (
           <Note tone="error" role="alert">

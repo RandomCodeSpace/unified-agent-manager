@@ -93,6 +93,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/fs/dirs",
 		"POST /api/mcp/servers",
 		"POST /api/projects",
+		"POST /api/projects/{id}/branch-link/detect",
 		"POST /api/projects/{id}/charts/{chart_id}/refresh",
 		"POST /api/projects/{id}/previous/{conversation_id}/import",
 		"POST /api/projects/{id}/routines",

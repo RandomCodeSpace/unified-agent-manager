@@ -261,6 +261,7 @@ export function seed(): MockState {
       created_at: ago(60 * 24 * 9),
       badge: { text: 'UM', color: 'blue' },
       branch: 'feat/web-project-defaults-and-sidebar-revamp',
+      branch_link: 'https://github.com/RandomCodeSpace/unified-agent-manager/tree/{branch}',
     },
     { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' }, no_git: 'not_repository' },
     {
@@ -270,6 +271,7 @@ export function seed(): MockState {
       created_at: ago(60 * 24 * 2),
       badge: { text: 'NS', color: 'pink' },
       branch: 'main',
+      branch_link: 'https://gitlab.example.com/web/notes-site/-/tree/{branch}',
     },
   ];
 

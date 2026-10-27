@@ -703,6 +703,9 @@ type WebProject struct {
 	// The web service shows, and counts, only the ones it can check, and
 	// keeps their rows elsewhere.
 	Charts []WebChart `json:"charts,omitempty"`
+	// BranchLink is the Project's branch link: absent until detected or
+	// set, empty once the owner cleared it.
+	BranchLink *string `json:"branch_link,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -749,13 +752,14 @@ type WebTaskDefaults struct {
 type webProjectAlias WebProject
 
 var knownWebProjectFields = map[string]struct{}{
-	"id":         {},
-	"name":       {},
-	"dir":        {},
-	"created_at": {},
-	"defaults":   {},
-	"badge":      {},
-	"charts":     {},
+	"id":          {},
+	"name":        {},
+	"dir":         {},
+	"created_at":  {},
+	"defaults":    {},
+	"badge":       {},
+	"charts":      {},
+	"branch_link": {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {
