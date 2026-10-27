@@ -459,6 +459,7 @@ func installedCLI() (string, os.FileInfo, error) {
 // export file.
 func sdkClientAt(path string, export bool) sdkClient {
 	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	env = withDefault(env, wsMaxAge, "15")
 	if owner := cliOwner(); owner != "" {
 		env = append(env, cliOwnerEnv+"="+owner)
 	}
@@ -470,6 +471,22 @@ func sdkClientAt(path string, export bool) sdkClient {
 		}
 	}
 	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+}
+
+// wsMaxAge caps the age (seconds) at which the CLI still reuses its model
+// WebSocket. A firewall or proxy that drops an idle tunnel without closing it
+// leaves the CLI sending the next request into a dead socket, where it hangs
+// with no timeout; GitHub's edge closes idle sockets after about 20 s, so a
+// socket older than 15 s at reuse is replaced instead. Undocumented CLI
+// setting (1.0.103); the owner's own value wins.
+const wsMaxAge = "COPILOT_CLI_WEBSOCKET_MAX_CONNECTION_AGE_SECS"
+
+// withDefault returns env with key=value added unless env already sets key.
+func withDefault(env []string, key, value string) []string {
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, key+"=") }) {
+		return env
+	}
+	return append(env, key+"="+value)
 }
 
 // cliFeatureFlags lists the CLI's enabled feature flags, comma-separated.
