@@ -58,6 +58,8 @@ func TestUAMReadProjectScope(t *testing.T) {
 			fmt.Sprintf(`{"op":"tasks","args":{"project":%q}}`, other.ProjectID),
 			fmt.Sprintf(`{"op":"task","args":{"id":%q}}`, other.ID),
 			fmt.Sprintf(`{"op":"changes","args":{"id":%q}}`, other.ID),
+			fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, other.ID),
+			fmt.Sprintf(`{"op":"search","args":{"query":"x","project":%q}}`, other.ProjectID),
 		} {
 			if res := uamReadCall(t, conv, args); !res.Failed || !strings.Contains(res.Text, "requires Yolo") {
 				t.Fatalf("%s read escaped project: %+v", mode, res)
@@ -79,6 +81,7 @@ func TestUAMReadProjectScope(t *testing.T) {
 		t.Fatalf("Yolo tasks: %+v", page)
 	}
 	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"changes","args":{"id":%q}}`, other.ID), &page)
+	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, other.ID), &page)
 	setSession(m, caller.ID, func(s *webSession) { s.modeUnknown = true })
 	if res := uamReadCall(t, conv, fmt.Sprintf(`{"op":"task","args":{"id":%q}}`, other.ID)); !res.Failed {
 		t.Fatal("unknown permission mode allowed cross-project read")
@@ -89,7 +92,11 @@ func TestUAMReadStrictArguments(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	_, conv := createSession(t, m, prov)
 	for _, tc := range []struct{ args, want string }{
-		{`{"op":"history"}`, "who_touched {path, cursor?}"},
+		{`{"op":"send"}`, "history {id, cursor?}"},
+		{`{"op":"search","args":{"query":" "}}`, "query is required"},
+		{`{"op":"search","args":{"q":"x"}}`, `"query": string`},
+		{`{"op":"history","args":{}}`, "id is required"},
+		{`{"op":"history","args":[]}`, "JSON object"},
 		{`{"op":"sense","oops":true}`, `unknown field "oops"`},
 		{`{"op":"sense","args":{"project":"elsewhere"}}`, `args: {}`},
 		{`{"op":"projects","args":{"limit":200}}`, `args: {"cursor"?: string}`},
@@ -300,5 +307,110 @@ func TestUAMReadLongInvalidArgumentsStayBounded(t *testing.T) {
 		if tc.shape != "" && !strings.HasSuffix(result.Text, "; args: "+tc.shape) {
 			t.Fatal("bounded error lost its argument shape")
 		}
+	}
+}
+
+func TestUAMReadSearch(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	caller, conv := createSession(t, m, prov)
+	sibling, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: caller.ProjectID, Name: "Sibling"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := createSession(t, m, prov)
+	t.Setenv("COPILOT_HOME", t.TempDir())
+	var page uamTestPage
+	uamReadJSON(t, conv, `{"op":"search","args":{"query":"redraw"}}`, &page)
+	if len(page.Rows) != 0 || !strings.Contains(page.Note["reason"].(string), "unavailable") {
+		t.Fatalf("no store: %+v", page)
+	}
+	sessionStore(t,
+		[2]string{caller.ConversationID, "The redraw needed a second pass."},
+		[2]string{sibling.ConversationID, "We fixed the redraw by replaying focus events."},
+		[2]string{other.ConversationID, "A redraw in another project."},
+	)
+	page = uamTestPage{}
+	uamReadJSON(t, conv, `{"op":"search","args":{"query":"redraw"}}`, &page)
+	if len(page.Rows) != 2 || page.Note != nil {
+		t.Fatalf("search: %+v", page)
+	}
+	for _, row := range page.Rows {
+		if row["project"] != caller.ProjectID || !strings.Contains(row["snippet"].(string), "redraw") || row["name"] == "" || row["updated"] == "" {
+			t.Fatalf("row: %+v", row)
+		}
+	}
+	setSession(m, caller.ID, func(s *webSession) { s.mode = store.ModeYolo })
+	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"search","args":{"query":"redraw","project":%q}}`, other.ProjectID), &page)
+	if len(page.Rows) != 1 || page.Rows[0]["id"] != other.ID {
+		t.Fatalf("Yolo search: %+v", page)
+	}
+	m.mu.Lock()
+	m.searchSlot = make(chan struct{}, 1)
+	m.searchSlot <- struct{}{}
+	m.mu.Unlock()
+	if res := uamReadCall(t, conv, `{"op":"search","args":{"query":"redraw"}}`); !res.Failed || !strings.Contains(res.Text, "another search") {
+		t.Fatalf("busy search: %+v", res)
+	}
+}
+
+func TestUAMReadHistory(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	caller, conv := createSession(t, m, prov)
+	sibling, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: caller.ProjectID, Name: "Sibling"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	items := []agentapi.Item{
+		{ID: "u0", Kind: agentapi.ItemUser, Text: "Fix the redraw", Time: at},
+		{ID: "r0", Kind: agentapi.ItemReasoning, Text: "thinking"},
+		{ID: "t0", Kind: agentapi.ItemTool, Text: "tool output"},
+		{ID: "s0", Kind: agentapi.ItemAssistant, Text: "subagent reply", AgentID: "sub"},
+		{ID: "a0", Kind: agentapi.ItemAssistant, Text: strings.Repeat("x", 3000)},
+	}
+	for i := 0; i < 55; i++ {
+		items = append(items, agentapi.Item{ID: fmt.Sprintf("a%d", i+1), Kind: agentapi.ItemAssistant, Text: fmt.Sprintf("reply %d", i)})
+	}
+	setSession(m, sibling.ID, func(s *webSession) { s.items = items })
+	var page uamTestPage
+	args := fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, sibling.ID)
+	uamReadJSON(t, conv, args, &page)
+	if len(page.Rows) != 50 || page.More != 7 || page.Note["earlier_missing"] != false || page.Note["loading"] != false || page.Note["unavailable"] != nil {
+		t.Fatalf("first page: rows %d more %d note %+v", len(page.Rows), page.More, page.Note)
+	}
+	long := page.Rows[1]["text"].(string)
+	if page.Rows[0]["kind"] != "user" || page.Rows[0]["text"] != "Fix the redraw" || page.Rows[0]["time"] != at.Format(time.RFC3339Nano) ||
+		page.Rows[1]["kind"] != "assistant" || len(long) > uamHistoryEntryBytes+len(truncatedMarker) || !strings.HasSuffix(long, truncatedMarker) {
+		t.Fatalf("entries: %+v", page.Rows[:2])
+	}
+	next := page.Next
+	page = uamTestPage{}
+	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"history","args":{"id":%q,"cursor":%q}}`, sibling.ID, next), &page)
+	if len(page.Rows) != 7 || page.More != 0 || page.Rows[6]["text"] != "reply 54" {
+		t.Fatalf("last page: %+v", page)
+	}
+	// The caller may read its own conversation, as with task and changes.
+	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, caller.ID), &page)
+	// An active Thread whose record is not in memory starts reading it.
+	setSession(m, sibling.ID, func(s *webSession) { s.conv, s.items, s.history, s.historyRead = nil, nil, "", false })
+	page = uamTestPage{}
+	uamReadJSON(t, conv, args, &page)
+	if len(page.Rows) != 0 || page.Note["loading"] != true {
+		t.Fatalf("loading history: %+v", page)
+	}
+	var done <-chan struct{}
+	setSession(m, sibling.ID, func(s *webSession) { done = s.historyDone })
+	<-done
+	setSession(m, sibling.ID, func(s *webSession) { s.convID, s.items, s.history, s.historyRead = "", nil, "", false })
+	uamReadJSON(t, conv, args, &page)
+	if !strings.Contains(fmt.Sprint(page.Note["unavailable"]), "no provider conversation") {
+		t.Fatalf("unavailable active history: %+v", page)
+	}
+	// A closed Thread without a provider conversation reports why its history is unavailable.
+	setSession(m, sibling.ID, func(s *webSession) {
+		s.conv, s.items, s.convID, s.base, s.history, s.historyRead = nil, nil, "", StateClosed, "", false
+	})
+	if res := uamReadCall(t, conv, args); !res.Failed || !strings.Contains(res.Text, "no provider conversation") {
+		t.Fatalf("unavailable history: %+v", res)
 	}
 }
