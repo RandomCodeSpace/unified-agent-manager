@@ -142,8 +142,9 @@ type sessionTally struct {
 	mainWithTools, mainMulti int
 	mainTools                map[string]int
 	spend                    map[string]*modelSpend
-	// web_fetch: calls, failures by class, fetches of a host that already
-	// failed in the same session, and each failed host's session count.
+	// web_fetch: calls, failures by class, fetches of a host already
+	// blocked (blockedFetch) in the same session, and each blocked host's
+	// session count.
 	fetches, fetchRetries         int
 	fetchFailures                 map[string]int
 	fetchFailedHosts              map[string]int
@@ -248,7 +249,7 @@ func (c *journalCount) done() {
 	if c.js.turnsSince >= 0 {
 		c.t.promptTurns = append(c.t.promptTurns, float64(c.js.turnsSince))
 	}
-	if c.js.mainSince >= 0 {
+	if c.js.mainSince > 0 {
 		c.t.mainPerPrompt = append(c.t.mainPerPrompt, float64(c.js.mainSince))
 	}
 	for host := range c.js.failedHosts {
@@ -326,8 +327,9 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 		if e.Data.Success != nil && !*e.Data.Success {
 			t.failures[cmp.Or(js.tools[e.Data.ToolCallID], "unknown")]++
 			if host, ok := js.fetchHost[e.Data.ToolCallID]; ok {
-				t.fetchFailures[fetchFailureClass(e.Data.Error.Message)]++
-				if host != "" {
+				class := fetchFailureClass(e.Data.Error.Message)
+				t.fetchFailures[class]++
+				if host != "" && blockedFetch[class] {
 					js.failedHosts[host] = true
 				}
 			}
@@ -392,7 +394,9 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 				t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
 			}
 			js.turnsSince = 0
-			if js.mainSince >= 0 {
+			// Every prompt makes a model call: none means the journal
+			// recorded no usage (an older CLI), not a free prompt.
+			if js.mainSince > 0 {
 				t.mainPerPrompt = append(t.mainPerPrompt, float64(js.mainSince))
 			}
 			js.mainSince = 0
@@ -434,6 +438,10 @@ func (t *sessionTally) addFetch(e *journalEvent, js *journalScan) {
 	js.fetchHost[e.Data.ToolCallID] = host
 	t.fetchRetries += b2i(host != "" && js.failedHosts[host])
 }
+
+// blockedFetch are the failure classes that say a host is unreachable from
+// here, not that a URL was wrong: those the fuse blocks, and timeouts.
+var blockedFetch = map[string]bool{"status_401": true, "status_403": true, "status_407": true, "status_451": true, "refused_by_fuse": true, "timeout": true}
 
 // fetchFailureClass names a failed web_fetch by its error message.
 func fetchFailureClass(message string) string {
@@ -605,13 +613,13 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	add("web_fetch.calls", t.fetches)
 	add("web_fetch.failed", sum(t.fetchFailures))
 	add("web_fetch.failed_pct", pct(sum(t.fetchFailures), t.fetches))
-	add("web_fetch.retries_of_failed_host", t.fetchRetries)
-	add("web_fetch.failed_hosts", len(t.fetchFailedHosts))
+	add("web_fetch.retries_of_blocked_host", t.fetchRetries)
+	add("web_fetch.blocked_hosts", len(t.fetchFailedHosts))
 	multi := 0
 	for _, n := range t.fetchFailedHosts {
 		multi += b2i(n >= 2)
 	}
-	add("web_fetch.failed_hosts_in_2plus_sessions", multi)
+	add("web_fetch.blocked_hosts_in_2plus_sessions", multi)
 	for _, kv := range ranked(t.fetchFailures, 0) {
 		add("web_fetch.failure_"+kv.k, kv.n)
 	}

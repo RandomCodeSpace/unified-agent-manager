@@ -279,8 +279,9 @@ func TestUAMCountsRoundTrip(t *testing.T) {
 }
 
 // The cost counts: each model's cost and AI units, the main agent's model
-// calls per prompt and its tool calls, and web_fetch failures by class with
-// retries of a host that already failed. No host or URL reaches the file.
+// calls per prompt (prompts with none recorded left out) and its tool calls,
+// and web_fetch failures by class with retries of a blocked host (not one
+// that only answered 404). No host or URL reaches the file.
 func TestSessionStatsCostCounts(t *testing.T) {
 	home := filepath.Join(t.TempDir(), ".copilot")
 	t.Setenv("COPILOT_HOME", home)
@@ -306,6 +307,9 @@ func TestSessionStatsCostCounts(t *testing.T) {
 			fetch("08", "f3", "https://slow.test/x", "a1"),
 			failed("09", "f3", "TimeoutError: The operation was aborted due to timeout"),
 			usage("10", "sol", "sub-agent", 1, 0.5e9, 1),
+			fetch("10", "f4", "https://docs.test/wrong", ""),
+			failed("10", "f4", "Error: Failed to fetch https://docs.test/wrong - status code 404"),
+			fetch("10", "f5", "https://docs.test/right", ""),
 			`{"type":"user.message","timestamp":"2026-10-05T10:00:11Z","data":{"content":"p2"}}`,
 			usage("12", "opus", "user", 10, 1e9, 0),
 		},
@@ -313,6 +317,8 @@ func TestSessionStatsCostCounts(t *testing.T) {
 			`{"type":"user.message","timestamp":"2026-10-05T10:00:00Z","data":{"content":"p"}}`,
 			fetch("01", "g1", "https://blocked.test/other", ""),
 			failed("02", "g1", "Error: Failed to fetch https://blocked.test/other - status code 403"),
+			// No usage recorded (an older CLI): these prompts are left out.
+			`{"type":"user.message","timestamp":"2026-10-05T10:00:03Z","data":{"content":"p2"}}`,
 		},
 	}
 	for id, lines := range journals {
@@ -334,27 +340,27 @@ func TestSessionStatsCostCounts(t *testing.T) {
 		stats[s.Key] = s.Value
 	}
 	for key, want := range map[string]string{
-		"model_cost.opus":                          "40.00",
-		"model_cost.sol":                           "1.00",
-		"model_ai_units.opus":                      "7.00",
-		"tokens.total_ai_units":                    "7.50",
-		"tokens.subagent_ai_units":                 "0.50",
-		"main.model_calls":                         "4",
-		"main.model_calls_per_prompt_median":       "1",
-		"main.model_calls_per_prompt_p90":          "3",
-		"main.calls_with_tools":                    "2",
-		"main.multi_tool_calls_pct":                "50",
-		"main.tool_calls":                          "3",
-		"main.tool_calls_pct":                      "75",
-		"main_tools.web_fetch":                     "3",
-		"web_fetch.calls":                          "4",
-		"web_fetch.failed":                         "4",
-		"web_fetch.retries_of_failed_host":         "1",
-		"web_fetch.failed_hosts":                   "2",
-		"web_fetch.failed_hosts_in_2plus_sessions": "1",
-		"web_fetch.failure_status_403":             "2",
-		"web_fetch.failure_refused_by_fuse":        "1",
-		"web_fetch.failure_timeout":                "1",
+		"model_cost.opus":                           "40.00",
+		"model_cost.sol":                            "1.00",
+		"model_ai_units.opus":                       "7.00",
+		"tokens.total_ai_units":                     "7.50",
+		"tokens.subagent_ai_units":                  "0.50",
+		"main.model_calls":                          "4",
+		"main.model_calls_per_prompt_median":        "1",
+		"main.model_calls_per_prompt_p90":           "3",
+		"main.calls_with_tools":                     "2",
+		"main.multi_tool_calls_pct":                 "50",
+		"main.tool_calls":                           "5",
+		"main.tool_calls_pct":                       "83",
+		"main_tools.web_fetch":                      "5",
+		"web_fetch.calls":                           "6",
+		"web_fetch.failed":                          "5",
+		"web_fetch.retries_of_blocked_host":         "1",
+		"web_fetch.blocked_hosts":                   "2",
+		"web_fetch.blocked_hosts_in_2plus_sessions": "1",
+		"web_fetch.failure_status_403":              "2",
+		"web_fetch.failure_refused_by_fuse":         "1",
+		"web_fetch.failure_timeout":                 "1",
 	} {
 		if stats[key] != want {
 			t.Errorf("%s = %q, want %q", key, stats[key], want)

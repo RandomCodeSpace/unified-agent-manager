@@ -1005,12 +1005,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   rate-limit Auto switches), `model_calls.*`, `model_cost.*` and
   `model_ai_units.*` (the five models called most, by model ID: calls, cost
   units, AI units), `main.*` (the main agent's model calls, per prompt
-  median and p90, those that asked for tools and the share asking for two or
-  more at once, and its share of the tool calls), `main_tools.*` (the main
-  agent's tool calls by tool), `web_fetch.*` (calls, failures by class:
-  HTTP status, refused by the fuse, timeout or other; fetches of a host that
-  already failed in the same session; failed hosts, and those failed in two
-  sessions or more), `model_changes.*` (by source) and `activity.*` (active
+  median and p90 over prompts whose calls the journal recorded, those that
+  asked for tools and the share asking for two or more at once, and its
+  share of the tool calls), `main_tools.*` (the main agent's tool calls by
+  tool), `web_fetch.*` (calls, failures by class: HTTP status, refused by
+  the fuse, timeout or other; fetches of a host already blocked in the same
+  session, by a 401, 403, 407 or 451, a fuse refusal or a timeout; blocked
+  hosts, and those blocked in two sessions or more), `model_changes.*` (by source) and `activity.*` (active
   days, sessions and prompts per active day, subagents started, completed
   and failed, compactions per session, stalled requests uam retried). Lines
   `uam.*` are uam's own counts, kept in `uam-counts.json` beside the config
