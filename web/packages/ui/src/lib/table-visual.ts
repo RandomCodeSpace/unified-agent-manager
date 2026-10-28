@@ -13,6 +13,28 @@ export function numeric(v: Value): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// A figure with one unit from a closed set (owner, 2026-10-28): times, sizes and counts, each scaled
+// within its family so a column of "812 ms" and "41 s" compares. "B" is billions, as in token counts.
+const UNITS: Record<string, { family: string; scale: number }> = {
+  ms: { family: 'time', scale: 1e-3 }, s: { family: 'time', scale: 1 }, min: { family: 'time', scale: 60 }, h: { family: 'time', scale: 3600 },
+  KB: { family: 'bytes', scale: 1024 }, MB: { family: 'bytes', scale: 1024 ** 2 }, GB: { family: 'bytes', scale: 1024 ** 3 }, TB: { family: 'bytes', scale: 1024 ** 4 },
+  KiB: { family: 'bytes', scale: 1024 }, MiB: { family: 'bytes', scale: 1024 ** 2 }, GiB: { family: 'bytes', scale: 1024 ** 3 },
+  K: { family: 'count', scale: 1e3 }, M: { family: 'count', scale: 1e6 }, B: { family: 'count', scale: 1e9 },
+};
+const withUnit = /^((?:0|[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)(?:\.\d+)?|0?\.\d+)\s?([a-zA-Z]{1,3})$/;
+
+/** A figure with a known unit, scaled within its family ("812 ms" → 0.812, time), else null. */
+function unitFigure(v: Value): { n: number; family: string } | null {
+  const match = typeof v === 'string' ? withUnit.exec(v.trim()) : null;
+  const u = match && UNITS[match[2]];
+  return u ? { n: Number(match[1].replaceAll(',', '')) * u.scale, family: u.family } : null;
+}
+
+/** A cell's size for bars and sorting: its number, or its unit figure scaled within its family. */
+export function magnitude(v: Value): number | null {
+  return numeric(v) ?? unitFigure(v)?.n ?? null;
+}
+
 /** The unit a numeric cell prints with: its currency symbol and percent sign, if any. */
 function unit(v: Value): string {
   const match = typeof v === 'string' ? formatted.exec(v) : null;
@@ -36,7 +58,14 @@ export function barColumns(columns: readonly { name: string }[], rows: readonly 
   return columns.map((column, index) => {
     if (LABEL_HEADER.test(column.name)) return null;
     const cells = rows.map(row => row.values[index]).filter(v => v != null && v !== '');
-    if (cells.length < MIN_ROWS || cells.some(v => unit(v) !== unit(cells[0]))) return null;
+    if (cells.length < MIN_ROWS) return null;
+    // Every cell a figure of one unit family ("41 s", "812 ms"), or every cell a plain number in one unit.
+    const figures = cells.map(unitFigure);
+    if (figures.every(f => f && f.family === figures[0]!.family)) {
+      const max = Math.max(...figures.map(f => f!.n));
+      return max > 0 ? max : null;
+    }
+    if (cells.some(v => unit(v) !== unit(cells[0]))) return null;
     const values: number[] = [];
     for (const cell of cells) {
       const n = numeric(cell);

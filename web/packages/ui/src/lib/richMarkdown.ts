@@ -51,7 +51,10 @@ const plain = (nodes: MdNode[] = []): string => nodes.map((n) => n.value ?? plai
 
 interface Fact { label: MdNode[]; value: MdNode[]; rest: MdNode[] }
 
-/** A paragraph that opens `**Label:** value` (the colon inside or right after the bold), split into its label and value. */
+// "**Label** — value": an em or en dash between spaces (a hyphen stays prose).
+const DASH = /^\s+[—–]\s+/;
+
+/** A paragraph that opens `**Label:** value` (the colon inside or right after the bold) or `**Label** — value`, split into its label and value. */
 function labelled(para: MdNode | undefined): Omit<Fact, 'rest'> | null {
   const lead = para?.type === 'paragraph' ? para.children?.[0] : undefined;
   if (lead?.type !== 'strong') return null;
@@ -64,6 +67,8 @@ function labelled(para: MdNode | undefined): Omit<Fact, 'rest'> | null {
     value = after;
   } else if (after[0]?.type === 'text' && after[0].value?.startsWith(':')) {
     value = [{ ...after[0], value: after[0].value.slice(1) }, ...after.slice(1)];
+  } else if (after[0]?.type === 'text' && DASH.test(after[0].value ?? '')) {
+    value = [{ ...after[0], value: after[0].value!.replace(DASH, '') }, ...after.slice(1)];
   } else return null;
   if (value[0]?.type === 'text') value[0] = { ...value[0], value: value[0].value!.trimStart() };
   return plain(label).trim() ? { label, value: value.filter((n) => n.type !== 'text' || n.value) } : null;
@@ -311,6 +316,116 @@ function timeline(list: MdNode): boolean {
   return true;
 }
 
+// An option's letter at the start of its bold lead: "A", "A.", "A)", "A:", "A ·", "A —", "Option A".
+const LETTER = /^(?:Option\s+([A-H])\b|([A-H])(?:[.):]|\s*·|\s+[—–]|$))\s*/;
+const PICK = /\b(?:pick|choose) one\b/i;
+
+/**
+ * Choices, not steps: a list of 2–8 items whose bold leads run A, B, C… (the letter moves to the gutter),
+ * or a numbered list of bold leads right after a line that says "pick one" or "choose one". Drawn like
+ * steps with the letter, but never tied to the todo list: nothing to tick off, nothing to click.
+ */
+function choices(list: MdNode, prev: MdNode | undefined): boolean {
+  const items = list.children ?? [];
+  if (items.length < 2 || items.length > 8 || !items.every(boldLead)) return false;
+  const letters = items.map((item) => LETTER.exec(plain(boldLead(item)!.children).trim()));
+  const lettered = letters.every((m, i) => m && (m[1] ?? m[2]) === 'ABCDEFGH'[i]);
+  if (!lettered && !(list.ordered && prev?.type === 'paragraph' && PICK.test(plain(prev.children)))) return false;
+  items.forEach((item, i) => {
+    const lead = boldLead(item)!;
+    const first = lead.children?.[0];
+    const m = letters[i];
+    // The letter is drawn in the gutter: take it off the lead when the lead's text starts with it.
+    if (lettered && m && first?.type === 'text' && first.value?.trimStart().startsWith(m[0].trim())) {
+      first.value = first.value.trimStart().slice(m[0].length);
+      if (!first.value) lead.children!.shift();
+      if (!lead.children!.length) item.children![0].children!.shift();
+    }
+    markProps(item, { dataOption: 'ABCDEFGH'[i] });
+  });
+  markProps(list, { className: ['md-steps', 'md-options'] });
+  return true;
+}
+
+const TALLY = /\b(\d[\d,]*)\s+(passed|failed|skipped|errors?)\b/gi;
+const TALLY_ORDER = ['failed', 'errors', 'skipped', 'passed'];
+
+/** A paragraph with counts of two or more kinds ("979 passed, 3 skipped, 1 failed"): the tally for a count line above it, failures first. */
+function tally(para: MdNode) {
+  const counts = new Map<string, number>();
+  for (const m of plain(para.children).matchAll(TALLY)) {
+    const kind = m[2].toLowerCase().replace(/^error$/, 'errors');
+    counts.set(kind, (counts.get(kind) ?? 0) + Number(m[1].replaceAll(',', '')));
+  }
+  if (counts.size < 2) return;
+  markProps(para, { dataTally: TALLY_ORDER.filter((k) => counts.has(k)).map((k) => `${counts.get(k)} ${k}`).join(',') });
+}
+
+// Section heads that say what was not proven, in warning; only these two vouch, in success.
+const HEAD_WARN = new Set(['unverified', 'not verified', 'not run', 'not tested', 'untested', 'still open', 'blocked']);
+const HEAD_OK = new Set(['verified', 'tested']);
+
+/**
+ * A line of bold text alone directly followed by a list is the list's head: an eyebrow, toned when it
+ * says what was or was not verified. Other heads only when short (four words, 32 characters, no code).
+ */
+function heads(parent: MdNode) {
+  const kids = parent.children ?? [];
+  kids.forEach((kid, i) => {
+    const label = boldLine(kid);
+    if (!label || kids[i + 1]?.type !== 'list') return;
+    const tone = HEAD_WARN.has(label) ? 'warn' : HEAD_OK.has(label) ? 'ok' : undefined;
+    const code = kid.children![0].children?.some((c) => c.type !== 'text');
+    if (!tone && (code || label.length > 32 || label.split(/\s+/).length > 4)) return;
+    markProps(kid, { className: ['md-head'], ...(tone ? { dataTone: tone } : {}) });
+  });
+}
+
+/** A paragraph that opens with bold text starting "N. ": its number and the length of that prefix. */
+function stepNumber(node: MdNode | undefined): { n: number; prefix: number } | null {
+  const lead = node?.type === 'paragraph' ? node.children?.[0] : undefined;
+  const first = lead?.type === 'strong' ? lead.children?.[0] : undefined;
+  const m = first?.type === 'text' ? /^(\d{1,2})\.\s+/.exec(first.value ?? '') : null;
+  return m ? { n: Number(m[1]), prefix: m[0].length } : null;
+}
+
+/**
+ * Paragraphs that open `**1. Title**`, `**2. …**` (numbered from 1, no gap) are steps: each takes the
+ * blocks up to the next numbered one; nothing after the last. A heading or rule ends the run.
+ */
+function numberedSteps(parent: MdNode) {
+  const kids = parent.children ?? [];
+  for (let i = 0; i < kids.length; i++) {
+    if (stepNumber(kids[i])?.n !== 1) continue;
+    const starts = [i];
+    for (let j = i + 1; j < kids.length; j++) {
+      const step = stepNumber(kids[j]);
+      if (step) {
+        if (step.n !== starts.length + 1) break;
+        starts.push(j);
+      } else if (kids[j].type === 'heading' || kids[j].type === 'thematicBreak') break;
+    }
+    if (starts.length < 2) continue;
+    const items: MdNode[] = starts.map((start, k) => {
+      const group = kids.slice(start, k + 1 < starts.length ? starts[k + 1] : start + 1);
+      const lead = group[0].children![0];
+      const first = lead.children![0];
+      first.value = first.value!.slice(stepNumber(group[0])!.prefix);
+      if (!first.value) lead.children!.shift();
+      // The text on the lines under the title stays under it, not run on after it.
+      const para = group[0].children!;
+      const after = para[1];
+      if (after?.type === 'text' && after.value?.startsWith('\n')) para.splice(1, 1, { type: 'break' }, { ...after, value: after.value.slice(1) });
+      return { type: 'listItem', checked: null, children: group };
+    });
+    const list: MdNode = { type: 'list', ordered: true, children: items };
+    Object.assign(list, { start: 1, spread: false });
+    for (const item of items) Object.assign(item, { spread: false });
+    steps(list);
+    kids.splice(i, starts.at(-1)! + 1 - i, list);
+  }
+}
+
 /** A numbered list whose every item opens with bold text: steps, each keyed by its lead to track against the todo list. */
 function steps(list: MdNode) {
   const items = list.children ?? [];
@@ -380,14 +495,18 @@ export function remarkRich(options: { first?: boolean } = {}) {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
-    if (node.type === 'list' && !statusList(node) && !severityList(node) && !fileList(node) && !timeline(node) && !factList(node)) {
-      steps(node);
-      tasks(node);
-    }
+    if (node.type === 'paragraph') tally(node);
+    // Lists from their parent, so a list sees the line before it ("pick one:").
+    node.children?.forEach((list, i) => {
+      if (list.type !== 'list' || statusList(list) || severityList(list) || fileList(list) || timeline(list) || choices(list, node.children![i - 1]) || factList(list)) return;
+      steps(list);
+      tasks(list);
+    });
   };
   return (tree: MdNode) => {
     visit(tree);
     if (options.first !== false) summaryLead(tree);
+    numberedSteps(tree);
     const paragraphs = (node: MdNode) => {
       // A facts grid's own rows are done; a value that opens in bold is not another fact.
       if (node.data?.hName === 'dl' || !node.children) return;
@@ -396,6 +515,7 @@ export function remarkRich(options: { first?: boolean } = {}) {
       node.children.forEach(paragraphs);
     };
     paragraphs(tree);
+    heads(tree);
   };
 }
 

@@ -256,3 +256,68 @@ test('a # title with three or more ## sections gets a section index; a click bri
   }
   vi.restoreAllMocks();
 });
+
+test('a bold line alone over a list is its head: toned when it says what was or was not verified', () => {
+  const { container } = render(<Markdown text={'**Verified**\n- Go tests\n\n**Not verified:**\n- Windows\n\n**Next steps**\n- Release\n\n**Unverified:** ran nothing\n\n**Pros**\n- a\n\n**Cons**\n- b'} />);
+  expect([...container.querySelectorAll('p.md-head')].map((p) => [p.textContent, (p as HTMLElement).dataset.tone ?? ''])).toEqual([
+    ['Verified', 'ok'],
+    ['Not verified:', 'warn'],
+    ['Next steps', ''],
+  ]);
+  expect(container.querySelector('p.md-head svg')).not.toBeNull();
+  expect(container.textContent).toContain('Unverified: ran nothing');
+  expect(container.querySelector('.md-pair')).not.toBeNull();
+});
+
+test('**Label** — value items are facts; a hyphen is not a separator', () => {
+  const { container } = render(<Markdown text={'- **`add`** — Reject duplicate SKUs\n- **`remove`** – Keep the audit row\n\nThen\n\n- **a** - one\n- **b** - two'} />);
+  const grid = container.querySelector('dl.md-facts')!;
+  expect([...grid.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['add', 'remove']);
+  expect([...grid.querySelectorAll('dd')].map((d) => d.textContent)).toEqual(['Reject duplicate SKUs', 'Keep the audit row']);
+  expect(container.querySelectorAll('dl')).toHaveLength(1);
+});
+
+test('paragraphs numbered **1.** **2.** in bold are steps, also after streaming split the text; a gap leaves them as written', () => {
+  const text = '**1. `Inventory.value` — lines 34–36**\nSums floats.\n\n**2. `remove()` — line 52**\nDrops the audit row.\n\nAfter.';
+  for (const streamed of [false, true]) {
+    const { container, rerender, unmount } = render(<Markdown text={text} streaming={streamed} />);
+    if (streamed) rerender(<Markdown text={text} />);
+    const items = [...container.querySelectorAll('ol.md-steps > li')] as HTMLElement[];
+    expect(items.map((li) => li.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['Inventory.value — lines 34–36 Sums floats.', 'remove() — line 52 Drops the audit row.']);
+    expect(container.querySelector('.md > p:last-child')?.textContent).toBe('After.');
+    unmount();
+  }
+  const { container } = render(<Markdown text={'**1. One**\n\n**3. Three**'} />);
+  expect(container.querySelector('ol')).toBeNull();
+});
+
+test('choices are drawn like steps with their letter, never tied to the todo list', () => {
+  const plan = new Map([[planKey('Retry with luna'), 'done' as const]]);
+  const { container } = render(inReply({ plan }, <Markdown text={'**To unblock, pick one:**\n\n1. **Retry with luna** — cheaper\n2. **Split the file** — two PRs'} />));
+  const list = container.querySelector('ol.md-options')!;
+  expect([...list.querySelectorAll('li')].map((li) => [li.dataset.option, li.dataset.state ?? '', li.dataset.plan ?? ''])).toEqual([['A', '', ''], ['B', '', '']]);
+  expect(container.querySelector('.md-progress')).toBeNull();
+  expect(container.querySelector('button, [role="radio"]')).toBeNull();
+  const { container: lettered } = render(<Markdown text={'- **A · Ledger:** quiet\n- **B · Cards:** loud'} />);
+  expect(lettered.querySelector('dl')).toBeNull();
+  expect([...lettered.querySelectorAll('ul.md-options > li')].map((li) => [li.dataset.option, li.textContent])).toEqual([['A', 'Ledger: quiet'], ['B', 'Cards: loud']]);
+});
+
+test('a line with counts of two kinds gets a count line, failures first; one kind does not', () => {
+  const { container } = render(<Markdown text={'Ran the suite: 979 passed, 3 skipped, 1 failed.\n\nAll 12 passed.'} />);
+  expect([...container.querySelectorAll('.md-counts')].map((p) => p.textContent)).toEqual(['1 failed · 3 skipped · 979 passed']);
+  expect(container.querySelector('.md-counts .text-error')?.textContent).toBe('1 failed');
+});
+
+test('the mouse over inline code highlights every identical inline code span in the message', async () => {
+  const set = vi.fn(), del = vi.fn();
+  vi.stubGlobal('CSS', { highlights: { set, delete: del } });
+  vi.stubGlobal('Highlight', class { ranges: Range[]; constructor(...ranges: Range[]) { this.ranges = ranges; } });
+  const { container } = render(<Markdown text={'Merged as `a20a1947`.\n\nDev runs `a20a1947`, not `e444bfe3`.'} />);
+  const [first] = [...container.querySelectorAll('code')];
+  await userEvent.hover(first);
+  expect(set).toHaveBeenCalledWith('echo', expect.objectContaining({ ranges: [expect.any(Range), expect.any(Range)] }));
+  await userEvent.unhover(first);
+  expect(del).toHaveBeenCalledWith('echo');
+  vi.unstubAllGlobals();
+});

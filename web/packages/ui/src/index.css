@@ -918,6 +918,56 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  /* Council shapes (r24): list heads, choices. */
+  .md p.md-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 12px 0 4px;
+    font-size: var(--text-eyebrow);
+    letter-spacing: 0.66px;
+    text-transform: uppercase;
+  }
+  .md > p.md-head:first-child {
+    margin-top: 0;
+  }
+  .md p.md-head strong {
+    color: var(--color-muted);
+  }
+  .md p.md-head[data-tone='ok'],
+  .md p.md-head[data-tone='ok'] strong {
+    color: var(--color-success);
+  }
+  .md p.md-head[data-tone='warn'],
+  .md p.md-head[data-tone='warn'] strong {
+    color: var(--color-warning);
+  }
+  ::highlight(echo) {
+    background-color: var(--color-accent-wash);
+    text-decoration: underline 2px var(--color-accent);
+  }
+  .md-facts dt code {
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .md ul.md-options {
+    padding-left: 0;
+    list-style: none;
+  }
+  .md :is(ul, ol).md-options > li::before {
+    content: attr(data-option);
+    position: absolute;
+    top: 8px;
+    left: 0;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    background: none;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-faint);
+  }
   /* Outline, pros and cons, timeline and summary lead (r22 7, 9, 10 and 3). */
   .md-outline {
     margin: 0 0 12px;
