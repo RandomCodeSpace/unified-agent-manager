@@ -176,7 +176,8 @@ test('a drawing with unsent changes shows the pair, and collapses once the note 
   expect(screen.getByText('4 changes by you ·', { exact: false })).toBeTruthy();
   await user.type(composer(), 'Looks right, continue');
   await user.keyboard('{Enter}');
-  await log().findByText(/^The user edited docs\/diagram-d4-0\.excalidraw since your version \(v1 → v2\)/);
+  // The note went with the message; the conversation shows it as one line, its change list left to the agent.
+  await log().findByText((_, el) => el?.tagName === 'P' && el.textContent === 'You edited docs/diagram-d4-0.excalidraw (v1 → v2).');
   await waitFor(() => expect(card.getByText('Agent’s v2')).toBeTruthy());
   expect(card.queryByText(/^Yours v/)).toBeNull();
   expect(card.queryByRole('button', { name: 'Agent’s version' })).toBeNull();
