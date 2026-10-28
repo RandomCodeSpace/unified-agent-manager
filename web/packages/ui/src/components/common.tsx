@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
-import { CircleAlert, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { createContext, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import { remarkRich, type CalloutKind } from '../lib/richMarkdown';
+import type { TodoStatus } from '../api';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
 import { FileIcon } from './FileIcon';
@@ -542,6 +543,15 @@ const MdContext = createContext<MdSource>({ text: '', streaming: false });
 /** The reply an assistant message's markdown belongs to (its id and whole text), so a mermaid fence knows which drawing is its own. */
 export const ItemContext = createContext<{ id: string; text: string } | null>(null);
 
+/**
+ * What a reply's rich blocks reach in their Thread: `plan`, the live todo list's states by title key
+ * (`planKey`), which a reply's task list or steps tick off; `latest`, the reply no message follows
+ * yet, whose questions and blockers answer in place; `send`, which posts an answer as the owner's
+ * message (queued after a running turn) and resolves to an error, or null once taken.
+ */
+export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus>; latest?: string; send?: (text: string) => Promise<string | null> }
+export const ReplyContext = createContext<ReplyTools>({});
+
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
 export const SessionContext = createContext<string | undefined>(undefined);
 
@@ -870,33 +880,178 @@ const CALLOUT: Record<CalloutKind, { title: string; Icon: LucideIcon }> = {
   important: { title: 'Important', Icon: CircleAlert },
   warning: { title: 'Warning', Icon: TriangleAlert },
   caution: { title: 'Caution', Icon: OctagonAlert },
+  question: { title: 'Question', Icon: CircleHelp },
+  blocker: { title: 'Blocker', Icon: Ban },
 };
+
+const choicesOf = (value: unknown): string[] => {
+  try {
+    const list: unknown = JSON.parse(String(value ?? '[]'));
+    return Array.isArray(list) ? list.filter((c): c is string => typeof c === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * A question or blocker's answer in place, on the latest reply only: its choices as buttons (the
+ * first press picks one, a second press on it sends it) and a field for words of the owner's own.
+ * The answer goes out as the owner's message, the question quoted above it. Elsewhere the choices
+ * are a plain list.
+ */
+function CalloutAnswer({ ask, choices }: Readonly<{ ask: string; choices: string[] }>) {
+  const item = useContext(ItemContext);
+  const { latest, send } = useContext(ReplyContext);
+  const [chosen, setChosen] = useState('');
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const hint = useId();
+  if (!send || !item || item.id !== latest) return choices.length ? <ul className="md-choices-plain">{choices.map((c) => <li key={c}>{c}</li>)}</ul> : null;
+  const submit = async (pick = chosen) => {
+    const answer = [pick, text.trim()].filter(Boolean).join('\n\n');
+    if (!answer || busy) return;
+    setBusy(true);
+    setError('');
+    const err = await send(`${ask ? `> ${ask}\n\n` : ''}${answer}`);
+    setBusy(false);
+    if (err) setError(err);
+    else {
+      setChosen('');
+      setText('');
+    }
+  };
+  return (
+    <div className="md-answer">
+      {choices.length > 0 && (
+        <div role="group" aria-label="Choices" aria-describedby={hint} className="md-choices">
+          {choices.map((c) => (
+            <button key={c} type="button" className="md-choice" aria-pressed={chosen === c} disabled={busy} onClick={() => (chosen === c ? void submit(c) : setChosen(c))}>
+              {chosen === c && <Check aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={2.5} />}
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <Input size="md" value={text} disabled={busy} aria-label="Answer" aria-describedby={hint} placeholder={chosen ? 'Add a note (optional)…' : 'Answer here…'} onChange={(e) => setText(e.target.value)} />
+        <Button type="submit" size="icon-sm" variant="subtle" aria-label="Send answer" disabled={busy || !(chosen || text.trim())}>
+          <CornerDownLeft />
+        </Button>
+      </form>
+      <p id={hint} className="md-answer-hint">{error ? <span role="alert" className="text-error">{error}</span> : chosen ? 'Press it again or Enter to send' : 'Sends as your message, the question quoted'}</p>
+    </div>
+  );
+}
 
 /** A GitHub alert (`> [!WARNING]`, marked by remarkRich) as a toned callout with its title; any other quote as written. */
 function MdQuote({ node, children }: Readonly<{ children?: ReactNode } & ExtraProps>) {
   const kind = node?.properties.dataCallout as CalloutKind | undefined;
   const callout = kind && CALLOUT[kind];
   if (!callout) return <blockquote>{children}</blockquote>;
+  const answerable = kind === 'question' || kind === 'blocker';
   return (
     <div role="note" className="md-callout" data-callout={kind}>
       <p className="md-callout-title"><callout.Icon aria-hidden="true" className="size-3.5 shrink-0" />{callout.title}</p>
       {children}
+      {answerable && <CalloutAnswer ask={String(node?.properties.dataAsk ?? '')} choices={choicesOf(node?.properties.dataChoices)} />}
     </div>
   );
 }
 
-/** A task list with how many of its items are done above it (counted by remarkRich). */
-function MdList({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
-  const total = Number(node?.properties.dataTotal);
-  const list = <ul className={className}>{children}</ul>;
-  if (!total) return list;
-  const done = Number(node?.properties.dataDone);
+/** A reply's closing question (marked by remarkRich): the prose as written, then its answer in place. */
+function MdDiv({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
+  if (!String(className ?? '').includes('md-ask')) return <div className={className}>{children}</div>;
+  return (
+    <div className={className}>
+      {children}
+      <CalloutAnswer ask={String(node?.properties.dataAsk ?? '')} choices={choicesOf(node?.properties.dataChoices)} />
+    </div>
+  );
+}
+
+/** A plan item's state: its glyph, colour and words. */
+const PLAN_MARK: Record<TodoStatus, { Icon: LucideIcon; tone: string; words: string }> = {
+  done: { Icon: Check, tone: 'text-success', words: 'done' },
+  in_progress: { Icon: CircleDot, tone: 'text-accent', words: 'in progress' },
+  blocked: { Icon: Ban, tone: 'text-warning', words: 'blocked' },
+  pending: { Icon: Circle, tone: 'text-faint', words: 'to do' },
+};
+
+type HastNode = NonNullable<ExtraProps['node']>;
+const checkedItem = (li: HastNode) => li.children.some((c) => c.type === 'element' && c.tagName === 'input' && !!c.properties.checked);
+
+/** An item's state: the todo list's row of the same title when there is one, else a task item's own box. */
+function itemState(li: HastNode, plan: ReplyTools['plan']): { state?: TodoStatus; live: boolean } {
+  const key = li.properties.dataPlan;
+  const live = typeof key === 'string' && key ? plan?.get(key) : undefined;
+  if (live) return { state: live, live: true };
+  const task = String(li.properties.className ?? '').includes('task-list-item');
+  return { state: task ? (checkedItem(li) ? 'done' : 'pending') : undefined, live: false };
+}
+
+/** "2 of 4 done", with a bar, and "from the todo list" while some items follow it. */
+function PlanProgress({ done, total, live }: Readonly<{ done: number; total: number; live: boolean }>) {
+  return (
+    <p className="md-progress">
+      <progress value={done} max={total} aria-label={`${done} of ${total} done`} />
+      <span className="tabular-nums">{done} of {total} done</span>
+      {live && <span>· from the todo list</span>}
+    </p>
+  );
+}
+
+/** A list's items' states, counted: done of total, and whether any follows the todo list. */
+function planTally(list: HastNode | undefined, plan: ReplyTools['plan']) {
+  let done = 0, total = 0, live = false;
+  for (const li of list?.children ?? []) {
+    if (li.type !== 'element' || li.tagName !== 'li') continue;
+    const item = itemState(li, plan);
+    total++;
+    live ||= item.live;
+    if (item.state === 'done') done++;
+  }
+  return { done, total, live };
+}
+
+/** A task list or steps item: its state's glyph (a task item's box gives way to it), live from the todo list when a row has its title. */
+function MdItem({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
+  const { plan } = useContext(ReplyContext);
+  const item = node ? itemState(node, plan) : { live: false };
+  if (!item.state) return <li className={className}>{children}</li>;
+  const mark = PLAN_MARK[item.state];
+  const rest = Children.toArray(children).filter((c) => !(isValidElement(c) && c.type === 'input'));
+  return (
+    <li className={className} data-state={item.state} data-live={item.live || undefined}>
+      <mark.Icon aria-hidden="true" className={cn('md-mark', mark.tone)} strokeWidth={item.state === 'done' ? 2.5 : undefined} />
+      {rest}
+      <span className="sr-only">, {mark.words}{item.live && ' in the todo list'}</span>
+    </li>
+  );
+}
+
+/** Steps with the progress line above them once any follows the todo list. */
+function MdOrdered({ node, children, ...props }: Readonly<{ children?: ReactNode } & ExtraProps & Omit<ComponentProps<'ol'>, 'children'>>) {
+  const { plan } = useContext(ReplyContext);
+  const list = <ol {...props}>{children}</ol>;
+  const tally = String(props.className ?? '').includes('md-steps') ? planTally(node, plan) : null;
+  if (!tally?.live) return list;
   return (
     <>
-      <p className="md-progress">
-        <progress value={done} max={total} aria-label={`${done} of ${total} done`} />
-        <span className="tabular-nums">{done} of {total} done</span>
-      </p>
+      <PlanProgress {...tally} />
+      {list}
+    </>
+  );
+}
+
+/** A task list with how many of its items are done above it, each item live from the todo list when a row has its title. */
+function MdList({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
+  const { plan } = useContext(ReplyContext);
+  const list = <ul className={className}>{children}</ul>;
+  if (!Number(node?.properties.dataTotal)) return list;
+  return (
+    <>
+      <PlanProgress {...planTally(node, plan)} />
       {list}
     </>
   );
@@ -908,6 +1063,9 @@ const mdComponents: Components = {
   table: MdTable,
   blockquote: MdQuote,
   ul: MdList,
+  ol: MdOrdered,
+  li: MdItem,
+  div: MdDiv,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);
@@ -951,7 +1109,7 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
   return (
     <div ref={fileDemand} className={cn('md', className)}>
       {blocks.map((block, i) => (
-        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
+        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} tail={i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
       ))}
     </div>
   );
@@ -987,16 +1145,16 @@ export function PlainText({ text, className }: Readonly<{ text: string; classNam
   return <p ref={fileDemand} className={cn('break-words whitespace-pre-wrap', className)}>{parts}</p>;
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, tail, breaks, rehypePlugins }: { text: string; streaming: boolean; /** The text's last block. */ tail: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
   const origin = useContext(GitLabItemsContext)?.origin;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
-    const rich = streaming ? base : [...base, remarkRich];
+    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { tail }]];
     return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
-  }, [breaks, origin, streaming]);
+  }, [breaks, origin, streaming, tail]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>

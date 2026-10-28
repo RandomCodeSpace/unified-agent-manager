@@ -1125,7 +1125,7 @@ function assistantMessage({ item, text, streaming = false, className, whole, sta
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
-        {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} />}
+        {whole?.status === 'whole' ? plainText(text) : <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider>}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
       </div>

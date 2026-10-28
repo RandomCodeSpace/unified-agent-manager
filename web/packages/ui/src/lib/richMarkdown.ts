@@ -12,10 +12,16 @@ interface MdNode {
   data?: { hName?: string; hProperties?: Record<string, unknown> };
 }
 
-export const CALLOUTS = ['note', 'tip', 'important', 'warning', 'caution'] as const;
+export const CALLOUTS = ['note', 'tip', 'important', 'warning', 'caution', 'question', 'blocker'] as const;
 export type CalloutKind = (typeof CALLOUTS)[number];
 
-const ALERT = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\r?\n|$)/i;
+const ALERT = /^\[!(note|tip|important|warning|caution|question|blocker)\][ \t]*(?:\r?\n|$)/i;
+/** How many choices a question may list for answer buttons, and how long its quoted text may be. */
+const MAX_CHOICES = 6;
+const MAX_ASK = 600;
+
+/** A plan item's or todo's title as a match key: lower case, letters and digits only, single spaces. */
+export const planKey = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 // A short figure: "12", "98%", "1.2 s", "$40k", "~3 min", "1,024 KiB".
 const FIGURE = /^[~≈<>]?[$€£]?[-+]?\d[\d,.]*(?:\s?(?:%|[a-zA-Z]{1,5}))?$/;
 
@@ -33,7 +39,50 @@ function alert(node: MdNode) {
   if (!first.value) para.children.shift();
   if (para.children[0]?.type === 'break') para.children.shift();
   if (!para.children.length) node.children!.shift();
-  markProps(node, { dataCallout: m[1].toLowerCase() });
+  const kind = m[1].toLowerCase();
+  markProps(node, { dataCallout: kind });
+  if (kind === 'question' || kind === 'blocker') answerable(node);
+}
+
+/**
+ * A question or blocker the owner can answer in place: its text, to quote in the answer, and the
+ * choices of a closing bullet or numbered list whose every item is one short paragraph (the list
+ * leaves the tree; the callout draws the choices).
+ */
+function answerable(node: MdNode) {
+  const kids = node.children ?? [];
+  const choices = choicesOf(kids.at(-1));
+  if (choices.length) kids.pop();
+  const ask = kids.map((k) => plain(k.children ?? (k.value ? [k] : [])).trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ');
+  markProps(node, { dataAsk: ask.slice(0, MAX_ASK), dataChoices: JSON.stringify(choices) });
+}
+
+/** A list as answer choices: 2–6 items, each one non-empty paragraph and no task box; else none. */
+function choicesOf(list: MdNode | undefined): string[] {
+  const items = list?.type === 'list' ? list.children ?? [] : [];
+  if (items.length < 2 || items.length > MAX_CHOICES || !items.every((i) => i.checked == null && i.children?.length === 1 && i.children[0].type === 'paragraph')) return [];
+  const choices = items.map((i) => plain(i.children![0].children).trim());
+  return choices.every(Boolean) ? choices : [];
+}
+
+/**
+ * A reply that ends by asking: its last paragraph ends in "?", alone or followed by a closing list
+ * of choices. Marked like a question callout, so the latest reply answers it in place, but drawn as
+ * the prose it is.
+ */
+function closingQuestion(tree: MdNode) {
+  const kids = tree.children ?? [];
+  const last = kids.at(-1);
+  const choices = choicesOf(last);
+  const para = choices.length ? kids.at(-2) : last;
+  const ask = para?.type === 'paragraph' ? plain(para.children).trim().replace(/\s+/g, ' ') : '';
+  if (!ask.endsWith('?')) return;
+  const n = choices.length ? 2 : 1;
+  kids.splice(kids.length - n, n, {
+    type: 'ask',
+    data: { hName: 'div', hProperties: { className: ['md-ask'], dataAsk: ask.slice(0, MAX_ASK), dataChoices: JSON.stringify(choices) } },
+    children: [para!],
+  });
 }
 
 /** The item's lead when its first paragraph opens with bold text, else null. */
@@ -141,21 +190,30 @@ function factParagraphs(parent: MdNode) {
   parent.children = out;
 }
 
-/** A numbered list whose every item opens with bold text: steps. */
+/** A numbered list whose every item opens with bold text: steps, each keyed by its lead to track against the todo list. */
 function steps(list: MdNode) {
   const items = list.children ?? [];
-  if (list.ordered && items.length >= 2 && items.every(boldLead)) markProps(list, { className: ['md-steps'] });
+  if (!list.ordered || items.length < 2 || !items.every(boldLead)) return;
+  markProps(list, { className: ['md-steps'] });
+  for (const item of items) markProps(item, { dataPlan: planKey(plain(boldLead(item)!.children)) });
 }
 
-/** A task list: how many of its items are done, for the progress line above it. */
+/** A task list: how many of its items are done, for the progress line above it; each item keyed by its text to track against the todo list. */
 function tasks(list: MdNode) {
   const items = list.children ?? [];
   if (!items.length || items.some((i) => i.checked == null)) return;
   markProps(list, { dataDone: items.filter((i) => i.checked).length, dataTotal: items.length });
+  for (const item of items) {
+    const para = item.children?.[0];
+    if (para?.type === 'paragraph') markProps(item, { dataPlan: planKey(plain(para.children)) });
+  }
 }
 
-/** The remark plugin; run it only on text that has finished arriving, so a block changes shape once. */
-export function remarkRich() {
+/**
+ * The remark plugin; run it only on text that has finished arriving, so a block changes shape once.
+ * `tail`: the text is a reply's last block, whose closing question may be answered in place.
+ */
+export function remarkRich({ tail = false }: { tail?: boolean } = {}) {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
@@ -166,6 +224,7 @@ export function remarkRich() {
   };
   return (tree: MdNode) => {
     visit(tree);
+    if (tail) closingQuestion(tree);
     const paragraphs = (node: MdNode) => {
       // A facts grid's own rows are done; a value that opens in bold is not another fact.
       if (node.data?.hName === 'dl' || !node.children) return;

@@ -96,8 +96,16 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
     label/value grid; two to four that are each one short figure
     (`**Tests:** 742`, `**Coverage:** 81%`) are stat tiles;
   - put risks, caveats and what you did not verify in `> [!WARNING]`;
+  - `> [!QUESTION]` asks the owner to decide and `> [!BLOCKER]` says what
+    stops you until they act; on your latest reply the owner answers either
+    in place, and a closing bullet list (2–6 short items) becomes buttons, so
+    end a question with its options when there are some; a reply whose last
+    paragraph ends in "?" (with or without a closing options list) is
+    answerable in place the same way;
   - a numbered list where every item starts with bold text is a step list;
-  - a task list (`- [x]` / `- [ ]`) shows "N of M done" with a bar.
+  - a task list (`- [x]` / `- [ ]`) shows "N of M done" with a bar;
+  - a task item, or a step's bold lead, with the same title as a todo row
+    ticks off live from the todo list, so write a plan with your todo titles.
   One item that breaks the shape makes the whole list ordinary.
 - **Code blocks** wrap long lines, scroll past about 480 px of height and
   have a copy button. Common language tags are highlighted.

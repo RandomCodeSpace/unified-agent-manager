@@ -1,8 +1,9 @@
 import { useApi } from '../ApiContext';
+import { planKey } from '../lib/richMarkdown';
 import { ArrowDown, ChartLine, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -12,7 +13,7 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
+import { GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
@@ -932,6 +933,29 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const line = statusLine(session, labelled, compacting, connected);
   // The strip stays while the Thread has subagents, which it counts at its right end, or a todo list (live or kept) at its left.
   const strip = !!line || session.subagents.length > 0 || stripHasTodos(session);
+  // A reply's plan ticks off from the live todo list; its questions answer in place while no message follows it.
+  const todoView = session.turn_activity?.todos;
+  const todoPlan = useMemo(() => (todoView?.known ? new Map(todoView.todos.map((t) => [planKey(t.title), t.status])) : undefined), [todoView]);
+  const latestReply = useMemo(() => {
+    for (let i = session.items.length - 1; i >= 0; i--) {
+      const it = session.items[i];
+      if (!it.agent_id && (it.kind === 'user' || it.kind === 'assistant')) return it.kind === 'assistant' ? it.id : undefined;
+    }
+    return undefined;
+  }, [session.items]);
+  const locked = readOnly(session);
+  const replyTools = useMemo(() => ({
+    plan: todoPlan,
+    latest: latestReply,
+    send: locked ? undefined : async (text: string) => {
+      try {
+        const sub = await api.prompt(session.id, text, newRequestId(), 'queue');
+        return sub.status === 'accepted' || sub.status === 'queued' ? null : sub.error || 'The thread did not take the answer.';
+      } catch (err) {
+        return `Could not send the answer: ${describeError(err)}`;
+      }
+    },
+  }), [todoPlan, latestReply, locked, api, session.id]);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
@@ -947,6 +971,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <TempRootContext.Provider value={tempRoots}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)}>
     <GitLabItemsContext.Provider value={gitlabItems}>
+    <ReplyContext.Provider value={replyTools}>
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1079,6 +1104,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       {previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}
     </div>
     </DrawingsProvider>
+    </ReplyContext.Provider>
     </GitLabItemsContext.Provider>
     </SubagentScope>
     </TempRootContext.Provider>

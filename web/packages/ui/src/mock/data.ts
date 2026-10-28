@@ -719,7 +719,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       updated_at: ago(2),
       items: [
         { id: 'i1', kind: 'user', time: ago(12), text: 'Audit templates/post.html for accessibility problems and fix what is safe to fix. Check contrast of the theme tokens too.' },
-        { id: 'i2', kind: 'assistant', time: ago(11), text: 'Splitting this into two independent surveys so they can run in parallel: markup and contrast.' },
+        { id: 'i2', kind: 'assistant', time: ago(11), text: 'Splitting this into two independent surveys so they can run in parallel: markup and contrast.\n\n1. **Split the audit into markup and contrast.** One subagent per survey.\n2. **Survey templates for missing alt text and labels.** The markup pass.\n3. **Check contrast of the theme tokens.** Against WCAG AA.\n4. **Run the accessibility linter.** Once axe-core is in.\n\n> [!QUESTION]\n> axe-core is not installed. How should I get it?\n>\n> - Add it as a dev dependency\n> - Run it with npx, no install\n> - Skip the linter\n\n> [!WARNING]\n> The contrast fixes change two theme tokens; check the dark theme after.' },
         tool('i3', 11, { name: 'task', title: 'Survey templates for missing alt text and labels', status: 'running', input: '{"description":"Survey templates for missing alt text and labels"}' }),
         tool('i4', 11, { name: 'task', title: 'Check contrast of the theme tokens', status: 'running', input: '{"description":"Check contrast of the theme tokens"}' }),
         tool('i5', 11, {
