@@ -22,11 +22,13 @@ const outcomeOf = (el: Element) => (within(cardOf(el)).queryByRole('button', { n
 const footOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':scope > [data-foot]') ?? null;
 
 describe('messages', () => {
-  test('end notes of started threads link the thread and leave its reply to the agent', () => {
+  const notes = 'uam thread: Thread "Fix \\"login\\"" (child-1), which you started, ended its turn: completed. Files changed: 2. Its last reply:\nRaw child reply\n\nwith a second paragraph\n\nuam thread: Thread "Docs" (child-2), which you started, was settled.\nuam trail: Thread "Docs" edited a.go 3 min ago and is still running. Re-read it first.';
+  // The journal hands notices back with line breaks as spaces.
+  test.each([['as sent', notes], ['from the journal', notes.replaceAll('\n', ' ')]])('end notes of started threads link the thread and leave its reply to the agent (%s)', (_, text) => {
     const select = vi.fn();
     const items: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Split the work' },
-      { id: 'n', kind: 'notice', time: '2026-10-09T00:00:01Z', text: 'uam thread: Thread "Fix \\"login\\"" (child-1), which you started, ended its turn: completed. Files changed: 2. Its last reply:\nRaw child reply\n\nwith a second paragraph\n\nuam thread: Thread "Docs" (child-2), which you started, was settled.\nuam trail: Thread "Docs" edited a.go 3 min ago and is still running. Re-read it first.' },
+      { id: 'n', kind: 'notice', time: '2026-10-09T00:00:01Z', text },
     ];
     const view = render(
       <TaskActionsContext.Provider value={{ select } as unknown as TaskActions}>

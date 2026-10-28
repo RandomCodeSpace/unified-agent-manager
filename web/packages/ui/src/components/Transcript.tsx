@@ -1153,8 +1153,12 @@ function noticeRow({ text, className, whole }: MessageParts) {
   );
 }
 
-/** The head of a `uam thread:` end note (create_task.go): the Thread's quoted name, its ID, then how it ended; its last reply follows on the next lines. */
-const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which you started, (.*?)(?: Its last reply:)?(?:\n|$)/;
+/**
+ * A `uam thread:` note (create_task.go): the Thread's quoted name, its ID, then what happened; an end
+ * note's last reply follows "Its last reply:". The journal hands notices back with line breaks as
+ * spaces, so the reply is cut at that marker, not at a line break.
+ */
+const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which you started, (.*?)(?: Its last reply:[\s\S]*|\n[\s\S]*)?$/;
 
 /** A Go-quoted name as written, when it is not also a JSON string. */
 function unquote(raw: string): string {
@@ -1170,7 +1174,7 @@ function ThreadNotes({ text, className }: Readonly<{ text: string; className?: s
   const actions = useTaskActions();
   return (
     <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
-      {text.split(/\n+(?=uam (?:thread|trail): |The user edited )/).map((part, index) => {
+      {text.split(/\s+(?=uam (?:thread|trail): |The user edited )/).map((part, index) => {
         const note = THREAD_NOTE.exec(part);
         if (!note) return <Markdown key={index} text={part} className="[&_p]:m-0" />;
         return (
