@@ -618,14 +618,14 @@
   }
   /* Rich blocks (lib/richMarkdown.ts), Ledger (owner, 2026-10-28, r21 A): fixed renderings of exact
      Markdown shapes; colour only on labels (a callout's glyph and title, a plan item's glyph). */
-  .md ul:not(.contains-task-list):not(.md-choices-plain) {
+  .md ul:not(.contains-task-list) {
     padding-left: 16px;
     list-style: none;
   }
-  .md ul:not(.contains-task-list):not(.md-choices-plain) > li {
+  .md ul:not(.contains-task-list) > li {
     position: relative;
   }
-  .md ul:not(.contains-task-list):not(.md-choices-plain) > li::before {
+  .md ul:not(.contains-task-list) > li::before {
     content: '';
     position: absolute;
     top: 0.68em;
@@ -675,57 +675,6 @@
   }
   .md-callout[data-callout='blocker'] {
     --callout-tone: var(--color-attention);
-  }
-  /* A question's answer in place: choices, a field, a hint. */
-  .md-answer {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 8px;
-  }
-  .md-choices {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .md-choice {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    min-height: 28px;
-    padding: 3px 10px;
-    border: 1px solid var(--color-hairline-strong);
-    border-radius: var(--radius-sm);
-    background: var(--color-raised);
-    color: var(--color-ink);
-    font-size: var(--text-ui);
-    text-align: left;
-    transition: background-color 100ms, border-color 100ms;
-  }
-  .md-choice:hover:not(:disabled) {
-    background: var(--color-tint-hover);
-  }
-  .md-choice[aria-pressed='true'] {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
-  }
-  .md-choice:disabled {
-    opacity: 0.45;
-  }
-  @media (pointer: coarse) {
-    .md-choice {
-      min-height: 44px;
-    }
-  }
-  .md .md-answer-hint {
-    margin: 0;
-    font-size: var(--text-caption);
-    color: var(--color-muted);
-  }
-  .md ul.md-choices-plain {
-    margin: 6px 0 0;
-    padding-left: 20px;
-    list-style: disc;
   }
   .md dl.md-facts {
     display: grid;
