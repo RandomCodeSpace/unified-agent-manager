@@ -1167,7 +1167,8 @@ const TRAIL_NOTE = /^uam trail: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\) edited (.
 const DRAWING_NOTE = /^The user edited (.+?) since your version \((v\d+ → v\d+)\):/;
 
 /** Where each uam note of a notice starts, the line breaks between them gone or not. */
-const NOTE_START = /\s+(?=uam (?:thread|trail|budget): |The user edited .+? since your version \(v\d+ → v\d+\):)/;
+// One whitespace character, and a file name without spaces: patterns that cannot backtrack (Sonar S8786).
+const NOTE_START = /\s(?=uam (?:thread|trail|budget): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):)/;
 
 /** A notice that starts with a uam note UamNotes shows. */
 const UAM_NOTES = /^(?:uam (?:thread|trail): |The user edited )/;
@@ -1190,7 +1191,7 @@ function UamNotes({ text, className }: Readonly<{ text: string; className?: stri
   );
   return (
     <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
-      {text.split(NOTE_START).map((part, index) => {
+      {text.split(NOTE_START).map((part) => part.trim()).filter(Boolean).map((part, index) => {
         const ended = THREAD_NOTE.exec(part);
         if (ended) return <p key={index} className="m-0">Thread {thread(ended[1], ended[2])} {ended[3]}</p>;
         const trail = TRAIL_NOTE.exec(part);
