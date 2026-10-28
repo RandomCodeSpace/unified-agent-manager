@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -1020,6 +1020,8 @@ function MdItem({ node, className, children }: Readonly<{ className?: string; ch
     );
   }
   if (node?.properties.dataPath) return <FileItem node={node} className={className}>{children}</FileItem>;
+  // A choice (remarkRich `choices`) shows its letter in the gutter and is never tied to the todo list.
+  if (node?.properties.dataOption) return <li className={className} data-option={String(node.properties.dataOption)}>{children}</li>;
   if (node?.properties.dataWhen) {
     return (
       <li className={className} data-gap={node.properties.dataGap ? true : undefined}>
@@ -1076,6 +1078,30 @@ function MdList({ node, className, children }: Readonly<{ className?: string; ch
   );
 }
 
+/**
+ * Echo trace (r24): the mouse over inline code underlines every identical inline code span in the same
+ * message, through a CSS Custom Highlight (no DOM change, nothing opens); nothing on touch or without the API.
+ */
+function echoOver(e: ReactPointerEvent<HTMLDivElement>) {
+  if (typeof CSS === 'undefined' || !('highlights' in CSS)) return;
+  const code = e.pointerType === 'mouse' ? (e.target as Element).closest?.('code') : null;
+  const text = code && !code.closest('pre') ? code.textContent?.trim() ?? '' : '';
+  const same = text.length >= 3 ? [...e.currentTarget.querySelectorAll('code')].filter((c) => !c.closest('pre') && c.textContent?.trim() === text) : [];
+  if (same.length < 2) {
+    CSS.highlights.delete('echo');
+    return;
+  }
+  CSS.highlights.set('echo', new Highlight(...same.map((c) => {
+    const range = new Range();
+    range.selectNodeContents(c);
+    return range;
+  })));
+}
+
+function echoLeave() {
+  if (typeof CSS !== 'undefined' && 'highlights' in CSS) CSS.highlights.delete('echo');
+}
+
 /** The reply's outline (`outlineOf`), when it has one: its title heading carries the section index. */
 const OutlineContext = createContext<Outline | null>(null);
 
@@ -1103,6 +1129,34 @@ function MdTitle({ node, children, ...props }: Readonly<{ children?: ReactNode }
         ))}
       </ol>
     </div>
+  );
+}
+
+/**
+ * A list's head (remarkRich `heads`), its glyph in its tone when it says what was or was not verified; a
+ * paragraph with a test tally gets the count line above it, failures in their tone. Any other paragraph as written.
+ */
+function MdParagraph({ node, children, ...props }: Readonly<{ children?: ReactNode } & ExtraProps & Omit<ComponentProps<'p'>, 'children'>>) {
+  const tone = node?.properties.dataTone;
+  const tally = node?.properties.dataTally;
+  if (tone === 'ok' || tone === 'warn') {
+    const Icon = tone === 'ok' ? Check : TriangleAlert;
+    return <p {...props} data-tone={tone}><Icon aria-hidden="true" className="size-3.5 shrink-0" />{children}</p>;
+  }
+  if (typeof tally !== 'string') return <p {...props}>{children}</p>;
+  const parts = tally.split(',');
+  return (
+    <>
+      <p className="md-counts" aria-hidden="true">
+        {parts.map((part, i) => (
+          <span key={part}>
+            {i > 0 && ' · '}
+            <span className={cn(/^[1-9][\d]* (failed|errors)$/.test(part) && 'font-semibold text-error')}>{part}</span>
+          </span>
+        ))}
+      </p>
+      <p {...props}>{children}</p>
+    </>
   );
 }
 
@@ -1137,6 +1191,7 @@ const mdComponents: Components = {
   ul: MdList,
   ol: MdOrdered,
   li: MdItem,
+  p: MdParagraph,
   h1: MdTitle,
   code({ className, children }) {
     const language = languageOf(className);
@@ -1185,7 +1240,7 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
   const outline = useMemo(() => streaming ? null : outlineOf(text), [text, streaming]);
   return (
     <OutlineContext.Provider value={outline}>
-      <div ref={fileDemand} className={cn('md', className)}>
+      <div ref={fileDemand} className={cn('md', className)} onPointerOver={echoOver} onPointerLeave={echoLeave}>
         {blocks.map((block, i) => (
           <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} rehypePlugins={rehypePlugins} />
         ))}

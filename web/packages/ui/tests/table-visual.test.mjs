@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { barColumns, cellStatus, numeric, statusColumns } from '../src/lib/table-visual.ts';
+import { barColumns, cellStatus, magnitude, numeric, statusColumns } from '../src/lib/table-visual.ts';
 
 // A table as MarkdownTable builds it: column names and each row's cell text.
 const table = (names, ...rows) => [names.map(name => ({ name })), rows.map(values => ({ values }))];
@@ -48,7 +48,19 @@ test('years, leading zeros, negatives, mixed units and 1..n row numbers stay pla
   assert.deepEqual(bars(['n'], ['1'], ['2'], ['3'], ['4']), [null]);
   // The same numbers in another order are a quantity.
   assert.deepEqual(bars(['n'], ['2'], ['1'], ['3'], ['4']), [4]);
-  assert.deepEqual(bars(['latency'], ['12 ms'], ['9 ms'], ['30 ms']), [null]);
+});
+
+test('figures with one unit family get bars scaled within it; mixed families and unknown units stay plain', () => {
+  assert.deepEqual(bars(['latency'], ['12 ms'], ['9 ms'], ['30 ms']), [0.03]);
+  assert.deepEqual(bars(['p90'], ['41 s'], ['812 ms'], ['2.3 s']), [41]);
+  assert.deepEqual(bars(['tokens'], ['6.15B'], ['1.69B'], ['58.0M']), [6.15e9]);
+  assert.deepEqual(bars(['size'], ['1.5 MB'], ['512 KB'], ['2 GB']), [2 * 1024 ** 3]);
+  assert.deepEqual(bars(['mixed'], ['41 s'], ['2 GB'], ['3 ms']), [null]);
+  assert.deepEqual(bars(['dist'], ['3 km'], ['5 km'], ['9 km']), [null]);
+  assert.deepEqual(bars(['part'], ['12 ms'], ['9'], ['30 ms']), [null]);
+  assert.equal(magnitude('812 ms'), 0.812);
+  assert.equal(magnitude('1,024'), 1024);
+  assert.equal(magnitude('v24'), null);
 });
 
 test('fewer than 3 numbers, more than 500 rows or more than 12 columns get no bars', () => {

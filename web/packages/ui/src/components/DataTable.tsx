@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, Filter, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { barColumns, cellStatus, numeric, statusColumns, type CellStatus } from '../lib/table-visual';
+import { barColumns, cellStatus, magnitude, statusColumns, type CellStatus } from '../lib/table-visual';
 import { VisualBoundary } from './VisualBoundary';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -80,13 +80,13 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
     const filtered = active.length ? rows.filter(row => active.every(([column, text]) => String(row.values[column] ?? '').toLocaleLowerCase().includes(text))) : rows;
     if (!sort) return filtered;
     const { column, descending } = sort;
-    const numbers = rows.every(row => row.values[column] == null || row.values[column] === '' || numeric(row.values[column]) !== null);
+    const numbers = rows.every(row => row.values[column] == null || row.values[column] === '' || magnitude(row.values[column]) !== null);
     return [...filtered].sort((a, b) => {
       const av = a.values[column], bv = b.values[column];
       // Missing values stay last in either direction.
       if (av == null || av === '') return bv == null || bv === '' ? 0 : 1;
       if (bv == null || bv === '') return -1;
-      return (numbers ? numeric(av)! - numeric(bv)! : collator.compare(String(av), String(bv))) * (descending ? -1 : 1);
+      return (numbers ? magnitude(av)! - magnitude(bv)! : collator.compare(String(av), String(bv))) * (descending ? -1 : 1);
     });
   }, [rows, sort, active]);
   const start = Math.min(page, Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1)) * PAGE_SIZE;
@@ -130,7 +130,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
             const status = statuses?.[index] ? cellStatus(row.values[index]) : null;
             if (status) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={alignment(column.align)}><StatusLabel status={status} text={String(row.values[index])} /></Cell>;
             const max = bars?.[index];
-            const n = max ? numeric(row.values[index]) : null;
+            const n = max ? magnitude(row.values[index]) : null;
             if (!max || !n) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
             // The bar sits behind the number on its first line, in a track at most 9rem wide, from the side the column is aligned to, so the number ends on it.
             const pct = (n / max) * 100;
