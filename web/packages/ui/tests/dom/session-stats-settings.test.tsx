@@ -14,6 +14,8 @@ describe('Settings → Session stats', () => {
     expect(await screen.findByRole('img', { name: '330 tool calls, 19 failed' })).toBeTruthy();
     await user.click(screen.getByRole('radio', { name: 'Spend' }));
     expect(screen.getByRole('img', { name: '801 cost units' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Cost units by model' })).toBeTruthy();
+    expect(screen.getByText('801 cost units, by model')).toBeTruthy();
   });
 
   test('Every counter lists every count under its group with the file it was written to', async () => {

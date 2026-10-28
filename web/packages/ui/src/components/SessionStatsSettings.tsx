@@ -266,17 +266,17 @@ function CacheMosaic({ c }: Readonly<{ c: Counts }>) {
 
 const MODEL_TONES = ['bg-badge-blue', 'bg-badge-pink', 'bg-badge-amber'];
 
-/** Model calls as one strip: the three biggest models of all time in colour, the rest grey. */
-function ModelStrip({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
-  const models = entries(c, 'model_calls').filter(([, v]) => v > 0);
+/** Model calls, or their cost units, as one strip: the three biggest models of all time in colour, the rest grey. */
+function ModelStrip({ c, all, cost = false }: Readonly<{ c: Counts; all: Counts; cost?: boolean }>) {
+  const models = entries(c, cost ? 'model_cost' : 'model_calls').filter(([, v]) => v > 0);
   // Colour by the all-time rank, so a model keeps its colour when the window changes.
   const ranked = entries(all, 'model_calls').map(([name]) => name);
   const tone = (name: string) => MODEL_TONES[ranked.indexOf(name)] ?? 'bg-hairline-strong';
   const total = models.reduce((a, [, v]) => a + v, 0);
   if (!total) return null;
   return (
-    <Card title={`${fmt(total)} model calls, by model`}>
-      <div className="flex h-7 gap-0.5" role="img" aria-label="Model calls by model">
+    <Card title={cost ? `${fmt(total)} cost units, by model` : `${fmt(total)} model calls, by model`}>
+      <div className="flex h-7 gap-0.5" role="img" aria-label={cost ? 'Cost units by model' : 'Model calls by model'}>
         {models.map(([name, v]) => (
           <span key={name} className={`flex min-w-[3px] items-center overflow-hidden rounded-[3px] px-1.5 text-caption font-medium text-on-primary ${tone(name)}`} style={{ flexGrow: v }} title={`${name}: ${fmt(v)} (${pct(v, total, 0)})`}>
             {v / total >= 0.15 && <span className="truncate">{pct(v, total, 0)}</span>}
@@ -290,7 +290,7 @@ function ModelStrip({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
             {name} <b className="font-medium tabular-nums text-ink">{fmt(v)}</b>
           </li>
         ))}
-        <li className="text-muted">· changed by hand {fmt(num(c, 'model_changes.model_picker'))}</li>
+        {!cost && <li className="text-muted">· changed by hand {fmt(num(c, 'model_changes.model_picker'))}</li>}
       </ul>
     </Card>
   );
@@ -304,6 +304,7 @@ function SpendView({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
         <CacheMosaic c={c} />
       </div>
       <ModelStrip c={c} all={all} />
+      <ModelStrip c={c} all={all} cost />
       <p className="text-caption text-muted">“other” is calls the CLI gave no initiator; its documentation says that marks user-initiated calls.</p>
     </div>
   );

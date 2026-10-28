@@ -250,7 +250,8 @@ type Manager struct {
 	// call is logged: every look at a Thread asks again while the pause
 	// lasts, and only the first is a log line (assist.go).
 	utility            utilityLog
-	counts             uamCounts // uam's own action counts (uam_counts.go)
+	counts             uamCounts             // uam's own action counts (uam_counts.go)
+	fetchFuses         map[string]*fetchFuse // guarded by mu; saved beside the store (fuses.go)
 	suggestPauseLogged atomic.Bool
 	tokens             tokenLedger   // guarded by mu; persisted by the existing flush loop
 	harness            *harnessUsage // optional local harness collector; snapshots guarded by mu
