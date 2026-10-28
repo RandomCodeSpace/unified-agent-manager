@@ -60,7 +60,7 @@ func (m *Manager) trailContextLocked(s *webSession, use agentapi.ToolUse) string
 			if relative, err := filepath.Rel(s.workdir, path); err == nil {
 				display = relative
 			}
-			notes = append(notes, fmt.Sprintf("uam trail: Thread %q edited %s %d min ago and is still running. Re-read it first.", firstNonEmpty(sibling.name, sibling.title, "New thread"), display, int(now.Sub(edit.At)/time.Minute)))
+			notes = append(notes, fmt.Sprintf("uam trail: Thread %q (%s) edited %s %d min ago and is still running. Re-read it first.", firstNonEmpty(sibling.name, sibling.title, "New thread"), sibling.id, display, int(now.Sub(edit.At)/time.Minute)))
 			n++
 			if n == 3 {
 				break

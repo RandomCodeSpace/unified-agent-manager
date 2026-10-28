@@ -1088,8 +1088,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Excalidraw canvas (every change saves on its own), Agent's is the version
   the agent last wrote or read, Changes shows both in one picture with the
   list of what changed. Your changes reach the agent as a note with your next
-  message (the composer shows a chip per changed drawing; the note itself
-  appears in the conversation as a notice). The Excalidraw editor (2.9 MB)
+  message (the composer shows a chip per changed drawing; the conversation shows
+  the note as a one-line notice naming the drawing). The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
   Conversation → Diagram editor can switch to a draw.io page at an origin you name, after a
   check of that origin passes.
@@ -1194,7 +1194,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   question and the answer or decision, replacing the waiting note if it has
   not been delivered yet. The agent gets the note with its next tool call, or as its next turn starts
   when it is idle; the note then shows in that Thread's conversation as a uam
-  notice, not as your message. Notes wait only in memory, so a service
+  notice of one line linking the Thread (an end note without its reply),
+  not as your message. Notes wait only in memory, so a service
   restart drops those not yet delivered, and nothing is sent to a Thread
   that is settled or archived. The new Thread's conversation begins with
   "Started by another thread", and
@@ -1315,7 +1316,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   rebound or relabelled). A save also sends the Thread's session event, so
   other browsers refresh. The agent learns of your edits as a note on your
   next message, "The user edited docs/flow.excalidraw since your version
-  (v1 → v2): …", logged in the transcript as a uam notice, and through its
+  (v1 → v2): …", logged in the transcript as a one-line notice ("You edited
+  docs/flow.excalidraw (v1 → v2).", without the change list), and through its
   `uam_diagram_read` tool, which lists the drawings or returns one as text
   (one line per node and edge, with the unseen changes); both make the
   current version the agent's. The draw.io editor is opt-in: Settings holds

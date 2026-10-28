@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, ItemContext, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, ItemContext, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -1153,8 +1153,25 @@ function noticeRow({ text, className, whole }: MessageParts) {
   );
 }
 
-/** The head of a `uam thread:` end note (create_task.go): the Thread's quoted name, its ID, then how it ended; its last reply follows on the next lines. */
-const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which you started, (.*?)(?: Its last reply:)?(?:\n|$)/;
+/**
+ * A `uam thread:` note (create_task.go): the Thread's quoted name, its ID, then what happened; an end
+ * note's last reply follows "Its last reply:". The journal hands notices back with line breaks as
+ * spaces, so the reply is cut at that marker, not at a line break.
+ */
+const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which you started, (.*?)(?: Its last reply:[\s\S]*|\n[\s\S]*)?$/;
+
+/** A `uam trail:` note (trails.go): the running Thread's quoted name and ID, the file it edited and when; the agent's instruction after it is not shown. */
+const TRAIL_NOTE = /^uam trail: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\) edited (.+?) (\d+ min ago) and is still running\./;
+
+/** The head of a drawing change note (drawings_diff.go): the owner made the changes, so only the agent gets their list. */
+const DRAWING_NOTE = /^The user edited (.+?) since your version \((v\d+ → v\d+)\):/;
+
+/** Where each uam note of a notice starts, the line breaks between them gone or not. */
+// One whitespace character, and a file name without spaces: patterns that cannot backtrack (Sonar S8786).
+const NOTE_START = /\s(?=uam (?:thread|trail|budget): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):)/;
+
+/** A notice that starts with a uam note UamNotes shows. */
+const UAM_NOTES = /^(?:uam (?:thread|trail): |The user edited )/;
 
 /** A Go-quoted name as written, when it is not also a JSON string. */
 function unquote(raw: string): string {
@@ -1162,22 +1179,26 @@ function unquote(raw: string): string {
 }
 
 /**
- * The end notes of Threads this one started, as a link to each Thread and how it ended: the
- * agent gets their last replies, the transcript does not repeat them. Notes sharing the notice
- * (trails, drawing edits) show as other notices do.
+ * uam's notes to the agent, one line each: Threads this one started and running Threads that
+ * edited a file link to the Thread; a drawing the owner edited shows only its file. The agent gets
+ * the started Threads' replies and the drawings' change lists; the transcript does not repeat
+ * them. Other notes show as other notices do.
  */
-function ThreadNotes({ text, className }: Readonly<{ text: string; className?: string }>) {
+function UamNotes({ text, className }: Readonly<{ text: string; className?: string }>) {
   const actions = useTaskActions();
+  const thread = (name: string, id: string) => (
+    <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(id)}>{unquote(name)}</button>
+  );
   return (
     <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
-      {text.split(/\n+(?=uam (?:thread|trail): |The user edited )/).map((part, index) => {
-        const note = THREAD_NOTE.exec(part);
-        if (!note) return <Markdown key={index} text={part} className="[&_p]:m-0" />;
-        return (
-          <p key={index} className="m-0">
-            Thread <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(note[2])}>{unquote(note[1])}</button> {note[3]}
-          </p>
-        );
+      {text.split(NOTE_START).map((part) => part.trim()).filter(Boolean).map((part, index) => {
+        const ended = THREAD_NOTE.exec(part);
+        if (ended) return <p key={index} className="m-0">Thread {thread(ended[1], ended[2])} {ended[3]}</p>;
+        const trail = TRAIL_NOTE.exec(part);
+        if (trail) return <p key={index} className="m-0">Thread {thread(trail[1], trail[2])} edited <FileRef text={trail[3]} /> {trail[4]} and is still running.</p>;
+        const drawing = DRAWING_NOTE.exec(part);
+        if (drawing) return <p key={index} className="m-0">You edited <FileRef text={drawing[1]} /> ({drawing[2]}).</p>;
+        return <Markdown key={index} text={part} className="[&_p]:m-0" />;
       })}
     </div>
   );
@@ -1618,7 +1639,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
-      if (item.kind === 'notice' && item.text?.startsWith('uam thread: ')) return <ThreadNotes text={item.text} className={className} />;
+      if (item.kind === 'notice' && UAM_NOTES.test(item.text ?? '')) return <UamNotes text={item.text ?? ''} className={className} />;
       return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
