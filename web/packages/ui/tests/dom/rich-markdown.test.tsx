@@ -181,3 +181,13 @@ test('a table column of pass/fail words or marks shows toned labels; the words s
   const cells = [...container.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].slice(1).map((td) => [td.querySelector('svg') ? 'glyph' : '', td.textContent]));
   expect(cells).toEqual([[['glyph', 'pass'], ['glyph', 'pass']], [['glyph', 'fail'], ['glyph', 'fail']]]);
 });
+
+test('a value with several changes stays as written; a figure with a Unicode minus still makes a tile', () => {
+  const { container } = render(<Markdown text={'- **React:** 18.2.0 → 19.0.0, bundle 142 KB → 118 KB\n- **Vite:** 5.2.0 → 6.0.1\n\nStats:\n\n- **Tests:** 742\n- **Build time:** 38 s\n- **Bundle delta:** −45 KB'} />);
+  const [changes, stats] = container.querySelectorAll('dl');
+  const dds = [...changes.querySelectorAll('dd')];
+  expect(dds[0].querySelector('del')).toBeNull();
+  expect(dds[0].textContent).toBe('18.2.0 → 19.0.0, bundle 142 KB → 118 KB');
+  expect(dds[1].querySelector('del')?.textContent).toBe('5.2.0');
+  expect(stats.className).toBe('md-facts md-tiles');
+});
