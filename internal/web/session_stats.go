@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,16 +65,19 @@ type journalEvent struct {
 	Timestamp string `json:"timestamp"`
 	AgentID   string `json:"agentId"`
 	Data      struct {
-		ToolCallID        string          `json:"toolCallId"`
-		ToolName          string          `json:"toolName"`
-		Arguments         json.RawMessage `json:"arguments"`
-		Success           *bool           `json:"success"`
-		Result            json.RawMessage `json:"result"`
-		Reason            string          `json:"reason"`
-		ErrorType         string          `json:"errorType"`
-		RequestID         string          `json:"requestId"`
-		Source            string          `json:"source"`
-		Cause             string          `json:"cause"`
+		ToolCallID string          `json:"toolCallId"`
+		ToolName   string          `json:"toolName"`
+		Arguments  json.RawMessage `json:"arguments"`
+		Success    *bool           `json:"success"`
+		Result     json.RawMessage `json:"result"`
+		Reason     string          `json:"reason"`
+		Error      struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		ErrorType         string `json:"errorType"`
+		RequestID         string `json:"requestId"`
+		Source            string `json:"source"`
+		Cause             string `json:"cause"`
 		PermissionRequest struct {
 			FullCommandText         string `json:"fullCommandText"`
 			Intention               string `json:"intention"`
@@ -89,15 +93,26 @@ type journalEvent struct {
 			ReasoningTokens    float64 `json:"reasoningTokens"`
 			Cost               float64 `json:"cost"`
 			TimeToFirstTokenMs float64 `json:"timeToFirstTokenMs"`
+			NumToolCalls       float64 `json:"numToolCalls"`
+			CopilotUsage       struct {
+				TotalNanoAiu float64 `json:"totalNanoAiu"`
+			} `json:"copilotUsage"`
 		} `json:"usage"`
 	} `json:"data"`
 }
 
 // usageSum totals the session.usage_record calls of one initiator.
 type usageSum struct {
-	calls                                                 int
-	input, output, cacheRead, cacheWrite, reasoning, cost float64
+	calls                                                      int
+	input, output, cacheRead, cacheWrite, reasoning, cost, aiu float64
 }
+
+// modelSpend is one model's calls' cost units and AI units.
+type modelSpend struct{ cost, aiu float64 }
+
+// fetchStatus is a failed web_fetch's class: its HTTP status, a refusal by
+// uam's fuse, a timeout, or other.
+var fetchStatus = regexp.MustCompile(`status code (\d{3})\b`)
 
 type sessionTally struct {
 	sessions, withPrompts, skipped       int
@@ -120,9 +135,21 @@ type sessionTally struct {
 	noTools                          int
 	usage                            map[string]*usageSum
 	ttfb                             []float64
-	models, modelChanges             map[string]int
-	rateSwitches, prompts, stalls    int
-	days                             map[string]bool
+	// The main agent's (not a subagent's) model calls: per owner prompt,
+	// those that asked for tools, and those that asked for two or more at
+	// once; its tool calls by tool; each model's spend.
+	mainPerPrompt            []float64
+	mainWithTools, mainMulti int
+	mainTools                map[string]int
+	spend                    map[string]*modelSpend
+	// web_fetch: calls, failures by class, fetches of a host that already
+	// failed in the same session, and each failed host's session count.
+	fetches, fetchRetries         int
+	fetchFailures                 map[string]int
+	fetchFailedHosts              map[string]int
+	models, modelChanges          map[string]int
+	rateSwitches, prompts, stalls int
+	days                          map[string]bool
 }
 
 // journalScan is one journal's state while it is read.
@@ -136,6 +163,12 @@ type journalScan struct {
 	turns      map[string]*openTurn
 	turnsSince int
 	shell      map[string]map[[32]byte]bool
+	// mainSince counts the main agent's model calls since the last owner
+	// prompt, -1 before the first. fetchHost is each web_fetch call's host,
+	// failedHosts the hosts whose fetch failed in this session.
+	mainSince   int
+	fetchHost   map[string]string
+	failedHosts map[string]bool
 }
 
 type openTurn struct {
@@ -145,7 +178,8 @@ type openTurn struct {
 
 func newSessionTally() sessionTally {
 	return sessionTally{events: map[string]int{}, tools: map[string]int{}, failures: map[string]int{}, permissions: map[string]int{}, errors: map[string]int{}, aborts: map[string]int{},
-		commands: map[[32]byte]int{}, usage: map[string]*usageSum{}, models: map[string]int{}, modelChanges: map[string]int{}, days: map[string]bool{}}
+		commands: map[[32]byte]int{}, usage: map[string]*usageSum{}, models: map[string]int{}, modelChanges: map[string]int{}, days: map[string]bool{},
+		mainTools: map[string]int{}, spend: map[string]*modelSpend{}, fetchFailures: map[string]int{}, fetchFailedHosts: map[string]int{}}
 }
 
 // SessionStats scans every session journal under COPILOT_HOME, adds uam's own
@@ -196,7 +230,8 @@ type journalCount struct {
 }
 
 func newJournalCount(t *sessionTally, seen bool) *journalCount {
-	return &journalCount{t: t, seen: seen, js: &journalScan{tools: map[string]string{}, asked: map[string]time.Time{}, commands: map[[32]byte]bool{}, turns: map[string]*openTurn{}, turnsSince: -1, shell: map[string]map[[32]byte]bool{}}}
+	return &journalCount{t: t, seen: seen, js: &journalScan{tools: map[string]string{}, asked: map[string]time.Time{}, commands: map[[32]byte]bool{}, turns: map[string]*openTurn{}, turnsSince: -1, shell: map[string]map[[32]byte]bool{},
+		mainSince: -1, fetchHost: map[string]string{}, failedHosts: map[string]bool{}}}
 }
 
 func (c *journalCount) add(e *journalEvent) {
@@ -212,6 +247,12 @@ func (c *journalCount) done() {
 	c.t.withPrompts += b2i(c.prompted)
 	if c.js.turnsSince >= 0 {
 		c.t.promptTurns = append(c.t.promptTurns, float64(c.js.turnsSince))
+	}
+	if c.js.mainSince >= 0 {
+		c.t.mainPerPrompt = append(c.t.mainPerPrompt, float64(c.js.mainSince))
+	}
+	for host := range c.js.failedHosts {
+		c.t.fetchFailedHosts[host]++
 	}
 }
 
@@ -267,6 +308,12 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 		if turn := js.turns[e.AgentID]; turn != nil {
 			turn.tools++
 		}
+		if e.AgentID == "" {
+			t.mainTools[e.Data.ToolName]++
+		}
+		if e.Data.ToolName == "web_fetch" {
+			t.addFetch(e, js)
+		}
 		if e.Data.ToolName == "bash" || e.Data.ToolName == "shell" {
 			seen := js.shell[e.AgentID]
 			if seen == nil {
@@ -278,6 +325,12 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 	case "tool.execution_complete":
 		if e.Data.Success != nil && !*e.Data.Success {
 			t.failures[cmp.Or(js.tools[e.Data.ToolCallID], "unknown")]++
+			if host, ok := js.fetchHost[e.Data.ToolCallID]; ok {
+				t.fetchFailures[fetchFailureClass(e.Data.Error.Message)]++
+				if host != "" {
+					js.failedHosts[host] = true
+				}
+			}
 		}
 	case "permission.requested":
 		p := e.Data.PermissionRequest
@@ -317,7 +370,7 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 			}
 		}
 	case "session.usage_record":
-		t.addUsage(e)
+		t.addUsage(e, js)
 	case "session.model_change":
 		t.modelChanges[cmp.Or(e.Data.Source, "unknown")]++
 		t.rateSwitches += b2i(e.Data.Cause == "rate_limit_auto_switch")
@@ -339,6 +392,10 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 				t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
 			}
 			js.turnsSince = 0
+			if js.mainSince >= 0 {
+				t.mainPerPrompt = append(t.mainPerPrompt, float64(js.mainSince))
+			}
+			js.mainSince = 0
 		}
 		return true
 	}
@@ -361,9 +418,55 @@ func (t *sessionTally) addShell(raw json.RawMessage, seen map[[32]byte]bool) {
 	seen[h] = true
 }
 
-// addUsage adds one model call to the total and to its initiator's sums.
-func (t *sessionTally) addUsage(e *journalEvent) {
+// addFetch counts a web_fetch call, and one of a host that already failed in
+// this session. The host is kept in memory only, never in the summary.
+func (t *sessionTally) addFetch(e *journalEvent, js *journalScan) {
+	t.fetches++
+	var args struct {
+		URL string `json:"url"`
+	}
+	host := ""
+	if json.Unmarshal(e.Data.Arguments, &args) == nil {
+		if u, err := url.Parse(args.URL); err == nil {
+			host = strings.ToLower(u.Host)
+		}
+	}
+	js.fetchHost[e.Data.ToolCallID] = host
+	t.fetchRetries += b2i(host != "" && js.failedHosts[host])
+}
+
+// fetchFailureClass names a failed web_fetch by its error message.
+func fetchFailureClass(message string) string {
+	switch {
+	case strings.Contains(message, "uam fuse:"):
+		return "refused_by_fuse"
+	case fetchStatus.MatchString(message):
+		return "status_" + fetchStatus.FindStringSubmatch(message)[1]
+	case strings.Contains(strings.ToLower(message), "timeout") || strings.Contains(strings.ToLower(message), "timed out"):
+		return "timeout"
+	}
+	return "other"
+}
+
+// addUsage adds one model call to the total and to its initiator's sums,
+// and a main agent's call to its counts.
+func (t *sessionTally) addUsage(e *journalEvent, js *journalScan) {
 	u := e.Data.Usage
+	if u.Initiator != "sub-agent" {
+		if js.mainSince >= 0 {
+			js.mainSince++
+		}
+		t.mainWithTools += b2i(u.NumToolCalls >= 1)
+		t.mainMulti += b2i(u.NumToolCalls >= 2)
+	}
+	model := cmp.Or(u.Model, "unknown")
+	spend := t.spend[model]
+	if spend == nil {
+		spend = &modelSpend{}
+		t.spend[model] = spend
+	}
+	spend.cost += u.Cost
+	spend.aiu += u.CopilotUsage.TotalNanoAiu / 1e9
 	group := map[string]string{"user": "user", "sub-agent": "subagent"}[u.Initiator]
 	for _, g := range []string{"total", cmp.Or(group, "other")} {
 		sum := t.usage[g]
@@ -378,6 +481,7 @@ func (t *sessionTally) addUsage(e *journalEvent) {
 		sum.cacheWrite += u.CacheWriteTokens
 		sum.reasoning += u.ReasoningTokens
 		sum.cost += u.Cost
+		sum.aiu += u.CopilotUsage.TotalNanoAiu / 1e9
 	}
 	t.models[cmp.Or(u.Model, "unknown")]++
 	if u.TimeToFirstTokenMs > 0 {
@@ -465,12 +569,51 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 		addF("tokens."+g+"_cache_write", u.cacheWrite, 0)
 		addF("tokens."+g+"_reasoning", u.reasoning, 0)
 		addF("tokens."+g+"_cost", u.cost, 2)
+		addF("tokens."+g+"_ai_units", u.aiu, 2)
 	}
 	addF("models.ttfb_median_ms", quantile(t.ttfb, 0.5), 0)
 	addF("models.ttfb_p90_ms", quantile(t.ttfb, 0.9), 0)
 	add("models.rate_limit_switches", t.rateSwitches)
 	for _, kv := range ranked(t.models, sessionStatsTopModels) {
 		add("model_calls."+kv.k, kv.n)
+	}
+	spend := func(model string) modelSpend {
+		if s := t.spend[model]; s != nil {
+			return *s
+		}
+		return modelSpend{}
+	}
+	for _, kv := range ranked(t.models, sessionStatsTopModels) {
+		addF("model_cost."+kv.k, spend(kv.k).cost, 2)
+	}
+	for _, kv := range ranked(t.models, sessionStatsTopModels) {
+		addF("model_ai_units."+kv.k, spend(kv.k).aiu, 2)
+	}
+
+	mainCalls := t.usage["user"].callsOrZero() + t.usage["other"].callsOrZero()
+	add("main.model_calls", mainCalls)
+	addF("main.model_calls_per_prompt_median", quantile(t.mainPerPrompt, 0.5), 0)
+	addF("main.model_calls_per_prompt_p90", quantile(t.mainPerPrompt, 0.9), 0)
+	add("main.calls_with_tools", t.mainWithTools)
+	add("main.multi_tool_calls_pct", pct(t.mainMulti, t.mainWithTools))
+	add("main.tool_calls", sum(t.mainTools))
+	add("main.tool_calls_pct", pct(sum(t.mainTools), t.events["tool.execution_start"]))
+	for _, kv := range ranked(t.mainTools, sessionStatsTopTools) {
+		add("main_tools."+kv.k, kv.n)
+	}
+
+	add("web_fetch.calls", t.fetches)
+	add("web_fetch.failed", sum(t.fetchFailures))
+	add("web_fetch.failed_pct", pct(sum(t.fetchFailures), t.fetches))
+	add("web_fetch.retries_of_failed_host", t.fetchRetries)
+	add("web_fetch.failed_hosts", len(t.fetchFailedHosts))
+	multi := 0
+	for _, n := range t.fetchFailedHosts {
+		multi += b2i(n >= 2)
+	}
+	add("web_fetch.failed_hosts_in_2plus_sessions", multi)
+	for _, kv := range ranked(t.fetchFailures, 0) {
+		add("web_fetch.failure_"+kv.k, kv.n)
 	}
 	for _, kv := range ranked(t.modelChanges, 0) {
 		add("model_changes."+kv.k, kv.n)
@@ -486,6 +629,13 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	addF("activity.compactions_per_session", ratio(t.events["session.compaction_complete"], t.withPrompts), 2)
 	add("activity.stall_retries", t.stalls)
 	return out
+}
+
+func (u *usageSum) callsOrZero() int {
+	if u == nil {
+		return 0
+	}
+	return u.calls
 }
 
 // pct is n of total in whole percent, 0 for no total.

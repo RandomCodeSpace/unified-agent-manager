@@ -1000,17 +1000,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   again before its next prompt), `turns.*` (each model step from the
   journal's turn start to its end: duration median and p90, tool calls per
   step, steps with no tool, main steps per prompt), `tokens.*` (calls, input, output,
-  cache read and write, reasoning tokens and cost, in total and by
+  cache read and write, reasoning tokens, cost and AI units, in total and by
   initiator: user, subagent or other), `models.*` (time to first token,
-  rate-limit Auto switches), `model_calls.*` (the five models called most,
-  by model ID), `model_changes.*` (by source) and `activity.*` (active
+  rate-limit Auto switches), `model_calls.*`, `model_cost.*` and
+  `model_ai_units.*` (the five models called most, by model ID: calls, cost
+  units, AI units), `main.*` (the main agent's model calls, per prompt
+  median and p90, those that asked for tools and the share asking for two or
+  more at once, and its share of the tool calls), `main_tools.*` (the main
+  agent's tool calls by tool), `web_fetch.*` (calls, failures by class:
+  HTTP status, refused by the fuse, timeout or other; fetches of a host that
+  already failed in the same session; failed hosts, and those failed in two
+  sessions or more), `model_changes.*` (by source) and `activity.*` (active
   days, sessions and prompts per active day, subagents started, completed
   and failed, compactions per session, stalled requests uam retried). Lines
   `uam.*` are uam's own counts, kept in `uam-counts.json` beside the config
   (written within ten seconds of a change, so a crash can lose the last few):
   prompts steered and queued, your permission answers by decision, assisted
   reviews approved and escalated, turns given up after a second stall,
-  read-once hits, fuse trips, tool calls uam refused, Auto fallback
+  read-once hits, fuse trips, web_fetch hosts blocked, tool calls uam refused, Auto fallback
   questions asked and answered, Threads `uam_create_task` started or refused
   and their end notes, forks, rewinds, hunk reverts, settles (by you,
   auto-settle or review), archives, budgets set and reached, handoffs,
@@ -1196,6 +1203,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   start a Thread there with `uam_create_task`, so the change is tracked in
   that folder's Project. Shell commands are not checked: uam cannot tell
   before they run where they write.
+- **Blocked web hosts**: the first `web_fetch` of any URL is always made.
+  When it fails with status 401, 403, 407 or 451, every Thread on the server
+  skips that host and first path segment for 4 days (a 429, for 10
+  minutes), and the whole host once two of its segments failed so. A skipped
+  fetch is refused at once, telling the agent not to retry and to use another
+  source. The blocks are kept in `fetch-fuses.json` beside uam's config, so
+  they outlive a restart; when one lapses, the next fetch is made again and a
+  new failure starts a new block.
 - **Tables**: Markdown tables fill the message width. Long cells wrap; a
   table wider than the message (its headings never break inside a word)
   scrolls sideways within its own box, never the page. Each completed table

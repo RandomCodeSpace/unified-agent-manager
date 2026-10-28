@@ -781,6 +781,9 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         { key: 'model_calls.gpt-5.6-sol', value: '511' },
         { key: 'model_calls.claude-opus-5', value: '214' },
         { key: 'model_calls.Qwen3.8-27B', value: '53' },
+        { key: 'model_cost.claude-opus-5', value: '2140.00' },
+        { key: 'model_cost.gpt-5.6-sol', value: '1050.00' },
+        { key: 'model_cost.gpt-5.6-luna', value: '730.00' },
         { key: 'model_changes.model_picker', value: '6' },
         { key: 'uam.settle', value: '12' },
         { key: 'config.threads', value: '18' },
@@ -793,7 +796,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
           ['tools.bash', 140], ['tools.view', 61], ['tools.web_fetch', 22], ['tool_failures.bash', 11], ['tool_failures.web_fetch', 8], ['turns.median_s', 6.9], ['turns.p90_s', 30.5], ['models.ttfb_median_ms', 3900], ['models.ttfb_p90_ms', 11800],
           ['tokens.total_cost', 801], ['tokens.user_cost', 90], ['tokens.subagent_cost', 300], ['tokens.other_cost', 411], ['tokens.user_calls', 40], ['tokens.subagent_calls', 210], ['tokens.other_calls', 60],
           ['tokens.user_input', 4e6], ['tokens.user_cache_read', 3.1e6], ['tokens.subagent_input', 6e6], ['tokens.subagent_cache_read', 5.6e6], ['tokens.other_input', 7e6], ['tokens.other_cache_read', 6.2e6],
-          ['model_calls.gpt-5.6-luna', 180], ['model_calls.gpt-5.6-sol', 104], ['model_calls.claude-opus-5', 26]].map(([key, value]) => ({ key: String(key), value: String(value) })),
+          ['model_calls.gpt-5.6-luna', 180], ['model_calls.gpt-5.6-sol', 104], ['model_calls.claude-opus-5', 26],
+          ['model_cost.claude-opus-5', 520], ['model_cost.gpt-5.6-sol', 171], ['model_cost.gpt-5.6-luna', 110]].map(([key, value]) => ({ key: String(key), value: String(value) })),
       ],
     });
     const worktreed = worktrees.route(method, path, body);

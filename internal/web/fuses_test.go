@@ -53,24 +53,29 @@ func TestFuseDenialsAndTaskScope(t *testing.T) {
 func TestFuseFetchStatusSegmentAndExpiry(t *testing.T) {
 	now := time.Date(2026, 10, 10, 14, 2, 0, 0, time.UTC)
 	s := &webSession{id: "s"}
-	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{"s": s}}
+	other := &webSession{id: "other"}
+	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{"s": s, "other": other}}
 	fetch := func(raw string) agentapi.ToolUse {
 		return agentapi.ToolUse{Tool: "web_fetch", Args: map[string]any{"url": raw}}
 	}
-	for _, status := range []string{"401", "403", "451", "429"} {
+	for _, status := range []string{"401", "403", "407", "451", "429"} {
 		t.Run(status, func(t *testing.T) {
-			s.fuses = nil
+			m.fetchFuses = nil
 			use := fetch("https://EXAMPLE.com/a/one?q=1")
-			m.failedToolUse(t.Context(), s, use, "Error: Failed to fetch https://EXAMPLE.com/a/one?q=1 - status code "+status)
-			got := m.preToolUse(t.Context(), s, fetch("https://example.com/a/two"))
-			reopen := "20:02"
-			ttl := 6 * time.Hour
-			if status == "429" {
-				reopen = "14:12"
-				ttl = 10 * time.Minute
+			if m.preToolUse(t.Context(), s, use).Deny != "" {
+				t.Fatal("the first fetch is refused")
 			}
-			if !strings.Contains(got.Deny, "refused "+status+" at 14:02 UTC; reopens "+reopen+" UTC") {
-				t.Fatalf("reason=%q", got.Deny)
+			m.failedToolUse(t.Context(), s, use, "Error: Failed to fetch https://EXAMPLE.com/a/one?q=1 - status code "+status)
+			reopen, ttl := "2026-10-14 14:02", fetchBlockTTL
+			if status == "429" {
+				reopen, ttl = "2026-10-10 14:12", 10*time.Minute
+			}
+			// Every Thread skips it, not only the one whose fetch was refused.
+			for _, task := range []*webSession{s, other} {
+				got := m.preToolUse(t.Context(), task, fetch("https://example.com/a/two"))
+				if !strings.Contains(got.Deny, "example.com/a refused "+status+" at 2026-10-10 14:02 UTC; every thread skips it until "+reopen+" UTC") {
+					t.Fatalf("reason=%q", got.Deny)
+				}
 			}
 			for _, raw := range []string{"https://example.com/b/one", "https://other.com/a/one"} {
 				if m.preToolUse(t.Context(), s, fetch(raw)).Deny != "" {
@@ -85,11 +90,49 @@ func TestFuseFetchStatusSegmentAndExpiry(t *testing.T) {
 		})
 	}
 	for _, failure := range []string{"Error: Failed to fetch x - status code 404", "body mentions 403", "Error: Failed to fetch x - status code 4030", "timeout"} {
-		s.fuses = nil
+		m.fetchFuses = nil
 		m.failedToolUse(t.Context(), s, fetch("https://example.com/a"), failure)
-		if len(s.fuses) != 0 {
+		if len(m.fetchFuses) != 0 {
 			t.Fatalf("unexpected fuse: %q", failure)
 		}
+	}
+}
+
+// A second refused segment of a host blocks the whole host; rate limits never do.
+func TestFuseFetchWholeHost(t *testing.T) {
+	now := time.Date(2026, 10, 10, 14, 2, 0, 0, time.UTC)
+	s := &webSession{id: "s"}
+	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{"s": s}}
+	refuse := func(raw, status string) {
+		m.failedToolUse(t.Context(), s, agentapi.ToolUse{Tool: "web_fetch", Args: map[string]any{"url": raw}}, "Error: Failed to fetch "+raw+" - status code "+status)
+	}
+	denied := func(raw string) bool {
+		return m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "web_fetch", Args: map[string]any{"url": raw}}).Deny != ""
+	}
+	refuse("https://news.test/a", "429")
+	refuse("https://news.test/b", "429")
+	if denied("https://news.test/c") {
+		t.Fatal("rate limits blocked the host")
+	}
+	refuse("https://blocked.test/news", "403")
+	if denied("https://blocked.test/index") {
+		t.Fatal("one segment blocked the host")
+	}
+	refuse("https://blocked.test/index", "403")
+	if !denied("https://blocked.test/anything/else") || denied("https://other.test/news") {
+		t.Fatal("two segments did not block just the host")
+	}
+}
+
+// The refusals outlive a restart: a new Manager on the same store reads them.
+func TestFuseFetchSaved(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	use := agentapi.ToolUse{Tool: "web_fetch", Args: map[string]any{"url": "https://blocked.test/x"}}
+	m.failedToolUse(t.Context(), m.sessions[sum.ID], use, "Error: Failed to fetch https://blocked.test/x - status code 403")
+	again := &Manager{store: m.store, now: m.now, sessions: map[string]*webSession{"s": {id: "s"}}}
+	if again.preToolUse(t.Context(), again.sessions["s"], use).Deny == "" {
+		t.Fatal("the refusal was not saved")
 	}
 }
 

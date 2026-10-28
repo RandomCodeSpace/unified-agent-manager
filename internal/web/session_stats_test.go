@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -274,5 +275,96 @@ func TestUAMCountsRoundTrip(t *testing.T) {
 	}
 	if !slices.Contains(got.Stats, SessionStat{"uam.forks", "2"}) || !slices.Contains(got.Stats, SessionStat{"uam.trail_notes", "3"}) {
 		t.Fatalf("stats = %v", got.Stats)
+	}
+}
+
+// The cost counts: each model's cost and AI units, the main agent's model
+// calls per prompt and its tool calls, and web_fetch failures by class with
+// retries of a host that already failed. No host or URL reaches the file.
+func TestSessionStatsCostCounts(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".copilot")
+	t.Setenv("COPILOT_HOME", home)
+	usage := func(at, model, initiator string, cost, nano float64, tools int) string {
+		return fmt.Sprintf(`{"type":"session.usage_record","timestamp":"2026-10-05T10:00:%sZ","data":{"usage":{"model":%q,"initiator":%q,"cost":%g,"numToolCalls":%d,"copilotUsage":{"totalNanoAiu":%g}}}}`, at, model, initiator, cost, tools, nano)
+	}
+	fetch := func(at, id, raw, agent string) string {
+		return fmt.Sprintf(`{"type":"tool.execution_start","agentId":%q,"timestamp":"2026-10-05T10:00:%sZ","data":{"toolCallId":%q,"toolName":"web_fetch","arguments":{"url":%q}}}`, agent, at, id, raw)
+	}
+	failed := func(at, id, message string) string {
+		return fmt.Sprintf(`{"type":"tool.execution_complete","timestamp":"2026-10-05T10:00:%sZ","data":{"toolCallId":%q,"success":false,"error":{"message":%q}}}`, at, id, message)
+	}
+	journals := map[string][]string{
+		"a": {
+			`{"type":"user.message","timestamp":"2026-10-05T10:00:00Z","data":{"content":"p"}}`,
+			usage("01", "opus", "user", 10, 3e9, 2),
+			fetch("02", "f1", "https://Blocked.test/news", ""),
+			failed("03", "f1", "Error: Failed to fetch https://Blocked.test/news - status code 403"),
+			usage("04", "opus", "", 10, 2e9, 1),
+			fetch("05", "f2", "https://blocked.test/index", ""),
+			failed("06", "f2", "Denied by preToolUse hook: uam fuse: blocked.test/* refused 403"),
+			usage("07", "opus", "", 10, 1e9, 0),
+			fetch("08", "f3", "https://slow.test/x", "a1"),
+			failed("09", "f3", "TimeoutError: The operation was aborted due to timeout"),
+			usage("10", "sol", "sub-agent", 1, 0.5e9, 1),
+			`{"type":"user.message","timestamp":"2026-10-05T10:00:11Z","data":{"content":"p2"}}`,
+			usage("12", "opus", "user", 10, 1e9, 0),
+		},
+		"b": {
+			`{"type":"user.message","timestamp":"2026-10-05T10:00:00Z","data":{"content":"p"}}`,
+			fetch("01", "g1", "https://blocked.test/other", ""),
+			failed("02", "g1", "Error: Failed to fetch https://blocked.test/other - status code 403"),
+		},
+	}
+	for id, lines := range journals {
+		dir := filepath.Join(home, "session-state", id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, _, _ := newTestManager(t)
+	got, err := m.SessionStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := map[string]string{}
+	for _, s := range got.Stats {
+		stats[s.Key] = s.Value
+	}
+	for key, want := range map[string]string{
+		"model_cost.opus":                          "40.00",
+		"model_cost.sol":                           "1.00",
+		"model_ai_units.opus":                      "7.00",
+		"tokens.total_ai_units":                    "7.50",
+		"tokens.subagent_ai_units":                 "0.50",
+		"main.model_calls":                         "4",
+		"main.model_calls_per_prompt_median":       "1",
+		"main.model_calls_per_prompt_p90":          "3",
+		"main.calls_with_tools":                    "2",
+		"main.multi_tool_calls_pct":                "50",
+		"main.tool_calls":                          "3",
+		"main.tool_calls_pct":                      "75",
+		"main_tools.web_fetch":                     "3",
+		"web_fetch.calls":                          "4",
+		"web_fetch.failed":                         "4",
+		"web_fetch.retries_of_failed_host":         "1",
+		"web_fetch.failed_hosts":                   "2",
+		"web_fetch.failed_hosts_in_2plus_sessions": "1",
+		"web_fetch.failure_status_403":             "2",
+		"web_fetch.failure_refused_by_fuse":        "1",
+		"web_fetch.failure_timeout":                "1",
+	} {
+		if stats[key] != want {
+			t.Errorf("%s = %q, want %q", key, stats[key], want)
+		}
+	}
+	data, err := os.ReadFile(got.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(data)), "blocked.test") {
+		t.Fatalf("file holds a host:\n%s", data)
 	}
 }
