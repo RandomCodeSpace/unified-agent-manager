@@ -260,6 +260,57 @@ function fileList(list: MdNode): boolean {
   return true;
 }
 
+// A clock time ("06:58", "14:02:10", "9:05 pm") or a date ("2026-10-28"), optionally with a time.
+const WHEN = /^(\d{4}-[01]\d-[0-3]\d(?:[ T](?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)?|(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s?[ap]m)?)(?=$|[\s,:—–-])/i;
+// What may sit between the time and the event: "06:58 — merged", "06:58: merged", "06:58 - merged".
+const WHEN_GAP = /^\s*(?:[—–:-]\s*)?/;
+
+/** A time's minutes, to measure the gap to the next: a clock time within its day, a date-time since the epoch; null for a date alone. */
+function minutesOf(when: string): { n: number; clock: boolean } | null {
+  const date = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/.exec(when);
+  if (date) return { n: Date.UTC(+date[1], +date[2] - 1, +date[3], +date[4], +date[5]) / 60000, clock: false };
+  const clock = /^(\d{1,2}):(\d{2})(?::\d{2})?\s?([ap]m)?$/i.exec(when);
+  if (!clock) return null;
+  const pm = clock[3]?.toLowerCase() === 'pm', am = clock[3]?.toLowerCase() === 'am';
+  const h = (+clock[1] % (am || pm ? 12 : 24)) + (pm ? 12 : 0);
+  return { n: h * 60 + +clock[2], clock: true };
+}
+
+/** An item's time when its first paragraph opens with one (in bold or not); the rest of the item is the event. */
+function whenOf(item: MdNode): { when: string; strip: () => void } | null {
+  const para = item.children?.[0];
+  const first = para?.type === 'paragraph' ? para.children?.[0] : undefined;
+  if (!first || !para?.children) return null;
+  if (first.type === 'strong') {
+    const text = plain(first.children).trim();
+    const m = WHEN.exec(text);
+    if (!m || m[0] !== text) return null;
+    return { when: text, strip: () => { para.children!.shift(); const next = para.children![0]; if (next?.type === 'text') next.value = next.value!.replace(WHEN_GAP, ''); } };
+  }
+  const m = first.type === 'text' ? WHEN.exec(first.value ?? '') : null;
+  if (!m) return null;
+  return { when: m[1], strip: () => { first.value = first.value!.slice(m[0].length).replace(WHEN_GAP, ''); if (!first.value) para.children!.shift(); } };
+}
+
+/** A list whose every item opens with a time or date: a timeline, each item's time on the rail, a gap of more than an hour to the next marked. */
+function timeline(list: MdNode): boolean {
+  const items = list.children ?? [];
+  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  const whens = items.map(whenOf);
+  if (whens.some((w) => !w)) return false;
+  items.forEach((item, i) => {
+    whens[i]!.strip();
+    markProps(item, { dataWhen: whens[i]!.when });
+    const [a, b] = [minutesOf(whens[i]!.when), i + 1 < items.length ? minutesOf(whens[i + 1]!.when) : null];
+    if (!a || !b || a.clock !== b.clock) return;
+    // Clock times may run either way and past midnight: the shorter way round the day.
+    const d = Math.abs(b.n - a.n);
+    if ((a.clock ? Math.min(d, 1440 - d) : d) > 60) markProps(item, { dataGap: true });
+  });
+  markProps(list, { className: ['md-timeline'] });
+  return true;
+}
+
 /** A numbered list whose every item opens with bold text: steps, each keyed by its lead to track against the todo list. */
 function steps(list: MdNode) {
   const items = list.children ?? [];
@@ -279,21 +330,68 @@ function tasks(list: MdNode) {
   }
 }
 
-/** The remark plugin; run it only on text that has finished arriving, so a block changes shape once. */
-export function remarkRich() {
+// Two lists side by side: the first label of a pair opens the left column, its partner the right.
+const PAIRS: Record<string, string> = { pros: 'cons', keep: 'drop', do: "don't", advantages: 'disadvantages', for: 'against' };
+
+/** A paragraph that is bold text alone ("**Pros**", "**Pros:**", "**Pros**:"): its label in lower case, else null. */
+function boldLine(node: MdNode | undefined): string | null {
+  if (node?.type !== 'paragraph') return null;
+  const [lead, after] = node.children ?? [];
+  if (lead?.type !== 'strong' || node.children!.length > 2 || (after && (after.type !== 'text' || after.value!.trim() !== ':'))) return null;
+  return plain(lead.children).trim().replace(/:$/, '').replace('’', "'").toLowerCase();
+}
+
+/** `**Pros**` and a list, then `**Cons**` and a list (Keep/Drop, Do/Don't, …): the two side by side. */
+function pairs(parent: MdNode) {
+  const kids = parent.children ?? [];
+  for (let i = 0; i + 3 < kids.length; i++) {
+    const left = boldLine(kids[i]);
+    const right = boldLine(kids[i + 2]);
+    if (!left || !right || PAIRS[left] !== right || kids[i + 1].type !== 'list' || kids[i + 3].type !== 'list') continue;
+    const column = (label: MdNode, list: MdNode): MdNode => ({ type: 'side', data: { hName: 'div' }, children: [{ ...label, data: { hProperties: { className: ['md-pair-label'] } } }, list] });
+    kids.splice(i, 4, { type: 'pair', data: { hName: 'div', hProperties: { className: ['md-pair'] } }, children: [column(kids[i], kids[i + 1]), column(kids[i + 2], kids[i + 3])] });
+  }
+}
+
+const LEADS = new Set(['tl;dr', 'tldr', 'summary', 'result', 'in short', 'bottom line']);
+
+/** A reply that opens `**TL;DR:** …` (Summary, Result, …) in one line: the gist set apart above the detail, its label as a caption. */
+function summaryLead(tree: MdNode) {
+  const para = tree.children?.[0];
+  const row = labelled(para);
+  if (!row?.value.length || !LEADS.has(plain(row.label).trim().toLowerCase())) return;
+  // A paragraph of `**Label:** value` lines is facts, not a lead.
+  if (lines(para!.children ?? []).length > 1) return;
+  tree.children![0] = {
+    type: 'lead',
+    data: { hName: 'div', hProperties: { className: ['md-lead'] } },
+    children: [
+      { type: 'paragraph', data: { hProperties: { className: ['md-lead-label'] } }, children: row.label },
+      { type: 'paragraph', children: row.value },
+    ],
+  };
+}
+
+/**
+ * The remark plugin; run it only on text that has finished arriving, so a block changes shape once.
+ * `first`: whether this text opens the reply (a streamed reply renders in blocks, and only the first may hold its lead).
+ */
+export function remarkRich(options: { first?: boolean } = {}) {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
-    if (node.type === 'list' && !statusList(node) && !severityList(node) && !fileList(node) && !factList(node)) {
+    if (node.type === 'list' && !statusList(node) && !severityList(node) && !fileList(node) && !timeline(node) && !factList(node)) {
       steps(node);
       tasks(node);
     }
   };
   return (tree: MdNode) => {
     visit(tree);
+    if (options.first !== false) summaryLead(tree);
     const paragraphs = (node: MdNode) => {
       // A facts grid's own rows are done; a value that opens in bold is not another fact.
       if (node.data?.hName === 'dl' || !node.children) return;
+      pairs(node);
       factParagraphs(node);
       node.children.forEach(paragraphs);
     };
@@ -317,4 +415,29 @@ export function commandsOf(text: string): Command[] | null {
     else if (line.trim()) out.at(-1)!.output.push(line);
   }
   return out.length >= 2 ? out : null;
+}
+
+/** A long reply's title and its sections, for an index above them. */
+export interface Outline { title: string; sections: string[] }
+
+/** Heading text as it reads: emphasis, code marks and link targets dropped. */
+const headingText = (raw: string) => raw.replace(/\s+#+\s*$/, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').trim();
+
+/** A reply whose first heading is a `# Title` followed by three or more `## Section` headings (outside code fences): its outline; else null. */
+export function outlineOf(text: string): Outline | null {
+  let title: string | null = null;
+  const sections: string[] = [];
+  let fence: string | null = null;
+  for (const line of text.split('\n')) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (f && (!fence || f[1].startsWith(fence))) fence = fence ? null : f[1];
+    if (fence || f) continue;
+    const h = /^(#{1,6}) (.+)$/.exec(line);
+    if (!h || !headingText(h[2])) continue;
+    if (title === null) {
+      if (h[1] !== '#') return null;
+      title = headingText(h[2]);
+    } else if (h[1] === '##') sections.push(headingText(h[2]));
+  }
+  return title !== null && sections.length >= 3 ? { title, sections } : null;
 }

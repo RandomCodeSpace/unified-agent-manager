@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { expect, test, vi } from 'vitest';
@@ -190,4 +190,69 @@ test('a value with several changes stays as written; a figure with a Unicode min
   expect(dds[0].textContent).toBe('18.2.0 → 19.0.0, bundle 142 KB → 118 KB');
   expect(dds[1].querySelector('del')?.textContent).toBe('5.2.0');
   expect(stats.className).toBe('md-facts md-tiles');
+});
+
+test('a list whose every item opens with a time is a timeline: the time on the rail, a gap of over an hour marked', () => {
+  const { container } = render(<Markdown text={'- 06:58 #708 merged\n- **07:04** — dev on `c2934028`\n- 09:11: v0.21.12 published'} />);
+  const items = [...container.querySelectorAll('ul.md-timeline > li')] as HTMLElement[];
+  expect(items.map((li) => [li.querySelector('time')?.textContent, li.lastElementChild?.textContent, li.dataset.gap ?? ''])).toEqual([
+    ['06:58', '#708 merged', ''],
+    ['07:04', 'dev on c2934028', 'true'],
+    ['09:11', 'v0.21.12 published', ''],
+  ]);
+  const { container: mixed } = render(<Markdown text={'- 06:58 merged\n- then deployed\n- 1:5 ratio'} />);
+  expect(mixed.querySelector('.md-timeline')).toBeNull();
+});
+
+test('Pros and Cons lists sit side by side, also after streaming split the text', () => {
+  const text = 'Options:\n\n**Pros**\n- no new dependency\n- deterministic\n\n**Cons:**\n- needs exact titles';
+  for (const streamed of [false, true]) {
+    const { container, rerender, unmount } = render(<Markdown text={text} streaming={streamed} />);
+    if (streamed) rerender(<Markdown text={text} />);
+    const columns = [...container.querySelectorAll('.md-pair > div')];
+    expect(columns.map((c) => [c.querySelector('.md-pair-label')?.textContent, [...c.querySelectorAll('li')].map((li) => li.textContent)])).toEqual([
+      ['Pros', ['no new dependency', 'deterministic']],
+      ['Cons:', ['needs exact titles']],
+    ]);
+    unmount();
+  }
+  const { container } = render(<Markdown text={'**Pros**\n- a\n\n**Risks**\n- b'} />);
+  expect(container.querySelector('.md-pair')).toBeNull();
+});
+
+test('a reply that opens with **Result:** sets its gist apart; the same label later, or as one of several label lines, does not', () => {
+  const text = '**Result:** v0.21.12 is out and on dev.\n\nDetails follow.\n\n**Summary:** not the opening.';
+  for (const streamed of [false, true]) {
+    const { container, rerender, unmount } = render(<Markdown text={text} streaming={streamed} />);
+    if (streamed) rerender(<Markdown text={text} />);
+    const leads = container.querySelectorAll('.md-lead');
+    expect(leads).toHaveLength(1);
+    expect([...leads[0].querySelectorAll('p')].map((p) => p.textContent)).toEqual(['Result', 'v0.21.12 is out and on dev.']);
+    unmount();
+  }
+  const { container } = render(<Markdown text={'**Result:** green\n**Tests:** 742'} />);
+  expect(container.querySelector('.md-lead')).toBeNull();
+  expect(container.querySelector('dl.md-facts')).not.toBeNull();
+});
+
+test('a # title with three or more ## sections gets a section index; a click brings the section into view', async () => {
+  const scrolled: string[] = [];
+  vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) { scrolled.push(this.textContent ?? ''); });
+  const text = '**Result:** shipped.\n\n# Release `v0.21.12`\n\n## Changes\n\nA.\n\n```md\n## Not a section\n```\n\n## Verification\n\nB.\n\n## Open items\n\nC.';
+  for (const streamed of [false, true]) {
+    const { rerender, unmount } = render(<Markdown text={text} streaming={streamed} />);
+    if (streamed) rerender(<Markdown text={text} />);
+    const index = screen.getByRole('list', { name: 'Sections' });
+    expect(index.closest('.md-outline')?.querySelector('h1')?.textContent).toBe('Release v0.21.12');
+    const buttons = within(index).getAllByRole('button');
+    expect(buttons.map((b) => b.textContent)).toEqual(['01Changes', '02Verification', '03Open items']);
+    await userEvent.click(buttons[1]);
+    expect(scrolled.at(-1)).toBe('Verification');
+    unmount();
+  }
+  for (const other of ['# Title\n\n## One\n\n## Two', '## Intro\n\n# Title\n\n## One\n\n## Two\n\n## Three']) {
+    const { container } = render(<Markdown text={other} />);
+    expect(container.querySelector('.md-outline')).toBeNull();
+  }
+  vi.restoreAllMocks();
 });

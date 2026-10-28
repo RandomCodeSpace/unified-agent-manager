@@ -10,7 +10,7 @@ import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
-import { SEVERITY_ORDER, STATUS_ORDER, commandsOf, remarkRich, type CalloutKind, type Command } from '../lib/richMarkdown';
+import { SEVERITY_ORDER, STATUS_ORDER, commandsOf, outlineOf, remarkRich, type CalloutKind, type Command, type Outline } from '../lib/richMarkdown';
 import type { TodoStatus } from '../api';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
@@ -1020,6 +1020,15 @@ function MdItem({ node, className, children }: Readonly<{ className?: string; ch
     );
   }
   if (node?.properties.dataPath) return <FileItem node={node} className={className}>{children}</FileItem>;
+  if (node?.properties.dataWhen) {
+    return (
+      <li className={className} data-gap={node.properties.dataGap ? true : undefined}>
+        <time>{String(node.properties.dataWhen)}</time>
+        <span aria-hidden="true" className="md-timeline-dot" />
+        <span className="min-w-0">{children}</span>
+      </li>
+    );
+  }
   return <PlanItem node={node} className={className}>{children}</PlanItem>;
 }
 
@@ -1067,6 +1076,36 @@ function MdList({ node, className, children }: Readonly<{ className?: string; ch
   );
 }
 
+/** The reply's outline (`outlineOf`), when it has one: its title heading carries the section index. */
+const OutlineContext = createContext<Outline | null>(null);
+
+const hastText = (node: HastNode | HastNode['children'][number]): string => node.type === 'text' ? node.value : 'children' in node ? node.children.map(hastText).join('') : '';
+
+/** A long reply's title with an index of its sections under it; a click brings the section into view. Any other heading as written. */
+function MdTitle({ node, children, ...props }: Readonly<{ children?: ReactNode } & ExtraProps & Omit<ComponentProps<'h1'>, 'children'>>) {
+  const outline = useContext(OutlineContext);
+  if (!outline || !node || hastText(node).trim() !== outline.title) return <h1 {...props}>{children}</h1>;
+  const show = (target: HTMLElement, section: string) => {
+    const heading = [...(target.closest('.md')?.querySelectorAll('h2') ?? [])].find((h) => h.textContent?.trim() === section);
+    heading?.scrollIntoView({ block: 'start' });
+  };
+  return (
+    <div className="md-outline">
+      <h1 {...props}>{children}</h1>
+      <ol aria-label="Sections">
+        {outline.sections.map((section, i) => (
+          <li key={i}>
+            <button type="button" onClick={(e) => show(e.currentTarget, section)}>
+              <span aria-hidden="true" className="md-outline-n">{String(i + 1).padStart(2, '0')}</span>
+              {section}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 const SHELL = new Set(['sh', 'bash', 'shell', 'console', 'zsh']);
 
 /** One command row: `$`, the command, its own copy button, and the output lines under it, muted. */
@@ -1098,6 +1137,7 @@ const mdComponents: Components = {
   ul: MdList,
   ol: MdOrdered,
   li: MdItem,
+  h1: MdTitle,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);
@@ -1141,12 +1181,16 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
   const fileDemand = useFileDemand(text);
+  // The outline needs the whole reply (a streamed one renders in blocks), and waits for it to finish like other rich blocks.
+  const outline = useMemo(() => streaming ? null : outlineOf(text), [text, streaming]);
   return (
-    <div ref={fileDemand} className={cn('md', className)}>
-      {blocks.map((block, i) => (
-        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
-      ))}
-    </div>
+    <OutlineContext.Provider value={outline}>
+      <div ref={fileDemand} className={cn('md', className)}>
+        {blocks.map((block, i) => (
+          <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} rehypePlugins={rehypePlugins} />
+        ))}
+      </div>
+    </OutlineContext.Provider>
   );
 }
 
@@ -1180,16 +1224,16 @@ export function PlainText({ text, className }: Readonly<{ text: string; classNam
   return <p ref={fileDemand} className={cn('break-words whitespace-pre-wrap', className)}>{parts}</p>;
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, first, breaks, rehypePlugins }: { text: string; streaming: boolean; first: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
   const origin = useContext(GitLabItemsContext)?.origin;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
-    const rich = streaming ? base : [...base, remarkRich];
+    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first }]];
     return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
-  }, [breaks, origin, streaming]);
+  }, [breaks, origin, streaming, first]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>

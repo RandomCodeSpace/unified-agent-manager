@@ -918,6 +918,167 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  /* Outline, pros and cons, timeline and summary lead (r22 7, 9, 10 and 3). */
+  .md-outline {
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-md);
+    background: var(--color-raised);
+  }
+  .md .md-outline h1 {
+    margin: 0 0 6px;
+    font-size: 1.15em;
+  }
+  .md .md-outline ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .md .md-outline li {
+    margin: 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .md-outline button {
+    display: flex;
+    width: 100%;
+    gap: 10px;
+    padding: 4px 0;
+    text-align: left;
+    color: var(--color-accent);
+    cursor: pointer;
+  }
+  .md-outline button:hover {
+    text-decoration: underline;
+  }
+  .md-outline-n {
+    padding-top: 1px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-faint);
+  }
+  .md .md-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 0 0 10px;
+  }
+  .md-pair > div {
+    min-width: 0;
+    padding: 0 14px;
+  }
+  .md-pair > div:first-child {
+    padding-left: 0;
+  }
+  .md-pair > div + div {
+    border-left: 1px solid var(--color-hairline);
+  }
+  .md .md-pair-label {
+    margin-bottom: 4px;
+    font-size: var(--text-eyebrow);
+    letter-spacing: 0.66px;
+    text-transform: uppercase;
+  }
+  .md .md-pair-label strong {
+    color: var(--color-success);
+  }
+  .md .md-pair > div + div .md-pair-label strong {
+    color: var(--color-error);
+  }
+  .md-pair > div > :last-child {
+    margin-bottom: 0;
+  }
+  @media (max-width: 640px) {
+    .md .md-pair {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .md-pair > div {
+      padding: 0;
+    }
+    .md-pair > div + div {
+      border-left: 0;
+    }
+  }
+  .md :is(ul, ol).md-timeline {
+    display: grid;
+    grid-template-columns: max-content 16px 1fr;
+    column-gap: 6px;
+    padding-left: 0;
+    list-style: none;
+  }
+  .md ul.md-timeline > li::before {
+    content: none;
+  }
+  .md .md-timeline > li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: baseline;
+    margin: 0;
+  }
+  .md-timeline time {
+    padding: 3px 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: inherit;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-muted);
+  }
+  .md-timeline > li > :last-child {
+    padding: 3px 0;
+  }
+  .md-timeline-dot {
+    position: relative;
+    align-self: stretch;
+  }
+  .md-timeline-dot::before {
+    content: '';
+    position: absolute;
+    z-index: 1;
+    top: calc(3px + 0.75em - 4px);
+    left: 4px;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid var(--color-accent);
+    border-radius: 9999px;
+    background: var(--color-canvas);
+  }
+  .md-timeline-dot::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 7.5px;
+    border-left: 1px solid var(--color-hairline-strong);
+  }
+  .md-timeline > li:first-child .md-timeline-dot::after {
+    top: calc(3px + 0.75em);
+  }
+  .md-timeline > li:last-child .md-timeline-dot::after {
+    bottom: calc(100% - 3px - 0.75em);
+  }
+  /* More than an hour to the next entry: the rail below it dashed. */
+  .md-timeline > li[data-gap] .md-timeline-dot::after {
+    border-left-style: dashed;
+  }
+  .md-lead {
+    margin: 0 0 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .md .md-lead > p {
+    margin: 0;
+    font-size: 1.07em;
+    color: var(--color-ink);
+  }
+  .md .md-lead > .md-lead-label {
+    margin-bottom: 2px;
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.66px;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
   .md-progress progress {
     width: 72px;
     height: 3px;

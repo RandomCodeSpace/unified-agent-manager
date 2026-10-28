@@ -16,6 +16,8 @@ const WHOLE = /^ {0,3}(\[[^\]]+\]:|<!--|<\?|<![a-z]|<!\[CDATA\[|<(pre|script|sty
  * stays one list). The blank lines themselves are dropped.
  */
 const LABEL_LINE = /^\*\*[^*\n]{1,60}(?::\*\*|\*\*:)/;
+// The second label of a side-by-side pair ("**Cons**" after "**Pros**" and its list) stays in the pair's block.
+const PAIR_SECOND = /^\*\*(cons|drop|don['’]t|disadvantages|against)(?::\*\*|\*\*:?)\s*$/i;
 
 export function splitBlocks(text: string): string[] {
   if (WHOLE.test(text)) return [text];
@@ -37,8 +39,8 @@ export function splitBlocks(text: string): string[] {
     }
     // The last line may still be arriving: bare digits may yet become an ordered list item.
     const undecided = i === lines.length - 1 && /^\d{1,9}$/.test(line);
-    // A run of `**Label:** value` paragraphs stays one block: it renders as one facts grid (richMarkdown.ts).
-    const labels = LABEL_LINE.test(line) && LABEL_LINE.test(lines[start]);
+    // A run of `**Label:** value` paragraphs stays one block: it renders as one facts grid (richMarkdown.ts); so does a Pros/Cons pair.
+    const labels = (LABEL_LINE.test(line) && LABEL_LINE.test(lines[start])) || PAIR_SECOND.test(line);
     if (blank >= 0 && blank > start && !undecided && !labels && !/^[ \t]/.test(line) && !LIST_ITEM.test(line)) {
       blocks.push(lines.slice(start, blank).join('\n'));
       start = i;
