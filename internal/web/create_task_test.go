@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -187,20 +189,20 @@ func TestCreateTaskRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, tc := range map[string]struct{ args, want string }{
-		"unknown project":     {`{"project":"Nowhere","prompt":"p"}`, `no project has the ID or name "Nowhere"`},
-		"ambiguous name":      {`{"project":"Twin","prompt":"p"}`, "2 projects are named \"Twin\""},
-		"project directory":   {fmt.Sprintf(`{"project":%q,"prompt":"p"}`, dir), "no project has the ID or name"},
-		"no project":          {`{"prompt":"p"}`, "give project or path, not both"},
-		"project and path":    {`{"project":"Target","path":"/tmp","prompt":"p"}`, "give project or path, not both"},
-		"path argument":       {fmt.Sprintf(`{"project":%q,"prompt":"p","dir":"/tmp"}`, target.ID), `unknown field "dir"`},
-		"blank prompt":        {`{"project":"Target","prompt":"  \n"}`, "prompt is required"},
-		"long prompt":         {fmt.Sprintf(`{"project":"Target","prompt":%q}`, strings.Repeat("x", maxSpawnPrompt+1)), "longer than 16384 bytes"},
-		"control in prompt":   {`{"project":"Target","prompt":"ring\u0007"}`, "control character"},
-		"carriage return":     {`{"project":"Target","prompt":"a\r\nb"}`, "control character"},
-		"long name":           {fmt.Sprintf(`{"project":"Target","prompt":"p","name":%q}`, strings.Repeat("n", maxNameRunes+1)), "name is longer than"},
-		"not an object":       {`["Target"]`, "invalid arguments"},
-		"model not offered":   {`{"project":"Target","prompt":"p","model":"nope"}`, `model "nope" is not offered`},
-		"effort not accepted": {`{"project":"Target","prompt":"p","effort":"high"}`, `unknown field "effort"`},
+		"unknown project":   {`{"project":"Nowhere","prompt":"p"}`, `no project has the ID or name "Nowhere"`},
+		"ambiguous name":    {`{"project":"Twin","prompt":"p"}`, "2 projects are named \"Twin\""},
+		"project directory": {fmt.Sprintf(`{"project":%q,"prompt":"p"}`, dir), "no project has the ID or name"},
+		"no project":        {`{"prompt":"p"}`, "give project or path, not both"},
+		"project and path":  {`{"project":"Target","path":"/tmp","prompt":"p"}`, "give project or path, not both"},
+		"path argument":     {fmt.Sprintf(`{"project":%q,"prompt":"p","dir":"/tmp"}`, target.ID), `unknown field "dir"`},
+		"blank prompt":      {`{"project":"Target","prompt":"  \n"}`, "prompt is required"},
+		"long prompt":       {fmt.Sprintf(`{"project":"Target","prompt":%q}`, strings.Repeat("x", maxSpawnPrompt+1)), "longer than 16384 bytes"},
+		"control in prompt": {`{"project":"Target","prompt":"ring\u0007"}`, "control character"},
+		"carriage return":   {`{"project":"Target","prompt":"a\r\nb"}`, "control character"},
+		"long name":         {fmt.Sprintf(`{"project":"Target","prompt":"p","name":%q}`, strings.Repeat("n", maxNameRunes+1)), "name is longer than"},
+		"not an object":     {`["Target"]`, "invalid arguments"},
+		"model not offered": {`{"project":"Target","prompt":"p","model":"nope"}`, `model "nope" is not one the owner enabled`},
+		"base alone":        {`{"project":"Target","prompt":"p","base":"main"}`, "base is only for a worktree"},
 	} {
 		t.Run(name, func(t *testing.T) { spawnRefused(t, m, prov, conv, tc.args, tc.want) })
 	}
@@ -215,7 +217,7 @@ func TestCreateTaskRefusals(t *testing.T) {
 // it is hidden, else auto.
 func TestCreateTaskModel(t *testing.T) {
 	prov := agenttest.NewProvider("fake", allCaps)
-	prov.SetModels([]agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "good", Name: "Good"}, {ID: "other", Name: "Other"}}, nil)
+	prov.SetModels([]agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "good", Name: "Good", Efforts: []string{"low", "high"}}, {ID: "other", Name: "Other"}}, nil)
 	m := startManager(t, openTestStore(t), prov)
 	_, conv := createSession(t, m, prov)
 	namedProject(t, m, "Target")
@@ -235,11 +237,54 @@ func TestCreateTaskModel(t *testing.T) {
 	if sum, _ := spawnOK(t, m, prov, conv, "call-3", `{"project":"Target","prompt":"p"}`); sum.Model != "auto" {
 		t.Fatalf("model with the default hidden = %q", sum.Model)
 	}
-	// As with Create, a model named outright may be a hidden one.
-	if sum, _ := spawnOK(t, m, prov, conv, "call-4", `{"project":"Target","prompt":"p","model":"good"}`); sum.Model != "good" || sum.Effort != "" || sum.ContextSize != "default" {
-		t.Fatalf("named model = %+v", sum)
+	// Unlike the browser's Create, an agent picks only from the models the owner enabled.
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p","model":"good"}`, `model "good" is not one the owner enabled; enabled: auto, other`)
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p","model":"gone"}`, `model "gone" is not one the owner enabled`)
+	if _, err := m.UpdateSettings(SettingsPatch{HiddenModels: map[string][]string{"fake": {}}}); err != nil {
+		t.Fatal(err)
 	}
-	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p","model":"gone"}`, `model "gone" is not offered`)
+	// An effort the model offers is taken; another is refused, pointing at uam op models.
+	if sum, _ := spawnOK(t, m, prov, conv, "call-4", `{"project":"Target","prompt":"p","model":"good","effort":"high"}`); sum.Model != "good" || sum.Effort != "high" || sum.ContextSize != "default" {
+		t.Fatalf("named model and effort = %+v", sum)
+	}
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p","model":"good","effort":"max"}`, "uam op models lists each model's efforts")
+}
+
+// A Thread starts on a new branch in its own worktree of a git Project
+// unless the call passes worktree false; base picks the branch it starts
+// from; a subfolder path is named within the worktree; a Project outside git
+// runs in its folder.
+func TestCreateTaskInNewWorktree(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	ts.m.worktreeRoot = t.TempDir()
+	project := addProject(t, ts.m, repo)
+	_, conv := createSession(t, ts.m, ts.prov)
+
+	sum, child := spawnOK(t, ts.m, ts.prov, conv, "default", fmt.Sprintf(`{"project":%q,"prompt":"p"}`, project))
+	if !strings.HasPrefix(sum.Worktree.Branch, "uam/") || sum.Workdir != sum.Worktree.Path || sum.ProjectID != project || !slices.Equal(child.Sends(), []string{"p"}) {
+		t.Fatalf("default = %+v, sends %q", sum, child.Sends())
+	}
+	if sum, _ := spawnOK(t, ts.m, ts.prov, conv, "base", fmt.Sprintf(`{"project":%q,"prompt":"p","base":"feature"}`, project)); sum.Worktree.Path == "" {
+		t.Fatalf("with base = %+v", sum)
+	} else if _, err := os.Stat(filepath.Join(sum.Workdir, "feature-only.go")); err != nil {
+		t.Fatalf("the worktree is not from base: %v", err)
+	}
+	if sum, _ := spawnOK(t, ts.m, ts.prov, conv, "folder", fmt.Sprintf(`{"project":%q,"prompt":"p","worktree":false}`, project)); sum.Worktree.Path != "" || sum.Workdir != repo {
+		t.Fatalf("worktree false = %+v", sum)
+	}
+	spawnRefused(t, ts.m, ts.prov, conv, fmt.Sprintf(`{"project":%q,"prompt":"p","worktree":false,"base":"main"}`, project), "base is only for a worktree")
+
+	sub, child := spawnOK(t, ts.m, ts.prov, conv, "sub", fmt.Sprintf(`{"path":%q,"prompt":"p"}`, filepath.Join(repo, "docs")))
+	if sub.Worktree.Path == "" || !slices.Equal(child.Sends(), []string{"Work in the subfolder docs of your folder.\n\np"}) {
+		t.Fatalf("subfolder = %+v, sends %q", sub, child.Sends())
+	}
+
+	plain := namedProject(t, ts.m, "Plain")
+	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "plain", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, plain))})
+	if res.Failed || !strings.Contains(res.Text, "not a git repository, so no worktree") {
+		t.Fatalf("a project outside git = %+v", res)
+	}
 }
 
 // A Task starts at most maxSpawns Tasks, counted over the stored records:

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -50,22 +51,30 @@ var createTaskTool = agentapi.HostTool{
 		"Use it for any change outside your own thread's folder. Give project or path, not both. "+
 		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
 		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and last reply, at your next tool call or turn; wait for it instead of checking. "+
+		"Pick model and effort for the work (a hard change: a stronger model or more effort; a small one: a cheaper model); uam op models lists the owner's enabled models with their efforts and cost tier. "+
+		"It starts on a new branch in its own git worktree of the project, so its changes stay apart until merged; pass worktree false only when the owner asks for the project's own folder. "+
 		"You can start at most %d threads.", maxSpawns),
 	Parameters: toolSchema([]string{"prompt"}, map[string]any{
-		"project": stringProp("An existing project: its ID, or its exact name."),
-		"path":    stringProp("A folder to work in: absolute, ~/..., or relative to your folder."),
-		"prompt":  stringProp(fmt.Sprintf("The new thread's first message, up to %d bytes.", maxSpawnPrompt)),
-		"name":    stringProp(fmt.Sprintf("The new thread's name, up to %d characters. Without one, the thread is titled from its prompt.", maxNameRunes)),
-		"model":   stringProp("A model ID the provider offers. Without one, the owner's default for new threads."),
+		"project":  stringProp("An existing project: its ID, or its exact name."),
+		"path":     stringProp("A folder to work in: absolute, ~/..., or relative to your folder."),
+		"prompt":   stringProp(fmt.Sprintf("The new thread's first message, up to %d bytes.", maxSpawnPrompt)),
+		"name":     stringProp(fmt.Sprintf("The new thread's name, up to %d characters. Without one, the thread is titled from its prompt.", maxNameRunes)),
+		"model":    stringProp("A model ID the owner enabled (uam op models). Without one, the owner's default for new threads."),
+		"effort":   stringProp("A reasoning effort the model offers (uam op models). Without one, the model's default."),
+		"worktree": map[string]any{"type": "boolean", "description": "Default true: the thread runs on a new branch in its own git worktree of the project (a project outside git runs in its folder). false only when the owner asks for the project's own folder."},
+		"base":     stringProp("For the worktree: the branch or commit its new branch starts from. Without one, the project's current branch."),
 	}),
 }
 
 type createTaskArgs struct {
-	Project string `json:"project"`
-	Path    string `json:"path"`
-	Prompt  string `json:"prompt"`
-	Name    string `json:"name"`
-	Model   string `json:"model"`
+	Project  string `json:"project"`
+	Path     string `json:"path"`
+	Prompt   string `json:"prompt"`
+	Name     string `json:"name"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+	Worktree *bool  `json:"worktree"`
+	Base     string `json:"base"`
 }
 
 // taskToolsLocked is the Manager's hostTools: uam_create_task unless
@@ -225,33 +234,64 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		return "", err
 	}
 	defer end()
-	req := CreateRequest{Name: in.Name, Model: in.Model, Prompt: in.Prompt, Mode: string(store.ModeSafe), spawnedBy: taskID}
+	req := CreateRequest{Name: in.Name, Model: in.Model, Effort: in.Effort, Prompt: in.Prompt, Mode: string(store.ModeSafe), spawnedBy: taskID}
+	var folder string
 	if in.Path != "" {
-		var folder string
 		if in.Project, folder, err = m.spawnPathProject(ctx, taskID, call.CallID, in.Path); err != nil {
 			return "", err
-		}
-		if folder != "" {
-			req.Prompt = "Work in the folder " + folder + ".\n\n" + req.Prompt
 		}
 	}
 	m.mu.Lock()
 	if caller := m.sessions[taskID]; caller != nil && caller.mode == store.ModeYolo && !caller.modeUnknown {
 		req.Mode = string(store.ModeYolo)
 	}
-	var projectName string
+	var projectName, projectDir string
 	req.ProjectID, projectName, err = m.spawnProjectLocked(in.Project)
+	if p := m.projects[req.ProjectID]; p != nil {
+		projectDir = p.Dir
+	}
 	var model string
 	req.Provider, model = m.newTaskSelectionLocked()
+	enabled := m.enabledModelsLocked(req.Provider)
 	m.mu.Unlock()
 	if err != nil {
 		return "", err
+	}
+	// A Thread gets its own worktree unless the call says not to; a Project
+	// outside git cannot have one, so without a word it runs in the folder.
+	worktree := in.Worktree == nil && inGitRepo(ctx, projectDir) || in.Worktree != nil && *in.Worktree
+	if in.Base != "" && !worktree {
+		return "", errors.New("base is only for a worktree")
+	}
+	if worktree {
+		req.Place = &PlaceRequest{Mode: placeWorktree, Base: in.Base}
+	}
+	switch {
+	case folder != "" && worktree:
+		// The worktree has its own copy of the Project's folder: name the subfolder within it.
+		rel, err := filepath.Rel(projectDir, folder)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			rel = folder
+		}
+		req.Prompt = "Work in the subfolder " + filepath.ToSlash(rel) + " of your folder.\n\n" + req.Prompt
+	case folder != "":
+		req.Prompt = "Work in the folder " + folder + ".\n\n" + req.Prompt
+	}
+	if in.Model != "" && !slices.ContainsFunc(enabled, func(mo agentapi.Model) bool { return mo.ID == in.Model }) {
+		ids := make([]string, len(enabled))
+		for i, mo := range enabled {
+			ids[i] = mo.ID
+		}
+		return "", fmt.Errorf("model %q is not one the owner enabled; enabled: %s", in.Model, strings.Join(ids, ", "))
 	}
 	if req.Model == "" {
 		req.Model = model
 	}
 	prov, workdir, mode, err := m.checkCreate(&req)
 	if err != nil {
+		if in.Effort != "" && strings.Contains(err.Error(), "effort") {
+			return "", fmt.Errorf("%w; uam op models lists each model's efforts", err)
+		}
 		return "", err
 	}
 	if req.id, err = newUUID(); err != nil {
@@ -289,6 +329,23 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	task := fmt.Sprintf("thread %s", req.id)
 	if req.Name != "" {
 		task = fmt.Sprintf("thread %s %q", req.id, req.Name)
+	}
+	if req.Model != "" {
+		task += " on " + req.Model
+		if req.Effort != "" {
+			task += " (" + req.Effort + " effort)"
+		}
+	}
+	switch {
+	case worktree:
+		task += " in a new worktree"
+		if in.Base != "" {
+			task += " from " + in.Base
+		}
+	case in.Worktree == nil:
+		task += " in the project's folder (not a git repository, so no worktree)"
+	default:
+		task += " in the project's folder"
 	}
 	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar. When its turn ends you get a 'uam thread:' note with its last reply. "+
 		"You can start %d more.", req.Mode, maxSpawns-n-1)
@@ -367,10 +424,8 @@ func (m *Manager) newTaskSelectionLocked() (provider, model string) {
 		}
 	}
 	var shown []string
-	for _, mo := range m.infos[provider].Models {
-		if !slices.Contains(m.settings.HiddenModels[provider], mo.ID) {
-			shown = append(shown, mo.ID)
-		}
+	for _, mo := range m.enabledModelsLocked(provider) {
+		shown = append(shown, mo.ID)
 	}
 	switch {
 	case d.Model != "" && slices.Contains(shown, d.Model):
@@ -381,6 +436,19 @@ func (m *Manager) newTaskSelectionLocked() (provider, model string) {
 		return provider, shown[0]
 	}
 	return provider, ""
+}
+
+// enabledModelsLocked is the provider's models the owner has not hidden in
+// Settings, in the provider's order: the ones an agent may pick for a Thread
+// it starts. The caller holds mu.
+func (m *Manager) enabledModelsLocked(provider string) []agentapi.Model {
+	var out []agentapi.Model
+	for _, mo := range m.infos[provider].Models {
+		if !slices.Contains(m.settings.HiddenModels[provider], mo.ID) {
+			out = append(out, mo)
+		}
+	}
+	return out
 }
 
 // spawnsLocked counts the Tasks the Task caller created or is creating. The

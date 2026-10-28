@@ -414,3 +414,28 @@ func TestUAMReadHistory(t *testing.T) {
 		t.Fatalf("unavailable history: %+v", res)
 	}
 }
+
+// models lists the default provider's models the owner enabled, with their
+// efforts and cost tier, and the model a new thread gets without one.
+func TestUAMReadModels(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels([]agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "big", Name: "Big", Efforts: []string{"low", "high"}, CostTier: agentapi.CostHigh}, {ID: "hidden", Name: "Hidden"}}, nil)
+	m := startManager(t, openTestStore(t), prov)
+	_, conv := createSession(t, m, prov)
+	if _, err := m.UpdateSettings(SettingsPatch{HiddenModels: map[string][]string{"fake": {"hidden"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Provider     string           `json:"provider"`
+		DefaultModel string           `json:"default_model"`
+		Models       []map[string]any `json:"models"`
+	}
+	uamReadJSON(t, conv, `{"op":"models"}`, &got)
+	ids := []string{}
+	for _, mo := range got.Models {
+		ids = append(ids, mo["id"].(string))
+	}
+	if got.Provider != "fake" || got.DefaultModel != "auto" || !slices.Equal(ids, []string{"auto", "big"}) || got.Models[1]["cost_tier"] != agentapi.CostHigh || fmt.Sprint(got.Models[1]["efforts"]) != "[low high]" {
+		t.Fatalf("models = %+v", got)
+	}
+}
