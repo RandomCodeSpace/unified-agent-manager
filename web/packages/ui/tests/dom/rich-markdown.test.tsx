@@ -1,6 +1,16 @@
-import { render, screen } from '@testing-library/react';
-import { expect, test } from 'vitest';
-import { Markdown } from '../../src/components/common';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
+import { expect, test, vi } from 'vitest';
+import { ItemContext, Markdown, ReplyContext, type ReplyTools } from '../../src/components/common';
+import { planKey } from '../../src/lib/richMarkdown';
+
+/** A reply's Markdown as the transcript renders it: in its item, with the Thread's reply tools. */
+const inReply = (tools: ReplyTools, children: ReactNode, id = 'r1') => (
+  <ReplyContext.Provider value={tools}>
+    <ItemContext.Provider value={{ id, text: '' }}>{children}</ItemContext.Provider>
+  </ReplyContext.Provider>
+);
 
 test('a GitHub alert renders as a titled callout without its marker', () => {
   const { container } = render(<Markdown text={'> [!WARNING]\n> The cache is stale.'} />);
@@ -82,4 +92,73 @@ test('one paragraph of label lines becomes facts; short figures become tiles', (
   expect(grids[0].className).toBe('md-facts md-tiles');
   expect([...grids[0].querySelectorAll('dd')].map(d => d.textContent)).toEqual(['5', '2', '62']);
   expect(container.textContent).toContain('Then Branch: main');
+});
+
+const QUESTION = '> [!QUESTION]\n> Which database should the cache use?\n>\n> - Postgres\n> - SQLite';
+
+test('a question on the latest reply answers in place: a choice pressed twice sends it with the question quoted', async () => {
+  const user = userEvent.setup();
+  const send = vi.fn(async () => null);
+  render(inReply({ latest: 'r1', send }, <Markdown text={QUESTION} />));
+  const note = screen.getByRole('note');
+  expect(note.dataset.callout).toBe('question');
+  const choices = within(note).getByRole('group', { name: 'Choices' });
+  expect(within(choices).getAllByRole('button').map((b) => b.textContent)).toEqual(['Postgres', 'SQLite']);
+  await user.click(within(choices).getByRole('button', { name: 'SQLite' }));
+  expect(within(choices).getByRole('button', { name: 'SQLite' }).getAttribute('aria-pressed')).toBe('true');
+  expect(send).not.toHaveBeenCalled();
+  await user.click(within(choices).getByRole('button', { name: 'SQLite' }));
+  expect(send).toHaveBeenCalledWith('> Which database should the cache use?\n\nSQLite');
+});
+
+test('a blocker takes typed words; an error stays beside the field', async () => {
+  const user = userEvent.setup();
+  const send = vi.fn(async () => 'The thread did not take the answer.');
+  render(inReply({ latest: 'r1', send }, <Markdown text={'> [!BLOCKER]\n> No token for the registry.'} />));
+  const note = screen.getByRole('note');
+  expect(note.dataset.callout).toBe('blocker');
+  expect(within(note).queryByRole('group')).toBeNull();
+  await user.type(within(note).getByRole('textbox', { name: 'Answer' }), 'Use the read-only token{Enter}');
+  expect(send).toHaveBeenCalledWith('> No token for the registry.\n\nUse the read-only token');
+  await waitFor(() => expect(within(note).getByRole('alert').textContent).toBe('The thread did not take the answer.'));
+  expect((within(note).getByRole('textbox', { name: 'Answer' }) as HTMLInputElement).value).toBe('Use the read-only token');
+});
+
+test('a question on an older reply, or a read-only Thread, shows its choices as a plain list', () => {
+  const { container } = render(inReply({ latest: 'r2', send: vi.fn() }, <Markdown text={QUESTION} />));
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect([...container.querySelectorAll('.md-choices-plain li')].map((li) => li.textContent)).toEqual(['Postgres', 'SQLite']);
+  const { container: locked } = render(inReply({ latest: 'r1' }, <Markdown text={QUESTION} />));
+  expect(locked.querySelectorAll('.md-choices-plain li')).toHaveLength(2);
+});
+
+test('a reply\'s plan follows the todo list: items whose title a row has take its state, the others keep their own', () => {
+  const plan = new Map([[planKey('Bump the SDK'), 'done' as const], [planKey('Run the suites'), 'in_progress' as const]]);
+  const { container } = render(inReply({ plan }, <Markdown text={'- [ ] Bump the SDK\n- [ ] Run the suites\n- [x] Write notes\n- [ ] Deploy'} />));
+  expect([...container.querySelectorAll('li')].map((li) => [li.dataset.state, li.dataset.live ?? ''])).toEqual([['done', 'true'], ['in_progress', 'true'], ['done', ''], ['pending', '']]);
+  expect(container.querySelector('input')).toBeNull();
+  expect(container.querySelector('.md-progress')?.textContent).toBe('2 of 4 done· from the todo list');
+  const { container: steps } = render(inReply({ plan }, <Markdown text={'1. **Bump the SDK.** then tidy\n2. **Deploy.** to dev'} />));
+  expect([...steps.querySelectorAll('li')].map((li) => li.dataset.state ?? '')).toEqual(['done', '']);
+  expect(steps.querySelector('.md-progress')?.textContent).toBe('1 of 2 done· from the todo list');
+});
+
+test('a reply that ends by asking answers in place too, drawn as prose; a closing list after the question gives its choices', async () => {
+  const user = userEvent.setup();
+  const send = vi.fn(async () => null);
+  const { container } = render(inReply({ latest: 'r1', send }, <Markdown text={'Fixed the header.\n\nShould I also fix the footer?'} />));
+  expect(screen.queryByRole('note')).toBeNull();
+  expect(container.querySelector('.md-ask p')?.textContent).toBe('Should I also fix the footer?');
+  await user.type(screen.getByRole('textbox', { name: 'Answer' }), 'Yes{Enter}');
+  expect(send).toHaveBeenCalledWith('> Should I also fix the footer?\n\nYes');
+  render(inReply({ latest: 'r1', send }, <Markdown text={'Which one should I keep?\n\n- The old cache\n- The new cache'} />));
+  expect(within(screen.getByRole('group', { name: 'Choices' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['The old cache', 'The new cache']);
+});
+
+test('a question that is not the reply\'s end, or a closing list without a question before it, stays plain', () => {
+  const { container } = render(inReply({ latest: 'r1', send: vi.fn() }, <Markdown text={'Is this right?\n\nI think so.'} />));
+  expect(container.querySelector('.md-ask')).toBeNull();
+  const { container: list } = render(inReply({ latest: 'r1', send: vi.fn() }, <Markdown text={'Done:\n\n- a\n- b'} />));
+  expect(list.querySelector('.md-ask')).toBeNull();
+  expect(screen.queryByRole('textbox')).toBeNull();
 });
