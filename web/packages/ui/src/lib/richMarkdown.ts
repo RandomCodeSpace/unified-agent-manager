@@ -3,6 +3,8 @@
 // stored reply, Copy and the model's history keep the Markdown as written; only the view differs.
 // A shape that does not match exactly renders as ordinary Markdown.
 
+import { looksLikePath } from './markdown';
+
 interface MdNode {
   type: string;
   value?: string;
@@ -67,6 +69,34 @@ function labelled(para: MdNode | undefined): Omit<Fact, 'rest'> | null {
   return plain(label).trim() ? { label, value: value.filter((n) => n.type !== 'text' || n.value) } : null;
 }
 
+/** A figure split into its number and unit: "14.6 MB" → 14.6, "MB"; null when it is not one. */
+function figureOf(text: string): { n: number; unit: string; decimals: number } | null {
+  const m = /^([-+]?\d[\d,]*(?:\.(\d+))?)\s?(%|[a-zA-Z]{1,5})?$/.exec(text.trim());
+  return m ? { n: Number(m[1].replaceAll(',', '')), unit: m[3] ?? '', decimals: m[2]?.length ?? 0 } : null;
+}
+
+/**
+ * A fact's value that reads "old → new" (or "->"), as text alone: the old value struck, an arrow,
+ * the new in bold, and the signed change when both are figures in one unit. Else the value as written.
+ */
+function change(value: MdNode[]): MdNode[] {
+  if (value.length !== 1 || value[0].type !== 'text') return value;
+  const m = /^(.+?)\s*(?:→|->)\s*(.+)$/.exec(value[0].value!.trim());
+  if (!m) return value;
+  const out: MdNode[] = [
+    { type: 'delete', children: [{ type: 'text', value: m[1] }] },
+    { type: 'arrow', data: { hName: 'span', hProperties: { className: ['md-arrow'], ariaLabel: 'to' } }, children: [{ type: 'text', value: '→' }] },
+    { type: 'strong', children: [{ type: 'text', value: m[2] }] },
+  ];
+  const [a, b] = [figureOf(m[1]), figureOf(m[2])];
+  if (a && b && a.unit === b.unit && a.n !== b.n) {
+    const d = b.n - a.n;
+    const words = `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(Math.max(a.decimals, b.decimals))}${b.unit ? (b.unit === '%' ? '%' : ` ${b.unit}`) : ''}`;
+    out.push({ type: 'delta', data: { hName: 'span', hProperties: { className: ['md-delta'] } }, children: [{ type: 'text', value: words }] });
+  }
+  return out;
+}
+
 /** Facts as a label/value grid; two to four that are each one short figure: stat tiles. */
 function factsNode(node: MdNode, rows: Fact[]) {
   const tiles = rows.length <= 4 && rows.every((r) => !r.rest.length && r.value.length === 1 && r.value[0].type === 'text' && FIGURE.test(r.value[0].value!.trim()));
@@ -76,7 +106,7 @@ function factsNode(node: MdNode, rows: Fact[]) {
     data: { hName: 'div' },
     children: [
       { type: 'paragraph', data: { hName: 'dt' }, children: row.label },
-      { type: 'paragraph', data: { hName: 'dd' }, children: [...row.value, ...row.rest] },
+      { type: 'paragraph', data: { hName: 'dd' }, children: [...(tiles ? row.value : change(row.value)), ...row.rest] },
     ],
   }));
 }
@@ -143,6 +173,91 @@ function factParagraphs(parent: MdNode) {
   parent.children = out;
 }
 
+/** An item's first paragraph and its first text when that opens the paragraph. */
+function leadText(item: MdNode): MdNode | undefined {
+  const para = item.children?.[0];
+  const first = para?.type === 'paragraph' ? para.children?.[0] : undefined;
+  return first?.type === 'text' ? first : undefined;
+}
+
+const STATUS_LEAD = /^(✅|✔|☑|❌|✖|✗|❎|⚠|⏭)\uFE0F?\s*/u;
+const STATUS_OF: Record<string, string> = { '✅': 'ok', '✔': 'ok', '☑': 'ok', '❌': 'fail', '✖': 'fail', '✗': 'fail', '❎': 'fail', '⚠': 'warn', '⏭': 'skip' };
+/** The order a status list's items take: what failed first, what passed last. */
+export const STATUS_ORDER = ['fail', 'warn', 'skip', 'ok'] as const;
+
+/** Stable order by `rank`, lowest first. */
+const ranked = (items: MdNode[], rank: (item: MdNode) => number) => items.map((item, i) => ({ item, i })).sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i).map(({ item }) => item);
+
+/** A list whose every item opens with ✅ ❌ ⚠️ (or ✔ ✗ ⏭): each item's mark gives way to its state, failures first. */
+function statusList(list: MdNode): boolean {
+  const items = list.children ?? [];
+  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  const leads = items.map((i) => {
+    const text = leadText(i);
+    const m = text ? STATUS_LEAD.exec(text.value ?? '') : null;
+    return m && text ? { text, m } : null;
+  });
+  if (leads.some((l) => !l)) return false;
+  items.forEach((item, i) => {
+    const { text, m } = leads[i]!;
+    text.value = text.value!.slice(m[0].length);
+    markProps(item, { dataStatus: STATUS_OF[m[1]] });
+  });
+  list.children = ranked(items, (i) => STATUS_ORDER.indexOf(i.data!.hProperties!.dataStatus as (typeof STATUS_ORDER)[number]));
+  markProps(list, { className: ['md-status'] });
+  return true;
+}
+
+const SEVERITY: Record<string, string> = { critical: 'critical', high: 'high', medium: 'medium', low: 'low', p0: 'critical', p1: 'high', p2: 'medium', p3: 'low' };
+/** The order findings take, most severe first. */
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'] as const;
+
+/** A list whose every item opens `**High:**` (Critical, High, Medium, Low or P0–P3): the label leaves the text for the row's own, most severe first. */
+function severityList(list: MdNode): boolean {
+  const items = list.children ?? [];
+  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  const rows = items.map((i) => {
+    const row = labelled(i.children?.[0]);
+    const level = row && SEVERITY[plain(row.label).trim().toLowerCase()];
+    return row && level && row.value.length ? { row, level } : null;
+  });
+  if (rows.some((r) => !r)) return false;
+  items.forEach((item, i) => {
+    const { row, level } = rows[i]!;
+    item.children![0].children = row.value;
+    markProps(item, { dataSeverity: level, dataLabel: plain(row.label).trim() });
+  });
+  list.children = ranked(items, (i) => SEVERITY_ORDER.indexOf(i.data!.hProperties!.dataSeverity as (typeof SEVERITY_ORDER)[number]));
+  markProps(list, { className: ['md-severity'] });
+  return true;
+}
+
+const COUNTS = /^\s*\(\+(\d+)\s*[−-](\d+)\)/;
+
+/** A list whose every item opens with inline code naming a file, then optionally "(+12 −3)": file rows with the counts drawn. */
+function fileList(list: MdNode): boolean {
+  const items = list.children ?? [];
+  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  const paths = items.map((i) => {
+    const para = i.children?.[0];
+    const code = para?.type === 'paragraph' ? para.children?.[0] : undefined;
+    return code?.type === 'inlineCode' && looksLikePath(code.value ?? '') ? { para: para!, path: code.value! } : null;
+  });
+  if (paths.some((p) => !p)) return false;
+  items.forEach((item, i) => {
+    const { para, path } = paths[i]!;
+    const after = para.children![1];
+    const m = after?.type === 'text' ? COUNTS.exec(after.value ?? '') : null;
+    if (m && after) {
+      after.value = after.value!.slice(m[0].length);
+      if (!after.value) para.children!.splice(1, 1);
+    }
+    markProps(item, { dataPath: path, ...(m ? { dataAdd: Number(m[1]), dataDel: Number(m[2]) } : {}) });
+  });
+  markProps(list, { className: ['md-files'] });
+  return true;
+}
+
 /** A numbered list whose every item opens with bold text: steps, each keyed by its lead to track against the todo list. */
 function steps(list: MdNode) {
   const items = list.children ?? [];
@@ -167,7 +282,7 @@ export function remarkRich() {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
-    if (node.type === 'list' && !factList(node)) {
+    if (node.type === 'list' && !statusList(node) && !severityList(node) && !fileList(node) && !factList(node)) {
       steps(node);
       tasks(node);
     }
@@ -182,4 +297,22 @@ export function remarkRich() {
     };
     paragraphs(tree);
   };
+}
+
+/** One command of a shell fence and the output lines under it. */
+export interface Command { command: string; output: string[] }
+
+/**
+ * A shell fence written as a session: its first line and at least one more start with `$ `, each
+ * command followed by its output lines (blank lines dropped). Null for any other fence.
+ */
+export function commandsOf(text: string): Command[] | null {
+  const lines = text.replace(/\n$/, '').split('\n');
+  if (!lines[0]?.startsWith('$ ')) return null;
+  const out: Command[] = [];
+  for (const line of lines) {
+    if (line.startsWith('$ ')) out.push({ command: line.slice(2), output: [] });
+    else if (line.trim()) out.at(-1)!.output.push(line);
+  }
+  return out.length >= 2 ? out : null;
 }

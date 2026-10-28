@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, Filter, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { barColumns, numeric } from '../lib/table-visual';
+import { barColumns, cellStatus, numeric, statusColumns, type CellStatus } from '../lib/table-visual';
 import { VisualBoundary } from './VisualBoundary';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -41,6 +41,25 @@ function headingBefore(element: Element | null): string {
   return /^H[1-6]$/.test(before.tagName) || bold ? before.textContent?.trim() ?? '' : '';
 }
 
+const STATUS_LABEL: Record<CellStatus, { Icon: LucideIcon; tone: string; word: string }> = {
+  ok: { Icon: Check, tone: 'text-success', word: 'pass' },
+  fail: { Icon: X, tone: 'text-error', word: 'fail' },
+  warn: { Icon: TriangleAlert, tone: 'text-warning', word: 'warning' },
+  skip: { Icon: SkipForward, tone: 'text-muted', word: 'skipped' },
+};
+
+/** A status cell as a toned label: its glyph and its word as written, or for a bare mark ("✓") the glyph with its word for screen readers. */
+function StatusLabel({ status, text }: Readonly<{ status: CellStatus; text: string }>) {
+  const { Icon, tone, word } = STATUS_LABEL[status];
+  const words = /\p{L}/u.test(text);
+  return (
+    <span className={cn('inline-flex items-center gap-1 text-eyebrow uppercase', tone)}>
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={2.25} />
+      {words ? text.trim() : <span className="sr-only">{word}</span>}
+    </span>
+  );
+}
+
 /** Local view over immutable rows. No data fetch, transcript update or model call. */
 export const DataTable = memo(function DataTable({ columns, rows, label, rowHeaders = false, visual = false }: Readonly<{
   columns: readonly TableColumn[]; rows: readonly TableRow[]; label?: string; rowHeaders?: boolean;
@@ -48,6 +67,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
   visual?: boolean;
 }>) {
   const bars = useMemo(() => visual ? barColumns(columns, rows) : null, [visual, columns, rows]);
+  const statuses = useMemo(() => visual ? statusColumns(columns, rows) : null, [visual, columns, rows]);
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
   const [filters, setFilters] = useState<Record<number, string>>({});
   const [page, setPage] = useState(0);
@@ -107,6 +127,8 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           })}</tr></thead>
           <tbody>{visible.slice(start, start + PAGE_SIZE).map(row => <tr key={row.id}>{columns.map((column, index) => {
             const Cell = rowHeaders && index === 0 ? 'th' : 'td';
+            const status = statuses?.[index] ? cellStatus(row.values[index]) : null;
+            if (status) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={alignment(column.align)}><StatusLabel status={status} text={String(row.values[index])} /></Cell>;
             const max = bars?.[index];
             const n = max ? numeric(row.values[index]) : null;
             if (!max || !n) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
