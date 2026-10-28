@@ -36,11 +36,10 @@ type fetchFuse struct {
 
 type fuseKey struct{ kind, key string }
 type fuseEntry struct {
-	at, until time.Time
-	count     int
-	status    string
-	commands  []string
-	warned    bool
+	at       time.Time
+	count    int
+	commands []string
+	warned   bool
 }
 
 // preToolUse is shared by the Task and its subagents. Lint never holds mu.
