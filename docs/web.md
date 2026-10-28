@@ -1150,11 +1150,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   start a new Thread. It gives the Project's ID or exact name, or a `path`,
   and the first message (up to 16 KiB, with no control characters
   other than newlines and tabs), and optionally a name (up to 120
-  characters) and a model. A name several Projects share is refused with
+  characters), a model and an effort (only models the owner left enabled in
+  Settings, which the `uam` read tool's `models` op lists with their efforts
+  and cost tier). The Thread starts on a new branch in its own git worktree
+  of the Project (from an optional `base` branch or commit) unless the call
+  passes `worktree: false` or the Project is outside git.
+  A name several Projects share is refused with
   their IDs. A `path` (absolute, `~/...`, or relative to the calling Thread's
   folder) inside a Project's folder starts the Thread in the Project with the
   deepest such folder; a subfolder is named in the first message
-  ("Work in the folder ..."). A path in no Project must be inside the
+  ("Work in the subfolder ... of your folder" in a worktree, else "Work in
+  the folder ..."). A path in no Project must be inside the
   service's home folder, and is never added unasked: the call puts an
   **Add a project** question on the calling Thread (Add project or Cancel)
   and waits for the owner. Add project makes a missing folder (0750), adds it
