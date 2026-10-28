@@ -21,7 +21,8 @@ import (
 const (
 	// todosDebounce gathers the changes of a burst into one read.
 	todosDebounce = 250 * time.Millisecond
-	// A list is cut at maxTodos rows, its texts at these rune counts.
+	// A list keeps its latest maxTodos rows (agentapi.RecentTodos), its
+	// texts these rune counts.
 	maxTodos          = 200
 	maxTodoTitleRunes = 200
 	maxTodoNoteRunes  = 300
@@ -161,15 +162,12 @@ func (c *conversation) readTodos(sess sdkSession) {
 // Each row keeps the dependencies on other rows of the list, in the
 // provider's order.
 func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow, deps []rpc.PlanSQLTodoDependency) agentapi.TodoList {
-	list := agentapi.TodoList{Known: true, Todos: make([]agentapi.Todo, 0, min(len(rows), maxTodos))}
+	list := agentapi.TodoList{Known: true, Todos: make([]agentapi.Todo, 0, len(rows))}
 	seen := make(map[string]agentapi.Todo, len(list.Todos))
 	for _, row := range rows {
 		todo := todoOf(row)
 		if _, dup := seen[todo.ID]; todo.ID == "" || dup {
 			continue
-		}
-		if len(list.Todos) == maxTodos {
-			break
 		}
 		if prev, ok := t.rows[todo.ID]; ok {
 			todo.AgentID, todo.ChangedAt, todo.Reopened = prev.AgentID, prev.ChangedAt, prev.Reopened
@@ -185,6 +183,7 @@ func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow, deps []rpc.PlanSQLTodoDepe
 		seen[todo.ID] = todo
 		list.Todos = append(list.Todos, todo)
 	}
+	list.Todos, _ = agentapi.RecentTodos(list.Todos, maxTodos)
 	at := make(map[string]int, len(list.Todos))
 	for i, todo := range list.Todos {
 		at[todo.ID] = i
@@ -197,10 +196,10 @@ func (t *todoReads) apply(rows []rpc.PlanSQLTodosRow, deps []rpc.PlanSQLTodoDepe
 		}
 		list.Todos[i].DependsOn = append(list.Todos[i].DependsOn, on)
 	}
+	t.rows = make(map[string]agentapi.Todo, len(list.Todos))
 	for _, todo := range list.Todos {
-		seen[todo.ID] = todo
+		t.rows[todo.ID] = todo
 	}
-	t.rows = seen
 	return list
 }
 

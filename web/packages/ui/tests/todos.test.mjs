@@ -67,10 +67,13 @@ test('the cue is the turn\'s latest row done or blocked; a blocked one wins a ti
   assert.equal(todoLine(view(done, { touched: false }), since)?.kind, 'carried');
 });
 
-test('the live reader\'s sections: In progress (the Now row first), Blocked, To do and Done; empty ones left out', () => {
+test('the live reader\'s sections: In progress (the Now row first), Blocked, To do and Done, each newest first; empty ones left out', () => {
   const todos = [row('a', 'done'), row('b', 'in_progress'), row('c', 'pending'), row('d', 'in_progress'), row('e', 'done'), row('f', 'blocked')];
-  const sections = todoSections(view(todos, { now: 'd' }));
-  assert.deepEqual(sections.map((s) => [s.status, s.label, s.todos.map((t) => t.id)]), [['in_progress', 'In progress', ['d', 'b']], ['blocked', 'Blocked', ['f']], ['pending', 'To do', ['c']], ['done', 'Done', ['a', 'e']]]);
+  const sections = todoSections(view(todos, { now: 'b' }));
+  assert.deepEqual(sections.map((s) => [s.status, s.label, s.todos.map((t) => t.id)]), [['in_progress', 'In progress', ['b', 'd']], ['blocked', 'Blocked', ['f']], ['pending', 'To do', ['c']], ['done', 'Done', ['e', 'a']]]);
+  // A row seen changing comes before those never seen to change, the latest change first.
+  const changed = [row('g', 'done', { changed_at: '2026-10-28T10:00:00Z' }), row('h', 'done', { changed_at: '2026-10-28T11:00:00Z' }), row('i', 'done')];
+  assert.deepEqual(todoSections(view(changed))[0].todos.map((t) => t.id), ['h', 'g', 'i']);
   assert.deepEqual(todoSections(view([row('a', 'done'), row('c', 'pending')])).map((s) => s.label), ['To do', 'Done']);
   assert.deepEqual(['in_progress', 'blocked', 'pending', 'done'].map(todoWord), ['In progress', 'Blocked', 'To do', 'Done']);
 });
@@ -84,9 +87,9 @@ test('a reply\'s foot names every count it has: done of total, then each open st
   assert.equal(turnTodoName({ total: 3, open: 3 }), 'Todo at the end of this turn: 0 of 3 done, 3 left open');
 });
 
-test('the kept list: the live reader\'s stages in the kept order; its facts say when, how many were left open or all done, and the rows not kept', () => {
+test('the kept list: the live reader\'s stages, newest first; its facts say when, how many were left open or all done, and the rows not kept', () => {
   const todos = [row('z', 'blocked'), row('y', 'in_progress'), row('p', 'pending'), row('w', 'done'), row('x', 'done')];
-  assert.deepEqual(snapshotSections(todos).map((s) => [s.label, s.todos.map((t) => t.id)]), [['In progress', ['y']], ['Blocked', ['z']], ['To do', ['p']], ['Done', ['w', 'x']]]);
+  assert.deepEqual(snapshotSections(todos).map((s) => [s.label, s.todos.map((t) => t.id)]), [['In progress', ['y']], ['Blocked', ['z']], ['To do', ['p']], ['Done', ['x', 'w']]]);
   assert.deepEqual(snapshotSections([row('w', 'done')]).map((s) => s.label), ['Done']);
   assert.deepEqual(snapshotFacts({ done: 2, total: 5, blocked: 1, in_progress: 1, pending: 1, open: 2 }, '14:02'), ['As this turn left it, 14:02', '2 left open']);
   assert.deepEqual(snapshotFacts({ done: 2, total: 3, blocked: 1 }, '14:02'), ['As this turn left it, 14:02']);

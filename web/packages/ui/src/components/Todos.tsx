@@ -2,9 +2,9 @@
 // button (see StatusLine), and the list as a turn left it, opened from its reply's foot
 // (`TurnTodo`). Both are the one anchored reader (`Reader`): a modal popover beside what opened
 // it, that lifted above the dim, a compact head with the count and meter, eyebrow sections by
-// stage and a keycap foot. A phone gets a sheet from the bottom. A list whose rows wait on others
-// shows as one list in its own order instead, with the dependencies drawn as rails beside it
-// (`RailList`), or, when this browser's setting says so, as a Mermaid flowchart (`TodoGraph`). The owner
+// stage, newest first, and a keycap foot. A phone gets a sheet from the bottom. A list whose open
+// rows wait on others shows those as one list instead, with the dependencies drawn as rails beside
+// it (`RailList`), or, when this browser's setting says so, as a Mermaid flowchart (`TodoGraph`). The owner
 // changes the list by asking in the chat.
 
 import { Ban, Check, Circle, CircleDot, ListChecks, RotateCw, type LucideIcon } from 'lucide-react';
@@ -15,11 +15,12 @@ import { cn } from '../lib/cn';
 import { renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
 import { useScheme } from '../lib/theme';
 import { loadTodoGraph, todoMermaid, type TodoGroup } from '../lib/todoGraph';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoLinks, todoWord, turnTodoName, type TodoLink, type TodoSection } from '../lib/todos';
+import { DONE_ROWS, METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoLinks, todoWord, turnTodoName, type TodoLink, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { DOT as IDENTITY_DOT, useSubagentReplies } from './Subagents';
 import { Blocks, type Block } from './ui/blocks';
+import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
@@ -102,9 +103,9 @@ const LANE = 7;
 const GLYPH_Y = 14;
 
 /**
- * The list in its own order with each dependency drawn beside it, from the row waited on to the
- * arrow at the row that waits (`todoLinks`). Rows never move as their status changes; pointing at a
- * row (a tap on a phone) lights its links and dims the others.
+ * The rows in the order given with each dependency drawn beside it, from the row waited on to the
+ * arrow at the row that waits (`todoLinks`). Pointing at a row (a tap on a phone) lights its links
+ * and dims the others.
  */
 function RailList({ rows, links, lanes, now, name, stamp }: Readonly<{ rows: readonly Todo[]; links: readonly TodoLink[]; lanes: number; now?: string; name: (todo: Todo) => string | undefined; stamp?: (todo: Todo) => ReactNode }>) {
   const list = useRef<HTMLUListElement>(null);
@@ -205,11 +206,47 @@ function TodoGraph({ rows, links, now, group }: Readonly<{ rows: readonly Todo[]
 /** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the rows in the list's own order the rails need when some wait on others (`rows`), the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. */
 export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; /** Where the graph puts a row: the turn tag and the subagent box. */ group?: (todo: Todo) => TodoGroup; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode }
 
-/** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
+/** One stage's section; Done shows its newest `DONE_ROWS` rows until "Show all". */
+function StageSection({ section, parts }: Readonly<{ section: TodoSection; parts: ReaderParts }>) {
+  const [all, setAll] = useState(false);
+  const capped = section.status === 'done' && section.todos.length > DONE_ROWS;
+  const rows = capped && !all ? section.todos.slice(0, DONE_ROWS) : section.todos;
+  return (
+    <PanelSection
+      label={section.label}
+      icon={
+        <span className="flex w-4 shrink-0 justify-center">
+          <TodoMark status={section.status} className="size-3" />
+        </span>
+      }
+      meta={<span className={cn('tabular-nums', TONE[section.status].text)}>{section.todos.length}</span>}
+    >
+      <ul>
+        {rows.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName stamp={parts.stamp?.(todo)} />
+        ))}
+      </ul>
+      {capped && (
+        <Button size="sm" variant="subtle" className="w-full justify-start text-caption font-normal text-muted pointer-coarse:h-11" onClick={() => setAll((a) => !a)}>
+          {all ? 'Show fewer' : `Show all ${section.todos.length}`}
+        </Button>
+      )}
+    </PanelSection>
+  );
+}
+
+/**
+ * The list in the reader: the count and meter in the head, the facts, then the sections, each row
+ * with the subagent that wrote it. When open rows wait on others, the open rows show as one list on
+ * rails (by stage, newest first) and Done stays its own section below.
+ */
 function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; title: string }>) {
   const { done = 0, total = 0 } = parts.counts;
   const Glyph = parts.glyph ?? ListChecks;
-  const rails = parts.rows ? todoLinks(parts.rows) : null;
+  const graph = loadTodoGraph() === 'graph';
+  const open = parts.sections.filter((s) => s.status !== 'done');
+  const openRows = open.flatMap((s) => s.todos);
+  const rails = parts.rows ? todoLinks(graph ? parts.rows : openRows) : null;
   const facts = [...parts.facts, rails?.loops ? (rails.loops === 1 ? '1 loop' : `${rails.loops} loops`) : '', rails?.hidden ? `${rails.hidden} more links not drawn` : ''].filter(Boolean);
   return (
     <div className="flex min-h-0 flex-col">
@@ -233,27 +270,9 @@ function TodoBody({ parts, sheet, heading, close, title }: Readonly<{ parts: Rea
       </PanelHead>
       <div className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {sheet && parts.blocks}
-        {rails && parts.rows && (loadTodoGraph() === 'graph'
-          ? <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />
-          : <RailList rows={parts.rows} links={rails.links} lanes={rails.lanes} now={parts.now} name={parts.name} stamp={parts.stamp} />)}
-        {!rails && parts.sections.map((section) => (
-          <PanelSection
-            key={section.status}
-            label={section.label}
-            icon={
-              <span className="flex w-4 shrink-0 justify-center">
-                <TodoMark status={section.status} className="size-3" />
-              </span>
-            }
-            meta={<span className={cn('tabular-nums', TONE[section.status].text)}>{section.todos.length}</span>}
-          >
-            <ul>
-              {section.todos.map((todo) => (
-                <TodoRow key={todo.id} todo={todo} now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName stamp={parts.stamp?.(todo)} />
-              ))}
-            </ul>
-          </PanelSection>
-        ))}
+        {rails && parts.rows && graph && <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />}
+        {rails && !graph && <RailList rows={openRows} links={rails.links} lanes={rails.lanes} now={parts.now} name={parts.name} stamp={parts.stamp} />}
+        {!(rails && graph) && (rails ? parts.sections.filter((s) => s.status === 'done') : parts.sections).map((section) => <StageSection key={section.status} section={section} parts={parts} />)}
       </div>
       {sheet ? (
         <p className="flex min-h-11 shrink-0 items-center px-4 pb-2 text-caption text-muted">{parts.foot}</p>

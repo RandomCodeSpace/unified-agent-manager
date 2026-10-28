@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/dustin/go-humanize v1.0.1
-	github.com/github/copilot-sdk/go v1.0.26
+	github.com/github/copilot-sdk/go v1.0.28
 	github.com/google/uuid v1.6.0
 	github.com/sourcegraph/go-diff v0.9.0
 	golang.org/x/sys v0.47.0

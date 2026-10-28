@@ -1656,6 +1656,32 @@ const (
 	TodoBlocked    = "blocked"
 )
 
+// RecentTodos bounds a list to n rows: its open rows first, then its done
+// ones, each from the end of the list (the latest added), all kept in the
+// list's order. It returns the rows and how many it dropped.
+func RecentTodos(todos []Todo, n int) ([]Todo, int) {
+	if len(todos) <= n {
+		return todos, 0
+	}
+	keep := make([]bool, len(todos))
+	left := n
+	for _, open := range []bool{true, false} {
+		for i := len(todos) - 1; i >= 0 && left > 0; i-- {
+			if (todos[i].Status != TodoDone) == open {
+				keep[i] = true
+				left--
+			}
+		}
+	}
+	out := make([]Todo, 0, n)
+	for i, t := range todos {
+		if keep[i] {
+			out = append(out, t)
+		}
+	}
+	return out, len(todos) - len(out)
+}
+
 // FileDiff is one provider-recorded file change. Before/After hold full file
 // text when available; Patch holds a unified diff when that is what the
 // provider returns.

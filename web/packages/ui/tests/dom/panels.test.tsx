@@ -305,12 +305,13 @@ describe('subagents', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.activeElement).toBe(subagents);
-    // The list opens its own reader; its rows wait on others, so it keeps their order with the rails beside them, "now" at the row the work is at.
+    // The list opens its own reader; its open rows wait on others, so they are one list with the rails beside them, "now" at the row
+    // the work is at, and Done is its own section (the contrast ⇄ tokens loop is met: tokens is done).
     await user.click(strip);
     const todo = await screen.findByRole('dialog', { name: 'Todo' });
-    expect(within(todo).queryAllByRole('region')).toEqual([]);
+    expect(within(todo).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Done']);
     expect(within(todo).getAllByRole('listitem')).toHaveLength(8);
-    expect(within(todo).getByText(/1 loop/)).toBeTruthy();
+    expect(within(todo).queryByText(/loop/)).toBeNull();
     expect(within(todo).getByText('now').parentElement!.textContent).toContain('Check contrast of the theme tokens');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

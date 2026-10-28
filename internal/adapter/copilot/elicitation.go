@@ -136,7 +136,8 @@ func formContent(questions []agentapi.Question, answers [][]string) (map[string]
 // cannot show it.
 func elicitationOf(req copilot.ElicitationContext, now time.Time) (agentapi.Interaction, error) {
 	source := clip(strings.TrimSpace(deref(req.ElicitationSource)), maxFormLabel)
-	from := cmp.Or(source, "Copilot")
+	// A Connector-owned server's display name only labels; Source stays its identity.
+	from := cmp.Or(clip(strings.TrimSpace(deref(req.ElicitationSourceDisplayName)), maxFormLabel), source, "Copilot")
 	ix := agentapi.Interaction{
 		ID:          "elicitation-" + rand.Text(),
 		Kind:        agentapi.InteractionQuestion,

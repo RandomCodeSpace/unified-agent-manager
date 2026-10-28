@@ -169,17 +169,20 @@ func TestWebTodosMapCleanAndBoundRows(t *testing.T) {
 	blocked.Description = &note
 	pending := todoRow("p", "Pending", "pending")
 	pending.Description = &note
-	rows := []rpc.PlanSQLTodosRow{blocked, pending, noStatus, todoRow("u", "Unknown", unknown), {Title: copilot.String("No id")}, todoRow("b", "Duplicate", "done"), todoRow("long", strings.Repeat("é", 300), "done")}
+	// Past maxTodos rows the oldest done ones go: the open rows and the latest done stay.
+	var rows []rpc.PlanSQLTodosRow
 	for i := range maxTodos {
-		rows = append(rows, todoRow("r"+strings.Repeat("x", i), "Row", "pending"))
+		rows = append(rows, todoRow("r"+strings.Repeat("x", i), "Row", "done"))
 	}
+	rows = append(rows, blocked, pending, noStatus, todoRow("u", "Unknown", unknown), rpc.PlanSQLTodosRow{Title: copilot.String("No id")}, todoRow("b", "Duplicate", "done"), todoRow("long", strings.Repeat("é", 300), "done"))
 	h.fs.setTodos(rows...)
 	h.fs.onEvent(todosChanged("e1", "", 100))
 	waitFor(t, "the todo list", func() bool { return len(todoLists(h, n)) == 1 })
 	got := todoLists(h, n)[0].Todos
-	if len(got) != maxTodos {
-		t.Fatalf("rows = %d, want %d", len(got), maxTodos)
+	if len(got) != maxTodos || got[0].ID != "r"+strings.Repeat("x", 5) {
+		t.Fatalf("rows = %d, first %q", len(got), got[0].ID)
 	}
+	got = got[len(got)-5:]
 	if b := got[0]; b.Title != "Blocked row" || b.Status != agentapi.TodoBlocked || b.Note != "needs sign-in" {
 		t.Fatalf("blocked = %+v", b)
 	}
