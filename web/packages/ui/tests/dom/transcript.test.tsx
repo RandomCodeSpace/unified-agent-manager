@@ -7,6 +7,7 @@ import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
+import { TaskActionsContext, type TaskActions } from '../../src/components/taskActions';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
 import { composer, log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
 
@@ -21,6 +22,26 @@ const outcomeOf = (el: Element) => (within(cardOf(el)).queryByRole('button', { n
 const footOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':scope > [data-foot]') ?? null;
 
 describe('messages', () => {
+  test('end notes of started threads link the thread and leave its reply to the agent', () => {
+    const select = vi.fn();
+    const items: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Split the work' },
+      { id: 'n', kind: 'notice', time: '2026-10-09T00:00:01Z', text: 'uam thread: Thread "Fix \\"login\\"" (child-1), which you started, ended its turn: completed. Files changed: 2. Its last reply:\nRaw child reply\n\nwith a second paragraph\n\nuam thread: Thread "Docs" (child-2), which you started, was settled.\nuam trail: Thread "Docs" edited a.go 3 min ago and is still running. Re-read it first.' },
+    ];
+    const view = render(
+      <TaskActionsContext.Provider value={{ select } as unknown as TaskActions}>
+        <Transcript sessionId="s" items={items} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />
+      </TaskActionsContext.Provider>,
+    );
+    expect(view.queryByText(/Raw child reply|second paragraph/)).toBeNull();
+    expect(view.getByText('ended its turn: completed. Files changed: 2.', { exact: false })).toBeTruthy();
+    expect(view.getByText('was settled.', { exact: false })).toBeTruthy();
+    expect(view.getByText(/^uam trail: Thread "Docs" edited a.go/)).toBeTruthy();
+    fireEvent.click(view.getByRole('button', { name: 'Fix "login"' }));
+    fireEvent.click(view.getByRole('button', { name: 'Docs' }));
+    expect(select.mock.calls).toEqual([['child-1'], ['child-2']]);
+  });
+
   test('skill invocation notices stay visible and ordered in turns', () => {
     const items: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Review the change' },

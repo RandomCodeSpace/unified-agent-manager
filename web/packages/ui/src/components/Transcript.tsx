@@ -35,6 +35,7 @@ import { Collapse, usePresence } from './ui/collapse';
 import { PHONE } from './ui/dialog';
 import { ContextMenu, Menu, useLazyContextMenu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
+import { useTaskActions } from './taskActions';
 
 /** A chart card loads with the first chart shown, never with the app; meanwhile it stands as the card does while its rows load. */
 const TurnChangesReader = lazy(() => import('./TurnChanges').then(m => ({ default: m.TurnChangesReader })));
@@ -1152,6 +1153,36 @@ function noticeRow({ text, className, whole }: MessageParts) {
   );
 }
 
+/** The head of a `uam thread:` end note (create_task.go): the Thread's quoted name, its ID, then how it ended; its last reply follows on the next lines. */
+const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which you started, (.*?)(?: Its last reply:)?(?:\n|$)/;
+
+/** A Go-quoted name as written, when it is not also a JSON string. */
+function unquote(raw: string): string {
+  try { return JSON.parse(`"${raw}"`) as string; } catch { return raw; }
+}
+
+/**
+ * The end notes of Threads this one started, as a link to each Thread and how it ended: the
+ * agent gets their last replies, the transcript does not repeat them. Notes sharing the notice
+ * (trails, drawing edits) show as other notices do.
+ */
+function ThreadNotes({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const actions = useTaskActions();
+  return (
+    <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
+      {text.split(/\n+(?=uam (?:thread|trail): |The user edited )/).map((part, index) => {
+        const note = THREAD_NOTE.exec(part);
+        if (!note) return <Markdown key={index} text={part} className="[&_p]:m-0" />;
+        return (
+          <p key={index} className="m-0">
+            Thread <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(note[2])}>{unquote(note[1])}</button> {note[3]}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 /** A clipped message's whole text, plain: as Markdown, megabytes of it would hold the page for seconds. Its file references still link. */
 const plainText = (text: string) => <PlainText text={text} />;
 
@@ -1587,6 +1618,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
+      if (item.kind === 'notice' && item.text?.startsWith('uam thread: ')) return <ThreadNotes text={item.text} className={className} />;
       return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
