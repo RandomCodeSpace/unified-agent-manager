@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { barColumns, numeric } from '../src/lib/table-visual.ts';
+import { barColumns, cellStatus, numeric, statusColumns } from '../src/lib/table-visual.ts';
 
 // A table as MarkdownTable builds it: column names and each row's cell text.
 const table = (names, ...rows) => [names.map(name => ({ name })), rows.map(values => ({ values }))];
@@ -60,4 +60,12 @@ test('fewer than 3 numbers, more than 500 rows or more than 12 columns get no ba
   assert.deepEqual(bars(['count'], ...capped), [Math.max(...capped.map(([v]) => Number(v)))]);
   const wide = Array.from({ length: 13 }, (_, i) => `c${i}`);
   assert.equal(bars(wide, wide.map(() => '5'), wide.map(() => '6'), wide.map(() => '8')), null);
+});
+
+test('status columns: every non-empty cell, two or more, is a status word or mark', () => {
+  assert.deepEqual(statusColumns(...table(['Suite', 'Result', 'Note'], ['web', 'pass', 'ok'], ['go', 'Failed', 'slow'], ['lint', '', ''])), [false, true, false]);
+  assert.deepEqual(statusColumns(...table(['Check'], ['✅'], ['❌'], ['⚠️'])), [true]);
+  assert.deepEqual(statusColumns(...table(['Breaking?'], ['yes'], ['no'])), [false]);
+  assert.deepEqual(statusColumns(...table(['Result'], ['pass'])), [false]);
+  assert.deepEqual(['pass', ' FAILED ', '✓', '⚠️', 'skipped', 'maybe'].map(cellStatus), ['ok', 'fail', 'ok', 'warn', 'skip', null]);
 });

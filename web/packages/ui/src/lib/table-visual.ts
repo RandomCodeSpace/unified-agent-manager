@@ -49,3 +49,25 @@ export function barColumns(columns: readonly { name: string }[], rows: readonly 
     return max > 0 ? max : null;
   });
 }
+
+export type CellStatus = 'ok' | 'fail' | 'warn' | 'skip';
+const STATUS_WORDS: Record<string, CellStatus> = {
+  pass: 'ok', passed: 'ok', ok: 'ok', success: 'ok', succeeded: 'ok', '✓': 'ok', '✔': 'ok', '✅': 'ok',
+  fail: 'fail', failed: 'fail', failure: 'fail', error: 'fail', '✗': 'fail', '✖': 'fail', '❌': 'fail',
+  warn: 'warn', warning: 'warn', '⚠': 'warn',
+  skip: 'skip', skipped: 'skip', '⏭': 'skip',
+};
+
+/** A cell's status when its whole text is a status word or mark ("pass", "Failed", "✓", "⚠️"), else null. */
+export function cellStatus(v: Value): CellStatus | null {
+  return typeof v === 'string' ? STATUS_WORDS[v.trim().toLowerCase().replaceAll('\uFE0F', '')] ?? null : null;
+}
+
+/** Each column whose every non-empty cell, two or more, is a status (`cellStatus`): drawn as toned labels. */
+export function statusColumns(columns: readonly { name: string }[], rows: readonly { values: readonly Value[] }[]): boolean[] | null {
+  if (rows.length > MAX_ROWS || columns.length > MAX_COLUMNS) return null;
+  return columns.map((_, index) => {
+    const cells = rows.map(row => row.values[index]).filter(v => v != null && v !== '');
+    return cells.length >= 2 && cells.every(v => cellStatus(v) !== null);
+  });
+}

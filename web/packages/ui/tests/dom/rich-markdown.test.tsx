@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { Markdown, ReplyContext, type ReplyTools } from '../../src/components/common';
 import { planKey } from '../../src/lib/richMarkdown';
 
@@ -108,3 +109,75 @@ test('a reply\'s plan follows the todo list: items whose title a row has take it
   expect(steps.querySelector('.md-progress')?.textContent).toBe('1 of 2 done· from the todo list');
 });
 
+
+test('a list whose every item opens with ✅ ❌ ⚠️ is a status list: failures first, a count line, each mark a glyph', () => {
+  const { container } = render(<Markdown text={'- ✅ Go tests\n- ❌ Sonar gate\n- ⚠️ Not tried live\n- ✔ ESLint'} />);
+  const list = container.querySelector('ul.md-status')!;
+  expect([...list.querySelectorAll('li')].map((li) => [li.dataset.status, li.textContent])).toEqual([
+    ['fail', 'Sonar gate, failed'],
+    ['warn', 'Not tried live, warning'],
+    ['ok', 'Go tests, passed'],
+    ['ok', 'ESLint, passed'],
+  ]);
+  expect(container.querySelector('.md-counts')?.textContent).toBe('1 failed · 1 warning · 2 passed');
+  // One plain item keeps the list as written.
+  const { container: plain } = render(<Markdown text={'- ✅ done\n- plain'} />);
+  expect(plain.querySelector('.md-status')).toBeNull();
+  expect(plain.textContent).toContain('✅ done');
+});
+
+test('a list of severity labels is grouped most severe first with a count line; the label leaves the text', () => {
+  const { container } = render(<Markdown text={'- **Medium:** retry has no cap\n- **High:** token in the log\n- **Low**: typo\n- **P1:** race on close'} />);
+  const rows = [...container.querySelectorAll('ul.md-severity > li')];
+  expect(rows.map((li) => [li.dataset.severity, li.querySelector('.md-level')?.textContent, li.lastElementChild?.textContent])).toEqual([
+    ['high', 'High:', 'token in the log'],
+    ['high', 'P1:', 'race on close'],
+    ['medium', 'Medium:', 'retry has no cap'],
+    ['low', 'Low:', 'typo'],
+  ]);
+  expect(container.querySelector('.md-counts')?.textContent).toBe('2 high · 1 medium · 1 low');
+  expect(container.querySelector('dl')).toBeNull();
+});
+
+test('a list of file paths is file rows; "(+a −d)" becomes counts and leaves the text', () => {
+  const { container } = render(<Markdown text={'- `internal/web/turn_activity.go` (+4 −6)\n- `web/src/lib/todos.ts` (+18 -3): newest first\n- `DESIGN.md`'} />);
+  const rows = [...container.querySelectorAll('ul.md-files > li')];
+  expect(rows).toHaveLength(3);
+  expect(rows.map((li) => li.querySelector('.md-file-counts')?.textContent ?? '')).toEqual(['+4−6', '+18−3', '']);
+  expect(rows[1].textContent).toContain('todos.ts: newest first');
+  expect(rows[0].textContent).not.toContain('(+4');
+  const { container: other } = render(<Markdown text={'- `npm ci` first\n- `src/a.ts`'} />);
+  expect(other.querySelector('.md-files')).toBeNull();
+});
+
+test('a fact whose value reads "old → new" shows the change, with the signed delta for figures in one unit', () => {
+  const { container } = render(<Markdown text={'- **SDK:** v1.0.26 → v1.0.28\n- **Bundle:** 14.6 MB → 19.6 MB\n- **Cold load:** 1.9 s -> 1.4 s\n- **Owner:** the web team'} />);
+  const dds = [...container.querySelectorAll('dd')];
+  expect(dds.map((dd) => [dd.querySelector('del')?.textContent ?? '', dd.querySelector('strong')?.textContent ?? '', dd.querySelector('.md-delta')?.textContent ?? ''])).toEqual([
+    ['v1.0.26', 'v1.0.28', ''],
+    ['14.6 MB', '19.6 MB', '+5.0 MB'],
+    ['1.9 s', '1.4 s', '−0.5 s'],
+    ['', '', ''],
+  ]);
+  expect(dds[3].textContent).toBe('the web team');
+});
+
+test('a shell fence written as a session is a row per command, each copying alone; the block copies the commands', async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const { container } = render(<Markdown text={'```sh\n$ make build\n$ go test ./internal/web/\nok  internal/web  65.9s\n```'} />);
+  const rows = [...container.querySelectorAll('.md-cmd')];
+  expect(rows.map((r) => r.querySelector('code')?.textContent)).toEqual(['$make build', '$go test ./internal/web/']);
+  expect(rows[1].querySelector('.md-cmd-out')?.textContent).toBe('ok  internal/web  65.9s');
+  await user.click(screen.getByRole('button', { name: 'Copy go test ./internal/web/' }));
+  expect(writeText).toHaveBeenLastCalledWith('go test ./internal/web/');
+  const { container: plain } = render(<Markdown text={'```sh\nmake build\n```'} />);
+  expect(plain.querySelector('.md-cmds')).toBeNull();
+});
+
+test('a table column of pass/fail words or marks shows toned labels; the words stay, a bare mark keeps its word for screen readers', () => {
+  const { container } = render(<Markdown text={'| Suite | Result | Mark |\n|---|---|---|\n| web | pass | ✅ |\n| go | fail | ❌ |'} />);
+  const cells = [...container.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].slice(1).map((td) => [td.querySelector('svg') ? 'glyph' : '', td.textContent]));
+  expect(cells).toEqual([[['glyph', 'pass'], ['glyph', 'pass']], [['glyph', 'fail'], ['glyph', 'fail']]]);
+});

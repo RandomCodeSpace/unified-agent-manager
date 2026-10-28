@@ -796,6 +796,128 @@
   .md .task-list-item[data-state='done'] {
     color: var(--color-muted);
   }
+  /* Status, severity and file lists (rows between hairlines), changed facts, shell sessions (r22). */
+  .md :is(ul, ol):is(.md-status, .md-severity, .md-files) {
+    padding-left: 0;
+    list-style: none;
+  }
+  .md ul:is(.md-status, .md-severity, .md-files, .md-cmds) > li::before {
+    content: none;
+  }
+  .md :is(.md-status, .md-severity, .md-files) > li {
+    position: relative;
+    margin-top: 0;
+    padding: 5px 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .md :is(.md-status, .md-severity, .md-files) > li:last-child {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .md .md-status > li {
+    padding-left: 22px;
+  }
+  .md .md-status > li > .md-mark {
+    top: calc(5px + 0.3em);
+  }
+  .md .md-status > li[data-status='ok'] {
+    color: var(--color-muted);
+  }
+  .md .md-counts {
+    margin-bottom: 4px;
+    font-size: var(--text-caption);
+    color: var(--color-muted);
+  }
+  .md .md-severity > li {
+    display: flex;
+    gap: 10px;
+  }
+  .md-level {
+    flex-shrink: 0;
+    width: 64px;
+    padding-top: 2px;
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.66px;
+    text-transform: uppercase;
+  }
+  .md .md-files > li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .md-file-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+  }
+  .md-file-counts {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .md-file-bar {
+    width: 40px;
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--color-error-wash);
+    overflow: hidden;
+  }
+  .md-file-bar > i {
+    display: block;
+    height: 100%;
+    background: var(--color-success);
+  }
+  .md-facts dd > del {
+    color: var(--color-faint);
+  }
+  .md-arrow {
+    margin: 0 6px;
+    color: var(--color-faint);
+  }
+  .md-delta {
+    margin-left: 6px;
+    font-size: var(--text-caption);
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .md .md-cmds {
+    margin: 0;
+    padding: 0 12px 6px;
+    list-style: none;
+    font-family: var(--font-mono);
+    font-size: var(--text-code);
+    color: var(--color-ink);
+  }
+  .md .md-cmds > li + li {
+    margin-top: 0;
+  }
+  .md-cmd {
+    padding: 3px 0;
+  }
+  .md-cmd + .md-cmd {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .md .md-cmds code {
+    padding: 0;
+    background: none;
+    font-size: inherit;
+  }
+  .md .md-cmd-out {
+    margin: 0 0 2px 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    font-size: 12px;
+    color: var(--color-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
   .md-progress progress {
     width: 72px;
     height: 3px;

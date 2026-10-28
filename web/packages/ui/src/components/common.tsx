@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -10,7 +10,7 @@ import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
 import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
-import { remarkRich, type CalloutKind } from '../lib/richMarkdown';
+import { SEVERITY_ORDER, STATUS_ORDER, commandsOf, remarkRich, type CalloutKind, type Command } from '../lib/richMarkdown';
 import type { TodoStatus } from '../api';
 import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
@@ -936,8 +936,94 @@ function planTally(list: HastNode | undefined, plan: ReplyTools['plan']) {
   return { done, total, live };
 }
 
-/** A task list or steps item: its state's glyph (a task item's box gives way to it), live from the todo list when a row has its title. */
+/** A status list item's state (remarkRich `statusList`): its glyph, colour and words. */
+const STATUS_MARK: Record<(typeof STATUS_ORDER)[number], { Icon: LucideIcon; tone: string; words: string; count: string }> = {
+  fail: { Icon: X, tone: 'text-error', words: 'failed', count: 'failed' },
+  warn: { Icon: TriangleAlert, tone: 'text-warning', words: 'warning', count: 'warning' },
+  skip: { Icon: SkipForward, tone: 'text-muted', words: 'skipped', count: 'skipped' },
+  ok: { Icon: Check, tone: 'text-success', words: 'passed', count: 'passed' },
+};
+const SEVERITY_TONE: Record<(typeof SEVERITY_ORDER)[number], string> = { critical: 'text-error', high: 'text-error', medium: 'text-warning', low: 'text-muted' };
+
+/**
+ * A status or severity list's count line: each state with rows, in the list's order, the
+ * failures and warnings (critical, high, medium) in their tone. Null for any other list.
+ */
+function ListCounts({ node }: Readonly<{ node?: HastNode }>) {
+  const kind = String(node?.properties.className ?? '');
+  const key = kind.includes('md-status') ? 'dataStatus' : kind.includes('md-severity') ? 'dataSeverity' : null;
+  if (!key || !node) return null;
+  const order: readonly string[] = key === 'dataStatus' ? STATUS_ORDER : SEVERITY_ORDER;
+  const counts = new Map<string, number>();
+  for (const li of node.children) if (li.type === 'element') counts.set(String(li.properties[key]), (counts.get(String(li.properties[key])) ?? 0) + 1);
+  const parts = order.filter((k) => counts.get(k)).map((k) => {
+    const n = counts.get(k)!;
+    if (key === 'dataStatus') {
+      const mark = STATUS_MARK[k as keyof typeof STATUS_MARK];
+      return { k, words: `${n} ${mark.count}`, tone: k === 'fail' || k === 'warn' ? mark.tone : '' };
+    }
+    const tone = SEVERITY_TONE[k as keyof typeof SEVERITY_TONE];
+    return { k, words: `${n} ${k}`, tone: k === 'low' ? '' : tone };
+  });
+  return (
+    <p className="md-counts">
+      {parts.map((p, i) => (
+        <span key={p.k}>
+          {i > 0 && ' · '}
+          <span className={cn(p.tone && `font-semibold ${p.tone}`)}>{p.words}</span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/** A file row (remarkRich `fileList`): the file's icon, the item as written (its path a file link), then its line counts with a bar. */
+function FileItem({ node, className, children }: Readonly<{ node: HastNode; className?: string; children?: ReactNode }>) {
+  const path = String(node.properties.dataPath);
+  const add = node.properties.dataAdd == null ? null : Number(node.properties.dataAdd);
+  const del = Number(node.properties.dataDel ?? 0);
+  return (
+    <li className={className}>
+      <FileIcon path={path} className="md-file-icon" />
+      <span className="min-w-0 flex-1">{children}</span>
+      {add != null && (
+        <span className="md-file-counts">
+          <span className="text-success">+{add}</span>
+          <span className="text-error">−{del}</span>
+          <span aria-hidden="true" className="md-file-bar"><i style={{ width: `${add + del ? (add / (add + del)) * 100 : 0}%` }} /></span>
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** A task list or steps item: its state's glyph (a task item's box gives way to it), live from the todo list when a row has its title. Status, severity and file items draw their own rows. */
 function MdItem({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
+  const status = node?.properties.dataStatus as keyof typeof STATUS_MARK | undefined;
+  if (status && STATUS_MARK[status]) {
+    const mark = STATUS_MARK[status];
+    return (
+      <li className={className} data-status={status}>
+        <mark.Icon aria-hidden="true" className={cn('md-mark', mark.tone)} strokeWidth={2.25} />
+        {children}
+        <span className="sr-only">, {mark.words}</span>
+      </li>
+    );
+  }
+  const severity = node?.properties.dataSeverity as keyof typeof SEVERITY_TONE | undefined;
+  if (severity && SEVERITY_TONE[severity]) {
+    return (
+      <li className={className} data-severity={severity}>
+        <span className={cn('md-level', SEVERITY_TONE[severity])}>{String(node?.properties.dataLabel ?? severity)}<span className="sr-only">:</span></span>
+        <span className="min-w-0">{children}</span>
+      </li>
+    );
+  }
+  if (node?.properties.dataPath) return <FileItem node={node} className={className}>{children}</FileItem>;
+  return <PlanItem node={node} className={className}>{children}</PlanItem>;
+}
+
+function PlanItem({ node, className, children }: Readonly<{ node?: HastNode; className?: string; children?: ReactNode }>) {
   const { plan } = useContext(ReplyContext);
   const item = node ? itemState(node, plan) : { live: false };
   if (!item.state) return <li className={className}>{children}</li>;
@@ -956,6 +1042,7 @@ function MdItem({ node, className, children }: Readonly<{ className?: string; ch
 function MdOrdered({ node, children, ...props }: Readonly<{ children?: ReactNode } & ExtraProps & Omit<ComponentProps<'ol'>, 'children'>>) {
   const { plan } = useContext(ReplyContext);
   const list = <ol {...props}>{children}</ol>;
+  if (/md-(status|severity)/.test(String(props.className ?? ''))) return <><ListCounts node={node} />{list}</>;
   const tally = String(props.className ?? '').includes('md-steps') ? planTally(node, plan) : null;
   if (!tally?.live) return list;
   return (
@@ -970,6 +1057,7 @@ function MdOrdered({ node, children, ...props }: Readonly<{ children?: ReactNode
 function MdList({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
   const { plan } = useContext(ReplyContext);
   const list = <ul className={className}>{children}</ul>;
+  if (/md-(status|severity)/.test(className ?? '')) return <><ListCounts node={node} />{list}</>;
   if (!Number(node?.properties.dataTotal)) return list;
   return (
     <>
@@ -977,6 +1065,29 @@ function MdList({ node, className, children }: Readonly<{ className?: string; ch
       {list}
     </>
   );
+}
+
+const SHELL = new Set(['sh', 'bash', 'shell', 'console', 'zsh']);
+
+/** One command row: `$`, the command, its own copy button, and the output lines under it, muted. */
+function CommandRow({ command }: Readonly<{ command: Command }>) {
+  const [copied, copy] = useCopied();
+  return (
+    <li className="md-cmd">
+      <div className="flex items-start gap-2">
+        <code className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]"><span aria-hidden="true" className="mr-2 text-faint select-none">$</span>{command.command}</code>
+        <Button size="icon-sm" variant="subtle" aria-label={copied ? 'Copied' : `Copy ${command.command}`} className={cn('text-muted', copied && 'text-success')} onClick={() => copy(command.command)}>
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </div>
+      {command.output.length > 0 && <pre className="md-cmd-out">{command.output.join('\n')}</pre>}
+    </li>
+  );
+}
+
+/** A shell session fence (`commandsOf`): a row per command, so each copies alone. */
+function CommandRows({ commands }: Readonly<{ commands: Command[] }>) {
+  return <ul translate="no" className="md-cmds">{commands.map((c, i) => <CommandRow key={i} command={c} />)}</ul>;
 }
 
 const mdComponents: Components = {
@@ -1010,6 +1121,9 @@ const mdComponents: Components = {
         </MermaidBlock>
       );
     }
+    const first = code?.type === 'element' ? code.children[0] : undefined;
+    const commands = language && SHELL.has(language) && first?.type === 'text' ? commandsOf(first.value) : null;
+    if (commands) return <CodeBlock language={language} text={commands.map((c) => c.command).join('\n')} body={<CommandRows commands={commands} />}>{children}</CodeBlock>;
     // GitLab's ```suggestion:-0+0 fence: the lines a reviewer proposes.
     return <CodeBlock language={language === 'suggestion' ? 'Suggested change' : language}>{children}</CodeBlock>;
   },
