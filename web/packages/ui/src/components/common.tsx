@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -543,13 +543,8 @@ const MdContext = createContext<MdSource>({ text: '', streaming: false });
 /** The reply an assistant message's markdown belongs to (its id and whole text), so a mermaid fence knows which drawing is its own. */
 export const ItemContext = createContext<{ id: string; text: string } | null>(null);
 
-/**
- * What a reply's rich blocks reach in their Thread: `plan`, the live todo list's states by title key
- * (`planKey`), which a reply's task list or steps tick off; `latest`, the reply no message follows
- * yet, whose questions and blockers answer in place; `send`, which posts an answer as the owner's
- * message (queued after a running turn) and resolves to an error, or null once taken.
- */
-export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus>; latest?: string; send?: (text: string) => Promise<string | null> }
+/** What a reply's rich blocks reach in their Thread: `plan`, the live todo list's states by title key (`planKey`), which a reply's task list or steps tick off. */
+export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus> }
 export const ReplyContext = createContext<ReplyTools>({});
 
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
@@ -884,88 +879,15 @@ const CALLOUT: Record<CalloutKind, { title: string; Icon: LucideIcon }> = {
   blocker: { title: 'Blocker', Icon: Ban },
 };
 
-const choicesOf = (value: unknown): string[] => {
-  try {
-    const list: unknown = JSON.parse(String(value ?? '[]'));
-    return Array.isArray(list) ? list.filter((c): c is string => typeof c === 'string') : [];
-  } catch {
-    return [];
-  }
-};
-
-/**
- * A question or blocker's answer in place, on the latest reply only: its choices as buttons (the
- * first press picks one, a second press on it sends it) and a field for words of the owner's own.
- * The answer goes out as the owner's message, the question quoted above it. Elsewhere the choices
- * are a plain list.
- */
-function CalloutAnswer({ ask, choices }: Readonly<{ ask: string; choices: string[] }>) {
-  const item = useContext(ItemContext);
-  const { latest, send } = useContext(ReplyContext);
-  const [chosen, setChosen] = useState('');
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const hint = useId();
-  if (!send || !item || item.id !== latest) return choices.length ? <ul className="md-choices-plain">{choices.map((c) => <li key={c}>{c}</li>)}</ul> : null;
-  const submit = async (pick = chosen) => {
-    const answer = [pick, text.trim()].filter(Boolean).join('\n\n');
-    if (!answer || busy) return;
-    setBusy(true);
-    setError('');
-    const err = await send(`${ask ? `> ${ask}\n\n` : ''}${answer}`);
-    setBusy(false);
-    if (err) setError(err);
-    else {
-      setChosen('');
-      setText('');
-    }
-  };
-  return (
-    <div className="md-answer">
-      {choices.length > 0 && (
-        <div role="group" aria-label="Choices" aria-describedby={hint} className="md-choices">
-          {choices.map((c) => (
-            <button key={c} type="button" className="md-choice" aria-pressed={chosen === c} disabled={busy} onClick={() => (chosen === c ? void submit(c) : setChosen(c))}>
-              {chosen === c && <Check aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={2.5} />}
-              {c}
-            </button>
-          ))}
-        </div>
-      )}
-      <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        <Input size="md" value={text} disabled={busy} aria-label="Answer" aria-describedby={hint} placeholder={chosen ? 'Add a note (optional)…' : 'Answer here…'} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit" size="icon-sm" variant="subtle" aria-label="Send answer" disabled={busy || !(chosen || text.trim())}>
-          <CornerDownLeft />
-        </Button>
-      </form>
-      <p id={hint} className="md-answer-hint">{error ? <span role="alert" className="text-error">{error}</span> : chosen ? 'Press it again or Enter to send' : 'Sends as your message, the question quoted'}</p>
-    </div>
-  );
-}
-
 /** A GitHub alert (`> [!WARNING]`, marked by remarkRich) as a toned callout with its title; any other quote as written. */
 function MdQuote({ node, children }: Readonly<{ children?: ReactNode } & ExtraProps>) {
   const kind = node?.properties.dataCallout as CalloutKind | undefined;
   const callout = kind && CALLOUT[kind];
   if (!callout) return <blockquote>{children}</blockquote>;
-  const answerable = kind === 'question' || kind === 'blocker';
   return (
     <div role="note" className="md-callout" data-callout={kind}>
       <p className="md-callout-title"><callout.Icon aria-hidden="true" className="size-3.5 shrink-0" />{callout.title}</p>
       {children}
-      {answerable && <CalloutAnswer ask={String(node?.properties.dataAsk ?? '')} choices={choicesOf(node?.properties.dataChoices)} />}
-    </div>
-  );
-}
-
-/** A reply's closing question (marked by remarkRich): the prose as written, then its answer in place. */
-function MdDiv({ node, className, children }: Readonly<{ className?: string; children?: ReactNode } & ExtraProps>) {
-  if (!String(className ?? '').includes('md-ask')) return <div className={className}>{children}</div>;
-  return (
-    <div className={className}>
-      {children}
-      <CalloutAnswer ask={String(node?.properties.dataAsk ?? '')} choices={choicesOf(node?.properties.dataChoices)} />
     </div>
   );
 }
@@ -1065,7 +987,6 @@ const mdComponents: Components = {
   ul: MdList,
   ol: MdOrdered,
   li: MdItem,
-  div: MdDiv,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);
@@ -1109,7 +1030,7 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
   return (
     <div ref={fileDemand} className={cn('md', className)}>
       {blocks.map((block, i) => (
-        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} tail={i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
+        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
       ))}
     </div>
   );
@@ -1145,16 +1066,16 @@ export function PlainText({ text, className }: Readonly<{ text: string; classNam
   return <p ref={fileDemand} className={cn('break-words whitespace-pre-wrap', className)}>{parts}</p>;
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, tail, breaks, rehypePlugins }: { text: string; streaming: boolean; /** The text's last block. */ tail: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
   const origin = useContext(GitLabItemsContext)?.origin;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
-    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { tail }]];
+    const rich = streaming ? base : [...base, remarkRich];
     return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
-  }, [breaks, origin, streaming, tail]);
+  }, [breaks, origin, streaming]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>

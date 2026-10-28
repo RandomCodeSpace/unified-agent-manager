@@ -97,11 +97,7 @@ background origin/auth check is cold, and do not rewrite loops or subshells.
     (`**Tests:** 742`, `**Coverage:** 81%`) are stat tiles;
   - put risks, caveats and what you did not verify in `> [!WARNING]`;
   - `> [!QUESTION]` asks the owner to decide and `> [!BLOCKER]` says what
-    stops you until they act; on your latest reply the owner answers either
-    in place, and a closing bullet list (2–6 short items) becomes buttons, so
-    end a question with its options when there are some; a reply whose last
-    paragraph ends in "?" (with or without a closing options list) is
-    answerable in place the same way;
+    stops you until they act; the owner answers in the composer as usual;
   - a numbered list where every item starts with bold text is a step list;
   - a task list (`- [x]` / `- [ ]`) shows "N of M done" with a bar;
   - a task item, or a step's bold lead, with the same title as a todo row
