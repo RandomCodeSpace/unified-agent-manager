@@ -506,7 +506,7 @@ func TestChildEndNoteBoundsAndScope(t *testing.T) {
 	working, done := SessionSummary{State: StateWorking}, SessionSummary{State: StateCompleted}
 	m.childEndLocked(child, working, done)
 	note := m.takeChildNotes(parent)
-	if !strings.HasPrefix(note, `uam thread: Thread "New thread" (child)`) || len(note) > maxChildReply+200 || !strings.HasSuffix(note, "é…") {
+	if !strings.HasPrefix(note, `uam thread: Thread "New thread" (child)`) || len(note) > maxChildReply+250 || !strings.HasSuffix(note, `é… (cut; the uam tool's history {"id": "child"} reads more)`) {
 		t.Fatalf("len=%d note=%q", len(note), note[:80])
 	}
 	child.items = nil
@@ -537,5 +537,47 @@ func TestChildEndNoteBoundsAndScope(t *testing.T) {
 				t.Fatalf("unexpected note %q", got)
 			}
 		})
+	}
+}
+
+// A started Thread's questions and permission requests reach its creator as
+// one-line notes, the owner's answer replacing a waiting note not yet
+// delivered; the creator may read the started Thread's history outside its
+// Project.
+func TestChildOwnerInteractionNotes(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	_, conv := createSession(t, m, prov)
+	target := namedProject(t, m, "Target")
+	sum, child := spawnOK(t, m, prov, conv, "call-1", fmt.Sprintf(`{"project":%q,"prompt":"go","name":"Build fix"}`, target))
+	head := fmt.Sprintf(`uam thread: Thread "Build fix" (%s), which you started, `, sum.ID)
+	pending := func(n int) func() bool {
+		return func() bool { return detail(t, m, sum.ID).Pending == n }
+	}
+	child.EmitTurn(agentapi.TurnWorking, "")
+	child.EmitInteraction(agentapi.Interaction{ID: "q1", Kind: agentapi.InteractionQuestion, Title: "Question from Copilot", Questions: []agentapi.Question{{Text: "Which\ncolour?", Choices: []string{"red", "blue"}}}})
+	waitUntil(t, "the question", pending(1))
+	if got, want := conv.Request().Hooks.Prompt(t.Context()), head+`waits for the owner: "Which colour?".`; got != want {
+		t.Fatalf("ask note = %q\nwant %q", got, want)
+	}
+	child.EmitInteraction(permissionRequest("p1"))
+	waitUntil(t, "the permission request", pending(2))
+	if _, err := m.Answer(sum.ID, "p1", agentapi.Answer{Decision: "deny"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Answer(sum.ID, "q1", agentapi.Answer{Answers: [][]string{{"blue"}}}); err != nil {
+		t.Fatal(err)
+	}
+	want := head + `got the owner's answer to "Run rm -rf build?": Deny.` + "\n\n" + head + `got the owner's answer to "Which colour?": blue.`
+	if got := conv.Request().Hooks.Prompt(t.Context()); got != want {
+		t.Fatalf("answer notes = %q\nwant %q", got, want)
+	}
+	child.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Done."})
+	waitUntil(t, "the reply", func() bool {
+		return slices.ContainsFunc(detail(t, m, sum.ID).Items, func(it agentapi.Item) bool { return it.ID == "a1" })
+	})
+	var page uamPageResult
+	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, sum.ID), &page)
+	if len(page.Rows) == 0 || !strings.Contains(fmt.Sprint(page.Rows[len(page.Rows)-1]), "Done.") {
+		t.Fatalf("history of the started thread = %+v", page)
 	}
 }

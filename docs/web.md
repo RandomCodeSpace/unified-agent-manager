@@ -1143,7 +1143,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   files require an explicit grant. Declaration metadata does not grant access.
 - **Reading uam**: every Thread has the `uam` tool with six read operations:
   `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
-  Reads are limited to its Project unless the Thread is in Yolo. `tasks`
+  Reads are limited to its Project unless the Thread is in Yolo; a Thread it
+  started with `uam_create_task` is readable in any Project. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
   Results carry compact summaries and outcomes, framed as data; a Thread row
   has `settled_by` `"auto"` or `"reviewed"` when the Thread settled itself. They
@@ -1185,8 +1186,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   runs on its own. Each time its turn ends (completed, failed, stopped,
   including at its spending limit), or it is settled or archived, the Thread
   that started it gets a `uam thread:` note: its name and ID, how it ended,
-  the files it changed when known, and its last reply cut to 2 KiB. The
-  agent gets the note with its next tool call, or as its next turn starts
+  the files it changed when known, and its last reply cut to 600 bytes; a
+  cut reply names the `uam` tool's `history` op, which reads the started
+  Thread in any Project. When the started Thread waits for the owner on a
+  question or permission request (not one yolo mode allows), the note says
+  what it asks, cut to 300 bytes; when the owner answers, a note gives the
+  question and the answer or decision, replacing the waiting note if it has
+  not been delivered yet. The agent gets the note with its next tool call, or as its next turn starts
   when it is idle; the note then shows in that Thread's conversation as a uam
   notice, not as your message. Notes wait only in memory, so a service
   restart drops those not yet delivered, and nothing is sent to a Thread
