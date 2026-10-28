@@ -98,8 +98,17 @@ function stageSections(todos: readonly Todo[], now?: string): TodoSection[] {
   }).filter((s) => s.todos.length > 0);
 }
 
-/** The live reader's sections: In progress (the Now row first), Blocked, To do and Done, each in the provider's order. */
-export const todoSections = (view: TodoView) => stageSections(view.todos, view.now);
+/** Rows newest first: by their last status change, then those uam never saw change from the end of the list (the provider adds rows there). */
+function newestFirst(todos: readonly Todo[]): Todo[] {
+  const when = (t: Todo) => (t.changed_at ? Date.parse(t.changed_at) : -Infinity);
+  return todos.map((t, i) => ({ t, i })).sort((a, b) => when(b.t) - when(a.t) || b.i - a.i).map(({ t }) => t);
+}
+
+/** A Done section shows its newest this many rows until "Show all". */
+export const DONE_ROWS = 8;
+
+/** The live reader's sections: In progress (the Now row first), Blocked, To do and Done, each newest first. */
+export const todoSections = (view: TodoView) => stageSections(newestFirst(view.todos), view.now);
 
 /** A reply's foot button's name, from the counts uam kept when its turn ended (on screen "Todo 5/7 · 1 in progress · 1 blocked"). */
 export function turnTodoName(counts: TodoCounts): string {
@@ -112,8 +121,8 @@ export function snapshotFacts(counts: TodoCounts, clock: string): string[] {
   return [`As this turn left it, ${clock}`, open ? `${open} left open` : blocked ? '' : 'all done', omitted ? `${omitted} more not shown` : ''].filter(Boolean);
 }
 
-/** The kept list's sections, as the live reader's: In progress, Blocked, To do and Done (newest first), each in the order uam kept them. */
-export const snapshotSections = (todos: readonly Todo[]) => stageSections(todos);
+/** The kept list's sections, as the live reader's: In progress, Blocked, To do and Done, each newest first. */
+export const snapshotSections = (todos: readonly Todo[]) => stageSections(newestFirst(todos));
 
 /** A row of the history reader's ledger: its latest state, when its status last changed (`at`) and in which turn (`turn`, 1-based among the Thread's timings; none for the running turn's change), the turn whose record first held it (`added`, the same way), and whether the agents removed it from the live list. */
 export interface LedgerRow { todo: Todo & { agent?: string }; at?: string; turn?: number; added?: number; removed: boolean }

@@ -152,9 +152,7 @@ func todoView(list agentapi.TodoList) TodoView {
 		rows = append(rows, cleanTodo(t))
 	}
 	v := TodoView{Known: list.Known, Counts: todoCounts(rows)}
-	if len(rows) > maxTodoRows {
-		rows, v.Omitted = rows[:maxTodoRows:maxTodoRows], len(rows)-maxTodoRows
-	}
+	rows, v.Omitted = agentapi.RecentTodos(rows, maxTodoRows)
 	// A row keeps only the dependencies on rows the browser gets.
 	shown := make(map[string]bool, len(rows))
 	for _, t := range rows {

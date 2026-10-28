@@ -76,13 +76,13 @@ func TestWebElicitationFormAccept(t *testing.T) {
 		},
 		Required: []string{"name", "ok"},
 	}
-	done := elicitAsync(h.fs, copilot.ElicitationContext{Message: "Configure the release", RequestedSchema: schema, ElicitationSource: strp("github")})
+	done := elicitAsync(h.fs, copilot.ElicitationContext{Message: "Configure the release", RequestedSchema: schema, ElicitationSource: strp("github"), ElicitationSourceDisplayName: strp("GitHub")})
 	q := pendingElicitation(t, h)
 	var names []string
 	for _, x := range q.Questions {
 		names = append(names, x.Field.Name)
 	}
-	if !slices.Equal(names, []string{"channel", "count", "name", "note", "ok", "tags"}) || q.Title != "Form from github" || q.Detail != "Configure the release" || q.Elicitation.Mode != agentapi.ElicitationForm || q.Elicitation.Source != "github" {
+	if !slices.Equal(names, []string{"channel", "count", "name", "note", "ok", "tags"}) || q.Title != "Form from GitHub" || q.Detail != "Configure the release" || q.Elicitation.Mode != agentapi.ElicitationForm || q.Elicitation.Source != "github" {
 		t.Fatalf("form = %+v (fields %v)", q, names)
 	}
 	if ch, count, ok, tags := q.Questions[0], q.Questions[1], q.Questions[4], q.Questions[5]; !slices.Equal(ch.Choices, []string{"Stable", "Beta"}) || ch.Custom ||

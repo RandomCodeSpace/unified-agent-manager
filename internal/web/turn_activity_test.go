@@ -203,14 +203,17 @@ func TestTurnActivityTodosCountsNowAndCap(t *testing.T) {
 	for i := range maxTodoRows {
 		rows = append(rows, agentapi.Todo{ID: "r" + strings.Repeat("x", i), Title: "Row", Status: agentapi.TodoDone})
 	}
-	// Dependencies on rows past the cap are dropped with them.
-	cut := rows[len(rows)-1].ID
-	rows[1].DependsOn = []string{"a", cut}
-	rows[2].DependsOn = []string{cut}
+	// Past the cap the oldest done rows go ("a", then the first filler rows), and dependencies on them with them.
+	kept := rows[len(rows)-1].ID
+	rows[1].DependsOn = []string{"a", kept}
+	rows[2].DependsOn = []string{"a"}
 	conv.Emit(todosEvent(true, rows...))
 	v := detail(t, m, sum.ID).TurnActivity.Todos
-	if b, c := v.Todos[1], v.Todos[2]; !slices.Equal(b.DependsOn, []string{"a"}) || c.DependsOn != nil {
+	if b, c := v.Todos[0], v.Todos[1]; !slices.Equal(b.DependsOn, []string{kept}) || c.DependsOn != nil {
 		t.Fatalf("depends on: b %v, c %v", b.DependsOn, c.DependsOn)
+	}
+	if v.Todos[7].ID != rows[len(rows)-maxTodoRows+7].ID || v.Todos[len(v.Todos)-1].ID != kept {
+		t.Fatalf("done rows kept: %q … %q", v.Todos[7].ID, v.Todos[len(v.Todos)-1].ID)
 	}
 	if !v.Known || v.Touched || len(v.Todos) != maxTodoRows || v.Omitted != len(rows)-maxTodoRows {
 		t.Fatalf("view: known %v touched %v rows %d omitted %d", v.Known, v.Touched, len(v.Todos), v.Omitted)
@@ -222,8 +225,8 @@ func TestTurnActivityTodosCountsNowAndCap(t *testing.T) {
 	if v.Now != "c" {
 		t.Fatalf("now = %q", v.Now)
 	}
-	if a, d, e, f := v.Todos[0], v.Todos[3], v.Todos[4], v.Todos[5]; a.Title != "Plan it" || d.Note != "needs sign-in" || e.Note != "" || f.Status != agentapi.TodoPending || f.Title != strings.Repeat("t", maxTodoTitleRunes)+"…" {
-		t.Fatalf("rows = %+v", v.Todos[:6])
+	if d, e, f := v.Todos[2], v.Todos[3], v.Todos[4]; d.Note != "needs sign-in" || e.Note != "" || f.Status != agentapi.TodoPending || f.Title != strings.Repeat("t", maxTodoTitleRunes)+"…" {
+		t.Fatalf("rows = %+v", v.Todos[:5])
 	}
 	// None in progress: no row is Now.
 	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone}))

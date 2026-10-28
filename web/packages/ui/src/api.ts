@@ -1169,8 +1169,8 @@ export interface TodoCounts { done?: number; total?: number; blocked?: number; i
 /**
  * The open conversation's todo list, which the agents keep in Copilot's session `todos` table:
  * `known` is false while it could not be read or no conversation is open; `touched` once the
- * running turn changed it (the last turn's answer between turns); the first 100 rows in the
- * provider's order, `omitted` past them; `counts` over all; `now` the id of the row the work is at.
+ * running turn changed it (the last turn's answer between turns); at most 100 rows in the
+ * provider's order, the latest open ones then the latest done, `omitted` the rest; `counts` over all; `now` the id of the row the work is at.
  */
 export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omitted?: number; counts: TodoCounts; now?: string }
 

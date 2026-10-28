@@ -4309,7 +4309,8 @@ func describePermission(d *rpc.PermissionRequestedData) (title, detail string) {
 	case *rpc.PermissionPromptRequestURL:
 		return "Fetch URL", r.URL + sandboxBypass(r.RequestSandboxBypass, r.RequestSandboxBypassReason)
 	case *rpc.PermissionPromptRequestMCP:
-		return "Run MCP tool " + r.ServerName + "/" + r.ToolName, compactJSON(r.Args)
+		// The display name only labels; approvals keep the server name.
+		return "Run MCP tool " + cmp.Or(strings.TrimSpace(deref(r.ServerDisplayName)), r.ServerName) + "/" + r.ToolName, compactJSON(r.Args)
 	case *rpc.PermissionPromptRequestCustomTool:
 		return "Run tool " + r.ToolName, compactJSON(r.Args)
 	case *rpc.PermissionPromptRequestMemory:

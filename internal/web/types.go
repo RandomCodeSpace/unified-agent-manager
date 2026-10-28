@@ -499,9 +499,10 @@ type TodoView struct {
 	// Touched is set once the list changed in the running turn; it keeps
 	// the last turn's answer between turns.
 	Touched bool `json:"touched"`
-	// Todos holds the first maxTodoRows rows, in the provider's order.
+	// Todos holds at most maxTodoRows rows, in the provider's order: the
+	// latest open rows, then the latest done ones (agentapi.RecentTodos).
 	Todos []agentapi.Todo `json:"todos"`
-	// Omitted counts the rows past them.
+	// Omitted counts the rows left out.
 	Omitted int `json:"omitted,omitempty"`
 	// Counts counts every row.
 	Counts TodoCounts `json:"counts"`

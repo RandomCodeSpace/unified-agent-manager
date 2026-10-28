@@ -192,7 +192,7 @@ export function quotaLabel(quota: Pick<Quota, 'type' | 'unit'>): string {
   return quota.type === 'premium_interactions' ? 'premium requests' : quota.type.replaceAll('_', ' ');
 }
 
-const PLAN_NAMES: Record<string, string> = { free: 'Free', pro: 'Pro', pro_plus: 'Pro+', max: 'Max', business: 'Business', enterprise: 'Enterprise', edu: 'Education' };
+const PLAN_NAMES: Record<string, string> = { free: 'Free', pro: 'Pro', pro_plus: 'Pro+', max: 'Max', business: 'Business', enterprise: 'Enterprise', edu: 'Education', access: 'Access' };
 
 /** "Pro+" for Copilot's pro_plus; an unknown tier reads as words, a missing one as "". */
 export function planName(plan: string | undefined): string {

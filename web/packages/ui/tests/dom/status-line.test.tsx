@@ -271,25 +271,37 @@ test('the todo button opens a reader of its own beside it: sections by state, th
   expect(line.getAttribute('aria-expanded')).toBe('false');
 });
 
-test('a list whose rows wait on others is one list in its own order with rails beside it; each row says what it waits on and how often it was reopened', async () => {
+test('open rows that wait on others are one list by stage with rails beside it, Done its own section; each row says what it waits on and how often it was reopened', async () => {
   const user = userEvent.setup();
   const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'], reopened: 2 }, { depends_on: ['c'] }]);
   render(draw(withTodos(listOf(todos))));
   await user.click(screen.getByRole('button', { name: /Show the list$/ }));
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
-  // No stage sections: the provider's order, which status changes never move.
-  expect(within(reader).queryAllByRole('region')).toEqual([]);
+  // The open rows by stage on rails; a dependency on a done row is met and draws no rail.
+  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Done']);
   expect(within(reader).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-    'Plan the pages, Done',
-    'Build the index pagenow, by Index page writer, In progress, waits on Plan the pages',
-    'Build the about page2, reopened 2 times, In progress, waits on Plan the pages, Sign in to the registry',
+    'Build the index pagenow, by Index page writer, In progress',
+    'Build the about page2, reopened 2 times, In progress, waits on Sign in to the registry',
     'Sign in to the registryNo token on this machine, Blocked, waits on Build the about page',
+    'Plan the pages, Done',
   ]);
   expect(within(reader).getByText(/1 loop/)).toBeTruthy();
-  // Four links: two in the loop (about ⇄ registry), two plain from the plan.
+  // Two links, both the loop (about ⇄ registry).
   const rails = reader.querySelectorAll('svg[aria-hidden] > g');
-  expect(rails.length).toBe(4);
+  expect(rails.length).toBe(2);
   expect([...rails].filter((g) => g.getAttribute('class')?.includes('text-accent')).length).toBe(2);
+});
+
+test('Done shows its newest rows first and only the newest few until Show all', async () => {
+  const user = userEvent.setup();
+  const done = Array.from({ length: 10 }, (_, i): Todo => ({ id: `d${i}`, title: `Done ${i}`, status: 'done' }));
+  render(draw(withTodos(listOf([...done, ...rows().slice(1)]))));
+  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  const section = within(within(reader).getByRole('region', { name: 'Done' }));
+  expect(section.getAllByRole('listitem').map((li) => li.textContent)).toEqual([9, 8, 7, 6, 5, 4, 3, 2].map((i) => `Done ${i}, Done`));
+  await user.click(section.getByRole('button', { name: 'Show all 10' }));
+  expect(section.getAllByRole('listitem')).toHaveLength(10);
 });
 
 test('with the Graph setting the reader draws the dependencies as a flowchart: turn tags from the kept records, a subagent\'s box, the rows still a list for screen readers', async () => {
