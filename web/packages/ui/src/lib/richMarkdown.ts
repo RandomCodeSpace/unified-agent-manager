@@ -21,7 +21,7 @@ const ALERT = /^\[!(note|tip|important|warning|caution|question|blocker)\][ \t]*
 /** A plan item's or todo's title as a match key: lower case, letters and digits only, single spaces. */
 export const planKey = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 // A short figure: "12", "98%", "1.2 s", "$40k", "~3 min", "1,024 KiB".
-const FIGURE = /^[~≈<>]?[$€£]?[-+]?\d[\d,.]*(?:\s?(?:%|[a-zA-Z]{1,5}))?$/;
+const FIGURE = /^[~≈<>]?[$€£]?[-+−]?\d[\d,.]*(?:\s?(?:%|[a-zA-Z]{1,5}))?$/;
 
 const markProps = (node: MdNode, props: Record<string, unknown>, hName?: string) => {
   node.data = { ...node.data, ...(hName ? { hName } : {}), hProperties: { ...node.data?.hProperties, ...props } };
@@ -71,16 +71,18 @@ function labelled(para: MdNode | undefined): Omit<Fact, 'rest'> | null {
 
 /** A figure split into its number and unit: "14.6 MB" → 14.6, "MB"; null when it is not one. */
 function figureOf(text: string): { n: number; unit: string; decimals: number } | null {
-  const m = /^([-+]?\d[\d,]*(?:\.(\d+))?)\s?(%|[a-zA-Z]{1,5})?$/.exec(text.trim());
-  return m ? { n: Number(m[1].replaceAll(',', '')), unit: m[3] ?? '', decimals: m[2]?.length ?? 0 } : null;
+  const m = /^([-+−]?\d[\d,]*(?:\.(\d+))?)\s?(%|[a-zA-Z]{1,5})?$/.exec(text.trim());
+  return m ? { n: Number(m[1].replaceAll(',', '').replace('−', '-')), unit: m[3] ?? '', decimals: m[2]?.length ?? 0 } : null;
 }
 
 /**
- * A fact's value that reads "old → new" (or "->"), as text alone: the old value struck, an arrow,
+ * A fact's value that reads "old → new" (or "->"), as text alone with one arrow: the old value struck, an arrow,
  * the new in bold, and the signed change when both are figures in one unit. Else the value as written.
  */
 function change(value: MdNode[]): MdNode[] {
   if (value.length !== 1 || value[0].type !== 'text') return value;
+  // One change only: a value listing several ("1 → 2, size 3 → 4") stays as written.
+  if (value[0].value!.split(/→|->/).length !== 2) return value;
   const m = /^(.+?)\s*(?:→|->)\s*(.+)$/.exec(value[0].value!.trim());
   if (!m) return value;
   const out: MdNode[] = [
