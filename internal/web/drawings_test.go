@@ -543,7 +543,7 @@ func TestDrawingNotesJoinThePromptHook(t *testing.T) {
 	putDrawing(ts, id, "docs/b.drawio", map[string]any{"content": strings.Replace(drawioPlain, `value="API"`, `value="Gateway"`, 1), "format": "drawio"})
 	s, _ := ts.m.lookup(id)
 	ts.m.mu.Lock()
-	s.childNotes = []string{"uam thread: child ended"}
+	s.childNotes = []childNote{{text: "uam thread: child ended"}}
 	ts.m.mu.Unlock()
 	note := conv.Request().Hooks.Prompt(t.Context())
 	want := "uam thread: child ended\n\n" +

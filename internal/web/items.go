@@ -698,6 +698,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		ix.State, ix.Resolution = agentapi.InteractionExpired, "the subagent was stopped"
 	}
 	cur := s.ixIdx[ix.ID]
+	asked := cur == nil && ix.State == agentapi.InteractionPending
 	if cur != nil {
 		if cur.State != agentapi.InteractionPending && ix.State == agentapi.InteractionPending {
 			return
@@ -716,6 +717,9 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 	}
 	// Claimed first, so the browser never sees a yolo request wait for the user.
 	m.autoAllowLocked(s, cur)
+	if asked && !cur.yolo {
+		m.childAskLocked(s, cur)
+	}
 	m.publishInteractionLocked(s, cur)
 }
 

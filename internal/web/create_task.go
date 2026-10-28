@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -26,7 +27,8 @@ import (
 // yolo, else in safe mode; it records its creator (spawnedBy), does not get
 // the tool, and one Task may create at most maxSpawns. Each time its turn
 // ends, or it is settled or archived, its creator gets an end note
-// (childEndLocked).
+// (childEndLocked), and a note when it waits for the owner and when the
+// owner answers (childAskLocked, childAnswerLocked).
 
 const (
 	createTaskToolName = "uam_create_task"
@@ -38,11 +40,14 @@ const (
 	// maxSpawnPrompt bounds a created Task's first message, in bytes.
 	maxSpawnPrompt = 16 << 10
 	// maxChildReply bounds the created Task's last reply in its end note,
-	// in bytes.
-	maxChildReply = 2 << 10
-	// maxChildNotes bounds the end notes waiting for a creator: a turn end
-	// and a settle of each Thread it may create.
-	maxChildNotes = 2 * maxSpawns
+	// in bytes; the uam tool's history op reads the rest.
+	maxChildReply = 600
+	// maxChildAsk bounds a question or its answer in a creator's note, in
+	// bytes.
+	maxChildAsk = 300
+	// maxChildNotes bounds the notes waiting for a creator: a turn end, a
+	// settle and a question to the owner of each Thread it may create.
+	maxChildNotes = 3 * maxSpawns
 )
 
 var createTaskTool = agentapi.HostTool{
@@ -50,7 +55,7 @@ var createTaskTool = agentapi.HostTool{
 	Description: fmt.Sprintf("Start a new uam thread with prompt as its first message, in a project or in the project of a folder. "+
 		"Use it for any change outside your own thread's folder. Give project or path, not both. "+
 		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
-		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and last reply, at your next tool call or turn; wait for it instead of checking. "+
+		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and the start of its last reply (the uam tool's history op reads the rest), at your next tool call or turn; wait for it instead of checking. Its questions and permission requests to the owner, and the owner's answers, come as notes too. "+
 		"Pick model and effort for the work (a hard change: a stronger model or more effort; a small one: a cheaper model); uam op models lists the owner's enabled models with their efforts and cost tier. "+
 		"It starts on a new branch in its own git worktree of the project, so its changes stay apart until merged; pass worktree false only when the owner asks for the project's own folder. "+
 		"You can start at most %d threads.", maxSpawns),
@@ -347,7 +352,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	default:
 		task += " in the project's folder"
 	}
-	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar. When its turn ends you get a 'uam thread:' note with its last reply. "+
+	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar. When its turn ends, or it waits for the owner, you get a 'uam thread:' note. "+
 		"You can start %d more.", req.Mode, maxSpawns-n-1)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -517,20 +522,96 @@ func (m *Manager) childEndLocked(s *webSession, before, after SessionSummary) {
 		}
 	}
 	if len(reply) > maxChildReply {
-		reply = strings.ToValidUTF8(reply[:maxChildReply], "") + "…"
+		reply = strings.ToValidUTF8(reply[:maxChildReply], "") + fmt.Sprintf("… (cut; the uam tool's history {\"id\": %q} reads more)", s.id)
 	}
-	text := fmt.Sprintf("uam thread: Thread %q (%s), which you started, %s.%s", firstNonEmpty(s.name, s.title, "New thread"), s.id, end, files)
+	text := childNoteHead(s) + end + "." + files
 	if reply != "" {
 		// A settled Thread's transcript may already be out of memory.
 		text += " Its last reply:\n" + reply
 	}
+	if m.queueChildNoteLocked(s, "", text) {
+		m.count("child_end_notes")
+	}
+}
+
+// childNote is a note waiting for a creator. key names the child's
+// interaction an owner note is about, so its answer replaces it while it
+// waits; it is empty for end notes.
+type childNote struct{ key, text string }
+
+func childNoteHead(s *webSession) string {
+	return fmt.Sprintf("uam thread: Thread %q (%s), which you started, ", firstNonEmpty(s.name, s.title, "New thread"), s.id)
+}
+
+// queueChildNoteLocked queues text for the active creator of s; nothing is
+// queued for a creator that is no longer active. A note with key replaces
+// the waiting one with the same key. It reports whether it queued text.
+// The caller holds mu.
+func (m *Manager) queueChildNoteLocked(s *webSession, key, text string) bool {
+	parent := m.sessions[s.spawnedBy]
+	if s.spawnedBy == "" || parent == nil || parent.removed || parent.stage != StageActive {
+		return false
+	}
+	if i := slices.IndexFunc(parent.childNotes, func(n childNote) bool { return key != "" && n.key == key }); i >= 0 {
+		parent.childNotes[i].text = text
+		return true
+	}
 	// shortcut: the oldest notes go past maxChildNotes; key them by Thread if
 	// a creator ever needs every note of a long idle wait.
-	parent.childNotes = append(parent.childNotes, text)
-	m.count("child_end_notes")
+	parent.childNotes = append(parent.childNotes, childNote{key, text})
 	if n := len(parent.childNotes); n > maxChildNotes {
 		parent.childNotes = parent.childNotes[n-maxChildNotes:]
 	}
+	return true
+}
+
+// childAskLocked tells the creator of s that s waits for the owner on ix, a
+// question or a permission request yolo mode did not claim. The caller
+// holds mu.
+func (m *Manager) childAskLocked(s *webSession, ix *interaction) {
+	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"waits for the owner: "+childAsk(ix.Interaction)+".") {
+		m.count("child_owner_notes")
+	}
+}
+
+// childAnswerLocked tells the creator of s how the owner answered ix. The
+// caller holds mu and recorded the resolution.
+func (m *Manager) childAnswerLocked(s *webSession, ix *interaction, answer agentapi.Answer) {
+	got := ix.Resolution
+	if !answer.Reject && !answer.Cancel && len(answer.Answers) > 0 {
+		parts := make([]string, len(answer.Answers))
+		for i, a := range answer.Answers {
+			parts[i] = strings.Join(a, ", ")
+		}
+		got = strings.Join(parts, "; ")
+	}
+	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"got the owner's answer to "+childAsk(ix.Interaction)+": "+clipLine(got)+".") {
+		m.count("child_owner_notes")
+	}
+}
+
+// childAsk is what ix asks, on one line: its questions, else its title and
+// detail.
+func childAsk(ix agentapi.Interaction) string {
+	what := ix.Title
+	if len(ix.Questions) > 0 {
+		qs := make([]string, len(ix.Questions))
+		for i, q := range ix.Questions {
+			qs[i] = q.Text
+		}
+		what = strings.Join(qs, " / ")
+	} else if ix.Detail != "" {
+		what += ": " + ix.Detail
+	}
+	return strconv.Quote(clipLine(what))
+}
+
+func clipLine(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > maxChildAsk {
+		text = strings.ToValidUTF8(text[:maxChildAsk], "") + "…"
+	}
+	return text
 }
 
 // takeChildNotes hands the waiting end notes of the Tasks s created to its
@@ -542,7 +623,10 @@ func (m *Manager) takeChildNotes(s *webSession) string {
 }
 
 func (m *Manager) takeChildNotesLocked(s *webSession) string {
-	notes := strings.Join(s.childNotes, "\n\n")
+	texts := make([]string, len(s.childNotes))
+	for i, n := range s.childNotes {
+		texts[i] = n.text
+	}
 	s.childNotes = nil
-	return notes
+	return strings.Join(texts, "\n\n")
 }

@@ -547,9 +547,10 @@ type webSession struct {
 	// spawnedBy is the Task whose uam_create_task call created this one. It
 	// never changes, and such a Task does not get the tool itself.
 	spawnedBy string
-	// childNotes are the end notes of the Tasks this one created, waiting
-	// for its agent's next tool call or turn (create_task.go).
-	childNotes []string
+	// childNotes are the end notes of the Tasks this one created, and their
+	// questions to the owner, waiting for its agent's next tool call or turn
+	// (create_task.go).
+	childNotes []childNote
 	// routineID is the routine whose run created this Task. It never
 	// changes, and such a Task does not get uam_create_task either.
 	routineID string
@@ -4952,6 +4953,9 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 				ix.Resolution = autoResolution(ix)
 			}
 			m.publishInteractionLocked(s, ix)
+		}
+		if !wasYolo {
+			m.childAnswerLocked(s, ix, answer)
 		}
 		m.changedLocked(s, before)
 		return ix.Interaction, nil
