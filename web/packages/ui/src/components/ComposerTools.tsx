@@ -1,15 +1,19 @@
 import { Tabs } from '@base-ui/react/tabs';
-import { ChevronDown, Lock, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, Copy, Lock, SlidersHorizontal } from 'lucide-react';
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useApi } from '../ApiContext';
 import type { Model, SessionDetail, Subagent } from '../api';
 import { cn } from '../lib/cn';
+import { useCopied } from '../lib/clipboard';
 import { compactTokens } from '../lib/cost';
+import { runLines } from '../lib/subagents';
 import { duration } from '../lib/transcript';
 import { contextLabel, ContextReport, ContextRing, contextShown } from './ComposerUsage';
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
+import { clockTime } from './common';
+import { PART_TONE, useActions } from './Subagents';
 import { Counts, Tile, UsageTab } from './TaskUsage';
 import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
@@ -100,7 +104,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, subagent, 
       </PanelHead>
       {/* One fixed height for every tab, so switching never moves or resizes the panel. */}
       <Tabs.Panel value={tab} className={cn('flex flex-none flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4 outline-hidden', sheet ? 'h-[60dvh]' : 'h-[min(440px,60vh)]')}>
-        {subagent ? <SubagentTab subagent={subagent} tab={tab} /> : <>
+        {subagent ? <SubagentTab subagent={subagent} tab={tab} onRun={close} /> : <>
         {tab === 'context' && <ContextTab session={session}><ContextReport session={session} model={model} /></ContextTab>}
         {tab === 'usage' && <UsageTab session={session} />}
         {tab === 'agent' && (skills.length ? <>
@@ -130,10 +134,38 @@ export function ComposerTools({ session, model, agentReason, onAgent, subagent, 
   </>;
 }
 
-/** A subagent's tab in its read-only Tools: what it used, and what kind of agent it is. */
-function SubagentTab({ subagent: s, tab }: Readonly<{ subagent: Subagent; tab: Tool }>) {
+/**
+ * A subagent's tab in its read-only Tools: what it used; what kind of agent it is, with Copy agent ID; and, with more
+ * than one, its runs, each scrolling the transcript to its first item (paging older history in) and closing Tools (`onRun`).
+ */
+function SubagentTab({ subagent: s, tab, onRun }: Readonly<{ subagent: Subagent; tab: Tool; onRun: () => void }>) {
+  const actions = useActions();
+  const [copied, copy] = useCopied();
   if (tab === 'agent') {
-    return <PanelSection label="Agent"><Counts rows={[['Name', s.name || 'Subagent'], ['Type', s.type || 'Not reported'], ['Description', s.description || '—']]} /></PanelSection>;
+    const runs = runLines(s);
+    return <>
+      <PanelSection label="Agent" action={<Button size="sm" variant="subtle" className="text-body" onClick={() => copy(s.id)}><Copy aria-hidden="true" className="text-muted" />{copied ? 'Copied' : 'Copy agent ID'}</Button>}>
+        <Counts rows={[['Name', s.name || 'Subagent'], ['Type', s.type || 'Not reported'], ['Description', s.description || '—']]} />
+      </PanelSection>
+      {runs.length > 0 && <PanelSection label="Runs" meta={`${runs.length}`}>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {runs.map((r, i) => (
+            <span key={i} className="contents">
+              {r.gapBefore && <span className="text-meta text-faint">Earlier runs not kept · latest runs</span>}
+              <button
+                type="button"
+                disabled={!r.started_at}
+                title={r.started_at ? `${r.trigger} · ${clockTime(r.started_at)}` : 'When this run started was not recorded, so it cannot be found in the transcript.'}
+                className="h-6 rounded-full bg-tint-well px-2 text-meta tabular-nums text-body transition-colors duration-100 hover:bg-tint-hover disabled:hover:bg-tint-well pointer-coarse:min-h-11"
+                onClick={() => { actions?.seek({ agent: s.id, time: r.started_at!, first: i === 0, running: r.running }); onRun(); }}
+              >
+                {r.n === null ? 'Run' : `Run ${r.n}`} · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
+              </button>
+            </span>
+          ))}
+        </div>
+      </PanelSection>}
+    </>;
   }
   const took = s.started_at ? duration(s.started_at, s.ended_at ?? new Date().toISOString()) : '';
   return (

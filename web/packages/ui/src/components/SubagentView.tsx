@@ -3,7 +3,8 @@ import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type
 import { taskName, type Badge, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { cn } from '../lib/cn';
 import { families } from '../lib/subagents';
-import { BAR_ROW, barCard, ProjectBadge, useMedia, type Tone } from './common';
+import { awaitsUser } from '../lib/transcript';
+import { BAR_ROW, barCard, ProjectBadge, STATE_LABELS, STATE_TONE, useMedia, type Tone } from './common';
 import { AgentTranscriptView, NOT_STOPPING, STATUS_LABEL, StopSubagent, SubagentMark, Took, useActions, useScope } from './Subagents';
 import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
@@ -58,14 +59,16 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
   if (!actions || !task) return null;
   const chain = spawners(s, subagents);
   const name = threadName(session);
-  const word = STATUS_LABEL[s.status];
+  // A request of its own waiting for the owner is the Thread's needs-you state, in its word and tone.
+  const needsYou = task.interactions.some((i) => i.agent_id === s.id && awaitsUser(i));
+  const word = needsYou ? STATE_LABELS.awaiting_permission : STATUS_LABEL[s.status];
   const levels: ActionItem[] = [
     { key: 'thread', label: name, icon: badge ? <ProjectBadge badge={badge} /> : undefined, onSelect: back },
     ...chain.map((a) => ({ key: a.id, label: agentName(a), icon: <Workflow />, onSelect: () => actions.show(a.id) })),
   ];
   return (
     <header className={cn('pane-header', BAR_ROW)}>
-      <div role="group" aria-label={`State: ${word}`} title={`State: ${word}`} className={barCard(TONE[s.status])}>
+      <div role="group" aria-label={`State: ${word}`} title={`State: ${word}`} className={barCard(needsYou ? STATE_TONE.awaiting_permission : TONE[s.status])}>
         {/* A phone gives the drawer's toggle to ←: the Thread it returns to has it. */}
         {!phone && leading}
         <Tip label={`Back to ${name} · Esc`}>
@@ -204,6 +207,7 @@ export function SubagentView({ session, subagent: s, onShow }: Readonly<{ sessio
   const transcript = useScope((d) => d.agents[s.id]);
   const snapshotSeq = useScope((d) => d.snapshotSeq) ?? 0;
   const parent = useScope((d) => d.summaries.calls.get(s.parent_tool_call_id ?? ''));
+  const seek = useScope((d) => (d.seek?.agent === s.id ? d.seek : null));
   const root = useRef<HTMLDivElement>(null);
   // The row that opened it is under the view now: the transcript takes the focus, so the keys scroll it at once.
   useLayoutEffect(() => {
@@ -227,6 +231,7 @@ export function SubagentView({ session, subagent: s, onShow }: Readonly<{ sessio
         parent={parent}
         spawner={spawner ? agentName(spawner) : threadName(session)}
         result={(s.status === 'completed' || s.status === 'idle') && !s.background ? parent?.tool?.output : undefined}
+        seek={seek}
       />
       {/* Above the dock's 40px overlap and a gap; the transcript's foot padding clears it at rest. */}
       <div className="absolute right-3 bottom-13 z-20 sm:right-4 md:right-6">

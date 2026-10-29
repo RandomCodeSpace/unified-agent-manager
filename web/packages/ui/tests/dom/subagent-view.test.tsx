@@ -1,6 +1,7 @@
 // A subagent in the Conversation pane (DESIGN.md subagent view): its own address, the bar, the switcher and the composer read-only.
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
+import * as data from '../../src/mock/data';
 import { PHONE } from '../../src/components/ui/dialog';
 import { renderApp } from './render';
 
@@ -39,4 +40,30 @@ test('on a phone the trail folds the levels above into "…", and the switcher i
   expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['NSAccessibility pass on the post template', 'Check contrast of the theme tokens']);
   await user.keyboard('{Escape}');
   expect(screen.getByRole('button', { name: 'Subagent 3 of 5. Show all' })).toBeTruthy();
+});
+
+test('a subagent waiting on the owner reads as the Thread does: Input, the needs-you fill', async () => {
+  const state = data.seed();
+  const task = state.tasks.find((t) => t.id === 't8')!;
+  task.interactions = [...task.interactions, { id: 'perm-a1', kind: 'permission', title: 'Run a shell command', detail: 'npx html-validate templates/', state: 'pending', time: new Date().toISOString(), agent_id: 'a1', options: [{ id: 'once', label: 'Allow once' }] }];
+  vi.spyOn(data, 'seed').mockReturnValue(state);
+  renderApp('#task=t8&agent=a1');
+  await transcript('Survey templates for missing alt text and labels');
+  const bar = screen.getByRole('group', { name: 'State: Input' });
+  expect(bar.className).toContain('bg-warning-wash');
+  // Another one, with nothing waiting, keeps its own state.
+  window.location.hash = '#task=t8&agent=a2';
+  await transcript('Check contrast of the theme tokens');
+  expect(screen.getByRole('group', { name: 'State: Running' }).className).toContain('bg-accent-wash');
+});
+
+test('Tools → Agent copies the agent ID', async () => {
+  const { user } = renderApp('#task=t8&agent=a1');
+  await transcript('Survey templates for missing alt text and labels');
+  await user.click(screen.getByRole('button', { name: 'Tools for this subagent, read only' }));
+  const tools = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await user.click(tools.getByRole('tab', { name: 'Agent' }));
+  await user.click(tools.getByRole('button', { name: 'Copy agent ID' }));
+  expect(await tools.findByRole('button', { name: 'Copied' })).toBeTruthy();
+  expect(await navigator.clipboard.readText()).toBe('a1');
 });

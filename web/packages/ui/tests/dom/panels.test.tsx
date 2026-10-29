@@ -396,7 +396,7 @@ describe('subagents', () => {
     expect(within(bar()).queryByRole('button', { name: /^Stop subagent/ })).toBeNull();
   });
 
-  test('a subagent with several runs counts them in its read-only Tools, scoped to it, with no context meter', async () => {
+  test('a subagent with several runs counts them in its read-only Tools, scoped to it, and lists them under Agent', async () => {
     const { user } = await openTask('t22');
     await user.click(live().getByRole('button', { name: /^Audit package internal\/store, running/ }));
     await view('Audit package internal/store');
@@ -407,6 +407,32 @@ describe('subagents', () => {
     expect(tools.getByText('Runs').nextElementSibling?.textContent).toBe('3');
     await user.click(tools.getByRole('tab', { name: 'Agent' }));
     expect(tools.getByText('Name').nextElementSibling?.textContent).toBe('Audit package internal/store');
+    expect(tools.getAllByRole('button', { name: /^Run \d · / }).map((b) => b.textContent)).toEqual(['Run 1 · ✓ 2m 0s', 'Run 2 · ✓ 2m 0s', 'Run 3 · running']);
+    // A run closes Tools and finds its start in the transcript.
+    await user.click(tools.getByRole('button', { name: /^Run 2/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull());
+    expect(screen.queryByText('That run is not in the retained transcript.')).toBeNull();
+  });
+
+  test('picking a run never calls it gone while the transcript can still show it: the first run is the start, a fresh running run the end', async () => {
+    const { user } = await openTask('t8');
+    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    const transcript = await view('Check contrast of the theme tokens');
+    await within(transcript).findByText(/is 2\.85:1, below AA/);
+    const pick = async (run: RegExp) => {
+      await user.click(screen.getByRole('button', { name: 'Tools for this subagent, read only' }));
+      const tools = within(await screen.findByRole('dialog', { name: 'Tools' }));
+      await user.click(tools.getByRole('tab', { name: 'Agent' }));
+      await user.click(tools.getByRole('button', { name: run }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull());
+    };
+    await pick(/^Run 2 · /);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText('That run is not in the retained transcript.')).toBeNull();
+    transcript.scrollTop = 40;
+    await pick(/^Run 1 · /);
+    await waitFor(() => expect(transcript.scrollTop).toBe(0));
+    expect(screen.queryByText('That run is not in the retained transcript.')).toBeNull();
   });
   test('a subagent another spawned sits under it; its trail leads back up a level, and ↑ ↓ on the switcher step through them', async () => {
     const { user } = await openTask('t8');

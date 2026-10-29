@@ -139,6 +139,17 @@ export interface SheetRequest {
   n: number;
 }
 
+/** A run picked in the subagent's Tools: its transcript shows the run's first item. `n` counts the picks. */
+export interface Seek {
+  agent: string;
+  time: string;
+  /** The first run: the transcript's start. */
+  first: boolean;
+  /** Still running: with nothing of it recorded yet, the transcript's end. */
+  running: boolean;
+  n: number;
+}
+
 /** What of the Task the transcript reads; kept while those fields are unchanged, so streaming leaves it alone. */
 type TaskInfo = Pick<SessionDetail, 'id' | 'provider' | 'workdir' | 'interactions' | 'stage' | 'state'>;
 
@@ -173,6 +184,8 @@ interface ScopeData {
   sheet: SheetRequest | null;
   /** A stop waits for its confirmation: a press there is not a press away from the sheet. */
   confirming: boolean;
+  /** The last run picked to scroll its subagent's transcript to. */
+  seek: Seek | null;
 }
 
 /** Stable for the life of the scope, so rows never render for a new callback. */
@@ -187,6 +200,8 @@ interface ScopeActions {
   open: (to: SheetTo) => void;
   /** Shows a subagent in the Conversation pane, in the Thread's place; the sheet makes way. */
   show: (agentId: string) => void;
+  /** Scrolls the open subagent's transcript to a run's first item. */
+  seek: (run: Omit<Seek, 'n'>) => void;
 }
 
 class ScopeStore {
@@ -247,6 +262,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
   const [sheet, setSheet] = useState<SheetRequest | null>(null);
+  const [seek, setSeek] = useState<Seek | null>(null);
   // The items and the index change with every streamed token; what is read from them (the user
   // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
   const byParent = parentMap(session.subagents);
@@ -263,8 +279,8 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
   const confirming = stopConfirm.target !== null;
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
@@ -292,6 +308,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
           request(null);
           handlers.current.onShow(agentId);
         },
+        seek: (run: Omit<Seek, 'n'>) => setSeek((x) => ({ ...run, n: (x?.n ?? 0) + 1 })),
       } satisfies ScopeActions,
     };
   });
@@ -316,7 +333,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
 
 // Identity tones as whole class names, so Tailwind sees them.
 export const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
-const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
+export const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
 const STATUS_WORD: Record<SubagentStatus, string> = { running: 'running', idle: 'idle', completed: 'completed', failed: 'failed', cancelled: 'stopped' };
 export const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };
 
@@ -744,6 +761,7 @@ export function AgentTranscriptView({
   parent,
   name,
   spawner,
+  seek,
 }: Readonly<{
   sessionId: string;
   provider: string;
@@ -759,6 +777,8 @@ export function AgentTranscriptView({
   name: string;
   /** Who spawned it: the Thread's name or a subagent's, for "asked by" and "returned to". */
   spawner: string;
+  /** A run picked in its Tools: show the first item at or after its start, paging to it if need be. */
+  seek?: Seek | null;
 }>) {
   // Always on screen: it mounts with the view and leaves with it.
   const open = true;
@@ -877,6 +897,58 @@ export function AgentTranscriptView({
     scrollTop.current = el.scrollTop;
   }
 
+  // Seeking a run: page towards its start until the first item at or after it is here, then show
+  // it; the first run is the transcript's start, a running run with nothing recorded yet its end.
+  // The reader scrolling or touching meanwhile takes over: nothing is written under them.
+  const [sought, setSought] = useState(seek?.n);
+  const [seeking, setSeeking] = useState<Seek | null>(null);
+  const [lost, setLost] = useState(false);
+  if (seek && seek.n !== sought) {
+    setSought(seek.n);
+    setSeeking(seek);
+    setLost(false);
+  }
+  const seekStart = useRef(0);
+  useEffect(() => {
+    if (seeking) seekStart.current = performance.now();
+  }, [seeking]);
+  const seekNow = useEffectEvent(() => {
+    const el = scroller.current;
+    const run = seeking;
+    if (!run || !el || !transcript || transcript.loading || detail.agent?.page) return;
+    // A failed read says so itself; the run is not called gone for it.
+    if (transcript.error || detail.agent?.pageError || touching.current || userAt.current > seekStart.current) return setSeeking(null);
+    const more = detail.compact && open;
+    const before = more && detail.agent?.before, after = more && detail.agent?.after;
+    if (run.first) {
+      if (before) return loadOlder();
+      setSeeking(null);
+      atBottom.current = false;
+      el.scrollTop = 0;
+      return;
+    }
+    // Compared as instants: an item's and a run's times may differ in zone or fraction.
+    const start = ms(run.time);
+    const at = items.findIndex((item) => ms(item.time) >= start);
+    if ((at === 0 || (at < 0 && !items.length)) && before) return loadOlder();
+    if (at < 0 && after) return loadOlder('newer');
+    setSeeking(null);
+    if (at < 0 && run.running) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    const id = items[at]?.id;
+    const row = id ? (el.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(id)}"], #${CSS.escape(`item-${id}`)}`) ?? [...el.querySelectorAll<HTMLElement>('[data-history-items]')].find((node) => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(id))) : undefined;
+    if (!row) return setLost(true);
+    atBottom.current = false;
+    el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
+  });
+  useEffect(() => {
+    if (seeking === null) return;
+    const frame = requestAnimationFrame(seekNow);
+    return () => cancelAnimationFrame(frame);
+  }, [seeking, items, transcript?.loading, transcript?.error, detail.agent?.page, detail.agent?.pageError]);
+
   const visibleInteractions = detail.compact ? windowInteractions(items, interactions, 0, !!detail.agent?.before, !!detail.agent?.after) : interactions;
   function latest() {
     pageRead.current?.controller.abort(); pageRead.current = null;
@@ -931,6 +1003,7 @@ export function AgentTranscriptView({
       {detail.agent?.page && <Note role="status"><Spinner /> Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
+      {lost && <Note role="status">That run is not in the retained transcript.</Note>}
       {prompt && <p className="-mb-4 self-end text-caption text-muted">Asked by {spawner}{clock(prompt.time) && ` · ${clock(prompt.time)}`}</p>}
       {body}
       {live && !detail.agent?.after && <p className="text-caption text-accent">Working · follows its end</p>}
