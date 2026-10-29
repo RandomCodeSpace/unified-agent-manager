@@ -48,10 +48,9 @@ describe('native task branching', () => {
     await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     const heading = await screen.findByRole('heading', { level: 1, name: 'Native branch' });
     expect(fork).toHaveBeenCalledTimes(1);
-    // A new branch is Idle, never Closed, in its header and its row; its hover says it starts with your message.
+    // A new branch is Idle, never Closed, in its header and its row.
     const state = screen.getByRole('group', { name: 'State: Idle' });
     expect(state.contains(heading)).toBe(true);
-    expect(state.getAttribute('title')).toBe('State: Idle · Branched; starts with your first message');
     const row = document.querySelector('[data-task-row="native-branch"]')!;
     expect(row.textContent).toContain('Idle');
     expect(row.textContent).not.toContain('Closed');

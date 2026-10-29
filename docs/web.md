@@ -1434,8 +1434,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Thread › spawning subagents › subagent", every level a link (the Thread one
   scrolls back to where it was spawned), its type (Copilot's agent name, such
   as explore, task or general-purpose, when reported) and time, and Stop while
-  it runs; its colour follows the subagent's state. Chips at the bottom right
-  switch between the Thread's subagents (↑ ↓ step). The message box stays,
+  it runs; its colour follows the subagent's state. The strip above the
+  message box keeps the Thread's subagents, as in the Thread: its list
+  switches to another one; the Thread's todo list is not shown there. The message box stays,
   read-only: subagents take no messages, its model and effort show the
   subagent's own, locked, and Tools shows its tokens, tool calls, time and
   runs. Its address is the Thread's with `&agent=<id>` (`#task=<id>&agent=<id>`),
@@ -1694,8 +1695,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "3 files changed; tests pass". The
   Thread's row in the sidebar keeps it in its hover text ("Review" is the
-  visible status until you open the Thread, then "Finished"), and the Thread header
-  beside its state (not on a phone). It is the finish evidence's own reading
+  visible status until you open the Thread, then "Finished"). It is the finish evidence's own reading
   of the turn, with no model call (the service reads it
   once, for both): the files the Thread's edit tools changed in the turn (the main
   agent's and its subagents', the files Changes shows for "Last turn"),
@@ -1708,9 +1708,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   A new turn clears the line, and a turn that is stopped or fails gets none.
   What the line reports is no state: a Thread whose turn says "tests fail" or
   that commands failed is Review or Finished like any other, the line's words
-  in its row tip, and the header's hover reads "State: Finished · tests fail",
-  or "a claim contradicted" when the last reply's receipts contradict one of
-  its claims.
+  in its row tip.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
   copies the conversation through that reply into a new active Thread, without

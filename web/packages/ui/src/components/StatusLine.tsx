@@ -211,14 +211,14 @@ const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text
  * opens from the bottom, and the arrow stands alone). `error`: why the last jump to a subagent
  * did not land, said in the sheet.
  */
-export function StatusLine({ line: given, session, since, hidden, hideSubagents = false, error, jump, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, hideTodos = false, error, jump, onJump }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
   since?: string;
   hidden: boolean;
-  /** A subagent fills the Conversation pane: its switcher stands in for the subagents section. */
-  hideSubagents?: boolean;
+  /** A subagent fills the Conversation pane: the Thread's todo list and its history are not its own. */
+  hideTodos?: boolean;
   error?: string;
   /** The reader is away from the bottom: the arrow shows. */
   jump: boolean;
@@ -234,7 +234,7 @@ export function StatusLine({ line: given, session, since, hidden, hideSubagents 
   const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
   const any = !!index?.subagents.length;
-  const subagents = hidden || hideSubagents || !any ? undefined : index!.subagents;
+  const subagents = hidden || !any ? undefined : index!.subagents;
   const timing = session.turn_timings?.at(-1);
   // The live region still says a turn started when the strip draws nothing for it.
   const spoken = hidden ? null : line;
@@ -242,7 +242,7 @@ export function StatusLine({ line: given, session, since, hidden, hideSubagents 
   const api = useApi();
   const activity = session.turn_activity?.todos;
   const known = activity?.known && activity.counts.total ? activity : undefined;
-  const turns = todoTurns(session);
+  const turns = hideTodos ? [] : todoTurns(session);
   // The history read: with the list unknown (a closed Thread) the last list uam wrote stands in for it, and the ledger reads the records afresh each time it opens.
   const [history, setHistory] = useState<{ id: string; data?: TodoHistory; error?: string } | null>(null);
   const kept = history?.id === session.id ? history : null;
@@ -263,7 +263,7 @@ export function StatusLine({ line: given, session, since, hidden, hideSubagents 
   useEffect(() => {
     if (wantLive) read(session.id);
   }, [wantLive, turns.length, session.id, read]);
-  const view = known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
+  const view = hideTodos ? undefined : known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
   const working = line?.kind === 'working';
   const list = line?.kind === 'working' ? line.todo : undefined;
   // Idle, or working with a list the line says nothing of (untouched, all done), the counts alone draw the blocks.

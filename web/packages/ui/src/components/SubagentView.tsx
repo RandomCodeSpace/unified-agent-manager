@@ -1,8 +1,6 @@
-import { ArrowLeft, ChevronDown, ChevronRight, Ellipsis, Square, Workflow } from 'lucide-react';
-import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { ArrowLeft, ChevronRight, Ellipsis, Square, Workflow } from 'lucide-react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { taskName, type Badge, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
-import { cn } from '../lib/cn';
-import { families } from '../lib/subagents';
 import { awaitsUser } from '../lib/transcript';
 import { BAR_ROW, barCard, ProjectBadge, STATE_LABELS, STATE_TONE, useMedia, type Tone } from './common';
 import { AgentTranscriptView, NOT_STOPPING, STATUS_LABEL, StopSubagent, SubagentMark, Took, useActions, useScope } from './Subagents';
@@ -68,7 +66,7 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
   ];
   return (
     <header className={BAR_ROW}>
-      <div role="group" aria-label={`State: ${word}`} title={`State: ${word}`} className={barCard(needsYou ? STATE_TONE.awaiting_permission : TONE[s.status])}>
+      <div role="group" aria-label={`State: ${word}`} className={barCard(needsYou ? STATE_TONE.awaiting_permission : TONE[s.status])}>
         {/* A phone gives the drawer's toggle to ←: the Thread it returns to has it. */}
         {!phone && leading}
         <Tip label={`Back to ${name} · Esc`}>
@@ -131,77 +129,11 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
   );
 }
 
-/** Chips shown around the current one before the rest fold into "+N". */
-const SHOWN = 3;
-const CHIP = 'flex h-7 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-caption transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11';
-
-/**
- * The switcher (DESIGN.md subagent view): at the pane's bottom right, on its own solid layer, the current subagent and its
- * neighbours as chips (state glyph and name), the rest behind "+N"; ↑ ↓ step through them. A phone shows "3 of N".
- */
-function Switcher({ current, onShow }: Readonly<{ current: Subagent; onShow: (id: string) => void }>) {
-  const subagents = useScope((d) => d.subagents) ?? [];
-  const phone = useMedia(PHONE);
-  const group = useRef<HTMLDivElement>(null);
-  // A step from the keys keeps the focus here, on the chip of the one it opened.
-  const stepped = useRef(false);
-  useLayoutEffect(() => {
-    if (!stepped.current) return;
-    stepped.current = false;
-    // The phone's one chip has no current mark: its trigger.
-    (group.current?.querySelector<HTMLElement>('[aria-current="true"]') ?? group.current?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
-  }, [current.id]);
-  const rows = families(subagents).flatMap((f) => f.rows.map((r) => r.subagent));
-  const at = rows.findIndex((x) => x.id === current.id);
-  if (at < 0 || rows.length < 2) return null;
-  const step = (by: number) => {
-    const next = rows[at + by];
-    if (next) onShow(next.id);
-  };
-  const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    stepped.current = true;
-    step(e.key === 'ArrowUp' ? -1 : 1);
-  };
-  const start = phone ? at : Math.max(0, Math.min(at - 1, rows.length - SHOWN));
-  const shown = rows.slice(start, start + (phone ? 1 : SHOWN));
-  const rest = rows.filter((x) => !shown.includes(x));
-  const items: ActionItem[] = rows.map((x) => ({ key: x.id, label: `${agentName(x)}${x.id === current.id ? ' (open)' : ''}`, icon: <SubagentMark status={x.status} />, onSelect: () => onShow(x.id) }));
-  const all = (face: ReactNode, label: string) => (
-    <Menu.Root modal={false}>
-      <Menu.Trigger render={<button type="button" aria-label={label} className={cn(CHIP, 'tabular-nums text-body')} />}>
-        {face}
-        <ChevronDown aria-hidden="true" className="size-3 text-faint" />
-      </Menu.Trigger>
-      <Menu.Content side="top" align="end" className="max-h-80 max-w-72">
-        <Menu.Actions items={items} />
-      </Menu.Content>
-    </Menu.Root>
-  );
-  return (
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- ↑ ↓ step through the subagents from the chips inside.
-    <div ref={group} role="group" aria-label="Subagents" className="flex items-center gap-0.5 rounded-full bg-raised p-0.5 shadow-float" onKeyDown={onKeyDown}>
-      {phone ? all(<><span className="flex size-4 items-center justify-center"><SubagentMark status={current.status} /></span><span><span className="font-medium text-ink">{at + 1}</span> of {rows.length}</span></>, `Subagent ${at + 1} of ${rows.length}. Show all`) : (
-        <>
-          {shown.map((x) => (
-            <button key={x.id} type="button" aria-current={x.id === current.id || undefined} title={agentName(x)} className={cn(CHIP, 'max-w-44', x.id === current.id ? 'bg-tint-selected font-medium text-ink hover:bg-tint-selected' : 'text-body')} onClick={() => onShow(x.id)}>
-              <span className="flex size-4 shrink-0 items-center justify-center"><SubagentMark status={x.status} /></span>
-              <span className="min-w-0 truncate">{agentName(x)}</span>
-            </button>
-          ))}
-          {rest.length > 0 && all(`+${rest.length}`, `${rest.length} more subagents`)}
-        </>
-      )}
-    </div>
-  );
-}
-
 /**
  * A subagent in the Conversation pane, over the Thread's conversation (kept beneath, where it was): its transcript read
- * as a conversation (AgentTranscriptView), the switcher floating at the bottom right above the dock.
+ * as a conversation (AgentTranscriptView). The strip's subagents section switches between them, as in the Thread.
  */
-export function SubagentView({ session, subagent: s, onShow }: Readonly<{ session: SessionDetail; subagent: Subagent; onShow: (id: string) => void }>) {
+export function SubagentView({ session, subagent: s }: Readonly<{ session: SessionDetail; subagent: Subagent }>) {
   const subagents = useScope((d) => d.subagents) ?? [];
   const task = useScope((d) => d.task);
   const transcript = useScope((d) => d.agents[s.id]);
@@ -233,10 +165,6 @@ export function SubagentView({ session, subagent: s, onShow }: Readonly<{ sessio
         result={(s.status === 'completed' || s.status === 'idle') && !s.background ? parent?.tool?.output : undefined}
         seek={seek}
       />
-      {/* Above the dock's 40px overlap and a gap; the transcript's foot padding clears it at rest. */}
-      <div className="absolute right-3 bottom-13 z-20 sm:right-4 md:right-6">
-        <Switcher current={s} onShow={onShow} />
-      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// A finished turn whose own record failed (mock t-chart, its outcome or reply changed) stays Finished: what it found is hover text, no state.
+// A finished turn whose own record failed (mock t-chart, its outcome or reply changed) stays Finished: what it found is no state.
 import { screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
@@ -13,21 +13,21 @@ function withChart(change: (task: ReturnType<typeof data.seed>['tasks'][number])
   vi.spyOn(data, 'seed').mockReturnValue(state);
 }
 
-// The header's state is its card's fill and name (DESIGN.md Thread header); what the turn found is the card's hover.
+// The header's state is its card's fill and name (DESIGN.md Thread header), with no tooltip of its own.
 const bar = () => screen.getByRole('group', { name: /^State: / });
 const row = () => document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-task-row="t-chart"]')!;
 
-test('failed tests in the outcome stay Finished, saying so on the header\'s hover', async () => {
+test('failed tests in the outcome stay Finished', async () => {
   withChart((t) => { t.outcome = 'Charted the commits; tests fail; 1 command failed'; });
   await openTask('t-chart');
   const state = await screen.findByRole('group', { name: 'State: Finished' });
-  expect(state.getAttribute('title')).toBe('State: Finished · tests fail');
+  expect(state.hasAttribute('title')).toBe(false);
   expect(state.className).toContain('before:bg-success');
   await waitFor(() => expect(row().textContent).toMatch(/Review|Finished/));
   expect(row().textContent).not.toContain('Tests fail');
 });
 
-test('a reply claim the turn\'s record contradicts says so on the header\'s hover', async () => {
+test('a reply claim the turn\'s record contradicts leaves the Thread Finished', async () => {
   withChart((t) => {
     const reply = t.items.filter((i) => i.kind === 'assistant').at(-1)!;
     reply.text = `${reply.text}\n\nAll tests pass.`;
@@ -35,14 +35,13 @@ test('a reply claim the turn\'s record contradicts says so on the header\'s hove
     t.items.splice(t.items.indexOf(reply), 0, { id: 'red-tests', kind: 'tool', time: reply.time, tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./...' }), exit_code: 1, output: 'FAIL' } });
   });
   await openTask('t-chart');
-  expect((await screen.findByRole('group', { name: 'State: Finished' })).getAttribute('title')).toBe('State: Finished · a claim contradicted');
+  expect((await screen.findByRole('group', { name: 'State: Finished' })).className).toContain('before:bg-success');
 });
 
 test('failed commands alone are no state: the turn stays Finished, green', async () => {
   withChart((t) => { t.outcome = 'Charted the commits; 2 commands failed'; });
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
-  expect(bar().getAttribute('title')).toBe('State: Finished');
   expect(bar().className).toContain('before:bg-success');
   expect(row().textContent).not.toContain('failed');
 });
