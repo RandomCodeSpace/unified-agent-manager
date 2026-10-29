@@ -919,11 +919,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   get 409 `budget_reached`; read-only and settings commands still run. The
   main agent's reply after it got the instruction (a denied call of its own,
   or uam's follow-up turn) is the handoff; a subagent's denied call does not
-  count. uam adds its own facts, computed without a model: AI credits
-  spent and the quota used, the time split, the last intent, the todo list,
-  the turn's failed tool calls, the files this Thread's edit tools changed
-  (git status against `HEAD`) and how many other files in its folder differ
-  from `HEAD`. Without a
+  count. uam adds its own facts, computed without a model, what to act on
+  first: the last intent, the todo list's counts and its open rows, the
+  commits on `HEAD` since the Thread started, the files this Thread's edit
+  tools changed (git status against `HEAD`) and how many other files differ
+  from `HEAD`, the turn's failed tool calls (file or command, and error),
+  then AI credits spent, the quota used and the time split. The commits and
+  files cover the Thread's folder and every repository holding a file its
+  edit tools changed, such as one it created inside the folder; files and
+  commits made only by commands are not traced to other repositories, and
+  commits by anything else in the same repository since then are listed
+  too. Without a
   handoff reply (Stop, the third call, a failed turn, a send uam could not
   make, an uncertain send followed by no turn within 2 minutes, closing the
   conversation, or a restart during the wrap-up) the facts alone are the
