@@ -51,7 +51,7 @@ At the limit uam does not cut you off mid-step: a tool already running finishes,
 - `## Next steps`: what to do next, in order.
 - `## How to resume`: the files to read first and the commands to run (build, test, the failing one).
 
-Be concrete: paths, commands, test names, errors. uam appends its own facts (files changed, the todo list, failed tool calls, AI credits spent), so do not list them again. The wrap-up has two model calls; past them uam stops the Thread and keeps only its facts.
+Be concrete: paths, commands, test names, errors. uam appends its own facts (open todos, commits since the Thread started, uncommitted files, failed tool calls, AI credits spent), so do not list them again. The wrap-up has two model calls; past them uam stops the Thread and keeps only its facts.
 
 ## GitLab via glab
 

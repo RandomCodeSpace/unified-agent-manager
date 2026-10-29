@@ -7,6 +7,9 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -240,12 +243,14 @@ const (
 	// handoffReadWait bounds the git and journal reads of the facts.
 	handoffReadWait = 10 * time.Second
 	// Bounds of the facts' lists.
-	maxHandoffFiles  = 30
-	maxHandoffTodos  = 20
-	maxHandoffFailed = 5
-	maxHandoffRunes  = 160
+	maxHandoffFiles   = 30
+	maxHandoffTodos   = 20
+	maxHandoffFailed  = 5
+	maxHandoffRunes   = 160
+	maxHandoffCommits = 30
+	maxHandoffRepos   = 10
 
-	handoffShape = "Write it in Markdown with these sections: ## Done, ## In progress (what is half-done and the state it is in), ## Next steps, ## How to resume (files and commands). uam adds the files changed, the todo list and the AI credits spent."
+	handoffShape = "Write it in Markdown with these sections: ## Done, ## In progress (what is half-done and the state it is in), ## Next steps, ## How to resume (files and commands). uam adds the open todos, the commits, the uncommitted files and the AI credits spent."
 	wrapDeny     = "uam budget: this Thread reached the spending limit its owner set. Do not start new work and do not call tools. Reply now with a handoff for whoever continues this work. " + handoffShape
 	wrapPrompt   = "uam: this Thread reached the spending limit its owner set. Stop here: do not call tools or start new work. Reply with a handoff for whoever continues this work. " + handoffShape
 )
@@ -272,8 +277,112 @@ type budgetWrap struct {
 // provider may not have received.
 var wrapPromptWait = 2 * time.Minute
 
-// handoffFiles lists the files changed for the facts.
-var handoffFiles = listTaskChanges
+// handoffRepo is one repository's part of the facts: its working tree
+// against HEAD and the commits made since the Thread started.
+type handoffRepo struct {
+	// label is its folder relative to the Thread's, "" for the Thread's own.
+	label   string
+	files   taskListing
+	err     error
+	commits []string // "hash\tsubject", newest first
+	more    bool     // more commits than were read
+}
+
+// handoffFiles reads the facts' repositories: the Thread's folder's (first,
+// even when it is not one) and those inside the folder holding files its
+// edit tools changed, such as repositories it created there, which the
+// folder's own git status does not see. Edits outside the folder are left
+// out: git runs only where the Thread works.
+var handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, turnStart, since time.Time) []handoffRepo {
+	files, err := listTaskChanges(ctx, workdir, edits, turnStart)
+	main := handoffRepo{files: files, err: err}
+	main.commits, main.more = handoffCommits(ctx, files.repo, since)
+	repos := []handoffRepo{main}
+	bases := []string{filepath.Clean(workdir)}
+	if real, err := filepath.EvalSymlinks(workdir); err == nil {
+		bases = append(bases, real)
+	}
+	// inside is p's path relative to the folder, ok when p is in it.
+	inside := func(p string) (string, bool) {
+		for _, base := range bases {
+			if rel, err := filepath.Rel(base, p); err == nil && filepath.IsLocal(rel) {
+				return rel, true
+			}
+		}
+		return "", false
+	}
+	abs := map[string]time.Time{}
+	for p, at := range edits {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(workdir, p)
+		}
+		if _, ok := inside(filepath.Clean(p)); ok {
+			abs[p] = at
+		}
+	}
+	for _, top := range editRepos(abs) {
+		rel, ok := inside(top)
+		if !ok || (files.repo != nil && top == files.repo.top) || len(repos) > maxHandoffRepos {
+			continue
+		}
+		r := handoffRepo{label: filepath.ToSlash(rel)}
+		r.files, r.err = listTaskChanges(ctx, top, abs, turnStart)
+		r.commits, r.more = handoffCommits(ctx, r.files.repo, since)
+		repos = append(repos, r)
+	}
+	return repos
+}
+
+// editRepos lists the work trees holding paths: for each, the nearest
+// folder above it with a .git entry, symbolic links resolved as git does.
+func editRepos(paths map[string]time.Time) []string {
+	seen, tops := map[string]string{}, map[string]bool{}
+	var top func(dir string) string
+	top = func(dir string) string {
+		if t, ok := seen[dir]; ok {
+			return t
+		}
+		t := ""
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			t = dir
+			if real, err := filepath.EvalSymlinks(dir); err == nil {
+				t = real
+			}
+		} else if parent := filepath.Dir(dir); parent != dir {
+			t = top(parent)
+		}
+		seen[dir] = t
+		return t
+	}
+	for p := range paths {
+		if t := top(filepath.Dir(p)); t != "" {
+			tops[t] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(tops))
+}
+
+// handoffCommits lists HEAD's commits since the Thread started, newest
+// first, at most maxHandoffCommits, and whether there are more. Commits by
+// anything else in the same repository since then are among them.
+func handoffCommits(ctx context.Context, repo *gitRepo, since time.Time) ([]string, bool) {
+	if repo == nil || !repo.hasHead || since.IsZero() {
+		return nil, false
+	}
+	out, code, _, err := runGit(ctx, repo.git, repo.top, 64<<10, "log", "--since="+since.UTC().Format("2006-01-02 15:04:05 +0000"),
+		"--format=%h%x09%s", "-n", strconv.Itoa(maxHandoffCommits+1), "HEAD", "--")
+	if err != nil || code != 0 {
+		return nil, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] == "" {
+		return nil, false
+	}
+	if len(lines) > maxHandoffCommits {
+		return lines[:maxHandoffCommits], true
+	}
+	return lines, false
+}
 
 // newWrap begins s's wrap-up.
 func newWrap(s *webSession, why string) *budgetWrap {
@@ -419,7 +528,7 @@ func (m *Manager) wrapPromptLapsed(s *webSession, w *budgetWrap) {
 type handoffNotes struct {
 	id, workdir, noReply string
 	edits                map[string]time.Time
-	turnStart            time.Time
+	turnStart, started   time.Time
 	spent, credits       float64
 	spentKnown           bool
 	quotaPercent         float64
@@ -445,7 +554,7 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 	if w.promptWait != nil {
 		w.promptWait.Stop()
 	}
-	in := handoffNotes{id: s.id, workdir: s.workdir, noReply: noReply, edits: maps.Clone(s.edits), turnStart: s.turnStart,
+	in := handoffNotes{id: s.id, workdir: s.workdir, noReply: noReply, edits: maps.Clone(s.edits), turnStart: s.turnStart, started: s.createdAt,
 		spent: s.budgetSpent(), spentKnown: s.usage != nil, credits: s.budget.Credits, quotaPercent: s.budget.QuotaPercent, intent: s.turnIntent, todos: s.turnActivity.Todos}
 	if used, ok := m.quotaUsedLocked(s.provider); ok {
 		in.quotaUsed = &used
@@ -456,10 +565,10 @@ func (m *Manager) finishWrapLocked(s *webSession, replyID, noReply string) {
 		defer log.Recover("budget handoff", &m.mu)
 		defer m.wg.Done()
 		ctx, cancel := context.WithTimeout(m.ctx, handoffReadWait)
-		files, filesErr := handoffFiles(ctx, in.workdir, in.edits, in.turnStart)
+		repos := handoffFiles(ctx, in.workdir, in.edits, in.turnStart, in.started)
 		split, _ := m.TaskTimeSplit(ctx, in.id)
 		cancel()
-		facts := in.markdown(files, filesErr, split)
+		facts := in.markdown(repos, split)
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if s.wrap != w || s.removed {
@@ -483,13 +592,17 @@ func failedTools(items []agentapi.Item, from time.Time, before map[string]bool) 
 		if tc == nil || tc.Status != agentapi.ToolFailed || it.Time.Before(from) || before != nil && !before[it.ID] {
 			continue
 		}
-		what := cmp.Or(toolCommand(tc), tc.Title)
+		command := toolCommand(tc)
+		what := cmp.Or(command, inputPath(tc.Input), strings.Join(patchHeaderPaths(tc.Input), ", "), tc.Title)
 		line := "`" + mdCode(tc.Name) + "`"
 		if what != "" && what != tc.Name {
 			line += ": " + "`" + mdCode(what) + "`"
 		}
 		if code := exitOf(tc); code != nil {
 			line += fmt.Sprintf(" (exit %d)", *code)
+		} else if msg := firstLine(tc.Output); command == "" && msg != "" {
+			// A shell's first output line is seldom its error; another tool's output is.
+			line += " — " + mdCode(msg)
 		}
 		if it.AgentID != "" {
 			line += " (subagent)"
@@ -508,12 +621,54 @@ func mdCode(text string) string {
 	return clipRunes(strings.ReplaceAll(text, "`", "'"), maxHandoffRunes)
 }
 
+// handoffFactsHead heads the facts; the memory pin leaves it out.
+const handoffFactsHead = "## Facts\n\n_Recorded by uam, not written by the agent._\n\n"
+
 // markdown is the handoff's facts: what uam recorded, without any model.
-func (in handoffNotes) markdown(files taskListing, filesErr error, split *TimeSplit) string {
+// What the next Thread acts on comes first: the open todos, the commits and
+// the uncommitted files; then what the budget counted.
+func (in handoffNotes) markdown(repos []handoffRepo, split *TimeSplit) string {
 	var b strings.Builder
-	b.WriteString("## Facts\n\n_Recorded by uam, not written by the agent._\n\n")
+	b.WriteString(handoffFactsHead)
 	if in.noReply != "" {
 		fmt.Fprintf(&b, "- **Handoff:** the agent wrote none (%s).\n", in.noReply)
+	}
+	if in.intent != "" {
+		fmt.Fprintf(&b, "- **Last intent:** %s\n", mdCode(in.intent))
+	}
+	if t := in.todos; t.Known && t.Counts.Total > 0 {
+		c := t.Counts
+		fmt.Fprintf(&b, "- **Todo list:** %d done, %d in progress, %d to do, %d blocked.\n", c.Done, c.InProgress, c.Pending, c.Blocked)
+		// Only the open rows: the done ones are the agent's Done section.
+		shown := 0
+		for _, row := range t.Todos {
+			note := ""
+			switch row.Status {
+			case agentapi.TodoDone:
+				continue
+			case agentapi.TodoInProgress:
+				note = " (in progress)"
+			case agentapi.TodoBlocked:
+				note = " (blocked"
+				if row.Note != "" {
+					note += ": " + mdCode(row.Note)
+				}
+				note += ")"
+			}
+			if shown == maxHandoffTodos {
+				fmt.Fprintf(&b, "  - and %d more open\n", c.Total-c.Done-maxHandoffTodos)
+				break
+			}
+			shown++
+			fmt.Fprintf(&b, "  - [ ] %s%s\n", mdCode(row.Title), note)
+		}
+	}
+	writeHandoffGit(&b, repos)
+	if len(in.failed) > 0 {
+		fmt.Fprintf(&b, "- **Failed tool calls in the last turn:** %d\n", len(in.failed))
+		for _, f := range in.failed {
+			fmt.Fprintf(&b, "  - %s\n", f)
+		}
 	}
 	if in.credits > 0 {
 		spent := "spend not reported yet"
@@ -536,66 +691,85 @@ func (in handoffNotes) markdown(files taskListing, filesErr error, split *TimeSp
 		}
 		fmt.Fprintf(&b, "- **Time:** %s in the model, %s running tools.\n", time.Duration(model*int64(time.Millisecond)).Round(time.Second), time.Duration(split.LocalMS*int64(time.Millisecond)).Round(time.Second))
 	}
-	if in.intent != "" {
-		fmt.Fprintf(&b, "- **Last intent:** %s\n", mdCode(in.intent))
-	}
-	if t := in.todos; t.Known && t.Counts.Total > 0 {
-		c := t.Counts
-		fmt.Fprintf(&b, "- **Todo list:** %d done, %d in progress, %d to do, %d blocked.\n", c.Done, c.InProgress, c.Pending, c.Blocked)
-		for i, row := range t.Todos {
-			if i == maxHandoffTodos {
-				fmt.Fprintf(&b, "  - and %d more\n", c.Total-maxHandoffTodos)
-				break
-			}
-			mark, note := "[ ]", ""
-			switch row.Status {
-			case agentapi.TodoDone:
-				mark = "[x]"
-			case agentapi.TodoInProgress:
-				note = " (in progress)"
-			case agentapi.TodoBlocked:
-				note = " (blocked"
-				if row.Note != "" {
-					note += ": " + mdCode(row.Note)
-				}
-				note += ")"
-			}
-			fmt.Fprintf(&b, "  - %s %s%s\n", mark, mdCode(row.Title), note)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// writeHandoffGit writes the commits since the Thread started and the
+// uncommitted files of repos, each path under its repository's label.
+func writeHandoffGit(b *strings.Builder, repos []handoffRepo) {
+	var commits, edited []string
+	more, read, all, others := false, false, 0, 0
+	for _, r := range repos {
+		prefix := ""
+		if r.label != "" {
+			prefix = r.label + "/"
 		}
-	}
-	if len(in.failed) > 0 {
-		fmt.Fprintf(&b, "- **Failed tool calls in the last turn:** %d\n", len(in.failed))
-		for _, f := range in.failed {
-			fmt.Fprintf(&b, "  - %s\n", f)
+		if r.err != nil {
+			where := "the Thread's folder"
+			if r.label != "" {
+				where = "`" + mdCode(r.label) + "`"
+			}
+			fmt.Fprintf(b, "- **Git:** could not read %s (%s).\n", where, mdCode(shortError(r.err)))
+			continue
 		}
+		if r.files.repo == nil {
+			continue
+		}
+		read = true
+		for _, c := range r.commits {
+			hash, subject, _ := strings.Cut(c, "\t")
+			line := "`" + mdCode(hash) + "` " + mdCode(subject)
+			if r.label != "" {
+				line = "`" + mdCode(r.label) + "` " + line
+			}
+			commits = append(commits, line)
+		}
+		more = more || r.more
+		for _, f := range r.files.task {
+			edited = append(edited, fmt.Sprintf("`%s` %s +%d −%d", mdCode(prefix+f.Path), f.Status, f.Additions, f.Deletions))
+		}
+		all += len(r.files.all.Files)
+		others += len(r.files.all.Files) - len(r.files.task)
+	}
+	if !read {
+		if len(repos) > 0 && repos[0].err == nil {
+			b.WriteString("- **Files changed:** not known; the folder is not a git repository.\n")
+		}
+		return
+	}
+	if len(commits) > 0 {
+		count := strconv.Itoa(len(commits))
+		if more {
+			count += " or more"
+		}
+		fmt.Fprintf(b, "- **Commits since the Thread started:** %s\n", count)
+		writeCapped(b, commits, maxHandoffCommits)
 	}
 	switch {
-	case filesErr != nil:
-		fmt.Fprintf(&b, "- **Files changed:** git could not list them (%s).\n", mdCode(shortError(filesErr)))
-	case files.repo == nil:
-		b.WriteString("- **Files changed:** not known; the folder is not a git repository.\n")
-	case len(files.all.Files) == 0:
-		b.WriteString("- **Files changed:** none against `HEAD`.\n")
+	case all == 0:
+		b.WriteString("- **Uncommitted changes:** none against `HEAD`.\n")
+	case len(edited) == 0:
+		b.WriteString("- **Files changed by this Thread:** none of its edits differ from `HEAD`.\n")
 	default:
-		// Only the files this Thread's edit tools touched; the rest of the
-		// folder (shell commands, other Threads, the owner) as a count.
-		if len(files.task) == 0 {
-			b.WriteString("- **Files changed by this Thread:** none of its edits differ from `HEAD`.\n")
-		} else {
-			fmt.Fprintf(&b, "- **Files changed by this Thread** against `HEAD`: %d\n", len(files.task))
-		}
-		for i, f := range files.task {
-			if i == maxHandoffFiles {
-				fmt.Fprintf(&b, "  - and %d more\n", len(files.task)-maxHandoffFiles)
-				break
-			}
-			fmt.Fprintf(&b, "  - `%s` %s +%d −%d\n", mdCode(f.Path), f.Status, f.Additions, f.Deletions)
-		}
-		if others := len(files.all.Files) - len(files.task); others > 0 {
-			fmt.Fprintf(&b, "- **Other changes in the folder:** %d %s from `HEAD` that this Thread's edit tools did not touch (shell commands or others may have).\n", others, plural(others, "file differs", "files differ"))
-		}
+		fmt.Fprintf(b, "- **Files changed by this Thread** against `HEAD`: %d\n", len(edited))
+		writeCapped(b, edited, maxHandoffFiles)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	// The rest of the working trees (shell commands, other Threads, the
+	// owner) as a count.
+	if others > 0 {
+		fmt.Fprintf(b, "- **Other changes in the folder:** %d %s from `HEAD` that this Thread's edit tools did not touch (shell commands or others may have).\n", others, plural(others, "file differs", "files differ"))
+	}
+}
+
+// writeCapped writes lines as a nested list, at most limit of them.
+func writeCapped(b *strings.Builder, lines []string, limit int) {
+	for i, line := range lines {
+		if i == limit {
+			fmt.Fprintf(b, "  - and %d more\n", len(lines)-limit)
+			return
+		}
+		fmt.Fprintf(b, "  - %s\n", line)
+	}
 }
 
 // creditText writes AI units as the web UI does (formatCredits): "<0.01"

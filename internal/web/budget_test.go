@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,14 +130,14 @@ func TestBudgetLimitMidToolWrapsUpWithTheHandoffReply(t *testing.T) {
 	if h.ReplyID != "r2" || h.NoReply != "" {
 		t.Fatalf("handoff = %+v", h)
 	}
-	for _, want := range []string{"## Facts", "**AI credits:** 2.1 spent; budget 2.0", "**Last intent:** Running the tests", "1 done, 1 in progress, 1 to do", "[x] Write the parser", "[ ] Add the tests (in progress)",
+	for _, want := range []string{"## Facts", "**AI credits:** 2.1 spent; budget 2.0", "**Last intent:** Running the tests", "1 done, 1 in progress, 1 to do", "[ ] Add the tests (in progress)", "[ ] Update the docs",
 		"`bash`: `go test ./...` (exit 1)", "none of its edits differ from `HEAD`", "**Other changes in the folder:** 2 files differ from `HEAD`"} {
 		if !strings.Contains(h.Facts, want) {
 			t.Errorf("facts lack %q:\n%s", want, h.Facts)
 		}
 	}
-	if strings.Contains(h.Facts, "make check") {
-		t.Errorf("facts name a call that did not fail:\n%s", h.Facts)
+	if strings.Contains(h.Facts, "make check") || strings.Contains(h.Facts, "Write the parser") {
+		t.Errorf("facts name a call that did not fail or a done todo:\n%s", h.Facts)
 	}
 	if sends := conv.Sends(); len(sends) != 1 || conv.Cancels() != 0 {
 		t.Fatalf("sends %q, cancels %d: the handoff needed no prompt and no stop", sends, conv.Cancels())
@@ -472,10 +476,10 @@ func budgetStopping(m *Manager, id string) bool {
 func TestBudgetRaisedWhileTheFactsAreReadDropsTheHandoff(t *testing.T) {
 	reading, release := make(chan struct{}), make(chan struct{})
 	files := handoffFiles
-	handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, start time.Time) (taskListing, error) {
+	handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, start, since time.Time) []handoffRepo {
 		close(reading)
 		<-release
-		return files(ctx, workdir, edits, start)
+		return files(ctx, workdir, edits, start, since)
 	}
 	t.Cleanup(func() { handoffFiles = files })
 	m, prov := startUsageManager(t, nil, nil)
@@ -523,7 +527,7 @@ func TestHandoffFactsListOnlyTheThreadsFiles(t *testing.T) {
 			[]string{"`a.go` M +3 −1"}, []string{"Other changes"}},
 	}
 	for _, c := range cases {
-		facts := handoffNotes{}.markdown(c.files, nil, nil)
+		facts := handoffNotes{}.markdown([]handoffRepo{{files: c.files}}, nil)
 		for _, w := range c.want {
 			if !strings.Contains(facts, w) {
 				t.Errorf("%s: facts lack %q:\n%s", c.name, w, facts)
@@ -534,5 +538,86 @@ func TestHandoffFactsListOnlyTheThreadsFiles(t *testing.T) {
 				t.Errorf("%s: facts carry %q:\n%s", c.name, n, facts)
 			}
 		}
+	}
+}
+
+// The todo rows are the open ones, however many done rows come first.
+func TestHandoffFactsListOnlyOpenTodos(t *testing.T) {
+	var todos []agentapi.Todo
+	for i := range 30 {
+		todos = append(todos, agentapi.Todo{ID: fmt.Sprint("d", i), Title: fmt.Sprint("Finished ", i), Status: agentapi.TodoDone})
+	}
+	todos = append(todos, agentapi.Todo{ID: "b", Title: "Wait for the key", Status: agentapi.TodoBlocked, Note: "no access"})
+	for i := range 22 {
+		todos = append(todos, agentapi.Todo{ID: fmt.Sprint("p", i), Title: fmt.Sprint("Open ", i), Status: agentapi.TodoPending})
+	}
+	in := handoffNotes{todos: TodoView{Known: true, Todos: todos, Counts: TodoCounts{Total: 53, Done: 30, Pending: 22, Blocked: 1}}}
+	facts := in.markdown(nil, nil)
+	for _, want := range []string{"30 done, 0 in progress, 22 to do, 1 blocked", "[ ] Wait for the key (blocked: no access)", "[ ] Open 18", "and 3 more open"} {
+		if !strings.Contains(facts, want) {
+			t.Errorf("facts lack %q:\n%s", want, facts)
+		}
+	}
+	if strings.Contains(facts, "Finished") || strings.Contains(facts, "Open 19") {
+		t.Errorf("facts list a done row or more than %d:\n%s", maxHandoffTodos, facts)
+	}
+}
+
+// Committed work shows as commits, also in a repository the Thread made
+// inside its folder that the folder's repository ignores.
+func TestHandoffFactsListCommitsSinceTheStartAndNestedRepos(t *testing.T) {
+	dir := gitRepoFixture(t) // its "init" commit is from now, before since
+	since := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	commitAt := func(repo, msg string) {
+		t.Helper()
+		cmd := exec.Command("git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", msg)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_COMMITTER_DATE=2030-01-01T00:00:00Z", "GIT_AUTHOR_DATE=2030-01-01T00:00:00Z")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("commit: %v\n%s", err, out)
+		}
+	}
+	commitAt(dir, "parent work")
+	nested := filepath.Join(dir, "svc")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitOutput(t, nested, "init", "-q")
+	if err := os.WriteFile(filepath.Join(nested, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOutput(t, nested, "add", ".")
+	commitAt(nested, "svc work")
+	if err := os.WriteFile(filepath.Join(nested, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("svc/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A repository outside the Thread's folder is not read, edited or not.
+	outside := t.TempDir()
+	gitOutput(t, outside, "init", "-q")
+	commitAt(outside, "outside work")
+	edits := map[string]time.Time{filepath.Join(nested, "a.txt"): since, "tracked.txt": since, filepath.Join(outside, "b.txt"): since}
+	facts := handoffNotes{}.markdown(handoffFiles(t.Context(), dir, edits, time.Time{}, since), nil)
+	for _, want := range []string{"**Commits since the Thread started:** 2", "parent work", "`svc` `", "svc work",
+		"**Files changed by this Thread** against `HEAD`: 2", "`tracked.txt` modified", "`svc/a.txt` modified +1 −1"} {
+		if !strings.Contains(facts, want) {
+			t.Errorf("facts lack %q:\n%s", want, facts)
+		}
+	}
+	if strings.Contains(facts, "` init") || strings.Contains(facts, "outside work") {
+		t.Errorf("facts list a commit from before the start or outside the folder:\n%s", facts)
+	}
+}
+
+// A failed call that is not a shell names its file and its error.
+func TestHandoffFailedToolsNameTheirFileAndError(t *testing.T) {
+	items := []agentapi.Item{
+		{ID: "v", Time: usageT0, AgentID: "sub", Tool: &agentapi.ToolCall{Name: "view", Status: agentapi.ToolFailed, Input: `{"path":"/w/a.go"}`, Output: "Path does not exist\nmore"}},
+		{ID: "p", Time: usageT0, Tool: &agentapi.ToolCall{Name: "apply_patch", Status: agentapi.ToolFailed, Input: "*** Begin Patch\n*** Update File: b.go\n*** End Patch"}},
+	}
+	got := failedTools(items, time.Time{}, nil)
+	if want := []string{"`view`: `/w/a.go` — Path does not exist (subagent)", "`apply_patch`: `b.go`"}; !slices.Equal(got, want) {
+		t.Fatalf("failed = %q, want %q", got, want)
 	}
 }
