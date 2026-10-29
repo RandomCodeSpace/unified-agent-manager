@@ -3864,7 +3864,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.forgetViewsLocked(agentID)
 		if agentID == "" {
 			c.compaction = compactionNone
-			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction, Compacted: d.Success, CompactionSummary: deref(d.SummaryContent)})
 		}
 	case *rpc.UserMessageData:
 		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) && !stallContinuation(d) {

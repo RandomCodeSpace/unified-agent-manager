@@ -182,6 +182,9 @@ func TestWebCompactionInTheBackground(t *testing.T) {
 					out = append(out, "holds")
 				case e.CompactingBackground:
 					out = append(out, "background")
+				case e.Compacted:
+					// A completion that succeeded, with its summary when reported.
+					out = append(out, "compacted"+e.CompactionSummary)
 				default:
 					out = append(out, "ended")
 				}
@@ -206,24 +209,27 @@ func TestWebCompactionInTheBackground(t *testing.T) {
 	h.fs.onEvent(phaseEv("s2", "", 105, &rpc.AssistantTurnStartData{TurnID: "1"}))
 	expect("after progress", "holds", "background")
 	h.fs.onEvent(phaseEv("k2", "", 106, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &threshold}))
-	expect("after completion", "holds", "background", "ended")
+	expect("after completion", "holds", "background", "compacted")
 
 	// One with no progress until it completes holds the conversation.
 	h.fs.onEvent(phaseEv("k3", "", 107, &rpc.SessionCompactionStartData{Trigger: &threshold}))
 	h.fs.onEvent(phaseEv("k4", "", 108, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &threshold}))
 	h.fs.onEvent(phaseEv("t2", "", 109, &rpc.ToolExecutionStartData{ToolCallID: "c2", ToolName: "view"}))
-	expect("blocking in the turn", "holds", "background", "ended", "holds", "ended")
+	expect("blocking in the turn", "holds", "background", "compacted", "holds", "compacted")
 
 	// The turn's end ends one in the background whose end never came.
 	h.fs.onEvent(phaseEv("k5", "", 110, &rpc.SessionCompactionStartData{Trigger: &threshold}))
 	h.fs.onEvent(phaseEv("s3", "", 111, &rpc.AssistantTurnStartData{TurnID: "2"}))
 	endTurn(t, h, 112)
-	expect("at the turn's end", "holds", "background", "ended", "holds", "ended", "holds", "background", "ended")
+	expect("at the turn's end", "holds", "background", "compacted", "holds", "compacted", "holds", "background", "ended")
 
 	// /compact between turns holds it until it completes.
 	h.fs.onEvent(phaseEv("k6", "", 120, &rpc.SessionCompactionStartData{Trigger: &manual}))
-	h.fs.onEvent(phaseEv("k7", "", 125, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &manual}))
-	expect("manual", "holds", "background", "ended", "holds", "ended", "holds", "background", "ended", "holds", "ended")
+	h.fs.onEvent(phaseEv("k7", "", 125, &rpc.SessionCompactionCompleteData{Success: true, Trigger: &manual, SummaryContent: option(": kept")}))
+	expect("manual", "holds", "background", "compacted", "holds", "compacted", "holds", "background", "ended", "holds", "compacted: kept")
+	h.fs.onEvent(phaseEv("k8", "", 126, &rpc.SessionCompactionStartData{Trigger: &manual}))
+	h.fs.onEvent(phaseEv("k9", "", 127, &rpc.SessionCompactionCompleteData{Success: false, SummaryContent: option("partial")}))
+	expect("failed", "holds", "background", "compacted", "holds", "compacted", "holds", "background", "ended", "holds", "compacted: kept", "holds", "ended")
 }
 
 func TestWebSubagentModelEffortEventsAndHistory(t *testing.T) {

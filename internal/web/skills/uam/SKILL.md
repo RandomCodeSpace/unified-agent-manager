@@ -38,6 +38,8 @@ and conventions below instead.
 
 When uam attaches a `uam trail:` note, another running Thread recently edited that file; re-read it before relying on its contents.
 
+When uam attaches a `uam memory:` note, your conversation was just compacted: its notes are quoted from earlier turns (constraints the owner set, decisions, facts) and its records are uam's own (open todos, commits, files changed). Treat them as still true unless later work changed them; for more, search your own Thread with `uam` `search` and your id.
+
 A `uam read-once:` result means the file is unchanged since your earlier view; use that.
 
 When uam reports repeated permission denials or a refused fetch with a reopening time, stop retrying that kind of action or URL segment; continue work that does not need it.
@@ -242,13 +244,16 @@ Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
 - `who_touched {path}` lists Threads in your Project with edits to that path,
   relative to your directory or absolute. Shell writes are not attributed;
   `partial: true` means unread history may contain more edits.
-- `search {query, project?}` searches Threads' conversations, as the owner's
+- `search {query, project?, id?}` searches Threads' conversations, as the owner's
   search box does: words all required, the last one a prefix. Rows give the
   Thread, a matching snippet and when it last changed, best match first,
   settled and archived Threads included. It ranks the best 30 Threads across
   all Projects before keeping the requested one, so add words when a
   search finds less than you expect. A `reason` note means search is
-  unavailable.
+  unavailable. With `id` (a Thread you may read, your own included) it lists
+  that Thread's matching passages instead, longer, each with its `source`
+  ("turn 12", or a part of a compaction checkpoint): after a compaction, search
+  your own id for what the summary left out.
 - `history {id}` gives a Thread's user prompts and assistant replies, oldest
   first, without tool output, thoughts or subagents; an entry over 2 KiB ends
   in `[truncated by uam]`. Your own ID works too. `loading: true` means uam

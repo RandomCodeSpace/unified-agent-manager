@@ -45,9 +45,12 @@ type SearchResults struct {
 }
 
 // SearchHit is a Thread and the matching passage of its conversation.
+// Source, in a search of one Thread, says where the passage is: "turn 12",
+// or a part of a compaction checkpoint such as "checkpoint overview".
 type SearchHit struct {
 	ThreadID string        `json:"thread_id"`
 	Snippet  []SnippetPart `json:"snippet"`
+	Source   string        `json:"source,omitempty"`
 }
 
 // SnippetPart is a run of a passage; Match marks the query's words.
@@ -58,6 +61,12 @@ type SnippetPart struct {
 
 // SearchThreads finds q in the conversations of uam's Threads.
 func (m *Manager) SearchThreads(ctx context.Context, q string) (SearchResults, error) {
+	return m.searchStore(ctx, q, "")
+}
+
+// searchStore finds q in the conversations of uam's Threads, one hit each;
+// with conv, the passages of that conversation alone, longer, best first.
+func (m *Manager) searchStore(ctx context.Context, q, conv string) (SearchResults, error) {
 	out := SearchResults{Hits: []SearchHit{}}
 	match := ftsQuery(q)
 	if match == "" {
@@ -99,8 +108,14 @@ func (m *Manager) SearchThreads(ctx context.Context, q string) (SearchResults, e
 	}
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
-	rows, err := db.QueryContext(ctx, `SELECT session_id, snippet(search_index, 0, char(2), char(3), '…', 24)
-		FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ?`, match, maxSearchRows)
+	query, args := `SELECT session_id, source_type, source_id, snippet(search_index, 0, char(2), char(3), '…', 24)
+		FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ?`, []any{match, maxSearchRows}
+	if conv != "" {
+		// 64 tokens is FTS5's longest snippet.
+		query, args = `SELECT session_id, source_type, source_id, snippet(search_index, 0, char(2), char(3), '…', 64)
+		FROM search_index WHERE search_index MATCH ? AND session_id = ? ORDER BY rank LIMIT ?`, []any{match, conv, maxSearchHits}
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, newError(http.StatusGatewayTimeout, "the search took too long; try more specific words")
@@ -113,16 +128,20 @@ func (m *Manager) SearchThreads(ctx context.Context, q string) (SearchResults, e
 	defer func() { _ = rows.Close() }()
 	seen := map[string]bool{}
 	for rows.Next() && len(out.Hits) < maxSearchHits {
-		var conv, snippet string
-		if err := rows.Scan(&conv, &snippet); err != nil {
+		var session, sourceType, sourceID, snippet sql.NullString
+		if err := rows.Scan(&session, &sourceType, &sourceID, &snippet); err != nil {
 			return out, newError(http.StatusBadGateway, "could not read a search result: %s", shortError(err))
 		}
-		id, ok := threads[conv]
-		if !ok || seen[id] {
+		id, ok := threads[session.String]
+		if !ok || conv == "" && seen[id] {
 			continue
 		}
 		seen[id] = true
-		out.Hits = append(out.Hits, SearchHit{ThreadID: id, Snippet: snippetParts(snippet)})
+		hit := SearchHit{ThreadID: id, Snippet: snippetParts(snippet.String)}
+		if conv != "" {
+			hit.Source = searchSource(sourceType.String, sourceID.String)
+		}
+		out.Hits = append(out.Hits, hit)
 	}
 	if err := rows.Err(); err != nil && ctx.Err() != nil {
 		return out, newError(http.StatusGatewayTimeout, "the search took too long; try more specific words")
@@ -189,4 +208,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// searchSource names where a passage is: "turn 12" for a turn (its
+// source_id ends ":turn:<index>"), else its source type in words.
+func searchSource(sourceType, sourceID string) string {
+	if sourceType == "turn" {
+		if i := strings.LastIndex(sourceID, ":turn:"); i >= 0 {
+			return "turn " + sourceID[i+len(":turn:"):]
+		}
+	}
+	return strings.ReplaceAll(sourceType, "_", " ")
 }

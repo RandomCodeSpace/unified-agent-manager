@@ -74,7 +74,7 @@ func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) age
 	out := agentapi.ToolVerdict{Context: m.trailContextLocked(s, use)}
 	if use.AgentID == "" {
 		// First, so the adapter records it as a notice (uam thread:).
-		out.Context = strings.TrimSpace(m.takeChildNotesLocked(s) + "\n" + out.Context)
+		out.Context = strings.TrimSpace(m.takeChildNotesLocked(s) + "\n" + m.takeMemoryPinLocked(s) + "\n" + out.Context)
 	}
 	deny, note := m.budgetToolLocked(s)
 	out.Context = strings.TrimSpace(out.Context + "\n" + note)

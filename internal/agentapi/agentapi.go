@@ -1084,6 +1084,11 @@ type Event struct {
 	// turn goes on beside; neither once it ended.
 	Compacting           bool
 	CompactingBackground bool
+	// Compacted is set on the EventCompaction that ends a compaction which
+	// succeeded; CompactionSummary is the summary that replaced the
+	// conversation, when the provider reports it.
+	Compacted         bool
+	CompactionSummary string
 
 	Activity       *Activity
 	Todos          *TodoList
