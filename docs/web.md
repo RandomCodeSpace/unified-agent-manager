@@ -724,6 +724,25 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   ring), until the compaction completes or the turn ends. The summary then
   carries `compacting_background: true` in place of `compacting`, also live
   only.
+- **Memory across compactions**: a compaction replaces the conversation
+  with a summary Copilot's model writes, and what it leaves out stays in the
+  journal but out of the agent's sight. When a compaction starts, a Utility
+  job (`memory-notes` in the Utility log; skipped without a Utility model or
+  past the day's limit) reads the main agent's prompts and replies since the
+  last job (every prompt first, then the newest replies, 16 KB at most) and
+  picks up to 12 constraints, decisions and facts as quotes. uam keeps a
+  note only when its quote, spaces aside, is in the item it names: the model
+  picks, never writes. A Thread keeps at most 40 notes, dropping the oldest
+  facts first, then decisions, then constraints; they are saved with the
+  Thread (`memory_notes`). When the compaction succeeds, uam waits for a job
+  in flight (2 minutes at most), drops the notes the summary carries (60% of
+  a note's words of four or more letters, digits or path characters found
+  in it), and pins the rest, with the handoff's facts (last intent, open
+  todos, commits since the Thread started, files changed), to the main
+  agent's next tool call as a `uam memory:` note, 6 KB at most, which names
+  the Thread's id for `uam` `search`. The conversation shows it as one line
+  that opens to what was pinned. The pin is not saved: a restart before the
+  next tool call drops it, and the notes wait for the next compaction.
 - **Status line**: while a Thread works, the line above the message box says
   what the agent says it is doing (Copilot derives it from its todo list),
   else a calm verb ("Working…" for a turn without a message), and for how

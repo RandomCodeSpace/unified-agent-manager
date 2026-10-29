@@ -567,6 +567,15 @@ type webSession struct {
 	wrap                         *budgetWrap
 	handoff                      *store.WebHandoff
 
+	// memoryNotes are the notes uam re-pins after a compaction (memory.go);
+	// memoryThrough is the newest item the last note job read, memoryRun
+	// the job in flight (closed when it ends) and memoryPin what the main
+	// agent's next tool call carries.
+	memoryNotes   []store.WebMemoryNote
+	memoryThrough time.Time
+	memoryRun     chan struct{}
+	memoryPin     string
+
 	// edits maps each file the Task's edit tools touched, as the tool gave
 	// its path, to when it was last touched, and turnStart is when the
 	// latest ordinary prompt to the main agent began (task_changes.go).
@@ -1013,6 +1022,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 			s.budget = *web.Budget
 		}
 		s.handoff = web.Handoff
+		s.memoryNotes = loadMemoryNotes(web.MemoryNotes)
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -2464,6 +2474,7 @@ func (m *Manager) flush() (err error) {
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
+				MemoryNotes: slices.Clone(s.memoryNotes),
 			},
 		})
 	}
@@ -2752,7 +2763,14 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			}
 		}
 	case agentapi.EventCompaction:
+		started := (ev.Compacting || ev.CompactingBackground) && !s.compacting && !s.compactingBackground
 		s.compacting, s.compactingBackground = ev.Compacting, ev.CompactingBackground
+		if started {
+			m.kickMemoryNotesLocked(s)
+		}
+		if ev.Compacted {
+			m.kickMemoryPinLocked(s, ev.CompactionSummary)
+		}
 	case agentapi.EventActivity:
 		if ev.Activity != nil {
 			m.applyActivityLocked(s, *ev.Activity)

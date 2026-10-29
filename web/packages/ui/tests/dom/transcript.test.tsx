@@ -48,6 +48,19 @@ describe('messages', () => {
     expect(select.mock.calls).toEqual([['child-1'], ['child-2'], ['child-2']]);
   });
 
+  test.each([['as sent', (s: string) => s], ['from the journal', (s: string) => s.replaceAll('\n', ' ')]])('a uam memory note is one line that opens to what uam pinned (%s)', (_, form) => {
+    const memory = 'uam memory: your conversation was compacted, and uam pinned what its summary may have dropped. Earlier turns stay searchable word for word.\n\nNotes quoted from the conversation:\n- constraint: "Never touch the vendored folder"';
+    const items: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Go on' },
+      { id: 'n', kind: 'notice', time: '2026-10-09T00:00:01Z', text: form(`${memory}\nuam budget: this Thread is close to the spending limit its owner set.`) },
+    ];
+    const view = render(<Transcript sessionId="s" items={items} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    const summary = view.getByText('Your conversation was compacted, and uam pinned what its summary may have dropped.');
+    expect(summary.tagName).toBe('SUMMARY');
+    expect(summary.closest('details')!.textContent).toContain('constraint: "Never touch the vendored folder"');
+    expect(view.getByText(/^uam budget: this Thread is close/)).toBeTruthy();
+  });
+
   test('skill invocation notices stay visible and ordered in turns', () => {
     const items: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Review the change' },

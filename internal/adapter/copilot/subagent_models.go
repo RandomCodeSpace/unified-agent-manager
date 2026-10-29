@@ -49,7 +49,7 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		}
 		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName), AgentID: in.AgentID})
 		if verdict.Context != "" || verdict.Deny != "" || verdict.Args != nil {
-			if strings.HasPrefix(verdict.Context, "uam trail:") || strings.HasPrefix(verdict.Context, "uam thread:") {
+			if strings.HasPrefix(verdict.Context, "uam trail:") || strings.HasPrefix(verdict.Context, "uam thread:") || strings.HasPrefix(verdict.Context, "uam memory:") {
 				c.logNotice(verdict.Context)
 			}
 			out := &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}

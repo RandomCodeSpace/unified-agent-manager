@@ -1166,12 +1166,15 @@ const TRAIL_NOTE = /^uam trail: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\) edited (.
 /** The head of a drawing change note (drawings_diff.go): the owner made the changes, so only the agent gets their list. */
 const DRAWING_NOTE = /^The user edited (.+?) since your version \((v\d+ → v\d+)\):/;
 
+/** A `uam memory:` note (memory.go): its first sentence, then what uam pinned after a compaction. */
+const MEMORY_NOTE = /^uam memory: ([^.]*\.)\s*([\s\S]*)$/;
+
 /** Where each uam note of a notice starts, the line breaks between them gone or not. */
 // One whitespace character, and a file name without spaces: patterns that cannot backtrack (Sonar S8786).
-const NOTE_START = /\s(?=uam (?:thread|trail|budget): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):)/;
+const NOTE_START = /\s(?=uam (?:thread|trail|budget|memory): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):)/;
 
 /** A notice that starts with a uam note UamNotes shows. */
-const UAM_NOTES = /^(?:uam (?:thread|trail): |The user edited )/;
+const UAM_NOTES = /^(?:uam (?:thread|trail|memory): |The user edited )/;
 
 /** A Go-quoted name as written, when it is not also a JSON string. */
 function unquote(raw: string): string {
@@ -1198,6 +1201,15 @@ function UamNotes({ text, className }: Readonly<{ text: string; className?: stri
         if (trail) return <p key={index} className="m-0">Thread {thread(trail[1], trail[2])} edited <FileRef text={trail[3]} /> {trail[4]} and is still running.</p>;
         const drawing = DRAWING_NOTE.exec(part);
         if (drawing) return <p key={index} className="m-0">You edited <FileRef text={drawing[1]} /> ({drawing[2]}).</p>;
+        const memory = MEMORY_NOTE.exec(part);
+        if (memory) {
+          return (
+            <details key={index}>
+              <summary className="cursor-pointer">{memory[1].charAt(0).toUpperCase() + memory[1].slice(1)}</summary>
+              <p className="m-0 mt-1 break-words whitespace-pre-wrap">{memory[2]}</p>
+            </details>
+          );
+        }
         return <Markdown key={index} text={part} className="[&_p]:m-0" />;
       })}
     </div>

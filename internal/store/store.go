@@ -563,6 +563,9 @@ type WebState struct {
 	// Handoff is what the Thread left for whoever continues its work when it
 	// reached its budget; nil without one, and cleared by its next turn.
 	Handoff *WebHandoff `json:"handoff,omitempty"`
+	// MemoryNotes are the Thread's notes uam re-pins after a compaction:
+	// verbatim quotes of its conversation the Utility model picked.
+	MemoryNotes []WebMemoryNote `json:"memory_notes,omitempty"`
 	// Place is the branch or worktree the Thread was started in; nil for a
 	// Thread on its Project's current branch.
 	Place *WebPlace `json:"place,omitempty"`
@@ -585,6 +588,15 @@ type Budget struct {
 	QuotaPercent float64 `json:"quota_percent,omitempty"`
 	Reached      bool    `json:"reached,omitempty"`
 	WrapUp       bool    `json:"wrap_up,omitempty"`
+}
+
+// WebMemoryNote is one memory note: Kind is "constraint", "decision" or
+// "fact"; Quote is copied from the conversation item ItemID.
+type WebMemoryNote struct {
+	Kind   string    `json:"kind"`
+	Quote  string    `json:"quote"`
+	ItemID string    `json:"item_id"`
+	At     time.Time `json:"at"`
 }
 
 // WebHandoff is a Thread's handoff at its budget: ReplyID is the main
@@ -656,6 +668,7 @@ var knownWebStateFields = map[string]struct{}{
 	"stop_reason":         {},
 	"budget":              {},
 	"handoff":             {},
+	"memory_notes":        {},
 	"place":               {},
 	"context":             {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
