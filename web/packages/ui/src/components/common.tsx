@@ -84,9 +84,9 @@ const TONE_BG: Record<Tone, string> = {
  */
 export const BAR_ROW = 'relative z-10 flex h-header shrink-0 items-center px-1.5 sm:px-2';
 const BAR_CARD = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md bg-raised pr-1 pl-1.5 shadow-raised';
-/** A state's still fill on the bar card: in motion, needs you, broken, done; any other tone stays neutral. */
-const BAR_FILL: Partial<Record<Tone, string>> = { accent: 'bg-accent-wash', warning: 'bg-warning-wash', error: 'bg-error-wash', success: 'bg-success-wash' };
-export const barCard = (tone?: Tone, className?: string) => cn(BAR_CARD, tone && BAR_FILL[tone], className);
+/** A state's still edge on the bar card, a 3px stripe at its left in the tone: in motion, needs you, broken, done; any other tone stays neutral. */
+const BAR_EDGE: Partial<Record<Tone, string>> = { accent: 'before:bg-accent', warning: 'before:bg-warning', error: 'before:bg-error', success: 'before:bg-success' };
+export const barCard = (tone?: Tone, className?: string) => cn(BAR_CARD, tone && BAR_EDGE[tone] && cn("relative overflow-hidden before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:content-['']", BAR_EDGE[tone]), className);
 
 export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was not resumed or resent.';
 

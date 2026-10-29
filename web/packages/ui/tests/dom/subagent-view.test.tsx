@@ -50,11 +50,11 @@ test('a subagent waiting on the owner reads as the Thread does: Input, the needs
   renderApp('#task=t8&agent=a1');
   await transcript('Survey templates for missing alt text and labels');
   const bar = screen.getByRole('group', { name: 'State: Input' });
-  expect(bar.className).toContain('bg-warning-wash');
+  expect(bar.className).toContain('before:bg-warning');
   // Another one, with nothing waiting, keeps its own state.
   window.location.hash = '#task=t8&agent=a2';
   await transcript('Check contrast of the theme tokens');
-  expect(screen.getByRole('group', { name: 'State: Running' }).className).toContain('bg-accent-wash');
+  expect(screen.getByRole('group', { name: 'State: Running' }).className).toContain('before:bg-accent');
 });
 
 test('Tools → Agent copies the agent ID', async () => {

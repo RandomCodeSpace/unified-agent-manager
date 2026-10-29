@@ -28,7 +28,7 @@ test('a Task compacting mid-turn says so once, on the strip\'s live line: not at
   // The header keeps Working, its blue fill.
   const header = screen.getByRole('group', { name: /^State: / });
   expect(header.getAttribute('aria-label')).toBe('State: Working');
-  expect(header.className).toContain('bg-accent-wash');
+  expect(header.className).toContain('before:bg-accent');
   expect(header.textContent).not.toContain('Compacting');
 });
 

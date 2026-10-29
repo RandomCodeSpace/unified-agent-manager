@@ -959,7 +959,7 @@ export const Sidebar = memo(function Sidebar({
       </header>
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="flex min-h-0 flex-1 flex-col" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
-        <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
+        <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
           {/* Each row names its machine to assistive technology by reference. */}
           {machines?.map((m) => <span key={m.id} id={machineLabelId(m)} className="sr-only">{m.label}{m.status.status === 'account-mismatch' ? ', unavailable: linked to a different Copilot account' : ''}</span>)}
           <OneInstance.Provider value={oneInstance}>{body}</OneInstance.Provider>

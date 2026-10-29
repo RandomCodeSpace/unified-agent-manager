@@ -22,7 +22,7 @@ test('failed tests in the outcome stay Finished, saying so on the header\'s hove
   await openTask('t-chart');
   const state = await screen.findByRole('group', { name: 'State: Finished' });
   expect(state.getAttribute('title')).toBe('State: Finished · tests fail');
-  expect(state.className).toContain('bg-success-wash');
+  expect(state.className).toContain('before:bg-success');
   await waitFor(() => expect(row().textContent).toMatch(/Review|Finished/));
   expect(row().textContent).not.toContain('Tests fail');
 });
@@ -43,13 +43,13 @@ test('failed commands alone are no state: the turn stays Finished, green', async
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
   expect(bar().getAttribute('title')).toBe('State: Finished');
-  expect(bar().className).toContain('bg-success-wash');
+  expect(bar().className).toContain('before:bg-success');
   expect(row().textContent).not.toContain('failed');
 });
 
 test('a clean finished turn fills the header green, with no state word in it', async () => {
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
-  expect(bar().className).toContain('bg-success-wash');
+  expect(bar().className).toContain('before:bg-success');
   expect(bar().textContent).not.toContain('Finished');
 });
