@@ -1357,6 +1357,7 @@ export default function App() {
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous ?? held.detail;
   const stale = !settingsOpen && !mismatched && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
+  const spawner = shown?.spawned_by ? state.sessions.find((s) => s.id === shown.spawned_by) : undefined;
   if (terminalId && !terminalProject) setTerminalId(null);
   const dialogMachine = taskDialog?.owner !== undefined ? machines?.find((m) => m.id === taskDialog.owner) : undefined;
   const dialogTask = taskDialog ? (dialogMachine ? dialogMachine.state.sessions : state.sessions).find((s) => s.id === taskDialog.id) : undefined;
@@ -1478,7 +1479,7 @@ export default function App() {
         onSessionUpdate={onSessionUpdate}
         onInteractionUpdate={onInteractionUpdate}
         leading={leading}
-        spawnedBy={taskName(state.sessions.find((s) => s.id === shown.spawned_by) ?? { name: '', title: '' })}
+        spawnedBy={spawner && { id: spawner.id, name: taskName(spawner), badge: state.projects.find((p) => p.id === spawner.project_id)?.badge }}
         since={opened.id === shown.id ? opened.mark : undefined}
         rerunOf={taskName(state.sessions.find((s) => s.id === shown.rerun_of) ?? { name: '', title: '' })}
       />

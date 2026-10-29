@@ -422,9 +422,15 @@ describe('messages', () => {
     expect(screen.queryByText(/^Turn failed/)).toBeNull();
   });
 
-  test('a task another task started names that task at the start of its conversation', async () => {
-    await openTask('t4');
-    expect(log().getByText('Started by another thread, Doctor: add terminal line.')).toBeTruthy();
+  test('a thread another thread started names it as the header trail\'s first crumb, which opens it; the conversation does not repeat it', async () => {
+    const { user } = await openTask('t4');
+    const header = screen.getByRole('group', { name: /^State: / });
+    const crumb = within(header).getByRole('button', { name: 'Doctor: add terminal line' });
+    expect(within(header).getByRole('heading', { level: 1 }).textContent).toBe('Bump GitHub Actions pins');
+    expect(header.className).toContain('bg-error-wash');
+    expect(log().queryByText(/Started by another thread/)).toBeNull();
+    await user.click(crumb);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Doctor: add terminal line' })).toBeTruthy();
   });
 });
 

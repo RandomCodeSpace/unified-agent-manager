@@ -25,9 +25,10 @@ test('a Task compacting mid-turn says so once, on the strip\'s live line: not at
   const log = await screen.findByRole('log');
   expect(log.textContent).not.toContain('Compacting the conversation');
   expect(log.textContent).not.toContain('Thinking…');
-  // The header keeps the still "Working".
-  const header = screen.getByRole('heading', { level: 1 }).parentElement!;
-  expect(header.textContent).toContain('Working');
+  // The header keeps Working, its blue fill.
+  const header = screen.getByRole('group', { name: /^State: / });
+  expect(header.getAttribute('aria-label')).toBe('State: Working');
+  expect(header.className).toContain('bg-accent-wash');
   expect(header.textContent).not.toContain('Compacting');
 });
 

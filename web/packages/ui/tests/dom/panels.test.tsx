@@ -572,9 +572,9 @@ describe('one working ring per place', () => {
     await openTask('t8');
     const pane = document.querySelector('main')!;
     const header = pane.querySelector('header')!;
-    // The header: "Working" beside a still dot; the strip says how many run in a still block.
+    // The header: Working as its still fill; the strip says how many run in a still block.
     expect(rings(header)).toHaveLength(0);
-    expect(header.textContent).toContain('Working');
+    expect(within(header).getByRole('group', { name: 'State: Working' }).className).toContain('bg-accent-wash');
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
     expect(rings(strip)).toHaveLength(0);
