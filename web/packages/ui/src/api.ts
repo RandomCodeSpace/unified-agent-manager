@@ -1130,6 +1130,8 @@ export interface Subagent {
   parent_agent_id?: string;
   name: string;
   description?: string;
+  /** The kind of agent the provider spawned (Copilot's agent name: explore, task, general-purpose); absent when it reports none. */
+  type?: string;
   /** Launched in the background: its `task` call's output only acknowledges the launch, and its result is its own last message. */
   background?: boolean;
   /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */

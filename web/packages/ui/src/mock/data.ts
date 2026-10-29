@@ -313,6 +313,7 @@ export function seed(): MockState {
     parent_tool_call_id: 'i3',
     name: 'Survey templates for missing alt text and labels',
     description: 'Check every template under templates/ for images without alt text and inputs without labels.',
+    type: 'explore',
     status: 'running',
     started_at: ago(11),
     model: 'claude-haiku-4.5',
@@ -400,6 +401,7 @@ export function seed(): MockState {
     parent_agent_id: 'a2',
     name: 'Verify store callers',
     description: 'Check the callers of store.Open for the old cursor.',
+    type: 'task',
     status: 'running',
     started_at: ago(0.8),
     model: 'gpt-5-mini',
@@ -749,6 +751,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           { id: 'v2', kind: 'assistant', time: ago(10), agent_id: 'a3', text: '`axe-core` is not installed and I was told not to add dependencies. Stopping here.' },
         ],
         a1: [
+          { id: 's00', kind: 'user', time: ago(11), agent_id: 'a1', text: 'Check every template under `templates/` for images without alt text and form inputs without labels. Fix what is safe to fix, and list anything you are not sure about instead of changing it.' },
           { id: 's0', kind: 'reasoning', time: ago(10), agent_id: 'a1', text: 'Grep for `<img` first, then read each hit for a missing `alt`.' },
           tool('s1', 10, { name: 'grep', title: 'Search "<img" in templates', status: 'completed', output: 'templates/post.html:13\ntemplates/list.html:22' }, 'a1'),
           tool('s2', 9, { name: 'view', title: 'Read templates/post.html', status: 'completed', output: '64 lines' }, 'a1'),

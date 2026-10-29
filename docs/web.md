@@ -1427,16 +1427,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   that another subagent spawned sits indented under it. While subagents run,
   the same rows sit at the foot of the conversation with the total tokens.
   Tokens are what Copilot reports for the subagent, shown as K, M or B; while it runs the count grows, and when it ends Copilot's
-  total replaces it. On a computer, resting the pointer on a row shows a peek:
-  how long it ran, tokens, tool calls, model, its last steps while it runs, its
-  result or error, who spawned it, and Stop, Full transcript and Copy agent ID.
-  Clicking a row opens its transcript in a panel beside it over a dimmed page;
-  on a phone a tap opens a sheet from the bottom, first the peek, then the
-  full transcript. The transcript shows the subagent's own prompt, replies and
-  tool calls, live while it runs, with a pill per run when it ran more than
-  once and a pill per subagent it spawned. "Show where it was spawned" jumps
-  to the tool call in the conversation. There is also a "Subagents" button in
-  the header with the total and how many are running; it lists the subagents
+  total replaces it. Clicking a row opens the subagent in the conversation
+  pane, in the Thread's place, read like a Thread: what it was asked (and by
+  whom), its replies and tool calls, live while it runs, and at the end its
+  result as returned to the Thread (or its error). The header shows the trail
+  "Thread › spawning subagents › subagent", every level a link (the Thread one
+  scrolls back to where it was spawned), its type (Copilot's agent name, such
+  as explore, task or general-purpose, when reported) and time, and Stop while
+  it runs; its colour follows the subagent's state. Chips at the bottom right
+  switch between the Thread's subagents (↑ ↓ step). The message box stays,
+  read-only: subagents take no messages, its model and effort show the
+  subagent's own, locked, and Tools shows its tokens, tool calls, time and
+  runs. Its address is the Thread's with `&agent=<id>` (`#task=<id>&agent=<id>`),
+  so a reload or a shared link opens it; Back, Esc or ← return to the Thread.
+  The strip's subagents button lists the subagents
   grouped by the message that started their reply, with filters by state. The
   list holds the newest 200 subagents; when Copilot's record has older ones,
   the count reads "200+" and the list ends with "Show older subagents", which
@@ -1444,7 +1448,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Prose and paths wrap to fit; wide tables and code blocks
   scroll within their own regions. Subagent output never
   appears in the Thread's own conversation. Its model and effort are shown
-  when Copilot reports them; they are not guessed from the parent Thread.
+  when Copilot reports them; they are not guessed from the parent Thread. The
+  API lists its kind as `type` (from Copilot's `subagent.started`
+  `agentName`, else `agentType`), left out when Copilot reports none.
   A finished subagent's line is the first line of its own result, as
   Copilot reported it; nothing rewrites it. A subagent is "Idle" when it has finished and the main
   agent may still resume it. The web interface sends no messages to a

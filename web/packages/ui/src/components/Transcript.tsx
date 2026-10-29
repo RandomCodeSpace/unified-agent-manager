@@ -1707,10 +1707,10 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
   );
 }
 
-/** A subagent's own transcript at 13px: the same rows, blocks and bubbles as the main one, with its own requests. */
+/** A subagent's own transcript in the Conversation pane: the same rows, blocks, bubbles and sizes as a Thread's, with its own requests. */
 export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live }: Readonly<{ sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean }>) {
   return (
-    <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
+    <div className="flex flex-col gap-6">
       <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} />
     </div>
   );

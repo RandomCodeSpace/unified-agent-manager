@@ -133,6 +133,13 @@ function hashSelection(path = window.location.hash): string | null {
   return h.startsWith(HASH_PREFIX) ? new URLSearchParams(h.slice(1)).get('task') || null : null;
 }
 
+/** A subagent open in its Thread's Conversation pane: `#task=<id>&agent=<agent id>`. */
+function hashAgent(path = window.location.hash): { task: string; agent: string } | null {
+  const task = hashSelection(path);
+  const agent = new URLSearchParams(path.replace(/^#/, '')).get('agent');
+  return task && agent ? { task, agent } : null;
+}
+
 export default function App() {
   const api = useApi();
   const FILTER_KEY = api.storageKey('uam.projectFilter');
@@ -237,6 +244,9 @@ export default function App() {
     localStorage.setItem(FILTER_KEY, JSON.stringify(id));
   }, [machines, onMachineFilter, here, FILTER_KEY]);
   const [settingsOpen, setSettingsOpen] = useState(() => (initialPath ?? window.location.hash) === SETTINGS_HASH);
+  // The subagent open in the selected Thread's Conversation pane; it belongs to that Thread, so selecting another leaves it.
+  const [agentView, setAgentView] = useState(() => hashAgent(initialPath));
+  const shownAgent = agentView?.task === state.selectedId ? agentView.agent : null;
   const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
   const [connectionsRequest, setConnectionsRequest] = useState(0);
   // The provider whose account Settings opens on (the blocked app's Open Settings), or null.
@@ -798,6 +808,23 @@ export default function App() {
   }, [recentTasks]);
 
   const openTask = useCallback((id: string) => select(id), [select]);
+  /** Opens one of the selected Thread's subagents in its Conversation pane, or (null) goes back to the Thread: a move between views. */
+  const showAgent = useCallback((agent: string | null) => {
+    pushView.current = true;
+    setAgentView(agent && state.selectedId ? { task: state.selectedId, agent } : null);
+  }, [state.selectedId]);
+  // Esc goes back from a subagent to its Thread, as ← does; not while typing, in the terminal, in a side panel or with a popup open.
+  useEffect(() => {
+    if (!shownAgent || viewOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || keysTaken() || editing()) return;
+      if (e.target instanceof Element && e.target.closest('.xterm, aside')) return;
+      showAgent(null);
+    };
+    // On the window, so a side panel's own Esc (on the document) goes first.
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shownAgent, viewOpen, showAgent]);
   const taskList = useMemo(() => ({ sessions: state.sessions, projects: state.projects, openTask }), [state.sessions, state.projects, openTask]);
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
@@ -879,7 +906,7 @@ export default function App() {
   let viewHash = '';
   if (settingsOpen) viewHash = SETTINGS_HASH;
   else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
-  else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}`;
+  else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}${shownAgent ? `&agent=${encodeURIComponent(shownAgent)}` : ''}`;
   // Written when the view changes, never over a fragment the user just navigated to (its event may come
   // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it:
   // an earlier render's effect that lands after the click (a blur the press caused) leaves it alone.
@@ -905,7 +932,12 @@ export default function App() {
     const routines = hashRoutines(h);
     if (h === SETTINGS_HASH) showSettings();
     else if (routines) showRoutines(routines);
-    else select(hashSelection(h));
+    else {
+      // Back from a subagent to its Thread (or Forward again) keeps the Thread selected.
+      const id = hashSelection(h);
+      if (id !== state.selectedId || settingsOpen || routinesFor) select(id);
+      setAgentView(hashAgent(h));
+    }
     // The entry is already in history.
     pushView.current = false;
   });
@@ -1482,6 +1514,8 @@ export default function App() {
         spawnedBy={spawner && { id: spawner.id, name: taskName(spawner), badge: state.projects.find((p) => p.id === spawner.project_id)?.badge }}
         since={opened.id === shown.id ? opened.mark : undefined}
         rerunOf={taskName(state.sessions.find((s) => s.id === shown.rerun_of) ?? { name: '', title: '' })}
+        subagent={shown.id === state.selectedId ? shownAgent : null}
+        onSubagent={showAgent}
       />
       </DetailsProvider>
     );

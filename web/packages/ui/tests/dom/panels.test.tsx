@@ -204,9 +204,12 @@ describe('subagents', () => {
   const sheet = async () => within(await screen.findByRole('dialog', { name: 'Subagents' }));
   const live = () => within(screen.getByRole('region', { name: 'Subagents at work' }));
   const flashed = () => document.querySelector<HTMLElement>('.animate-flash');
+  // A subagent opens in the Conversation pane: its transcript, under the header's bar.
+  const view = async (name: string) => screen.findByRole('region', { name: `Transcript of ${name}` });
+  const bar = () => screen.getByRole('group', { name: /^State: / });
 
   // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that opens its detail in the same box.
-  test('the strip\'s subagent list groups subagents by their message; a pick opens its detail in the same box, and ‹ All goes back', async () => {
+  test('the strip\'s subagent list groups subagents by their message; a pick opens it in the Conversation pane, and the list makes way', async () => {
     const { user } = await openTask('t8');
     // The header has no Subagents button any more: the strip counts them.
     expect(document.querySelector('header')!.textContent).not.toContain('Subagents');
@@ -219,27 +222,27 @@ describe('subagents', () => {
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
     expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
     await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
-    // The same box: the detail takes the list's place, its way back focused, its place in the list said.
-    expect(await index.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
-    expect(index.getByText('1 of 1')).toBeTruthy();
-    await waitFor(() => expect(document.activeElement?.textContent).toBe('All 1'));
-    // The error is said once, under Error, not again as a result.
-    expect(index.getByRole('region', { name: 'Error' }).textContent).toContain('axe-core is not installed in this project.');
-    expect(index.queryByRole('region', { name: 'Result' })).toBeNull();
-    await user.keyboard('{ArrowLeft}');
-    // Back on the list, the row it came from lit and focused.
-    expect(await index.findByRole('searchbox', { name: 'Search subagents' })).toBeTruthy();
-    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Run the accessibility linter, failed/));
-    expect(document.activeElement?.getAttribute('aria-current')).toBe('true');
+    // The pane: its transcript in the Thread's place, the sheet gone, the bar red, the URL its own.
+    const transcript = await view('Run the accessibility linter');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(bar().getAttribute('aria-label')).toBe('State: Failed');
+    expect(bar().className).toContain('bg-error-wash');
+    expect(window.location.hash).toBe('#task=t8&agent=a3');
+    // The error is said once, at the end under Error, as what went back to the Thread; not again as a result.
+    const error = within(transcript).getByRole('region', { name: 'Error' });
+    expect(error.textContent).toContain('axe-core is not installed in this project.');
+    expect(error.textContent).toContain('to Accessibility pass on the post template');
+    expect(within(transcript).queryByRole('region', { name: 'Result' })).toBeNull();
+    // The strip's subagents step aside while it is open; the switcher stands in for them.
+    expect(screen.queryByRole('button', { name: /^Subagents: .*Show the subagents$/ })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Subagents' })).toBeTruthy();
   });
-
-  test('a row, the strip and the reply\'s chip open the same sheet: on that subagent, on the list, on the reply\'s list', async () => {
+  test('a row opens the subagent in the pane; the strip and the reply\'s chip open the same sheet, on the list and on the reply\'s list', async () => {
     const { user } = await openTask('t8');
-    const link = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
     const opened = async () => {
       const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
       // The strip's own sheet: its subagents button controls it.
-      expect(link.getAttribute('aria-controls')).toBe(dialog.id);
+      expect(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/, hidden: true }).getAttribute('aria-controls')).toBe(dialog.id);
       expect(within(dialog).getByRole('heading', { name: 'Subagents' })).toBeTruthy();
       return dialog;
     };
@@ -247,31 +250,31 @@ describe('subagents', () => {
       await user.keyboard('{Escape}');
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     };
-    // A row: the sheet on that subagent's detail; Esc gives the focus back to the row.
-    const row = live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ });
-    await user.click(row);
-    const fromRow = await opened();
-    expect(await within(fromRow).findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
-    expect(within(fromRow).getByText('2 of 5')).toBeTruthy();
-    await closed();
-    expect(document.activeElement).toBe(row);
-    // The strip: the same sheet on the whole list.
-    await user.click(link);
+    // A row: the subagent in the Conversation pane, no sheet; Esc goes back to the Thread, as Back does.
+    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    const transcript = await view('Check contrast of the theme tokens');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Conversation' }).hasAttribute('inert')).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(transcript));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeNull());
+    expect(screen.getByRole('region', { name: 'Conversation' }).hasAttribute('inert')).toBe(false);
+    expect(window.location.hash).toBe('#task=t8');
+    // The strip: the sheet on the whole list.
+    await user.click(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ }));
     const fromStrip = await opened();
-    expect(fromStrip.id).toBe(fromRow.id);
     expect(within(fromStrip).getByRole('searchbox', { name: 'Search subagents' }).getAttribute('placeholder')).toBe('Search 5 subagents');
     expect(within(fromStrip).queryByRole('button', { name: /^From / })).toBeNull();
     await closed();
     // The chip: the same sheet on the list filtered to its reply, until "From … ×" lifts it.
     await user.click(live().getByRole('button', { name: /^5 subagents · [\d.]+M tokens · 1 done · 1 failed · 3 running/ }));
     const fromChip = await opened();
-    expect(fromChip.id).toBe(fromRow.id);
+    expect(fromChip.id).toBe(fromStrip.id);
     const filter = within(fromChip).getByRole('button', { name: /^From .*show every message's subagents$/ });
     expect(within(fromChip).getAllByRole('button', { name: /, (running|failed|completed)/ })).toHaveLength(5);
     await user.click(filter);
     expect(within(fromChip).queryByRole('button', { name: /^From / })).toBeNull();
   });
-
   test('the strip is three sections, the list, the progress line and the subagents, whose button opens the sheet without a Todo tab', async () => {
     const { user } = await openTask('t8');
     // The todo list and the subagents are buttons of their own; the progress line between them waits on the model, plain words.
@@ -348,7 +351,7 @@ describe('subagents', () => {
     expect(row.querySelector('span.text-error')?.textContent).toBe('axe-core is not installed in this project.');
   });
 
-  test('an earlier reply\'s chip opens the sheet on its list; a row opens its detail, which leads to where it was spawned', async () => {
+  test('an earlier reply\'s chip opens the sheet on its list; a row opens the subagent, whose Thread crumb leads to where it was spawned', async () => {
     const { user } = await openTask('t22');
     const chip = log().getByRole('button', { name: /^12 subagents · [\d.]+M tokens · 11 done · 1 running/ });
     expect(chip.getAttribute('aria-expanded')).toBeNull();
@@ -359,83 +362,76 @@ describe('subagents', () => {
     expect(rows).toHaveLength(12);
     expect(rows[0].getAttribute('aria-label')).toMatch(/^Audit package internal\/store, running/);
     await user.click(list.getByRole('button', { name: /^Audit package internal\/web, completed/ }));
-    // Read result first: what went back to the main agent leads the detail.
-    const result = await list.findByRole('region', { name: 'Result' });
-    // Its last message is that result: drawn once, not again under Work.
+    const transcript = within(await view('Audit package internal/web'));
+    // Read as a conversation: what it was asked first, its work, and what went back to the Thread at the end, green.
+    expect(bar().className).toContain('bg-success-wash');
+    const result = await transcript.findByRole('region', { name: 'Result' });
+    expect(result.textContent).toContain('returned to');
     const said = result.querySelector('p')!.textContent!;
     expect(said.length).toBeGreaterThan(10);
-    await waitFor(() => expect(list.getByRole('region', { name: 'Work' }).textContent).not.toContain('Loading'));
-    expect(list.getByRole('region', { name: 'Work' }).textContent).not.toContain(said);
-    expect(list.queryByRole('textbox')).toBeNull();
-    await user.click(list.getByRole('button', { name: 'Show where it was spawned' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Its last message is that result: drawn once.
+    await waitFor(() => expect(transcript.queryByText(/Loading/)).toBeNull());
+    expect(transcript.getAllByText(said)).toHaveLength(1);
+    expect(transcript.queryByRole('textbox')).toBeNull();
+    await user.click(within(bar()).getByRole('button', { name: /^Back to / }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: /^Transcript of / })).toBeNull());
     // Its reply has no rows of its own on the page: it lands on the chip that holds its call.
     await waitFor(() => expect(flashed()).toBe(chip));
   });
-
-  test('Stop in the detail is confirmed; a failed stop says so on the row, an accepted one waits for the run to end', async () => {
+  test('Stop on the bar is confirmed; a failed stop says so, an accepted one waits for the run to end', async () => {
     const { user } = await openTask('t8');
     await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    let open = await sheet();
-    expect(await open.findByText(/is 2\.85:1, below AA/)).toBeTruthy();
+    const transcript = within(await view('Check contrast of the theme tokens'));
+    expect(await transcript.findByText(/is 2\.85:1, below AA/)).toBeTruthy();
     const refused = vi.spyOn(api, 'cancelSubagent').mockRejectedValueOnce(new Error('the provider did not answer'));
-    await user.click(open.getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
+    await user.click(within(bar()).getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Stop subagent “Check contrast of the theme tokens”?' });
     await user.click(within(confirm).getByRole('button', { name: 'Stop subagent' }));
     await waitFor(() => expect(document.querySelector('[data-subagent-row] [role="alert"]')?.textContent).toBe('Could not stop it: the provider did not answer'));
     refused.mockRestore();
-    // The confirmation sat outside the sheet: pressing in it left the sheet open.
-    open = await sheet();
-    await user.click(open.getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
+    await user.click(within(bar()).getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop subagent' }));
-    // Stopped, it stays open where it was read.
-    expect(await open.findByText('Stopped before it finished.')).toBeTruthy();
+    // Stopped, it stays open where it was read; the bar has nothing left to stop.
+    expect(await transcript.findByText('Stopped before it finished.')).toBeTruthy();
+    expect(within(bar()).queryByRole('button', { name: /^Stop subagent/ })).toBeNull();
   });
 
-  test('picking a run never calls it gone while the transcript can still show it: the first run is the start, a fresh running run the end', async () => {
-    const { user } = await openTask('t8');
-    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    const open = await sheet();
-    const transcript = await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' });
-    await open.findByText(/is 2\.85:1, below AA/);
-    await user.click(open.getByRole('button', { name: /^Run 2 · / }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(open.queryByText('That run is not in the retained transcript.')).toBeNull();
-    transcript.scrollTop = 40;
-    await user.click(open.getByRole('button', { name: /^Run 1 · / }));
-    await waitFor(() => expect(transcript.scrollTop).toBe(0));
-    expect(open.queryByText('That run is not in the retained transcript.')).toBeNull();
-  });
-
-  test('a subagent with several runs shows each in its detail\'s run strip', async () => {
+  test('a subagent with several runs counts them in its read-only Tools, scoped to it, with no context meter', async () => {
     const { user } = await openTask('t22');
     await user.click(live().getByRole('button', { name: /^Audit package internal\/store, running/ }));
-    const open = await sheet();
-    const runs = (await open.findAllByRole('button', { name: /^Run \d · / })).map((b) => b.textContent);
-    expect(runs).toEqual(['Run 1 · ✓ 2m 0s', 'Run 2 · ✓ 2m 0s', 'Run 3 · running']);
-    await user.click(open.getByRole('button', { name: /^Run 2/ }));
-    expect(open.queryByText('That run is not in the retained transcript.')).toBeNull();
+    await view('Audit package internal/store');
+    await user.click(screen.getByRole('button', { name: 'Tools for this subagent, read only' }));
+    const tools = within(await screen.findByRole('dialog', { name: 'Tools' }));
+    expect(tools.getByText(/^Read only · Audit package internal\/store/)).toBeTruthy();
+    expect(tools.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Usage', 'Agent']);
+    expect(tools.getByText('Runs').nextElementSibling?.textContent).toBe('3');
+    await user.click(tools.getByRole('tab', { name: 'Agent' }));
+    expect(tools.getByText('Name').nextElementSibling?.textContent).toBe('Audit package internal/store');
   });
-
-  test('a subagent another spawned sits under it, opens from its detail, and leads back to it; ↑ ↓ step through the list', async () => {
+  test('a subagent another spawned sits under it; its trail leads back up a level, and ↑ ↓ on the switcher step through them', async () => {
     const { user } = await openTask('t8');
     const names = live().getAllByRole('button', { name: /, (failed|running|completed)/ }).map((b) => b.getAttribute('aria-label')?.split(',')[0]);
     expect(names.indexOf('Verify store callers')).toBe(names.indexOf('Check contrast of the theme tokens') + 1);
-    await user.click(live().getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
-    const open = await sheet();
-    await user.click(await open.findByRole('button', { name: /^Verify store callers$/ }));
-    expect(await open.findByRole('region', { name: 'Transcript of Verify store callers' })).toBeTruthy();
-    expect(open.getByText('3 of 5')).toBeTruthy();
-    await user.click(open.getByRole('button', { name: 'Check contrast of the theme tokens' }));
-    expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
-    // The way back holds the focus; ↓ goes to the next row of the list.
-    open.getByRole('button', { name: 'All 5' }).focus();
+    await user.click(live().getByRole('button', { name: /^Verify store callers, running/ }));
+    await view('Verify store callers');
+    // The trail: the Thread, the subagent that spawned it, then this one, current; its type beside the time.
+    const trail = within(screen.getByRole('navigation', { name: 'Trail' }));
+    expect(trail.getByRole('button', { name: 'Accessibility pass on the post template' })).toBeTruthy();
+    expect(trail.getByText('Verify store callers').closest('[aria-current="page"]')).toBeTruthy();
+    expect(bar().textContent).toContain('task');
+    await user.click(trail.getByRole('button', { name: 'Check contrast of the theme tokens' }));
+    expect(await view('Check contrast of the theme tokens')).toBeTruthy();
+    // The switcher: the current one lit; ↓ opens the next in the list's order and keeps the focus there.
+    const switcher = within(screen.getByRole('group', { name: 'Subagents' }));
+    const current = switcher.getByRole('button', { current: true });
+    expect(current.textContent).toBe('Check contrast of the theme tokens');
+    current.focus();
     await user.keyboard('{ArrowDown}');
-    expect(await open.findByRole('region', { name: 'Transcript of Verify store callers' })).toBeTruthy();
-    await user.click(open.getByRole('button', { name: 'Previous subagent' }));
-    expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
+    expect(await view('Verify store callers')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Verify store callers'));
+    await user.keyboard('{ArrowUp}');
+    expect(await view('Check contrast of the theme tokens')).toBeTruthy();
   });
-
   // A background launch's call is never read, so its transcript must not wait for that body.
   test('a background subagent\'s transcript does not wait for a call body it never reads', async () => {
     const original = mockData.seed;
@@ -449,29 +445,28 @@ describe('subagents', () => {
       const { user } = await openTask('t15');
       const index = await openSubagentIndex(user);
       await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
-      expect(await index.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
+      const transcript = within(await view('Audit the remaining packages'));
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(index.queryByText('Details load as you scroll here…')).toBeNull();
+      expect(transcript.queryByText('Details load as you scroll here…')).toBeNull();
     } finally {
       seed.mockRestore();
     }
   });
 
-  test('older subagents load from the record on request and open in the sheet; where they were spawned is gone, and it says so', async () => {
+  test('older subagents load from the record on request and open in the pane; where they were spawned is gone, and it says so', async () => {
     const { user } = await openTask('t15');
     const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: 'Show older subagents' }));
     // Their calls are not in the history held here: they wait under "Earlier in the conversation".
     const earlier = within(await index.findByRole('region', { name: 'Earlier in the conversation' }));
     await user.click(earlier.getByRole('button', { name: /^Audit package batch 2/ }));
-    expect(await index.findByRole('region', { name: 'Transcript of Audit package batch 2' })).toBeTruthy();
-    await user.click(index.getByRole('button', { name: 'Show where it was spawned' }));
+    expect(await view('Audit package batch 2')).toBeTruthy();
+    await user.click(within(bar()).getByRole('button', { name: /^Back to / }));
     // Locating pages through the record first; under coverage instrumentation that outlasts the default wait.
     const said = await screen.findAllByText(/^Where this subagent was spawned is not in the retained history/, {}, { timeout: 15000 });
     const alert = said.map((node) => node.closest<HTMLElement>('div[role="alert"]')).find(Boolean);
     await waitFor(() => expect(document.activeElement).toBe(alert));
   });
-
   test('the live rows list every subagent at work, running then failed first, with their tokens', async () => {
     await openTask('t22');
     expect(live().getByRole('button', { name: /^8 subagents · [\d.]+M tokens/ })).toBeTruthy();
@@ -496,8 +491,10 @@ describe('subagents', () => {
     const idle = await list.findByRole('button', { name: /^Audit package cmd\/tool9, idle/ });
     expect(list.getAllByRole('button', { name: /^Audit package / })).toHaveLength(1);
     await user.click(idle);
-    expect(await list.findByRole('region', { name: 'Transcript of Audit package cmd/tool9' })).toBeTruthy();
-    expect(list.queryByRole('textbox')).toBeNull();
+    expect(within(await view('Audit package cmd/tool9')).queryByRole('textbox')).toBeNull();
+    // The composer stays, read-only: no message, its settings locked, a way back to the Thread to write.
+    expect(screen.getByText('Subagents take no messages.', { exact: false })).toBeTruthy();
+    expect((document.getElementById('composer-text') as HTMLTextAreaElement).disabled).toBe(true);
   });
 
   test('an older message shows three rows, then "N more · Show all"; the newest shows all of its own', async () => {
@@ -511,29 +508,23 @@ describe('subagents', () => {
     expect(older.getAllByRole('button', { name: /^Audit package / })).toHaveLength(22);
   });
 
-  test('at the end of the list the step buttons stay focusable and do nothing, so ↑ ↓ ← keep working; → never leaves the detail', async () => {
+  test('the switcher shows the open one and its neighbours, the rest behind "+N"; at the end ↓ does nothing', async () => {
     const { user } = await openTask('t8');
     await user.click(live().getByRole('button', { name: /^Run the accessibility linter, failed/ }));
-    const open = await sheet();
-    expect(open.getByText('4 of 5')).toBeTruthy();
-    const next = open.getByRole('button', { name: 'Next subagent' });
-    await user.click(next);
-    expect(await open.findByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
-    // The last one: Next says it cannot go on, keeps the focus, and a press does nothing.
-    expect(next.getAttribute('aria-disabled')).toBe('true');
-    expect(next.hasAttribute('disabled')).toBe(false);
-    expect(document.activeElement).toBe(next);
-    await user.click(next);
-    expect(open.getByText('5 of 5')).toBeTruthy();
-    // → stays in the detail.
-    await user.keyboard('{ArrowRight}');
-    expect(open.getByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
-    await user.keyboard('{ArrowUp}');
-    expect(await open.findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
-    await user.keyboard('{ArrowLeft}');
-    expect(await open.findByRole('searchbox', { name: 'Search subagents' })).toBeTruthy();
+    await view('Run the accessibility linter');
+    const switcher = within(screen.getByRole('group', { name: 'Subagents' }));
+    expect(switcher.getAllByRole('button').map((b) => b.textContent)).toEqual(['Verify store callers', 'Run the accessibility linter', 'Check the heading order', '+2']);
+    switcher.getByRole('button', { current: true }).focus();
+    await user.keyboard('{ArrowDown}');
+    expect(await view('Check the heading order')).toBeTruthy();
+    // The last one: ↓ stays.
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
+    // "+2" lists them all; a pick opens it.
+    await user.click(switcher.getByRole('button', { name: '2 more subagents' }));
+    await user.click(await screen.findByRole('menuitem', { name: /^Survey templates for missing alt text and labels/ }));
+    expect(await view('Survey templates for missing alt text and labels')).toBeTruthy();
   });
-
   test('a reply\'s list offers no older subagents (they would join no reply); the whole list does', async () => {
     const { user } = await openTask('t15');
     await user.click(await screen.findByRole('button', { name: /^1 subagent · [\d.]+M tokens · 1 done/ }));
@@ -595,31 +586,30 @@ describe('one working ring per place', () => {
     expect(pane.querySelectorAll('.animate-breathe').length).toBeLessThanOrEqual(1);
   });
 
-  test('a running subagent\'s step turns no ring: its running call carries the step dots, its thought streams unlabelled; its head says "Running"', async () => {
+  test('a running subagent\'s step turns no ring: its running call carries the step dots, its thought streams unlabelled; its bar says "Running"', async () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
-    const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
-    expect(within(dialog).getByText('Running')).toBeTruthy();
+    const transcript = await screen.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
+    const bar = screen.getByRole('group', { name: /^State: / });
+    expect(bar.getAttribute('aria-label')).toBe('State: Running');
+    expect(bar.className).toContain('bg-accent-wash');
     // First its bash call is the step: the step dots, never a ring (the strip's live line has the one ring).
-    expect(rings(dialog)).toHaveLength(0);
+    expect(rings(transcript)).toHaveLength(0);
+    expect(rings(bar)).toHaveLength(0);
     expect(transcript.querySelectorAll('[data-step-mark]').length).toBeLessThanOrEqual(1);
     // Then a thought streams (the mock's): the foot has no "Thinking…" label and no step mark.
     await waitFor(() => expect(transcript.querySelector('[data-step-mark]')).toBeNull(), { timeout: 3000 });
     expect(within(transcript).queryByText('Thinking…')).toBeNull();
   });
-
   test('between steps a subagent\'s foot is blank: no filler verb, no mark', async () => {
     const { user } = await openTask('t8');
     const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
     await user.click(live.getByRole('button', { name: /^Verify store callers, running/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
-    await within(dialog).findByRole('region', { name: /^Transcript of / });
-    expect(within(dialog).queryByText(/…$/, { ignore: '.sr-only, textarea, input' })).toBeNull();
-    expect(rings(dialog)).toHaveLength(0);
+    const transcript = await screen.findByRole('region', { name: /^Transcript of / });
+    expect(within(transcript).queryByText(/…$/, { ignore: '.sr-only, textarea, input' })).toBeNull();
+    expect(rings(transcript)).toHaveLength(0);
   });
-
   test('a running background shell reads "Running" in plain words, with no chip or dot', async () => {
     const { user } = await openTask('t1');
     await user.click(screen.getByRole('button', { name: 'Background tasks: 1 running' }));

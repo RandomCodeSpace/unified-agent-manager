@@ -26,7 +26,7 @@ const duration = (n: number) => `${number.format(n)} ms`;
 const total = (models: readonly UsageMetricModel[], key: 'input' | 'output' | 'cache_read' | 'reasoning') => models.some((m) => m[key] !== undefined) ? models.reduce((n, m) => n + (m[key] ?? 0), 0) : undefined;
 const premium = <span className="inline-flex items-center gap-0.5">Premium<HelpTip label="Premium request cost">A multiplier, not USD.</HelpTip></span>;
 
-function Counts({ rows }: Readonly<{ rows: readonly (readonly [ReactNode, string])[] }>) {
+export function Counts({ rows }: Readonly<{ rows: readonly (readonly [ReactNode, string])[] }>) {
   return <dl className="space-y-1 tabular-nums">{rows.map(([label, value], i) => <div key={i} className="flex items-start justify-between gap-4"><dt className="text-muted">{label}</dt><dd className="shrink-0 text-body">{value}</dd></div>)}</dl>;
 }
 
@@ -50,7 +50,7 @@ function Fold({ label, meta, children }: Readonly<{ label: string; meta: ReactNo
   </details>;
 }
 
-function Tile({ label, value, sub, muted }: Readonly<{ label: string; value: string; sub?: ReactNode; muted?: boolean }>) {
+export function Tile({ label, value, sub, muted }: Readonly<{ label: string; value: string; sub?: ReactNode; muted?: boolean }>) {
   return <div className="rounded-md bg-tint-well px-3 py-1.5">
     <p className="text-caption text-muted">{label}</p>
     <p className={cn('text-title tabular-nums', muted ? 'text-muted' : 'text-ink')}>{value}</p>

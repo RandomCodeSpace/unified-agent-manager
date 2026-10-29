@@ -33,6 +33,16 @@ func TestSubagentLogMarksBackgroundLaunches(t *testing.T) {
 	}
 }
 
+func TestSubagentLogKeepsTheAgentType(t *testing.T) {
+	l := newSubagentLog()
+	explore, _ := l.apply(agentEv("s1", "a", &rpc.SubagentStartedData{ToolCallID: "call-a", AgentName: "explore", AgentDisplayName: "Explore Agent"}))
+	typed, _ := l.apply(agentEv("s2", "b", &rpc.SubagentStartedData{ToolCallID: "call-b", AgentType: option("general-purpose")}))
+	none, _ := l.apply(agentEv("s3", "c", &rpc.SubagentStartedData{ToolCallID: "call-c"}))
+	if explore.Type != "explore" || explore.Name != "Explore Agent" || typed.Type != "general-purpose" || none.Type != "" {
+		t.Fatalf("types = %q %q %q", explore.Type, typed.Type, none.Type)
+	}
+}
+
 func TestSubagentCountsTokensAndToolCalls(t *testing.T) {
 	h := openWeb(t)
 	usage := func(id, agentID string, in, out int64) {
