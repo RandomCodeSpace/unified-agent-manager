@@ -1690,7 +1690,7 @@ func (f *subagentFold) window() (agentapi.SubagentWindow, error) {
 }
 
 func subagentBytes(sa agentapi.Subagent) int {
-	return len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result) +
+	return len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Type) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result) +
 		len(sa.Runs)*agentapi.SubagentRunBytes
 }
 
@@ -4928,6 +4928,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 			sa.StartRun(ev.Timestamp, agentapi.SubagentTriggerSpawn)
 		}
 		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), cmp.Or(l.asked[d.ToolCallID], d.AgentDescription)
+		sa.Type = cmp.Or(d.AgentName, deref(d.AgentType))
 		if d.ParentID != nil {
 			sa.ParentAgentID = *d.ParentID
 		}

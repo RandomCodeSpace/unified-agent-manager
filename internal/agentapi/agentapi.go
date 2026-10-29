@@ -1524,6 +1524,10 @@ type Subagent struct {
 	ParentAgentID string `json:"parent_agent_id,omitempty"`
 	Name          string `json:"name"`
 	Description   string `json:"description,omitempty"`
+	// Type is the kind of agent the provider spawned (Copilot's agent name,
+	// else its agent type: explore, task, general-purpose), empty when it
+	// reports none.
+	Type string `json:"type,omitempty"`
 	// Background is set when it was launched in the background: its parent
 	// tool call then only acknowledges the launch, and its result is its own
 	// last message.

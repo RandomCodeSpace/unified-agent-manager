@@ -26,6 +26,7 @@ import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentScope } from './Subagents';
+import { SubagentBar, SubagentView } from './SubagentView';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
@@ -98,6 +99,9 @@ interface Props {
   since?: string;
   /** The name of the Task whose last message this one runs again (`rerun_of`); empty when that Task is gone or unnamed. */
   rerunOf?: string;
+  /** The subagent shown in the Conversation pane in the Thread's place (`#task=…&agent=…`), and the way to show one or (null) go back. */
+  subagent?: string | null;
+  onSubagent: (agentId: string | null) => void;
 }
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -365,7 +369,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
 
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, itemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, changesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, itemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, changesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf, subagent, onSubagent }: Readonly<Props>) {
   const api = useApi();
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
@@ -983,6 +987,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // A reply's plan ticks off from the live todo list.
   const todoView = session.turn_activity?.todos;
   const replyTools = useMemo(() => ({ plan: todoView?.known ? new Map(todoView.todos.map((t) => [planKey(t.title), t.status])) : undefined }), [todoView]);
+  // A subagent in the Conversation pane (DESIGN.md subagent view): the Thread's conversation stays beneath, where it was.
+  const viewed = subagent ? session.subagents.find((s) => s.id === subagent) : undefined;
+  const backToThread = useCallback(() => onSubagent(null), [onSubagent]);
+  // Back from one, the conversation takes the focus the view had (the Thread crumb's locate then moves it to the row).
+  const wasViewed = useRef(false);
+  useLayoutEffect(() => {
+    if (wasViewed.current && !viewed && (!document.activeElement || document.activeElement === document.body)) scroller.current?.focus({ preventScroll: true });
+    wasViewed.current = !!viewed;
+  }, [viewed]);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
@@ -996,107 +1009,111 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent}>
     <GitLabItemsContext.Provider value={gitlabItems}>
     <ReplyContext.Provider value={replyTools}>
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
-        {sinceMark && sinceSummary && !historyLoading && (
+        {sinceMark && sinceSummary && !historyLoading && !viewed && (
           <div className="shrink-0 px-3 pt-2 sm:px-4 md:px-6">
             <SinceYouLeft away={away(sinceMark, Date.parse(opened))} text={sinceSummary.text} onJump={() => void jumpTo(sinceSummary.ids)} onDismiss={() => setSinceMark(undefined)} />
           </div>
         )}
-        {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. */}
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <section aria-label="Conversation" className="min-h-0 flex-1 scroll-pb-12 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
-          onKeyDown={e => {
-            if (e.defaultPrevented) return;
-            if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }
-            if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); }
-          }}
-          onWheelCapture={e => { if (e.ctrlKey) return; if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
-          onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
-          onTouchEnd={e => { touching.current = e.touches.length > 0; }}
-          onTouchCancel={e => { touching.current = e.touches.length > 0; }}
-          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
-          <ScrollSentinel sentinelRef={sentinel} />
-          {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
-          {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-          <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
-            {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
-            {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
-            {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
-            {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another thread'}, to compare.</Note>}
-            {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source thread</button>. Both threads use the same project and current files.</Note>}
-            {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
-            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
-            <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
-            <Transcript
-              sessionId={session.id}
-              planVersion={session.plan_version}
-              planPath={session.plan_path}
-              planAvailable={session.open}
-              items={visibleItems}
-              identityItems={session.history_index}
-              liveItems={liveItems}
-              historyItemSeq={historyItemSeq}
-              turnTimings={session.turn_timings}
-              interactions={visibleInteractions}
-              subagents={session.subagents}
-              liveCard={!session.history_after}
-              live={live && !session.history_after}
-              working={working && !turnOver && !session.history_after}
-              connected={connected}
-              provider={session.provider}
-              workdir={session.workdir}
-              compacting={compacting}
-              onOpenChanges={openTurnChanges}
-              onOpenThreadChanges={noGit ? undefined : openChanges}
-              readersActive={active && connected}
-              readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
-              changedLine={!noGit}
-              onBranch={session.capabilities.fork && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseFork : undefined}
-              onRewind={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseRewind : undefined}
-              onEdit={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && !answering && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseEdit : undefined}
-            />
-            </HistoryAnchor>
-            {rewindAt && active && connected && <RewindPanel session={session} userItemId={rewindAt.userItemId} anchor={rewindAt.anchor} onClose={() => setRewindAt(null)} />}
-            {session.rewind && <RewindHold session={session} />}
-            {editError && <Note tone="error" role="alert">{editError}</Note>}
-            {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
-            {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
-            {cards.map((i) => (
-              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
-                <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
-              </Collapse>
-            ))}
-            {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
-            {session.handoff && !live && !session.history_after && (
-              <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
-            )}
-            {session.state === 'failed' && !noticed && (
-              <Note tone="error" role="alert">
-                Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
-              </Note>
-            )}
-          </div>
-        </section>
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* The subagent shown in the Thread's place, over its conversation, which keeps its place beneath. */}
+          {viewed && <SubagentView session={session} subagent={viewed} onShow={onSubagent} />}
+          {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
+          <section aria-label="Conversation" inert={!!viewed} className="min-h-0 flex-1 scroll-pb-12 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+            onKeyDown={e => {
+              if (e.defaultPrevented) return;
+              if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }
+              if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); }
+            }}
+            onWheelCapture={e => { if (e.ctrlKey) return; if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
+            onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
+            onTouchEnd={e => { touching.current = e.touches.length > 0; }}
+            onTouchCancel={e => { touching.current = e.touches.length > 0; }}
+            onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
+            <ScrollSentinel sentinelRef={sentinel} />
+            {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
+            {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
+            <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+              {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
+              {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
+              {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
+              {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another thread'}, to compare.</Note>}
+              {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source thread</button>. Both threads use the same project and current files.</Note>}
+              {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
+              {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
+              {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
+              <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
+              <Transcript
+                sessionId={session.id}
+                planVersion={session.plan_version}
+                planPath={session.plan_path}
+                planAvailable={session.open}
+                items={visibleItems}
+                identityItems={session.history_index}
+                liveItems={liveItems}
+                historyItemSeq={historyItemSeq}
+                turnTimings={session.turn_timings}
+                interactions={visibleInteractions}
+                subagents={session.subagents}
+                liveCard={!session.history_after}
+                live={live && !session.history_after}
+                working={working && !turnOver && !session.history_after}
+                connected={connected}
+                provider={session.provider}
+                workdir={session.workdir}
+                compacting={compacting}
+                onOpenChanges={openTurnChanges}
+                onOpenThreadChanges={noGit ? undefined : openChanges}
+                readersActive={active && connected}
+                readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
+                changedLine={!noGit}
+                onBranch={session.capabilities.fork && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseFork : undefined}
+                onRewind={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseRewind : undefined}
+                onEdit={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && !answering && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseEdit : undefined}
+              />
+              </HistoryAnchor>
+              {rewindAt && active && connected && <RewindPanel session={session} userItemId={rewindAt.userItemId} anchor={rewindAt.anchor} onClose={() => setRewindAt(null)} />}
+              {session.rewind && <RewindHold session={session} />}
+              {editError && <Note tone="error" role="alert">{editError}</Note>}
+              {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
+              {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
+              {cards.map((i) => (
+                <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
+                  <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+                </Collapse>
+              ))}
+              {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
+              {session.handoff && !live && !session.history_after && (
+                <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
+              )}
+              {session.state === 'failed' && !noticed && (
+                <Note tone="error" role="alert">
+                  Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
+                </Note>
+              )}
+            </div>
+          </section>
+        </div>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here leaves the side panels open: the next message or command about them is typed here. */}
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} error={locateError} jump={jump && strip} onJump={jumpToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideSubagents={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} />
             <Schedules snapshot={session.schedules} open={session.open} />
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
-            <Appear show={jump && !strip} className="shrink-0">
+            <Appear show={jump && !strip && !viewed} className="shrink-0">
               <Button variant="secondary" size="sm" className="shadow-float" onClick={jumpToBottom}>
                 <ArrowDown />
                 Jump to bottom
@@ -1111,7 +1128,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </div>
           )}
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id ? editing : null} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} />
           <ComposerFoot>
             <PlaceFoot session={session} project={project} />
             {/* At the right, an item of this row (the group is `contents`): the time split. What the turn waits on now is the strip's live line. */}

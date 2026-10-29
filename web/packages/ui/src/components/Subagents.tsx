@@ -3,15 +3,15 @@ import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
 import { isSubagentCall, subagentSummary, duration, windowInteractions } from '../lib/transcript';
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
-import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, CornerDownRight, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Minus, Square, Workflow, X } from 'lucide-react';
+import { createContext, memo, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { describeError, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
 import { compactTokens } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
-import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, runLines, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
+import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -21,7 +21,7 @@ import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
-import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { PanelFoot, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 import { Key } from './InlinePicker';
 
@@ -31,7 +31,7 @@ interface StopState {
   requested: boolean;
   error: string | null;
 }
-const NOT_STOPPING: StopState = { busy: false, requested: false, error: null };
+export const NOT_STOPPING: StopState = { busy: false, requested: false, error: null };
 
 /** One record of stop requests per Task, so every row of a subagent agrees. */
 function useStops(sessionId: string, subagents: readonly Subagent[]): [Record<string, StopState>, (agentId: string) => void] {
@@ -127,10 +127,11 @@ export function PanelHeader({ children, className }: Readonly<{ children: ReactN
 }
 
 /**
- * Where the strip's sheet opens (DESIGN.md subagent sheet): a subagent's detail, or the list,
- * filtered to one reply's subagents with `reply` (its message's id, "start" before any).
+ * Where the strip's sheet opens (DESIGN.md subagent sheet): the list, filtered to one reply's
+ * subagents with `reply` (its message's id, "start" before any). A subagent opens in the
+ * Conversation pane instead (`show`).
  */
-export type SheetTo = { agent: string } | { reply?: string };
+export type SheetTo = { reply?: string };
 
 /** The last request to open the strip's sheet (`to`) or close it (null); `n` counts them, so asking twice still opens it. */
 export interface SheetRequest {
@@ -138,8 +139,9 @@ export interface SheetRequest {
   n: number;
 }
 
-/** A run picked in the detail's run strip: the transcript shows the run's first item. `n` counts the picks. */
-interface Seek {
+/** A run picked in the subagent's Tools: its transcript shows the run's first item. `n` counts the picks. */
+export interface Seek {
+  agent: string;
   time: string;
   /** The first run: the transcript's start. */
   first: boolean;
@@ -182,6 +184,8 @@ interface ScopeData {
   sheet: SheetRequest | null;
   /** A stop waits for its confirmation: a press there is not a press away from the sheet. */
   confirming: boolean;
+  /** The last run picked to scroll its subagent's transcript to. */
+  seek: Seek | null;
 }
 
 /** Stable for the life of the scope, so rows never render for a new callback. */
@@ -192,8 +196,12 @@ interface ScopeActions {
   jumpToReply: (key: string) => void;
   /** Asks to confirm, then stops. */
   stop: (s: Subagent) => void;
-  /** Opens the strip's sheet on a subagent's detail or on the list. */
+  /** Opens the strip's sheet on the list. */
   open: (to: SheetTo) => void;
+  /** Shows a subagent in the Conversation pane, in the Thread's place; the sheet makes way. */
+  show: (agentId: string) => void;
+  /** Scrolls the open subagent's transcript to a run's first item. */
+  seek: (run: Omit<Seek, 'n'>) => void;
 }
 
 class ScopeStore {
@@ -219,11 +227,11 @@ const SubagentContext = createContext<{ store: ScopeStore; actions: ScopeActions
 const NO_SUBSCRIBE = () => () => {};
 
 /** One value from the Task's subagents; a component renders again only when it changes, so `select` returns primitives or kept references. */
-function useScope<T>(select: (d: ScopeData) => T): T | undefined {
+export function useScope<T>(select: (d: ScopeData) => T): T | undefined {
   const scope = useContext(SubagentContext);
   return useSyncExternalStore(scope?.store.subscribe ?? NO_SUBSCRIBE, () => (scope ? select(scope.store.data) : undefined));
 }
-const useActions = () => useContext(SubagentContext)?.actions;
+export const useActions = () => useContext(SubagentContext)?.actions;
 /** Scrolls the conversation to a tool call's row, opening what folds it; undefined outside a Task. */
 export const useLocateItem = () => useContext(SubagentContext)?.actions.locate;
 
@@ -249,11 +257,12 @@ export const useStopConfirming = () => useScope((d) => d.confirming) ?? false;
  * sheet): the session, the transcripts held, the requests to open the sheet, stop requests and their
  * one confirmation, and `locate`.
  */
-export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLocate, onJumpToReply, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; onLocate: (toolCallId: string) => void; onJumpToReply: (key: string) => void; children: ReactNode }>) {
+export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLocate, onJumpToReply, onShow, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; onLocate: (toolCallId: string) => void; onJumpToReply: (key: string) => void; onShow: (agentId: string) => void; children: ReactNode }>) {
   const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
   const [sheet, setSheet] = useState<SheetRequest | null>(null);
+  const [seek, setSeek] = useState<Seek | null>(null);
   // The items and the index change with every streamed token; what is read from them (the user
   // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
   const byParent = parentMap(session.subagents);
@@ -270,14 +279,14 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
   const confirming = stopConfirm.target !== null;
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
-  const handlers = useRef({ onLocate, onJumpToReply, ask: stopConfirm.ask });
+  const handlers = useRef({ onLocate, onJumpToReply, onShow, ask: stopConfirm.ask });
   useLayoutEffect(() => {
-    handlers.current = { onLocate, onJumpToReply, ask: stopConfirm.ask };
+    handlers.current = { onLocate, onJumpToReply, onShow, ask: stopConfirm.ask };
   });
   const [value] = useState(() => {
     const request = (to: SheetTo | null) => setSheet((r) => ({ to, n: (r?.n ?? 0) + 1 }));
@@ -295,6 +304,11 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
         },
         stop: (s: Subagent) => handlers.current.ask(s),
         open: request,
+        show: (agentId: string) => {
+          request(null);
+          handlers.current.onShow(agentId);
+        },
+        seek: (run: Omit<Seek, 'n'>) => setSeek((x) => ({ ...run, n: (x?.n ?? 0) + 1 })),
       } satisfies ScopeActions,
     };
   });
@@ -319,10 +333,9 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
 
 // Identity tones as whole class names, so Tailwind sees them.
 export const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
-const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
+export const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
 const STATUS_WORD: Record<SubagentStatus, string> = { running: 'running', idle: 'idle', completed: 'completed', failed: 'failed', cancelled: 'stopped' };
-const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };
-const STATUS_TONE: Record<SubagentStatus, string> = { running: 'text-accent', idle: 'text-muted', completed: 'text-success', failed: 'text-error', cancelled: 'text-muted' };
+export const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };
 
 /** "3 subagents · 2 done · 1 failed", with each count in its tone. */
 function Counts({ c, lead }: Readonly<{ c: SubagentCounts; lead?: ReactNode }>) {
@@ -343,7 +356,7 @@ function Counts({ c, lead }: Readonly<{ c: SubagentCounts; lead?: ReactNode }>) 
  * A subagent's state as a glyph (AgentChip's, without the word): the step dots while it runs
  * (`StepDots`, the running tool step's mark), a check, a cross, the idle glyph, a dash.
  */
-function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
+export function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
   switch (status) {
     case 'running':
       return <StepDots />;
@@ -376,7 +389,7 @@ function useNow(on: boolean): number {
 }
 
 /** How long it took, or, while it runs, how long it has been running (in `accent`). */
-function Took({ subagent: s, className }: Readonly<{ subagent: Subagent; className?: string }>) {
+export function Took({ subagent: s, className }: Readonly<{ subagent: Subagent; className?: string }>) {
   const running = s.status === 'running';
   const now = useNow(running && !!s.started_at);
   let text = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
@@ -431,11 +444,11 @@ const UNDER_NAME = 'pl-[calc(var(--spacing)*(8+var(--depth)*4.5))]';
  * One subagent (DESIGN.md subagent row), the same in the transcript and the sheet's list: its state
  * glyph, identity dot (while its reply has at most five), name, caption (what it is doing now, the
  * first line of its result, or its error, in `error`), duration and tokens; on a phone the caption
- * takes a second line. One spawned by another is indented under it. A press opens it in the strip's
- * sheet (in the sheet, `onOpen` shows it in place). With `anchor` it carries its `task` call's id,
- * so `locate` lands on it. Memoised: it renders again only when what it shows changes.
+ * takes a second line. One spawned by another is indented under it. A press opens it in the
+ * Conversation pane. With `anchor` it carries its `task` call's id, so `locate` lands on it.
+ * Memoised: it renders again only when what it shows changes.
  */
-export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth = 0, anchor = false, selected = false, onOpen }: { subagent: Subagent; tone?: IdentityTone; depth?: number; anchor?: boolean; selected?: boolean; onOpen?: (id: string) => void }) {
+export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth = 0, anchor = false }: { subagent: Subagent; tone?: IdentityTone; depth?: number; anchor?: boolean }) {
   const actions = useActions();
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
   const caption = useScope((d) => rowSummary(d.summaries, s)) ?? '';
@@ -450,11 +463,9 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         type="button"
         data-subagent-toggle=""
         data-index-row=""
-        aria-haspopup="dialog"
-        aria-current={selected || undefined}
         aria-label={`${name}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
-        className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', selected && 'bg-tint-selected hover:bg-tint-selected')}
-        onClick={() => (onOpen ? onOpen(s.id) : actions.open({ agent: s.id }))}
+        className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]"
+        onClick={() => actions.show(s.id)}
       >
         {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
         <span className="flex size-4 shrink-0 items-center justify-center">
@@ -479,173 +490,6 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
     </div>
   );
 });
-
-/**
- * One subagent in the sheet (DESIGN.md subagent sheet), in the list's place, read result first.
- * On top "‹ All N" back to the list and "k of N" with ↑ ↓ to its neighbours in the list's order.
- * The head: the subagent that spawned it (when one did), its state glyph, name and state word; what
- * it was asked for; one line of facts (how long, tokens, tool calls, model) with "↑ Spawned <time>",
- * which scrolls the conversation to where it was spawned; its runs and the subagents it spawned. The
- * body (`AgentTranscriptView`) holds Result (or Error), Asked and Work; the foot carries the key
- * hints and Stop while it runs, else Copy agent ID.
- */
-function SubagentDetail({ id, order, phone, onList, onOpen }: Readonly<{ id: string; order: readonly string[]; phone: boolean; onList: () => void; onOpen: (id: string) => void }>) {
-  const actions = useActions();
-  const { meta } = useApp();
-  const [copied, copy] = useCopied();
-  const task = useScope((d) => d.task);
-  const subagents = useScope((d) => d.subagents);
-  const s = subagents?.find((x) => x.id === id);
-  const transcript = useScope((d) => d.agents[id]);
-  const snapshotSeq = useScope((d) => d.snapshotSeq) ?? 0;
-  const parent = useScope((d) => d.summaries.calls.get(s?.parent_tool_call_id ?? ''));
-  const stopping = useScope((d) => d.stops[id]) ?? NOT_STOPPING;
-  const [seek, setSeek] = useState<Seek | null>(null);
-  const [scrolled, setScrolled] = useState(false);
-  // The row pressed in the list is gone: the way back takes the focus, so the keys below work at once.
-  const backButton = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => backButton.current?.focus({ preventScroll: true }), []);
-  if (!s || !task || !actions || !subagents) return null;
-  const name = s.name || 'Subagent';
-  const at = order.indexOf(id);
-  const step = (by: number) => {
-    const next = at >= 0 ? order[at + by] : undefined;
-    if (next) onOpen(next);
-  };
-  const spawner = s.parent_agent_id ? subagents.find((x) => x.id === s.parent_agent_id) : undefined;
-  const spawned = subagents.filter((x) => x.parent_agent_id === s.id);
-  const runs = runLines(s);
-  const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
-  const facts = [took, s.tokens ? `${compactTokens(s.tokens)} tokens` : '', s.tool_calls ? `${s.tool_calls} tool ${s.tool_calls === 1 ? 'call' : 'calls'}` : '', s.model ? modelName(meta, task.provider, s.model) : ''].filter(Boolean);
-  const parentId = s.parent_tool_call_id;
-  const spawnedAt = clock(s.runs?.[0]?.started_at || s.started_at);
-  // ↑ ↓ step through the list and ← goes back to it, from anywhere but a text field or the transcript, which scrolls with them;
-  // → does nothing here, so it never leaves the detail and drops the list's search, filters and open groups.
-  const onKeyDown = (e: ReactKeyboardEvent) => {
-    const target = e.target as HTMLElement;
-    if (e.altKey || e.ctrlKey || e.metaKey || target.closest('input, textarea, [contenteditable="true"], [role="region"]')) return;
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') step(e.key === 'ArrowUp' ? -1 : 1);
-    else if (e.key === 'ArrowLeft') onList();
-    else if (e.key !== 'ArrowRight') return;
-    e.preventDefault();
-  };
-  return (
-    // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- ↑ ↓ and ← move between the buttons' targets inside.
-    <div className="flex min-h-0 flex-1 animate-fade-in flex-col" onKeyDown={onKeyDown}>
-      <div className="flex h-9 shrink-0 items-center gap-1 px-2">
-        <button ref={backButton} type="button" data-sheet-focus="" className="flex h-7 items-center gap-1 rounded-sm pr-2 pl-1 text-caption text-body transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11" onClick={onList}>
-          <ChevronLeft aria-hidden="true" className="size-4 text-muted" />
-          All {order.length}
-        </button>
-        <span className="flex-1" />
-        {at >= 0 && (
-          <>
-            <span className="mr-1 text-meta tabular-nums text-muted">
-              {at + 1} of {order.length}
-            </span>
-            {/* At the ends they stay focusable (aria-disabled, a press does nothing), so focus and the keys stay in the detail. */}
-            <Button size="icon-sm" aria-label="Previous subagent" aria-disabled={at === 0} className="text-muted" onClick={() => step(-1)}>
-              <ChevronUp />
-            </Button>
-            <Button size="icon-sm" aria-label="Next subagent" aria-disabled={at === order.length - 1} className="text-muted" onClick={() => step(1)}>
-              <ChevronDown />
-            </Button>
-          </>
-        )}
-      </div>
-      <PanelHead scrolled={scrolled} className="px-4 pb-3">
-        {spawner && (
-          <Button size="sm" variant="subtle" title="Open the subagent that spawned it" className="-ml-1.5 h-6 w-fit max-w-full px-1.5 text-caption font-normal text-muted [&_svg]:size-3.5" onClick={() => onOpen(spawner.id)}>
-            <Workflow aria-hidden="true" />
-            <span className="truncate">{spawner.name || 'Subagent'}</span>
-            <ChevronRight aria-hidden="true" className="size-3! text-faint" />
-          </Button>
-        )}
-        <div className="mt-0.5 flex min-w-0 items-center gap-2">
-          <span className="flex size-5 shrink-0 items-center justify-center">
-            <SubagentMark status={s.status} />
-          </span>
-          <h2 className="min-w-0 truncate text-display-sm text-ink">{name}</h2>
-          <span className={cn('shrink-0 text-caption font-medium', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
-        </div>
-        {s.description && s.description.trim().toLowerCase() !== name.toLowerCase() && <p className="mt-0.5 line-clamp-2 pl-7 text-ui text-body" title={s.description}>{s.description}</p>}
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7 text-caption tabular-nums text-muted">
-          {s.status === 'running' && <Took subagent={s} className="text-caption" />}
-          {facts.map((fact) => <span key={fact} className="whitespace-nowrap">{fact}</span>)}
-          {parentId && (
-            <button type="button" className="-ml-1 flex h-6 items-center gap-1 rounded-full bg-tint-well px-2 text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11" aria-label="Show where it was spawned" title="Scroll the conversation to where it was spawned" onClick={() => actions.locate(parentId)}>
-              <ArrowUp aria-hidden="true" className="size-3 text-muted" />
-              {spawnedAt ? `Spawned ${spawnedAt}` : 'Where it was spawned'}
-            </button>
-          )}
-        </div>
-        {(runs.length > 0 || spawned.length > 0) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-7">
-            {runs.map((r, i) => {
-              const at = clock(r.started_at);
-              return (
-                <Fragment key={i}>
-                  {r.gapBefore && <span className="text-meta text-faint">Earlier runs not kept · latest runs</span>}
-                  <button
-                    type="button"
-                    disabled={!r.started_at}
-                    title={r.started_at ? `${r.trigger} · ${at}` : 'When this run started was not recorded, so it cannot be found in the transcript.'}
-                    className="h-6 rounded-full bg-tint-well px-2 text-meta tabular-nums text-body transition-colors duration-100 hover:bg-tint-hover disabled:hover:bg-tint-well pointer-coarse:min-h-11"
-                    onClick={() => setSeek((x) => ({ time: r.started_at!, first: i === 0, running: r.running, n: (x?.n ?? 0) + 1 }))}
-                  >
-                    {r.n === null ? 'Run' : `Run ${r.n}`} · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
-                  </button>
-                </Fragment>
-              );
-            })}
-            {spawned.map((x) => (
-              <button key={x.id} type="button" className="flex h-6 items-center gap-1.5 rounded-full bg-tint-well px-2 text-meta text-body transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11" onClick={() => onOpen(x.id)}>
-                <SubagentMark status={x.status} />
-                {x.name || 'Subagent'}
-                <ChevronRight aria-hidden="true" className="size-3 text-muted" />
-              </button>
-            ))}
-          </div>
-        )}
-      </PanelHead>
-      <AgentTranscriptView
-        key={s.id}
-        name={name}
-        provider={task.provider}
-        sessionId={task.id}
-        workdir={task.workdir}
-        subagent={s}
-        interactions={task.interactions}
-        transcript={transcript}
-        snapshotSeq={snapshotSeq}
-        open
-        parent={parent}
-        spawner={spawner?.name || (spawner ? 'Subagent' : 'the main agent')}
-        result={(s.status === 'completed' || s.status === 'idle') && !s.background ? parent?.tool?.output : undefined}
-        seek={seek}
-        onScrolled={setScrolled}
-      />
-      <PanelFoot>
-        {!phone && (
-          <>
-            <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
-            <span className="flex items-center gap-1.5"><Key>↑</Key><Key>↓</Key>switch</span>
-            <span className="flex items-center gap-1.5"><Key>←</Key>list</span>
-          </>
-        )}
-        <span className="flex-1" />
-        {s.status === 'running' ? (
-          <StopSubagent session={task} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
-        ) : (
-          <button type="button" className="flex h-7 items-center gap-1.5 rounded-sm px-2 text-caption text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink" onClick={() => copy(s.id)}>
-            <Copy aria-hidden="true" className="size-3.5 text-muted" />
-            {copied ? 'Copied' : 'Copy agent ID'}
-          </button>
-        )}
-      </PanelFoot>
-    </div>
-  );
-}
 
 /** Whether two messages say the same once spacing is ignored. */
 function sameText(a: string, b: string): boolean {
@@ -729,12 +573,12 @@ export function useSubagentIndex() {
 }
 
 /**
- * The strip sheet's Subagents tab (DESIGN.md subagent sheet): the list, or one subagent's detail in
- * its place, in the one fixed box. `to` is where it opened. The list: search, status chips, and the
+ * The strip sheet's Subagents tab (DESIGN.md subagent sheet): the list, the index of the Thread's
+ * subagents, in the one fixed box. `to` is where it opened. The list: search, status chips, and the
  * subagents grouped by the message that started their reply, newest first, each with its clock and
  * Jump; older messages show three rows, then "N more · Show all"; then the ones not placed and the
  * older ones from the record. Opened from a reply's chip it shows that reply's group alone, until
- * "From <time> ×" lifts the filter. A row opens its detail, which steps through the list's order.
+ * "From <time> ×" lifts the filter. A row opens the subagent in the Conversation pane, closing the sheet.
  */
 export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo | null; error?: string; phone: boolean }>) {
   const actions = useActions();
@@ -748,27 +592,11 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const tones = useScope((d) => d.replies.tones);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<IndexFilter>('all');
-  const [reply, setReply] = useState(to && 'reply' in to ? (to.reply ?? null) : null);
-  const [agent, setAgent] = useState(to && 'agent' in to ? to.agent : null);
-  // The last one opened: lit in the list, which scrolls to it on the way back.
-  const [selected, setSelected] = useState(agent);
+  const [reply, setReply] = useState(to?.reply ?? null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const list = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
-  // Stable, so the memoised rows do not render again with every update.
-  const open = useCallback((id: string) => {
-    setSelected(id);
-    setAgent(id);
-  }, []);
-  useLayoutEffect(() => {
-    if (agent) return;
-    const row = list.current?.querySelector<HTMLElement>('[data-index-row][aria-current="true"]');
-    row?.scrollIntoView({ block: 'nearest' });
-    row?.focus({ preventScroll: true });
-  }, [agent]);
   if (!taskId || !subagents || !summaries || !tones || !actions) return null;
-  // A subagent that is gone takes its detail with it.
-  if (agent && !subagents.some((s) => s.id === agent)) setAgent(null);
   const pool = reply === null ? groups : groups.filter((g) => g.key === reply);
   const all = pool.flatMap((g) => g.subagents);
   // The chips and the groups count what the search finds.
@@ -784,15 +612,7 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
     })
     // Caps defer: the newest message shown (after the search and filters) shows all its rows, older ones three until "Show all".
     .map((g, at) => ({ ...g, cap: reply !== null || at === 0 || g.rows.length <= GROUP_ROWS + 1 || expanded.has(g.key) ? g.rows.length : GROUP_ROWS }));
-  const order = shown.flatMap((g) => g.rows.map((r) => r.subagent.id));
   const from = reply === null ? undefined : groups.find((g) => g.key === reply);
-  // Back to the list: a row past its group's cap brings the whole group with it.
-  const back = () => {
-    const g = shown.find((x) => x.rows.findIndex((r) => r.subagent.id === agent) >= x.cap);
-    if (g) setExpanded((e) => new Set([...e, g.key]));
-    setAgent(null);
-  };
-  if (agent) return <SubagentDetail id={agent} order={order} phone={phone} onList={back} onOpen={open} />;
   // ArrowDown from the search box enters the rows; the arrows move between them, ArrowUp from the first goes back.
   const rowButtons = () => [...(list.current?.querySelectorAll<HTMLElement>('[data-index-row]') ?? [])];
   const onArrow = (e: ReactKeyboardEvent) => {
@@ -857,7 +677,7 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                 <ul className="flex flex-col">
                   {g.rows.slice(0, g.cap).map(({ subagent: s, depth }) => (
                     <li key={s.id}>
-                      <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} selected={s.id === selected} onOpen={open} />
+                      <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} />
                     </li>
                   ))}
                   {g.cap < g.rows.length && (
@@ -922,12 +742,14 @@ function OlderSubagents({ sessionId, before }: Readonly<{ sessionId: string; bef
 }
 
 /**
- * One subagent's transcript, in its open panel or sheet: a scroller filling it that keeps its
- * scrolling to itself. Mounting loads it from the subagent route, after which live frames
- * tagged with this agent_id keep it current (frames during the fetch are buffered and
- * replayed, see state.ts). Reloads on every fresh snapshot to close any gap.
+ * One subagent's transcript as a conversation, in the Conversation pane (DESIGN.md subagent view):
+ * what it was asked (by whom, when), its work, then its Result (or Error) as returned to its
+ * spawner; a running one follows its end. A scroller filling the pane that keeps its scrolling to
+ * itself. Mounting loads it from the subagent route, after which live frames tagged with this
+ * agent_id keep it current (frames during the fetch are buffered and replayed, see state.ts).
+ * Reloads on every fresh snapshot to close any gap.
  */
-function AgentTranscriptView({
+export function AgentTranscriptView({
   sessionId,
   provider,
   workdir,
@@ -936,12 +758,10 @@ function AgentTranscriptView({
   transcript: legacyTranscript,
   snapshotSeq,
   result: legacyResult,
-  open,
   parent,
   name,
   spawner,
   seek,
-  onScrolled,
 }: Readonly<{
   sessionId: string;
   provider: string;
@@ -953,16 +773,15 @@ function AgentTranscriptView({
   snapshotSeq: number;
   /** The `task` tool's output on the parent item, which is the subagent's result. */
   result?: string;
-  open: boolean;
   parent?: Item;
   name: string;
-  /** Who spawned it: "the main agent" or a subagent's name, for "returned to" and "by". */
+  /** Who spawned it: the Thread's name or a subagent's, for "asked by" and "returned to". */
   spawner: string;
-  /** A run picked in the row: show the first item at or after its start, paging to it if need be. */
+  /** A run picked in its Tools: show the first item at or after its start, paging to it if need be. */
   seek?: Seek | null;
-  /** Whether the body is scrolled from its top: the panel head fades in its edge. */
-  onScrolled?: (scrolled: boolean) => void;
 }>) {
+  // Always on screen: it mounts with the view and leaves with it.
+  const open = true;
   const api = useApi();
   const { dispatch } = useApp();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1007,14 +826,14 @@ function AgentTranscriptView({
   // The result: the `task` call's output; for a background launch, its own last message (once the window reaches its end).
   let result = detail.compact ? parentFullItem?.tool?.output : legacyResult;
   if (subagent.background) result = finished && !detail.agent?.after ? [...items].reverse().find((item) => item.kind === 'assistant' && item.text?.trim())?.text : undefined;
-  // Read result first: what it returned leads, what it was asked follows (its first message, once the
-  // window reaches the start), then its work. Its last message is the result when it says the same
-  // (always, for a background launch), so it is drawn once, under Result.
+  // Read as a conversation: what it was asked (its first message, once the window reaches the start),
+  // its work, then the result. Its last message is the result when it says the same (always, for a
+  // background launch), so it is drawn once, under Result.
   const atStart = !detail.agent?.before;
   const prompt = atStart && items[0]?.kind === 'user' ? items[0] : undefined;
   const last = finished && !detail.agent?.after ? [...items].reverse().find((item) => item.kind === 'assistant' && item.text?.trim()) : undefined;
   const lastIsResult = !!last && !!result && (subagent.background || sameText(result, last.text ?? ''));
-  const work = useMemo(() => items.filter((item) => item !== prompt && !(lastIsResult && item === last)), [items, prompt, lastIsResult, last]);
+  const work = useMemo(() => items.filter((item) => !(lastIsResult && item === last)), [items, lastIsResult, last]);
   useFileHintItems(subagent.id, items, open);
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -1073,7 +892,6 @@ function AgentTranscriptView({
     const el = scroller.current;
     if (!el) return;
     atBottom.current = !detail.agent?.after && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
-    onScrolled?.(el.scrollTop > 4);
     if (el.scrollTop < scrollTop.current && nearEdge(el, 'older')) loadOlder();
     else if (el.scrollTop > scrollTop.current && nearEdge(el, 'newer')) loadOlder('newer');
     scrollTop.current = el.scrollTop;
@@ -1155,10 +973,10 @@ function AgentTranscriptView({
   } else {
     body = (
       <>
-        <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
+        <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-6">
           <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={work} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} />
         </HistoryAnchor>
-        {work.length === 0 && <Note>{items.length === 0 ? 'Nothing recorded yet.' : 'No other steps.'}</Note>}
+        {items.length === 0 && <Note>Nothing recorded yet.</Note>}
       </>
     );
   }
@@ -1171,19 +989,12 @@ function AgentTranscriptView({
   // The notice belongs to a body on its way: a call never read (a background launch, a run not finished) has none.
   const parentNotice = detail.compact && readsParent && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>;
   const ended = clock(subagent.ended_at);
-  const asked = prompt && (
-    <PanelSection label="Asked" meta={[`by ${spawner}`, clock(prompt.time)].filter(Boolean).join(' · ')}>
-      {/* Three lines, then "Show the whole prompt". */}
-      <Clamp noun="prompt" height={56} surface="var(--color-raised)" className="text-ui text-body">
-        <Markdown text={prompt.text ?? ''} />
-      </Clamp>
-    </PanelSection>
-  );
 
   return (
     // Sideways it never scrolls: wide content scrolls in its own box; a touch hit area at the edge must not widen it.
+    // Its foot clears the dock's 40px overlap and the switcher floating above it.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-2 pb-5 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-3 pt-6 pb-28 [overflow-wrap:anywhere] sm:px-4 md:px-6 pointer-coarse:pb-32" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
       if (event.ctrlKey) return;
       userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();
@@ -1193,16 +1004,15 @@ function AgentTranscriptView({
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
       {lost && <Note role="status">That run is not in the retained transcript.</Note>}
+      {prompt && <p className="-mb-4 self-end text-caption text-muted">Asked by {spawner}{clock(prompt.time) && ` · ${clock(prompt.time)}`}</p>}
+      {body}
+      {live && !detail.agent?.after && <p className="text-caption text-accent">Working · follows its end</p>}
       {(outcome || parentNotice) && (
-        <PanelSection label={subagent.status === 'failed' ? 'Error' : 'Result'} meta={subagent.status === 'cancelled' ? ended : [`${subagent.status === 'failed' ? 'to' : 'returned to'} ${spawner}`, ended].filter(Boolean).join(' · ')} action={result && <CopyText text={result} label="Copy result" />}>
+        <PanelSection label={subagent.status === 'failed' ? 'Error' : 'Result'} icon={<CornerUpLeft aria-hidden="true" className="size-3.5 text-muted" />} meta={subagent.status === 'cancelled' ? ended : [`${subagent.status === 'failed' ? 'to' : 'returned to'} ${spawner}`, ended].filter(Boolean).join(' · ')} action={result && <CopyText text={result} label="Copy result" />} className="rounded-md bg-tint-well px-4 pt-2 pb-3">
           {outcome}
           {parentNotice}
         </PanelSection>
       )}
-      {asked}
-      <PanelSection label="Work" meta={live ? 'live' : undefined}>
-        {body}
-      </PanelSection>
     </div>
   );
 }
@@ -1220,7 +1030,7 @@ function CopyText({ text, label }: Readonly<{ text: string; label: string }>) {
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
-function StopSubagent({ session, subagent, stopping, onStop }: Readonly<{ session: TaskInfo; subagent: Subagent; stopping: StopState; onStop: () => void }>) {
+export function StopSubagent({ session, subagent, stopping, onStop }: Readonly<{ session: TaskInfo; subagent: Subagent; stopping: StopState; onStop: () => void }>) {
   const { busy, requested, error } = stopping;
   if (subagent.status !== 'running') return null;
   return (

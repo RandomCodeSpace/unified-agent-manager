@@ -205,18 +205,20 @@ const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text
  * with the jump arrow before the subagents while `jump` (the reader is away from the bottom).
  * Each button's name is a sentence (sr-only), the words on screen are hidden from assistive
  * tech, and a polite live region beside them speaks only what `useCue` lets through. The todo
- * list opens a reader of its own beside its button; the subagents open the sheet, and so does a
- * subagent row or chip in the conversation (`useSheetRequest`), on that subagent or that reply's
- * list. Each lights and lifts alone. `hidden` gives its place to another strip (the sheet then
+ * list opens a reader of its own beside its button; the subagents open the sheet, the index, and so
+ * does a reply's chip in the conversation (`useSheetRequest`), on that reply's list; a subagent
+ * itself opens in the Conversation pane. Each lights and lifts alone. `hidden` gives its place to another strip (the sheet then
  * opens from the bottom, and the arrow stands alone). `error`: why the last jump to a subagent
  * did not land, said in the sheet.
  */
-export function StatusLine({ line: given, session, since, hidden, error, jump, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, hideSubagents = false, error, jump, onJump }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
   since?: string;
   hidden: boolean;
+  /** A subagent fills the Conversation pane: its switcher stands in for the subagents section. */
+  hideSubagents?: boolean;
   error?: string;
   /** The reader is away from the bottom: the arrow shows. */
   jump: boolean;
@@ -232,7 +234,7 @@ export function StatusLine({ line: given, session, since, hidden, error, jump, o
   const shownLine = hidden || bare ? null : line;
   const index = useSubagentIndex();
   const any = !!index?.subagents.length;
-  const subagents = hidden || !any ? undefined : index!.subagents;
+  const subagents = hidden || hideSubagents || !any ? undefined : index!.subagents;
   const timing = session.turn_timings?.at(-1);
   // The live region still says a turn started when the strip draws nothing for it.
   const spoken = hidden ? null : line;

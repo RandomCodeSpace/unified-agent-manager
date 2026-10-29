@@ -1,9 +1,9 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { useApi } from '../ApiContext';
-import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
+import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Lock, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings, type ThreadPlace } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, taskName, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -143,6 +143,7 @@ function Picker({
   disabled,
   reason,
   hint,
+  lock,
   className,
   onChange,
 }: Readonly<{
@@ -158,6 +159,8 @@ function Picker({
   reason?: string;
   /** A second tooltip line (the model the latest turn was routed to). */
   hint?: string;
+  /** Fixed for good (a subagent's): a lock in the chevron's place. */
+  lock?: boolean;
   className?: string;
   onChange: (value: string) => void;
 }>) {
@@ -165,7 +168,7 @@ function Picker({
     <>
       {icon}
       <span data-squeeze="" className="max-w-36 truncate max-sm:max-w-24 in-data-[fold~=model]:hidden">{display}</span>
-      <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+      {lock ? <Lock aria-hidden="true" className="!size-3 text-faint" /> : <ChevronDown aria-hidden="true" className="!size-3 text-faint" />}
     </>
   );
   const item = (c: Choice) => (
@@ -186,7 +189,8 @@ function Picker({
   // A choice locks the picker while it saves: the same trigger stays, so the menu or sheet runs its exit and focus returns to it.
   const why = disabled ? reason ?? `${label} cannot change now` : undefined;
   const name = disabled ? `${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}` : `${label}: ${display}`;
-  const tone = disabled ? 'text-muted' : 'text-body';
+  // A lock reads as a value, not a control turned off.
+  const tone = lock ? 'text-body aria-disabled:cursor-default aria-disabled:opacity-100' : disabled ? 'text-muted' : 'text-body';
   if (phone || sheet !== null) {
     const radio = (c: Choice) => (
       <Radio.Root key={c.value} value={c.value} disabled={c.disabled} className="group/choice flex min-h-11 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover data-disabled:opacity-45">
@@ -332,11 +336,14 @@ interface ComposerProps {
   onCommandOutput?: (output: CommandOutput) => void;
   /** Set while a past owner prompt is edited here, to rewind to before it and send the edit. */
   editing?: Editing | null;
+  /** A subagent fills the Conversation pane: the composer stays, read-only, showing its settings; `onThread` goes back to write. */
+  subagent?: Subagent;
+  onThread?: () => void;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -348,7 +355,10 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null }: Readonly<ComposerProps>) {
+/** Why a subagent's model and effort cannot change. */
+const SPAWNED = 'Set when the Thread spawned it; a subagent cannot change it.';
+
+function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread }: Readonly<ComposerProps>) {
   const api = useApi();
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
@@ -381,7 +391,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const pending = useRef<{ key: string; id: string } | null>(null);
   const refocus = useRef(false);
   const live = LIVE.includes(session.state);
-  const locked = readOnly(session);
+  // A subagent takes no messages: everything the Thread's composer changes is locked while one is shown.
+  const locked = readOnly(session) || !!subagent;
   const last = outcome && (!session.last_submission || outcome.time >= session.last_submission.time) ? outcome : session.last_submission;
   // A longer output goes to the side panel when it arrives; the strip keeps confirmations and choices.
   const stripResult = last?.status === 'accepted' && !dismissedResultIds.includes(last.request_id) ? last.command_result : null;
@@ -1467,7 +1478,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           if (choices.length && text) updateText('', 0);
         }} onAnswer={() => void sendAnswer()} />
       )}
-      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
+      {subagent && (
+        <p className="flex items-start gap-2 px-3.5 pt-3 pb-1 text-chat text-muted max-sm:text-chat-lg">
+          <Lock aria-hidden="true" className="mt-1.5 size-3.5 shrink-0 text-faint" />
+          <span className="min-w-0">
+            Subagents take no messages.{' '}
+            <button type="button" className="text-left text-body underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={onThread}>Write to {taskName(session) || 'the thread'} ↖</button>
+          </span>
+        </p>
+      )}
+      {!subagent && (locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && session.stage === 'settled' && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1515,13 +1535,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
       {onCommandOutput && <p role="status" className="sr-only">{announced}</p>}
-      {commandResult && commandResult.kind !== 'action' && (
+      {!subagent && commandResult && commandResult.kind !== 'action' && (
         <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
           {resultBody}
         </div>
       )}
-      {queueStrip.mounted && (
+      {!subagent && queueStrip.mounted && (
         <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
         <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
@@ -1607,7 +1627,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         ref={textarea}
         id="composer-text"
         rows={2}
-        value={text}
+        value={subagent ? '' : text}
         placeholder={suggestion ? '' : describePlaceholder()}
         aria-describedby={suggestion ? SUGGESTION_ID : undefined}
         onChange={(e) => updateText(e.target.value, e.target.selectionStart ?? e.target.value.length)}
@@ -1685,11 +1705,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           <>
         <Picker
           id="composer-model"
-          icon={<ModelIcon model={selection.model} fallback={<Cpu aria-hidden="true" className="text-faint" />} />}
+          icon={<ModelIcon model={subagent ? subagent.model ?? '' : selection.model} fallback={<Cpu aria-hidden="true" className="text-faint" />} />}
           label="Model"
           heading={providerLabel(meta, session.provider)}
-          value={selection.model}
-          display={modelLabel}
+          value={subagent ? subagent.model ?? '' : selection.model}
+          display={subagent ? (subagent.model ? modelName(meta, session.provider, subagent.model) : 'Not reported') : modelLabel}
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
             const prices = session.capabilities.usage ? modelCostLine(m, false) : '';
@@ -1699,8 +1719,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           disabled={settingsLocked}
           // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.
           className="pointer-coarse:min-w-11 max-sm:max-w-max max-sm:grow max-sm:basis-11"
-          reason={locked ? 'This thread is read-only.' : undefined}
-          hint={routed ? `Latest turn ran on ${routed}` : undefined}
+          reason={subagent ? SPAWNED : locked ? 'This thread is read-only.' : undefined}
+          hint={routed && !subagent ? `Latest turn ran on ${routed}` : undefined}
+          lock={!!subagent}
           onChange={(v) => void settings({ model: v })}
         />
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
@@ -1709,10 +1730,19 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           session={session}
           model={catalog.find((m) => m.id === session.model)}
           agentReason={locked ? 'This thread is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
+          subagent={subagent}
           onAgent={(agent) => void chooseAgent(agent)}
         />
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
-        {settingsLocked || fixedTuning ? (
+        {subagent ? (
+          <Tip label={<>{`Effort: ${effortLabel(subagent.effort)}`}<span className="block text-on-primary/70">{SPAWNED}</span></>}>
+            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort: ${effortLabel(subagent.effort)}. Locked. ${SPAWNED}`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
+              <Gauge aria-hidden="true" className="text-faint" />
+              <span className="in-data-[fold~=tuning]:hidden">{effortLabel(subagent.effort)}</span>
+              <Lock aria-hidden="true" className="!size-3 text-faint" />
+            </Button>
+          </Tip>
+        ) : settingsLocked || fixedTuning ? (
           <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>
             <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className={cn('text-muted max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')}>
               <Gauge aria-hidden="true" className="text-faint" />
@@ -1734,7 +1764,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         )}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
-        {locked ? (
+        {subagent ? (
+          <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">Inherited from the Thread. Change it in the Thread&rsquo;s composer.</span></>}>
+            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}, inherited from the Thread. Locked.`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
+              {runIcon}
+              {runFace}
+              <span className="font-normal text-muted max-md:hidden in-data-[fold~=permissions]:hidden">inherited from the Thread</span>
+              <Lock aria-hidden="true" className="!size-3 text-faint" />
+            </Button>
+          </Tip>
+        ) : locked ? (
           <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">This thread is read-only.</span></>}>
             <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This thread is read-only.`} className="text-muted max-sm:hidden">
               {runIcon}
@@ -1764,7 +1803,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Menu.Content>
           </Menu.Root>
         )}
-        {!newTask && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
+        {!newTask && !subagent && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">
@@ -1792,7 +1831,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {/* Saving a setting is words: the Task's state glyph is the one ring. */}
         {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
-        <Appear show={live || session.execution?.objective?.status === 'active'}>
+        <Appear show={!subagent && (live || session.execution?.objective?.status === 'active')}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
@@ -1832,6 +1871,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               </Menu.Content>
             </Menu.Root>
           </span>
+        ) : subagent ? (
+          <Tip label="Subagents take no messages">
+            <Button size="icon-md" variant="primary" aria-disabled="true" aria-label="Send. Subagents take no messages" className="ml-1 rounded-full aria-disabled:opacity-30">
+              <ArrowUp aria-hidden="true" strokeWidth={2.25} />
+            </Button>
+          </Tip>
         ) : !locked && (
           <Tip label={describeSendTip()}>
             <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} aria-disabled={sendOff || undefined} onClick={(e) => sendOff && e.preventDefault()}>
