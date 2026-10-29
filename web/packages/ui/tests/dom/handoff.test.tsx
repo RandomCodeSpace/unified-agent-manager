@@ -13,10 +13,9 @@ async function openBudgetTask(id: string) {
 
 test('a Thread at its budget is Working, wrapping up in its hover text, with no handoff yet', async () => {
   await openBudgetTask('t-wrap');
-  // Wrapping up is a phase of the work, no state: the chip reads Working and says why on hover.
-  const header = screen.getByRole('heading', { level: 1 }).parentElement!;
-  expect(header.textContent).toContain('Working');
-  expect(header.querySelector('[title^="Wrapping up"]')).not.toBeNull();
+  // Wrapping up is a phase of the work, no state: the header reads Working and says why on hover.
+  const header = screen.getByRole('group', { name: 'State: Working' });
+  expect(header.getAttribute('title')).toBe('State: Working · Wrapping up: budget reached, tools are denied and the agent is writing a handoff');
   const row = within(screen.getByRole('navigation', { name: 'Threads' })).getByRole('button', { name: /Port the pager tests/ });
   expect(within(row).getByText('Working')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Handoff' })).toBeNull();

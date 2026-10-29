@@ -1,9 +1,9 @@
 import { useApi } from '../ApiContext';
 import { planKey } from '../lib/richMarkdown';
-import { ArrowDown, ChartLine, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, type Badge, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -13,8 +13,9 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, ScrollSentinel, SessionContext, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
+import { BAR_ROW, barCard, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, ScrollSentinel, SessionContext, Spinner, STATE_LABELS, STATE_TONE, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
+import { cn } from '../lib/cn';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
 import { PHONE } from './ui/dialog';
@@ -91,8 +92,8 @@ interface Props {
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
   /** Leading header control (the drawer button on narrow screens). */
   leading?: ReactNode;
-  /** The name of the Task that started this one (`spawned_by`); empty when that Task is gone or unnamed. */
-  spawnedBy?: string;
+  /** The Thread that started this one (`spawned_by`), with its Project's badge; undefined when that Thread is gone. */
+  spawnedBy?: { id: string; name: string; badge?: Badge };
   /** When the owner last had the Task on screen, before this visit; "Since you left" counts from it. */
   since?: string;
   /** The name of the Task whose last message this one runs again (`rerun_of`); empty when that Task is gone or unnamed. */
@@ -143,35 +144,75 @@ interface HeaderProps {
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
   onMcp: (open: boolean) => void;
+  /** The Thread that started this one, as the trail's first crumb (`session.spawned_by`): its name, undefined once it is gone, and its Project's badge. */
+  spawnerName?: string;
+  spawnerBadge?: Badge;
 }
 
 /**
- * The header's state chip: the state's glyph and word, the same few as the Thread list's (lib/tasks taskStatus); who
- * stopped it, a phase or the finished turn's failures are its hover text, never another state. Working is a still dot
- * and the word: what the work is, and the one moving mark, are the strip's live line.
+ * The header's state in words, the same few as the Thread list's (lib/tasks taskStatus); who stopped it, a phase or the
+ * finished turn's failures are its detail, never another state. The bar says it by its fill and its name; a phone, which
+ * has no sidebar beside it, also shows the glyph after the title.
  */
-function HeaderState({ session, state, failures, label }: Readonly<{ session: SessionSummary; state: SessionState; failures: string; label: boolean }>) {
-  let title = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
-  let text: string | undefined;
+function headerState(session: SessionSummary, state: SessionState, failures: string): { word: string; detail?: string; icon?: ReactNode } {
+  let detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
+  let word = STATE_LABELS[state];
   let icon: ReactNode;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
+  // Working is a still dot: the one moving mark in the pane is the strip's live line.
   if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="size-1.5 rounded-full bg-ink" />;
   if (state === 'working' && session.budget?.wrapping_up) {
-    title = 'Wrapping up: budget reached, tools are denied and the agent is writing a handoff';
+    detail = 'Wrapping up: budget reached, tools are denied and the agent is writing a handoff';
   } else if (stop) {
-    text = stop.short;
-    title = stop.title;
+    word = stop.short;
+    detail = stop.title;
     if (stop.notYours) icon = <CircleStop aria-hidden="true" className="size-3.5 text-warning" />;
   } else if (state === 'closed' && session.not_started) {
     // A new branch is closed only until its first message.
-    title = 'Branched; starts with your first message';
+    detail = 'Branched; starts with your first message';
   } else if (state !== session.state) {
-    title = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+    detail = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   } else if (state === 'completed' && failures) {
-    title = `Finished · ${failures}`;
+    detail = failures;
   }
-  return <StateMark state={state} label={label} text={text} icon={icon} title={title} className="shrink-0" />;
+  return { word, detail, icon };
+}
+
+/** The Thread that started this one (`spawned_by`), as the trail's first crumb, then "›"; on a phone a "…" menu holds it. */
+function ParentCrumb({ id, name, badge, phone }: Readonly<{ id: string; name?: string; badge?: Badge; phone: boolean }>) {
+  const actions = useTaskActions();
+  const open = () => actions.select(id);
+  let crumb: ReactNode;
+  // A Thread that is gone is only said to have been.
+  if (name === undefined) crumb = <span className="shrink-0 px-1.5 text-ui text-muted">Another thread</span>;
+  else if (phone) {
+    crumb = (
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<Button size="icon" aria-label="Show the thread that started this one" className="shrink-0 text-muted" />}>
+          <Ellipsis />
+        </Menu.Trigger>
+        <Menu.Content align="start" className="max-w-72">
+          <Menu.Item onClick={open}><span className="truncate">{name || 'Untitled thread'}</span></Menu.Item>
+        </Menu.Content>
+      </Menu.Root>
+    );
+  } else {
+    crumb = (
+      <Tip label={`Started by ${name || 'an untitled thread'}. Open it`}>
+        <button type="button" className="flex h-7 min-w-0 max-w-60 items-center gap-1.5 rounded-sm px-1.5 text-ui text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11" onClick={open}>
+          {badge && <ProjectBadge badge={badge} />}
+          <span className="truncate">{name || 'Untitled thread'}</span>
+        </button>
+      </Tip>
+    );
+  }
+  return (
+    <span className="-ml-1.5 flex min-w-0 shrink items-center gap-0.5">
+      {crumb}
+      <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
+    </span>
+  );
 }
 
 /** The branch link's mark: GitHub's or GitLab's by its address (GitLab's tree paths have `/-/`), a plain external link otherwise. */
@@ -182,7 +223,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -219,99 +260,105 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
   const renamable = canRename(session, actions);
   const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
+  // The state is the card's still fill and its name (DESIGN.md Thread header); a read-only Thread's stage chip stands for it.
+  const shown = headerState(session, state, failures);
+  const word = readOnly(session) ? stageLabel(session) : shown.word;
 
   return (
-    <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
-      {leading}
-      <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
-        {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
-        {renaming ? (
-          <InlineName initial={session.name} label="Thread name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+    <header ref={header} className={cn('pane-header', BAR_ROW)} data-scrolled={scrolled || undefined}>
+      <div role="group" aria-label={`State: ${word}`} title={`State: ${word}${shown.detail && !readOnly(session) ? ` · ${shown.detail}` : ''}`} className={barCard(readOnly(session) ? undefined : STATE_TONE[state])}>
+        {leading}
+        <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
+          {session.spawned_by && <ParentCrumb id={session.spawned_by} name={spawnerName} badge={spawnerBadge} phone={phone} />}
+          {project && <ProjectBadge badge={project.badge} />}
+          {renaming ? (
+            <InlineName initial={session.name} label="Thread name" className="h-8 max-w-md text-ui font-medium" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+          ) : (
+            <h1
+              ref={titleText}
+              className="min-w-0 truncate text-ui font-medium text-ink"
+              title={name || undefined}
+              onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
+            >
+              <TaskTitle session={session} />
+            </h1>
+          )}
+          <InstanceName />
+          {readOnly(session) ? (
+            // On a phone a Settled Task says so in its composer note, so the squeezed title keeps the room.
+            <Chip fill="outline" className={session.stage === 'settled' ? 'max-sm:hidden' : undefined}>{stageLabel(session)}</Chip>
+          ) : (
+            phone && <StateMark state={state} text={shown.word} icon={shown.icon} title={shown.detail} className="shrink-0" />
+          )}
+          {/* A Task action in flight is words: nothing in the header turns. */}
+          {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
+          {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
+          {renamable && !renaming && (
+            <Tip label="Rename">
+              <Button size="icon" aria-label="Rename thread" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+                <Pencil />
+              </Button>
+            </Tip>
+          )}
+          {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
+          {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
+        </div>
+        {/* The Changes control and its evidence cue, beside the title. */}
+        {noGit ? (
+          <>
+            <Popover.Root>
+              <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
+                <TriangleAlert />
+                <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
+              </Popover.Trigger>
+              <Popover.Content className="w-80 gap-2">
+                <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
+                <Popover.Description>
+                  {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has no Changes view.
+                </Popover.Description>
+                {noGit === 'not_repository' && <SetUpGitButton session={session} />}
+              </Popover.Content>
+            </Popover.Root>
+            {vcs}
+          </>
         ) : (
-          <h1
-            ref={titleText}
-            className="min-w-0 truncate text-display-sm text-ink"
-            title={name || undefined}
-            onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
-          >
-            <TaskTitle session={session} />
-          </h1>
+          <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
+            {vcs}
+          </div>
         )}
-        <InstanceName />
-        {readOnly(session) ? (
-          // On a phone a Settled Task says so in its composer note, so the squeezed title keeps the room.
-          <Chip fill="outline" className={session.stage === 'settled' ? 'max-sm:hidden' : undefined}>{stageLabel(session)}</Chip>
-        ) : (
-          <HeaderState session={session} state={state} failures={failures} label={!phone} />
+        {branchHref && !fold && (
+          <Tip label={branchLabel}>
+            <a id="branch-link" href={branchHref} target="_blank" rel="noopener noreferrer" aria-label={branchLabel} className={buttonVariants({ size: 'icon-md', className: 'text-muted' })}>
+              <BranchLinkIcon href={branchHref} />
+            </a>
+          </Tip>
         )}
-        {/* A Task action in flight is words: nothing in the header turns. */}
-        {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
-        {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
-        {renamable && !renaming && (
-          <Tip label="Rename">
-            <Button size="icon" aria-label="Rename thread" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
-              <Pencil />
+        {pinned > 0 && !fold && (
+          <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
+            <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={onToggleCharts}>
+              <ChartLine />
+              {labels && <span>Charts</span>}
+              <span className="tabular-nums text-ink">{pinned}</span>
             </Button>
           </Tip>
         )}
-        {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
-        {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
+        {terminal && project && !fold && (
+          <Tip label={`Terminal in ${project.name}`}>
+            <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
+              <SquareTerminal />
+              {labels && <span>Terminal</span>}
+            </Button>
+          </Tip>
+        )}
+        <Menu.Root modal={false}>
+          <Menu.Trigger render={<Button size="icon-md" aria-label="Thread actions" className="text-muted" />}>
+            <Ellipsis />
+          </Menu.Trigger>
+          <Menu.Content align="end">
+            <Menu.Actions items={items} />
+          </Menu.Content>
+        </Menu.Root>
       </div>
-      {/* The Changes control and its evidence cue, beside the title. */}
-      {noGit ? (
-        <>
-          <Popover.Root>
-            <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
-              <TriangleAlert />
-              <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
-            </Popover.Trigger>
-            <Popover.Content className="w-80 gap-2">
-              <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
-              <Popover.Description>
-                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has no Changes view.
-              </Popover.Description>
-              {noGit === 'not_repository' && <SetUpGitButton session={session} />}
-            </Popover.Content>
-          </Popover.Root>
-          {vcs}
-        </>
-      ) : (
-        <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
-          {vcs}
-        </div>
-      )}
-      {branchHref && !fold && (
-        <Tip label={branchLabel}>
-          <a id="branch-link" href={branchHref} target="_blank" rel="noopener noreferrer" aria-label={branchLabel} className={buttonVariants({ size: 'icon-md', className: 'text-muted' })}>
-            <BranchLinkIcon href={branchHref} />
-          </a>
-        </Tip>
-      )}
-      {pinned > 0 && !fold && (
-        <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
-          <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={onToggleCharts}>
-            <ChartLine />
-            {labels && <span>Charts</span>}
-            <span className="tabular-nums text-ink">{pinned}</span>
-          </Button>
-        </Tip>
-      )}
-      {terminal && project && !fold && (
-        <Tip label={`Terminal in ${project.name}`}>
-          <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
-            <SquareTerminal />
-            {labels && <span>Terminal</span>}
-          </Button>
-        </Tip>
-      )}
-      <Menu.Root modal={false}>
-        <Menu.Trigger render={<Button size="icon-md" aria-label="Thread actions" className="text-muted" />}>
-          <Ellipsis />
-        </Menu.Trigger>
-        <Menu.Content align="end">
-          <Menu.Actions items={items} />
-        </Menu.Content>
-      </Menu.Root>
     </header>
   );
 }, (a, b) => (Object.keys(a) as (keyof HeaderProps)[]).every((key) => a[key] === b[key] || (key === 'session' && SUMMARY_KEYS.every((field) => a.session[field] === b.session[field]))));
@@ -955,7 +1002,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
+        <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -982,7 +1029,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
-            {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another thread, ${spawnedBy}.` : 'Started by another thread.'}</Note>}
             {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
             {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another thread'}, to compare.</Note>}
             {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source thread</button>. Both threads use the same project and current files.</Note>}
@@ -1142,10 +1188,12 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
   }), [project.id, onSend, placed, place, filesBase]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
-        {leading}
-        <ProjectBadge badge={project.badge} className="mr-0.5" />
-        <h1 className="min-w-0 truncate text-display-sm text-ink">New thread</h1>
+      <header className={cn('pane-header', BAR_ROW)}>
+        <div className={barCard()}>
+          {leading}
+          <ProjectBadge badge={project.badge} />
+          <h1 className="min-w-0 truncate text-ui font-medium text-ink">New thread</h1>
+        </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">

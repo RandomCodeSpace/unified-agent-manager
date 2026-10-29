@@ -78,6 +78,16 @@ const TONE_BG: Record<Tone, string> = {
   faint: 'bg-faint',
 };
 
+/**
+ * The top bars (DESIGN.md Thread header, Sidebar): the 44px row keeps its box, and inside it a solid lifted card
+ * (no blur) 4px from its top and bottom, so the sidebar's and the Thread's top rows line up.
+ */
+export const BAR_ROW = 'relative z-10 flex h-header shrink-0 items-center px-1.5 sm:px-2';
+const BAR_CARD = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md bg-raised pr-1 pl-1.5 shadow-raised';
+/** A state's still fill on the bar card: in motion, needs you, broken, done; any other tone stays neutral. */
+const BAR_FILL: Partial<Record<Tone, string>> = { accent: 'bg-accent-wash', warning: 'bg-warning-wash', error: 'bg-error-wash', success: 'bg-success-wash' };
+export const barCard = (tone?: Tone, className?: string) => cn(BAR_CARD, tone && BAR_FILL[tone], className);
+
 export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was not resumed or resent.';
 
 /** Values shared by most of the tree; avoids threading meta/dispatch through every layer. */

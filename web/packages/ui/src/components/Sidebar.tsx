@@ -8,7 +8,7 @@ import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
-import { BADGE_TEXT, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { BADGE_TEXT, BAR_ROW, barCard, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
@@ -941,18 +941,21 @@ export const Sidebar = memo(function Sidebar({
 
   return (
     <nav aria-label="Threads" className="flex h-full min-h-0 flex-col bg-rail text-body">
-      <header className="flex h-header shrink-0 items-center gap-0.5 px-2 max-sm:h-auto max-sm:flex-wrap max-sm:py-1">
-        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} count={count} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
-        {/* Search uses the spare header width, or its own full row on a phone. */}
-        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">
-          <Search aria-hidden="true" className="size-3.5 shrink-0" />
-          <input ref={search} type="search" aria-label="Search threads" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
-        </label>
-        {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
-        {anyProject && <FilterButton projects={projects} actions={actions} />}
-        {projects.length > 0 && <RoutinesButton actions={actions} />}
-        <AddProjectButton actions={actions} />
-        {anyProject && <NewTaskButton actions={actions} id="new-task" />}
+      {/* The same card bar as the Thread header (common BAR_ROW), so the two top rows line up. */}
+      <header className={cn(BAR_ROW, 'max-sm:h-auto max-sm:py-1')}>
+        <div className={barCard(undefined, 'gap-0.5 max-sm:h-auto max-sm:flex-wrap max-sm:py-1')}>
+          <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} count={count} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
+          {/* Search uses the spare header width, or its own full row on a phone. */}
+          <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">
+            <Search aria-hidden="true" className="size-3.5 shrink-0" />
+            <input ref={search} type="search" aria-label="Search threads" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
+          </label>
+          {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
+          {anyProject && <FilterButton projects={projects} actions={actions} />}
+          {projects.length > 0 && <RoutinesButton actions={actions} />}
+          <AddProjectButton actions={actions} />
+          {anyProject && <NewTaskButton actions={actions} id="new-task" />}
+        </div>
       </header>
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="flex min-h-0 flex-1 flex-col" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>

@@ -707,7 +707,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `/compact` or it compacts on its own as the context fills, the Thread says
   so: the status line above the message box (and, during a turn, the line
   at the foot of the conversation) reads "Compacting the conversation…",
-  the header chip and the Thread's row read "Compacting…", and the Thread sits
+  the Thread's row reads "Compacting…", and the Thread sits
   under Working in the list (a request waiting for you still wins). When it
   ends a quiet notice stays in the conversation, "Compacted the conversation
   · freed 2,332 tokens." (the count only when Copilot reports one), or
@@ -1222,8 +1222,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   notice of one line linking the Thread (an end note without its reply),
   not as your message. Notes wait only in memory, so a service
   restart drops those not yet delivered, and nothing is sent to a Thread
-  that is settled or archived. The new Thread's conversation begins with
-  "Started by another thread", and
+  that is settled or archived. The new Thread's header opens its trail with
+  the Thread that started it (a link back to it), and
   the API lists that Thread as `spawned_by`, which survives restarts. A Thread
   started this way does not get the tool itself. One Thread can start at
   most 5 Threads, its subagents' calls included. Every Thread it started counts
@@ -1702,7 +1702,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   A new turn clears the line, and a turn that is stopped or fails gets none.
   What the line reports is no state: a Thread whose turn says "tests fail" or
   that commands failed is Review or Finished like any other, the line's words
-  in its row tip, and the header chip's hover reads "Finished · tests fail",
+  in its row tip, and the header's hover reads "State: Finished · tests fail",
   or "a claim contradicted" when the last reply's receipts contradict one of
   its claims.
 - **Branch from here**: a finished reply's turn menu offers native recorded
