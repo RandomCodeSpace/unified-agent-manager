@@ -11,11 +11,10 @@ async function openBudgetTask(id: string) {
   return rendered;
 }
 
-test('a Thread at its budget is Working, wrapping up in its hover text, with no handoff yet', async () => {
+test('a Thread at its budget is Working, with no handoff yet', async () => {
   await openBudgetTask('t-wrap');
-  // Wrapping up is a phase of the work, no state: the header reads Working and says why on hover.
-  const header = screen.getByRole('group', { name: 'State: Working' });
-  expect(header.getAttribute('title')).toBe('State: Working · Wrapping up: budget reached, tools are denied and the agent is writing a handoff');
+  // Wrapping up is a phase of the work, no state: the header reads Working.
+  screen.getByRole('group', { name: 'State: Working' });
   const row = within(screen.getByRole('navigation', { name: 'Threads' })).getByRole('button', { name: /Port the pager tests/ });
   expect(within(row).getByText('Working')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Handoff' })).toBeNull();

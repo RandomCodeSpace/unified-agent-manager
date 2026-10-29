@@ -115,7 +115,7 @@ const TITLE_ROOM = { min: 112, max: 400 };
 
 /**
  * How much the header has room for, by its width and the title's own width: everything (`wide`);
- * the header buttons as icons, with no last outcome (`snug`); and, `tight`, Charts and
+ * the header buttons as icons (`snug`); and, `tight`, Charts and
  * Terminal folded into the actions menu as on a phone. The title comes first: its width (up to
  * 400px) is kept before any button label, so a side panel drops the labels instead of cutting the
  * title to "Fix …". 0 is unmeasured: everything.
@@ -268,7 +268,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
 
   return (
     <header ref={header} className={BAR_ROW}>
-      <div role="group" aria-label={`State: ${word}`} title={`State: ${word}${shown.detail && !readOnly(session) ? ` · ${shown.detail}` : ''}`} className={barCard(readOnly(session) ? undefined : STATE_TONE[state])}>
+      <div role="group" aria-label={`State: ${word}`} className={barCard(readOnly(session) ? undefined : STATE_TONE[state])}>
         {leading}
         <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
           {session.spawned_by && <ParentCrumb id={session.spawned_by} name={spawnerName} badge={spawnerBadge} phone={phone} />}
@@ -302,8 +302,6 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
               </Button>
             </Tip>
           )}
-          {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
-          {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
         </div>
         {/* The Changes control and its evidence cue, beside the title. */}
         {noGit ? (
@@ -1020,9 +1018,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             <SinceYouLeft away={away(sinceMark, Date.parse(opened))} text={sinceSummary.text} onJump={() => void jumpTo(sinceSummary.ids)} onDismiss={() => setSinceMark(undefined)} />
           </div>
         )}
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        {/* 8px below the bar before the conversation clips, so scrolled content never runs into the header. */}
+        <div className="relative mt-2 flex min-h-0 flex-1 flex-col">
           {/* The subagent shown in the Thread's place, over its conversation, which keeps its place beneath. */}
-          {viewed && <SubagentView session={session} subagent={viewed} onShow={onSubagent} />}
+          {viewed && <SubagentView session={session} subagent={viewed} />}
           {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. */}
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
           <section aria-label="Conversation" inert={!!viewed} className="min-h-0 flex-1 scroll-pb-12 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
@@ -1038,7 +1037,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
             {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
             {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-            <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+            <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-4 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
               {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
               {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
               {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
@@ -1105,7 +1104,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideSubagents={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} />
             <Schedules snapshot={session.schedules} open={session.open} />
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">

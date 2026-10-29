@@ -350,7 +350,7 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [auth, checkVersion]);
   // A new version applies itself when nothing would be lost (no draft, no popup); otherwise the
-  // strip above the pane offers Reload and the next check tries again.
+  // snackbar over the pane offers Reload and the next check tries again.
   useEffect(() => {
     const version = api.owner ? federation?.homeVersion : meta?.version;
     if (!version) return;
@@ -1593,15 +1593,6 @@ export default function App() {
                   {CONNECTION_TEXT[connection]}
                 </output>
               )}
-              {updated && (
-                <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-body animate-fade-in">
-                  <Dot tone="accent" />
-                  <span className="flex-1">UAM was updated.</span>
-                  <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
-                    Reload
-                  </Button>
-                </output>
-              )}
               {signedOut.map((p) => (
                 <output key={p.name} className="flex items-center gap-2 bg-warning-wash px-4 py-1 text-caption text-warning animate-fade-in">
                   <Dot tone="warning" />
@@ -1627,12 +1618,24 @@ export default function App() {
                   </Button>
                 </p>
               )}
-              {stale && state.previousCached && (
-                <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
-                  <Dot tone="accent" /> Refreshing thread…
-                </output>
-              )}
               <div className="relative flex min-h-0 flex-1 flex-col">
+                {/* Notices float over the pane under the header bar, so nothing above them moves. */}
+                <div className="pointer-events-none absolute top-14 left-1/2 z-30 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2 *:pointer-events-auto">
+                  {updated && (
+                    <output className="flex items-center gap-3 rounded-full bg-raised py-1 pr-1 pl-3 text-caption text-body shadow-float animate-fade-in">
+                      <Dot tone="accent" />
+                      UAM was updated.
+                      <Button size="sm" variant="primary" className="rounded-full" onClick={() => window.location.reload()}>
+                        Reload
+                      </Button>
+                    </output>
+                  )}
+                  {stale && state.previousCached && (
+                    <output className="flex items-center gap-2 rounded-full bg-raised px-3 py-1 text-caption text-muted shadow-float animate-fade-in">
+                      <Dot tone="accent" /> Refreshing thread…
+                    </output>
+                  )}
+                </div>
                 {/* A cached page is presentation only; actions and typing wait for confirmation. Under a view the pane is skipped, not unmounted: content-visibility keeps its scroll, display:none would not. */}
                 <div className={cn('flex min-h-0 flex-1 flex-col', !!view && '[content-visibility:hidden]')} inert={stale || !!view} aria-hidden={!!view || undefined} aria-busy={stale || undefined}>
                   <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>

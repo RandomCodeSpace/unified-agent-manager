@@ -994,7 +994,7 @@ export function AgentTranscriptView({
     // Sideways it never scrolls: wide content scrolls in its own box; a touch hit area at the edge must not widen it.
     // Its foot clears the dock's 40px overlap and the switcher floating above it.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-3 pt-6 pb-28 [overflow-wrap:anywhere] sm:px-4 md:px-6 pointer-coarse:pb-32" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-3 pt-4 pb-28 [overflow-wrap:anywhere] sm:px-4 md:px-6 pointer-coarse:pb-32" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
       if (event.ctrlKey) return;
       userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();

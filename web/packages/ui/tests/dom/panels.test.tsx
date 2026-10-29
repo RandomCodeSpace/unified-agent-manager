@@ -233,9 +233,9 @@ describe('subagents', () => {
     expect(error.textContent).toContain('axe-core is not installed in this project.');
     expect(error.textContent).toContain('to Accessibility pass on the post template');
     expect(within(transcript).queryByRole('region', { name: 'Result' })).toBeNull();
-    // The strip's subagents step aside while it is open; the switcher stands in for them.
-    expect(screen.queryByRole('button', { name: /^Subagents: .*Show the subagents$/ })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Subagents' })).toBeTruthy();
+    // The strip keeps its subagents, as in the Thread; no switcher of its own.
+    expect(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ })).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Subagents' })).toBeNull();
   });
   test('a row opens the subagent in the pane; the strip and the reply\'s chip open the same sheet, on the list and on the reply\'s list', async () => {
     const { user } = await openTask('t8');
@@ -434,7 +434,7 @@ describe('subagents', () => {
     await waitFor(() => expect(transcript.scrollTop).toBe(0));
     expect(screen.queryByText('That run is not in the retained transcript.')).toBeNull();
   });
-  test('a subagent another spawned sits under it; its trail leads back up a level, and ↑ ↓ on the switcher step through them', async () => {
+  test('a subagent another spawned sits under it; its trail leads back up a level', async () => {
     const { user } = await openTask('t8');
     const names = live().getAllByRole('button', { name: /, (failed|running|completed)/ }).map((b) => b.getAttribute('aria-label')?.split(',')[0]);
     expect(names.indexOf('Verify store callers')).toBe(names.indexOf('Check contrast of the theme tokens') + 1);
@@ -446,16 +446,6 @@ describe('subagents', () => {
     expect(trail.getByText('Verify store callers').closest('[aria-current="page"]')).toBeTruthy();
     expect(bar().textContent).toContain('task');
     await user.click(trail.getByRole('button', { name: 'Check contrast of the theme tokens' }));
-    expect(await view('Check contrast of the theme tokens')).toBeTruthy();
-    // The switcher: the current one lit; ↓ opens the next in the list's order and keeps the focus there.
-    const switcher = within(screen.getByRole('group', { name: 'Subagents' }));
-    const current = switcher.getByRole('button', { current: true });
-    expect(current.textContent).toBe('Check contrast of the theme tokens');
-    current.focus();
-    await user.keyboard('{ArrowDown}');
-    expect(await view('Verify store callers')).toBeTruthy();
-    await waitFor(() => expect(document.activeElement?.textContent).toBe('Verify store callers'));
-    await user.keyboard('{ArrowUp}');
     expect(await view('Check contrast of the theme tokens')).toBeTruthy();
   });
   // A background launch's call is never read, so its transcript must not wait for that body.
@@ -534,22 +524,14 @@ describe('subagents', () => {
     expect(older.getAllByRole('button', { name: /^Audit package / })).toHaveLength(22);
   });
 
-  test('the switcher shows the open one and its neighbours, the rest behind "+N"; at the end ↓ does nothing', async () => {
+  test('with a subagent open, the strip\'s list switches to another one', async () => {
     const { user } = await openTask('t8');
     await user.click(live().getByRole('button', { name: /^Run the accessibility linter, failed/ }));
     await view('Run the accessibility linter');
-    const switcher = within(screen.getByRole('group', { name: 'Subagents' }));
-    expect(switcher.getAllByRole('button').map((b) => b.textContent)).toEqual(['Verify store callers', 'Run the accessibility linter', 'Check the heading order', '+2']);
-    switcher.getByRole('button', { current: true }).focus();
-    await user.keyboard('{ArrowDown}');
-    expect(await view('Check the heading order')).toBeTruthy();
-    // The last one: ↓ stays.
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('region', { name: 'Transcript of Check the heading order' })).toBeTruthy();
-    // "+2" lists them all; a pick opens it.
-    await user.click(switcher.getByRole('button', { name: '2 more subagents' }));
-    await user.click(await screen.findByRole('menuitem', { name: /^Survey templates for missing alt text and labels/ }));
+    const index = await openSubagentIndex(user);
+    await user.click(index.getByRole('button', { name: /^Survey templates for missing alt text and labels/ }));
     expect(await view('Survey templates for missing alt text and labels')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
   test('a reply\'s list offers no older subagents (they would join no reply); the whole list does', async () => {
     const { user } = await openTask('t15');

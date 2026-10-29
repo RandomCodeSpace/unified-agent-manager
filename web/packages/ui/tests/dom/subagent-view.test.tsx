@@ -1,4 +1,4 @@
-// A subagent in the Conversation pane (DESIGN.md subagent view): its own address, the bar, the switcher and the composer read-only.
+// A subagent in the Conversation pane (DESIGN.md subagent view): its own address, the bar, the strip and the composer read-only.
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
@@ -30,7 +30,7 @@ test('a subagent has an address: the URL opens it, and its composer stays, locke
   await waitFor(() => expect((document.getElementById('composer-text') as HTMLTextAreaElement).disabled).toBe(false));
 });
 
-test('on a phone the trail folds the levels above into "…", and the switcher is one "k of N" chip', async () => {
+test('on a phone the trail folds the levels above into "…"', async () => {
   const original = window.matchMedia.bind(window);
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === PHONE ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
   const { user } = renderApp('#task=t8&agent=a6');
@@ -38,8 +38,16 @@ test('on a phone the trail folds the levels above into "…", and the switcher i
   const trail = within(screen.getByRole('navigation', { name: 'Trail' }));
   await user.click(trail.getByRole('button', { name: 'Show the levels above' }));
   expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['NSAccessibility pass on the post template', 'Check contrast of the theme tokens']);
-  await user.keyboard('{Escape}');
-  expect(screen.getByRole('button', { name: 'Subagent 3 of 5. Show all' })).toBeTruthy();
+});
+
+test('the strip keeps the subagents as in the Thread, without the Thread\'s todo list', async () => {
+  renderApp('#task=t8&agent=a1');
+  await transcript('Survey templates for missing alt text and labels');
+  expect(screen.getByRole('button', { name: /Show the subagents$/ })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Show the list$/ })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Subagents' })).toBeNull();
+  // The bar's state is its fill and name, not a tooltip over the crumbs.
+  expect(screen.getByRole('group', { name: 'State: Running' }).hasAttribute('title')).toBe(false);
 });
 
 test('a subagent waiting on the owner reads as the Thread does: Input, the needs-you fill', async () => {
