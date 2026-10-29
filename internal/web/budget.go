@@ -289,29 +289,43 @@ type handoffRepo struct {
 }
 
 // handoffFiles reads the facts' repositories: the Thread's folder's (first,
-// even when it is not one) and those holding the files its edit tools
-// changed, such as repositories it created inside its folder, which the
-// folder's own git status does not see.
+// even when it is not one) and those inside the folder holding files its
+// edit tools changed, such as repositories it created there, which the
+// folder's own git status does not see. Edits outside the folder are left
+// out: git runs only where the Thread works.
 var handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, turnStart, since time.Time) []handoffRepo {
 	files, err := listTaskChanges(ctx, workdir, edits, turnStart)
 	main := handoffRepo{files: files, err: err}
 	main.commits, main.more = handoffCommits(ctx, files.repo, since)
 	repos := []handoffRepo{main}
+	bases := []string{filepath.Clean(workdir)}
+	if real, err := filepath.EvalSymlinks(workdir); err == nil {
+		bases = append(bases, real)
+	}
+	// inside is p's path relative to the folder, ok when p is in it.
+	inside := func(p string) (string, bool) {
+		for _, base := range bases {
+			if rel, err := filepath.Rel(base, p); err == nil && filepath.IsLocal(rel) {
+				return rel, true
+			}
+		}
+		return "", false
+	}
 	abs := map[string]time.Time{}
 	for p, at := range edits {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(workdir, p)
 		}
-		abs[p] = at
+		if _, ok := inside(filepath.Clean(p)); ok {
+			abs[p] = at
+		}
 	}
 	for _, top := range editRepos(abs) {
-		if (files.repo != nil && top == files.repo.top) || len(repos) > maxHandoffRepos {
+		rel, ok := inside(top)
+		if !ok || (files.repo != nil && top == files.repo.top) || len(repos) > maxHandoffRepos {
 			continue
 		}
-		r := handoffRepo{label: top}
-		if rel, err := filepath.Rel(workdir, top); err == nil && filepath.IsLocal(rel) {
-			r.label = filepath.ToSlash(rel)
-		}
+		r := handoffRepo{label: filepath.ToSlash(rel)}
 		r.files, r.err = listTaskChanges(ctx, top, abs, turnStart)
 		r.commits, r.more = handoffCommits(ctx, r.files.repo, since)
 		repos = append(repos, r)

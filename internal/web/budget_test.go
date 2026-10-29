@@ -593,7 +593,11 @@ func TestHandoffFactsListCommitsSinceTheStartAndNestedRepos(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("svc/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	edits := map[string]time.Time{filepath.Join(nested, "a.txt"): since, "tracked.txt": since}
+	// A repository outside the Thread's folder is not read, edited or not.
+	outside := t.TempDir()
+	gitOutput(t, outside, "init", "-q")
+	commitAt(outside, "outside work")
+	edits := map[string]time.Time{filepath.Join(nested, "a.txt"): since, "tracked.txt": since, filepath.Join(outside, "b.txt"): since}
 	facts := handoffNotes{}.markdown(handoffFiles(t.Context(), dir, edits, time.Time{}, since), nil)
 	for _, want := range []string{"**Commits since the Thread started:** 2", "parent work", "`svc` `", "svc work",
 		"**Files changed by this Thread** against `HEAD`: 2", "`tracked.txt` modified", "`svc/a.txt` modified +1 −1"} {
@@ -601,8 +605,8 @@ func TestHandoffFactsListCommitsSinceTheStartAndNestedRepos(t *testing.T) {
 			t.Errorf("facts lack %q:\n%s", want, facts)
 		}
 	}
-	if strings.Contains(facts, "` init") {
-		t.Errorf("facts list a commit from before the start:\n%s", facts)
+	if strings.Contains(facts, "` init") || strings.Contains(facts, "outside work") {
+		t.Errorf("facts list a commit from before the start or outside the folder:\n%s", facts)
 	}
 }
 
