@@ -2782,7 +2782,8 @@ Updates apply on their own. The installed app keeps no copy of the interface:
 after a new `uam web` is deployed, an open window notices the new version when
 its event stream reconnects (or when it comes back into view) and reloads
 itself, unless a draft, an upload or an open dialog would be lost; then it
-shows *UAM was updated* with a **Reload** button above the pane and waits.
+shows *UAM was updated* with a **Reload** button floating over the pane, under
+the header, and waits.
 
 There is no offline mode. The app is a live view of the service and needs it
 reachable, exactly as a browser tab does.
