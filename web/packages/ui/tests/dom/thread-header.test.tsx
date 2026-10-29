@@ -1,4 +1,4 @@
-// The Thread header is a card bar whose still fill is the Thread's state (DESIGN.md Thread header): no state word or dot on it.
+// The Thread header is a card bar whose still left edge is the Thread's state (DESIGN.md Thread header): no state word or dot on it.
 import { screen, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
@@ -10,16 +10,15 @@ afterEach(() => vi.restoreAllMocks());
 const bar = () => screen.getByRole('group', { name: /^State: / });
 
 test.each([
-  ['t8', 'Working', 'bg-accent-wash'],
-  ['t2', 'Input', 'bg-warning-wash'],
-  ['t5', 'Interrupted', 'bg-warning-wash'],
-  ['t4', 'Error', 'bg-error-wash'],
-  ['t-chart', 'Finished', 'bg-success-wash'],
-])('%s fills the header card for %s', async (id, word, fill) => {
+  ['t8', 'Working', 'before:bg-accent'],
+  ['t2', 'Input', 'before:bg-warning'],
+  ['t5', 'Interrupted', 'before:bg-warning'],
+  ['t4', 'Error', 'before:bg-error'],
+  ['t-chart', 'Finished', 'before:bg-success'],
+])('%s edges the header card for %s', async (id, word, edge) => {
   await openTask(id);
   expect(bar().getAttribute('aria-label')).toBe(`State: ${word}`);
-  expect(bar().className).toContain(fill);
-  expect(bar().className).not.toContain('bg-raised');
+  expect(bar().className).toContain(edge);
   expect(within(bar()).queryByText(word)).toBeNull();
 });
 
@@ -30,7 +29,7 @@ test('an idle Thread\'s header card stays neutral', async () => {
   await openTask('t-chart');
   expect(bar().getAttribute('aria-label')).toBe('State: Idle');
   expect(bar().className).toContain('bg-raised');
-  expect(bar().className).not.toMatch(/-wash/);
+  expect(bar().className).not.toMatch(/before:bg-/);
 });
 
 test('the sidebar\'s top row is the same card', async () => {

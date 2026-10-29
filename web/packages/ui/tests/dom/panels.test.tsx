@@ -226,7 +226,7 @@ describe('subagents', () => {
     const transcript = await view('Run the accessibility linter');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(bar().getAttribute('aria-label')).toBe('State: Failed');
-    expect(bar().className).toContain('bg-error-wash');
+    expect(bar().className).toContain('before:bg-error');
     expect(window.location.hash).toBe('#task=t8&agent=a3');
     // The error is said once, at the end under Error, as what went back to the Thread; not again as a result.
     const error = within(transcript).getByRole('region', { name: 'Error' });
@@ -364,7 +364,7 @@ describe('subagents', () => {
     await user.click(list.getByRole('button', { name: /^Audit package internal\/web, completed/ }));
     const transcript = within(await view('Audit package internal/web'));
     // Read as a conversation: what it was asked first, its work, and what went back to the Thread at the end, green.
-    expect(bar().className).toContain('bg-success-wash');
+    expect(bar().className).toContain('before:bg-success');
     const result = await transcript.findByRole('region', { name: 'Result' });
     expect(result.textContent).toContain('returned to');
     const said = result.querySelector('p')!.textContent!;
@@ -591,7 +591,7 @@ describe('one working ring per place', () => {
     const header = pane.querySelector('header')!;
     // The header: Working as its still fill; the strip says how many run in a still block.
     expect(rings(header)).toHaveLength(0);
-    expect(within(header).getByRole('group', { name: 'State: Working' }).className).toContain('bg-accent-wash');
+    expect(within(header).getByRole('group', { name: 'State: Working' }).className).toContain('before:bg-accent');
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
     expect(rings(strip)).toHaveLength(0);
@@ -619,7 +619,7 @@ describe('one working ring per place', () => {
     const transcript = await screen.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
     const bar = screen.getByRole('group', { name: /^State: / });
     expect(bar.getAttribute('aria-label')).toBe('State: Running');
-    expect(bar.className).toContain('bg-accent-wash');
+    expect(bar.className).toContain('before:bg-accent');
     // First its bash call is the step: the step dots, never a ring (the strip's live line has the one ring).
     expect(rings(transcript)).toHaveLength(0);
     expect(rings(bar)).toHaveLength(0);

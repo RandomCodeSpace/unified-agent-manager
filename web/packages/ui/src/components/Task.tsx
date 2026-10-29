@@ -13,9 +13,8 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { BAR_ROW, barCard, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, ScrollSentinel, SessionContext, Spinner, STATE_LABELS, STATE_TONE, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, WorkdirContext } from './common';
+import { BAR_ROW, barCard, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, STATE_TONE, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
-import { cn } from '../lib/cn';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
 import { PHONE } from './ui/dialog';
@@ -129,7 +128,6 @@ export function headerRoom(width: number, title = 0): 'wide' | 'snug' | 'tight' 
 }
 
 interface HeaderProps {
-  scrolled: boolean;
   leading?: ReactNode;
   /** The Task, read for its summary alone: the comparator below holds the header through frames that change nothing else. */
   session: SessionSummary;
@@ -227,7 +225,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -269,7 +267,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, projec
   const word = readOnly(session) ? stageLabel(session) : shown.word;
 
   return (
-    <header ref={header} className={cn('pane-header', BAR_ROW)} data-scrolled={scrolled || undefined}>
+    <header ref={header} className={BAR_ROW}>
       <div role="group" aria-label={`State: ${word}`} title={`State: ${word}${shown.detail && !readOnly(session) ? ` · ${shown.detail}` : ''}`} className={barCard(readOnly(session) ? undefined : STATE_TONE[state])}>
         {leading}
         <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
@@ -596,7 +594,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       if (historyAbort.current === controller) historyAbort.current = null;
     }
   }
-  const [scrolled, sentinel] = useScrolled();
 
   // The badge count follows turn boundaries and completed file-changing tools. The open sheet
   // also reports its refreshed default list; a tool completion during a badge read queues another.
@@ -1015,7 +1012,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} scrolled={scrolled} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && !viewed && (
@@ -1039,7 +1036,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             onTouchEnd={e => { touching.current = e.touches.length > 0; }}
             onTouchCancel={e => { touching.current = e.touches.length > 0; }}
             onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
-            <ScrollSentinel sentinelRef={sentinel} />
             {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
             {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
             <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
@@ -1205,7 +1201,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
   }), [project.id, onSend, placed, place, filesBase]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className={cn('pane-header', BAR_ROW)}>
+      <header className={BAR_ROW}>
         <div className={barCard()}>
           {leading}
           <ProjectBadge badge={project.badge} />

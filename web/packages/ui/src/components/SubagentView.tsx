@@ -67,7 +67,7 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
     ...chain.map((a) => ({ key: a.id, label: agentName(a), icon: <Workflow />, onSelect: () => actions.show(a.id) })),
   ];
   return (
-    <header className={cn('pane-header', BAR_ROW)}>
+    <header className={BAR_ROW}>
       <div role="group" aria-label={`State: ${word}`} title={`State: ${word}`} className={barCard(needsYou ? STATE_TONE.awaiting_permission : TONE[s.status])}>
         {/* A phone gives the drawer's toggle to ←: the Thread it returns to has it. */}
         {!phone && leading}
