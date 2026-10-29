@@ -263,7 +263,8 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   useEffect(() => {
     if (wantLive) read(session.id);
   }, [wantLive, turns.length, session.id, read]);
-  const view = hideTodos ? undefined : known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
+  const shownView = known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
+  const view = hideTodos ? undefined : shownView;
   const working = line?.kind === 'working';
   const list = line?.kind === 'working' ? line.todo : undefined;
   // Idle, or working with a list the line says nothing of (untouched, all done), the counts alone draw the blocks.
