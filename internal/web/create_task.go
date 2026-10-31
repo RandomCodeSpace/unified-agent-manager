@@ -53,7 +53,7 @@ const (
 var createTaskTool = agentapi.HostTool{
 	Name: createTaskToolName,
 	Description: fmt.Sprintf("Start a new uam thread with prompt as its first message, in a project or in the project of a folder. "+
-		"Use it for any change outside your own thread's folder; git on your own repository (committing, or merging your branch into the project's branch when asked) is not such a change. Give project or path, not both. "+
+		"Use it for any change outside your own thread's folder; committing and pushing your own branch is not such a change. Give project or path, not both. "+
 		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
 		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and the start of its last reply (the uam tool's history op reads the rest), at your next tool call or turn; wait for it instead of checking. Its questions and permission requests to the owner, and the owner's answers, come as notes too. "+
 		"Pick model and effort for the work (a hard change: a stronger model or more effort; a small one: a cheaper model); uam op models lists the owner's enabled models with their efforts and cost tier. "+

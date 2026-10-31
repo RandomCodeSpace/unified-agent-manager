@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -134,26 +135,24 @@ func diskInfo(dir string) *DiskInfo {
 	}
 }
 
-// Disk is the filesystem holding the worktrees, for /api/meta.
+// Disk is the filesystem holding the home folder, for /api/meta.
+// shortcut: worktrees go beside each repository, which may be on another disk; per-project disks if that matters.
 func (m *Manager) Disk() *DiskInfo {
-	root, err := m.worktreesDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	return diskInfo(root)
+	return diskInfo(home)
 }
 
 // ListWorktrees lists the worktree folders in every worktrees folder
 // (worktreeRoots) with the Thread each belongs to, what is not saved in it
 // and its size, measuring unknown or old sizes in the background.
 func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
-	root, err := m.worktreesDir()
-	if err != nil {
-		return Worktrees{}, err
-	}
-	out := Worktrees{Root: root, Disk: diskInfo(root), Worktrees: []WorktreeEntry{}, Removed: m.removedLog()}
-	out.DefaultRoot, _ = m.defaultWorktreesDir()
-	for _, dir := range m.allWorktreeDirs() {
+	// Root names where new worktrees go: the Copilot CLI's place for them.
+	root, _ := m.copilotWorktreeSettings("")
+	out := Worktrees{Root: cmp.Or(root, "<repository>.worktrees/<branch>"), Disk: m.Disk(), Worktrees: []WorktreeEntry{}, Removed: m.removedLog()}
+	for _, dir := range m.allWorktreeDirs(ctx) {
 		out.Worktrees = append(out.Worktrees, WorktreeEntry{Path: dir})
 	}
 	// A worktree recreated since it was removed on settling is listed once,
@@ -203,11 +202,78 @@ func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
 	return out, nil
 }
 
-// allWorktreeDirs are the worktree folders of every worktrees folder.
-func (m *Manager) allWorktreeDirs() []string {
-	var out []string
+// allWorktreeDirs are the worktrees uam made that are on disk: the
+// Threads' own, those git lists for a Project's repository on a uam/…
+// branch, and the uam-… folders in the worktrees folders earlier versions
+// used.
+//
+// A folder holding a Project or the folder of a Thread not in its own
+// worktree is never one, whatever its branch: a Project may itself be a
+// linked worktree on a uam/… branch. Each worktree is listed once, by the
+// path its Thread knows it by: git lists resolved paths, a Thread keeps the
+// one it was made with.
+func (m *Manager) allWorktreeDirs(ctx context.Context) []string {
+	var paths, dirs, kept []string
+	m.mu.Lock()
+	for _, s := range m.sessions {
+		if s.removed {
+			continue
+		}
+		if s.place != nil && s.place.Worktree != "" {
+			paths = append(paths, s.place.Worktree)
+		} else {
+			kept = append(kept, s.workdir)
+		}
+	}
+	for _, p := range m.projects {
+		dirs = append(dirs, p.Dir)
+	}
+	m.mu.Unlock()
+	kept = append(kept, dirs...)
 	for _, root := range m.worktreeRoots() {
-		out = append(out, worktreeDirs(root)...)
+		paths = append(paths, worktreeDirs(root)...)
+	}
+	for _, dir := range dirs {
+		paths = append(paths, uamWorktrees(ctx, dir)...)
+	}
+	for i, dir := range kept {
+		kept[i] = resolvedPath(dir)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, path := range paths {
+		real := resolvedPath(path)
+		info, err := os.Lstat(path)
+		if seen[real] || err != nil || !info.IsDir() || slices.ContainsFunc(kept, func(dir string) bool { return withinDir(real, dir) }) {
+			continue
+		}
+		seen[real] = true
+		out = append(out, path)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// uamWorktrees are the linked worktrees git lists for the repository
+// holding dir that are on a branch uam made (uam/…); the main worktree is
+// the Project's own folder and never one of them.
+func uamWorktrees(ctx context.Context, dir string) []string {
+	git, err := lookGit()
+	if err != nil {
+		return nil
+	}
+	raw, code, _, err := runGit(ctx, git, dir, maxStatusBytes, "worktree", "list", "--porcelain", "-z")
+	if err != nil || code != 0 {
+		return nil
+	}
+	var out []string
+	path, n := "", 0
+	for field := range strings.SplitSeq(string(raw), "\x00") {
+		if p, ok := strings.CutPrefix(field, "worktree "); ok {
+			path, n = p, n+1
+		} else if strings.HasPrefix(field, "branch refs/heads/"+branchPrefix) && n > 1 {
+			out = append(out, path)
+		}
 	}
 	return out
 }
@@ -498,7 +564,7 @@ func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.Web
 // conversation of its Thread is closed first, and its next use recreates
 // the worktree from the branch.
 func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) error {
-	if !slices.Contains(m.allWorktreeDirs(), path) {
+	if !slices.Contains(m.allWorktreeDirs(ctx), path) {
 		return newError(http.StatusNotFound, "worktree not found")
 	}
 	m.mu.Lock()

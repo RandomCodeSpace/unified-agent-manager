@@ -21,14 +21,16 @@ and conventions below instead.
   you in the conversation, so commit and push only when asked. Write commit
   messages and pull or merge requests by the git rules in your instructions,
   which the owner sets in Settings. The owner may instead
-  start a conversation on a new `uam/…` branch, or in its own git worktree
-  (by default under `~/.uam/worktrees/`): then your working directory is that worktree,
-  other conversations do not share it, and uam renames the branch after the
-  conversation's title until it is pushed. Stay on that branch. A worktree
-  shares its repository with the Project, so your commits land there. When
-  the owner asks to merge your branch into the Project, merge it in the
-  Project's folder (the first entry of `git worktree list`): check its
-  branch and `git status` there first, then `git -C <folder> merge <branch>`.
+  start a conversation on a new `uam/…` branch, or in its own git worktree,
+  placed as the Copilot CLI places its own (its `worktreePathTemplate`
+  setting, else `<repository>.worktrees/<branch>`). Other conversations do
+  not share that worktree. The branch is named once and never renamed; your
+  instructions (`uam place:`) name it and its base. Commit there; when asked
+  to push, run `git push -u origin HEAD`, which pushes your branch, never the
+  base; when asked for a pull or merge request, open it from your branch
+  into the base. Do not push to the base, merge into it or switch branches
+  unless the owner asks for exactly that, and do not ask which branch to
+  push.
 - **Steer**: a message the owner sends while you work. It reaches you before
   your next step. A **queued** message waits until the turn ends.
 - **Safe / Assisted / Yolo**: the permission policy. In Safe each permission
@@ -80,7 +82,8 @@ wording.
 
 Before `git push`, changed GitLab CI files are linted when the gate is ready.
 Fix reported CI errors before pushing. A new branch receives a static check;
-unavailable lint or inaccessible includes do not block the push. This is not
+unavailable lint, inaccessible includes and includes GitLab does not have yet
+(files added in the commits you push) do not block the push. This is not
 a guarantee that a pipeline will pass. Rules leave calls unchanged while the
 background origin/auth check is cold, and do not rewrite loops or subshells.
 
@@ -279,8 +282,8 @@ Use it when the owner asks for work to run as its own Thread, and for any
 change outside your own Thread's folder: uam refuses edit tools there
 (`uam scope:`), because such a change is tracked by no Thread. Do not write
 outside your folder with shell commands either; uam cannot see where they
-write, but the rule is the same. Git on your own repository is not such a
-write: commit, and merge your branch into the Project when the owner asks.
+write, but the rule is the same. Committing and pushing your own branch is
+not such a write.
 
 - `project` or `path` (one of them): `project` is the Project's ID or exact
   name; a name several Projects share is refused with their IDs. `path` is a
@@ -304,8 +307,9 @@ write: commit, and merge your branch into the Project when the owner asks.
   worktree of the Project, so its changes stay apart from the Project's
   folder until merged (a Project outside git runs in its folder). Pass
   `false` only when the owner asks for the Project's own folder. `base` is
-  the branch or commit the new branch starts from, else the Project's
-  current branch.
+  the branch or commit the new branch starts from, else the Copilot CLI's
+  `worktreeBaseRef` setting decides (the Project's current branch unless it
+  says `defaultBranch`).
 
 The new Thread starts in Yolo mode when you are in Yolo, else in Safe mode.
 It runs on its own and shows in the owner's

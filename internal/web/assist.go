@@ -485,9 +485,8 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		create.Model, create.Effort, create.ContextSize = req.Model, "", "default"
 	}
 	if s.place != nil && s.place.Worktree != "" {
-		// It runs in the same worktree, and the branch keeps its name.
+		// It runs in the same worktree, on the same branch.
 		place := *s.place
-		place.Named = true
 		create.samePlace, create.sameWorkdir = &place, s.workdir
 	}
 	text := ""

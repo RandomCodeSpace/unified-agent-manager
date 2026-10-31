@@ -227,7 +227,6 @@ func (m *Manager) replyFallbackLocked(s *webSession) {
 		return
 	}
 	s.title, s.titleFallback = title, true
-	m.kickPlaceNameLocked(s)
 }
 
 // fallbackTitle is text as a title until a model gives one: its words on
@@ -350,7 +349,6 @@ func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCan
 	}
 	conv := s.conv
 	m.changedLocked(s, before)
-	m.kickPlaceNameLocked(s)
 	m.mu.Unlock()
 	if title == "" {
 		return

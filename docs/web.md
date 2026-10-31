@@ -444,18 +444,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     `POST /api/sessions/{id}/git/branch` (`{"mode": "branch"}` or
     `{"mode": "switch", "branch": …, "remote": …}`), under the same rules,
     the Thread itself included; a Thread in its own worktree keeps its
-    branch. A new branch made this way takes the Thread's title like any
-    other. Connected instances advertise `branch-switch-v1`.
-  - **New worktree** runs `git worktree add -b uam/<8 hex digits>` from the
-    chosen base branch, local or remote (the current `HEAD` without one), in
-    `<folder for new worktrees>/<project>/uam-<8 hex digits>` (by default
-    `~/.uam/worktrees`). For a Project in a
-    folder of its repository, the Thread runs in the same folder of the
-    worktree. Other Threads keep working in the Project's folder.
-  - Neither branch tracks an upstream. Once the Thread has a name or a
-    title, the branch is renamed to `uam/<title>` unless it was pushed; the
-    worktree folder keeps its name. While a model's title is on its way the
-    branch waits for it rather than taking the first message.
+    branch. A new branch made this way is named from the Thread's name or
+    title like any other. Connected instances advertise `branch-switch-v1`.
+  - **New worktree** follows the Copilot CLI's own worktrees, whose
+    worktree commands the SDK does not expose. It runs
+    `git worktree add -b <branch>` from the chosen base branch, local or
+    remote; without one, from the CLI's `worktreeBaseRef` setting
+    (`defaultBranch`: the remote's default branch; otherwise the current
+    `HEAD`). The worktree goes where the CLI puts its own: the owner's
+    `worktreePathTemplate` (`{repoPath}`, `{repo}`, `{branch}`,
+    `{branchSlug}`, leading `~`), else `<repository>.worktrees/<branch slug>`
+    beside the repository. `worktreeBaseRef` is read from the repository's
+    `.github/copilot/settings.local.json`, its `settings.json`, then the
+    user's `settings.json` in `COPILOT_HOME`; `worktreePathTemplate` from
+    the user's file only, so a repository cannot choose where it is checked
+    out. For a Project in a folder of its repository, the Thread runs in the
+    same folder of the worktree. Other Threads keep working in the Project's
+    folder.
+  - Neither branch tracks an upstream. The branch is named once, when it is
+    made, as `uam/<slug of the Thread's name or first message>` (random hex
+    digits added when a local or remote branch has that name, or the text
+    leaves no slug) and never renamed. The agent's system message names the
+    branch and its base (`uam place:`) and says to push with
+    `git push -u origin HEAD` and open pull or merge requests into the base,
+    so it never asks which branch to push.
   - Everything of the Thread follows its folder: Files, `@` references,
     file links and previews, images, Changes and Commit/Push/Pull, the GitLab
     panel, receipts, and the terminal opened from the Thread. A draft
@@ -472,15 +484,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     kept, and so is one another active Thread runs in. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
-  - **Settings → Projects & worktrees → Folders → Folder for new worktrees** sets where new
-    worktrees go (`worktrees_dir` in `PATCH /api/settings`; `~` is the home
-    folder, `""` puts back `~/.uam/worktrees`). The folder must be absolute,
-    yours when it exists, and in no git repository; uam makes it (0700) with
-    the first worktree. Existing worktrees stay where they are and are still
-    listed, removed on settling and removable here. Connected instances
-    advertise `worktree-folder-v1`.
-  - **Settings → Projects & worktrees** shows the disk holding the folder for new
-    worktrees (free space against a 10% line), every worktree biggest first
+  - Worktrees earlier versions made in `~/.uam/worktrees` or the folder
+    Settings named (`worktrees_dir` in `PATCH /api/settings`, still
+    accepted) stay where they are and are still listed, removed on settling
+    and removable here; new worktrees no longer go there, and servers no
+    longer advertise `worktree-folder-v1`, so the folder picker is hidden.
+  - **Settings → Projects & worktrees** shows where new worktrees go, the disk
+    holding the home folder (free space against a 10% line), every worktree
+    uam made biggest first (from `git worktree list` of each Project's
+    repository, branches `uam/…`, and the earlier folders; never a folder
+    holding a Project or a Thread that is not in its own worktree, each
+    listed once by the path its Thread knows)
     with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
     20 worktrees removed on settling (one recreated since is listed only
@@ -2588,7 +2602,7 @@ Before a `git push`, committed CI changes relative to the push ref (or the
 origin default branch) receive `glab ci lint`. A branch with an origin tracking
 ref uses a dry run with its branch context; otherwise the note says static
 only. Invalid CI refuses the push with at most 20 diagnostic lines. Timeouts,
-glab errors and inaccessible includes allow it. Commands use argv directly,
+glab errors, inaccessible includes and includes GitLab does not have yet (a missing file that the push adds) allow it; a missing include file the push does not add, such as a misspelled path, still refuses it. Commands use argv directly,
 nil stdin, a 20-second deadline and a 1 MiB output limit. Authentication output
 is discarded. This does not add a new setting or guarantee pipeline success.
 

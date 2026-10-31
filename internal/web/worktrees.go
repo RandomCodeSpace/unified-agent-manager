@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -159,21 +160,9 @@ func (m *Manager) defaultWorktreesDir() (string, error) {
 	return filepath.Join(home, ".uam", "worktrees"), nil
 }
 
-// worktreesDir is the folder new Thread worktrees go in, one folder per
-// Project: Settings' worktrees_dir, else the default.
-func (m *Manager) worktreesDir() (string, error) {
-	m.mu.Lock()
-	dir := m.settings.WorktreesDir
-	m.mu.Unlock()
-	if dir != "" {
-		return dir, nil
-	}
-	return m.defaultWorktreesDir()
-}
-
-// worktreeRoots are the folders that may hold Thread worktrees: the one new
-// worktrees go in, the default, the earlier ones Settings named, and those
-// the Threads' worktrees are in.
+// worktreeRoots are the folders earlier versions put Thread worktrees in:
+// ~/.uam/worktrees and the ones Settings named. New worktrees go where the
+// Copilot CLI puts its own (worktreePath).
 func (m *Manager) worktreeRoots() []string {
 	var roots []string
 	if dir, err := m.defaultWorktreesDir(); err == nil {
@@ -184,11 +173,6 @@ func (m *Manager) worktreeRoots() []string {
 		roots = append(roots, m.settings.WorktreesDir)
 	}
 	roots = append(roots, m.oldWorktreeRoots...)
-	for _, s := range m.sessions {
-		if !s.removed && s.place != nil && s.place.Worktree != "" {
-			roots = append(roots, filepath.Dir(filepath.Dir(s.place.Worktree)))
-		}
-	}
 	m.mu.Unlock()
 	slices.Sort(roots)
 	return slices.Compact(roots)
@@ -271,7 +255,7 @@ func inGitRepo(ctx context.Context, dir string) bool {
 // of the Project in dir asked for, and returns the Thread's folder, its
 // place, and the function that takes them back if the Thread is not made.
 // Without a place the Thread runs in dir as it is.
-func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequest) (string, *store.WebPlace, func(), error) {
+func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequest, hint string) (string, *store.WebPlace, func(), error) {
 	none := func() {}
 	if req == nil || req.Mode == "" || req.Mode == placeCurrent {
 		return project.Dir, nil, none, nil
@@ -293,7 +277,7 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 		}
 		return project.Dir, nil, undo, nil
 	}
-	branch, err := freeBranch(ctx, repo)
+	branch, err := freeBranch(ctx, repo, hint)
 	if err != nil {
 		return "", nil, none, err
 	}
@@ -303,19 +287,33 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 	return m.makeWorktree(ctx, project, repo, branch, req.Base)
 }
 
-// freeBranch is a new branch name uam/<8 hex digits> no branch has yet.
-func freeBranch(ctx context.Context, repo *gitRepo) (string, error) {
+// freeBranch is a new branch name no local or remote branch has yet:
+// uam/<slug of hint>, with random hex digits added when that is taken or
+// hint leaves no slug. The name is final: uam never renames it, as the
+// Copilot CLI never renames the branches it makes for worktrees.
+func freeBranch(ctx context.Context, repo *gitRepo, hint string) (string, error) {
+	want := slug(hint)
+	if want != "" && branchFree(ctx, repo, branchPrefix+want) {
+		return branchPrefix + want, nil
+	}
 	for range 4 {
 		var b [4]byte
 		if _, err := rand.Read(b[:]); err != nil {
 			return "", fmt.Errorf("generate branch name: %w", err)
 		}
-		name := branchPrefix + hex.EncodeToString(b[:])
-		if !refExists(ctx, repo, "refs/heads/"+name) {
+		name := branchPrefix + strings.TrimPrefix(want+"-"+hex.EncodeToString(b[:]), "-")
+		if branchFree(ctx, repo, name) {
 			return name, nil
 		}
 	}
 	return "", newError(http.StatusConflict, "could not find a free branch name")
+}
+
+// branchFree reports whether no local branch and no remote's branch is
+// named name, so a push cannot land on an older branch of that name.
+func branchFree(ctx context.Context, repo *gitRepo, name string) bool {
+	out, code, _, err := runGit(ctx, repo.git, repo.top, 4096, "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/"+name, "refs/remotes/*/"+name)
+	return err == nil && code == 0 && strings.TrimSpace(string(out)) == ""
 }
 
 func refExists(ctx context.Context, repo *gitRepo, ref string) bool {
@@ -472,17 +470,19 @@ func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo
 		}
 		_, _ = runGitWrite(ctx, repo.top, nil, "branch", "-D", branch)
 	}
-	return project.Dir, &store.WebPlace{Mode: placeBranch, Branch: branch}, undo, nil
+	return project.Dir, &store.WebPlace{Mode: placeBranch, Branch: branch, Base: previous}, undo, nil
 }
 
-// makeWorktree adds a worktree at ~/.uam/worktrees/<project>/<branch> on
-// branch, a new branch from base. The Thread's folder is the Project's
-// folder inside it, as the Project may be a folder inside its repository.
+// makeWorktree adds a worktree on branch, a new branch from base, where the
+// Copilot CLI puts its own (worktreePath). The Thread's folder is the
+// Project's folder inside it, as the Project may be a folder inside its
+// repository.
 func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRepo, branch, base string) (string, *store.WebPlace, func(), error) {
 	none := func() {}
-	start := cmp.Or(base, "HEAD")
+	pathTemplate, baseRef := m.copilotWorktreeSettings(repo.top)
+	start, base := worktreeStart(ctx, repo, base, baseRef)
 	if !refExists(ctx, repo, start+"^{commit}") {
-		return "", nil, none, newError(http.StatusBadRequest, "%q is not a branch or commit of this repository", clipRunes(displaytext.Sanitize(base), maxDetailRunes))
+		return "", nil, none, newError(http.StatusBadRequest, "%q is not a branch or commit of this repository", clipRunes(displaytext.Sanitize(start), maxDetailRunes))
 	}
 	prefix, code, stderr, err := runGit(ctx, repo.git, project.Dir, 4096, "rev-parse", "--show-prefix")
 	if err != nil {
@@ -491,19 +491,13 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	if code != 0 {
 		return "", nil, none, newError(http.StatusBadGateway, "git rev-parse failed: %s", gitMessage(stderr))
 	}
-	root, err := m.worktreesDir()
+	path, err := worktreePath(pathTemplate, repo.top, branch)
 	if err != nil {
 		return "", nil, none, err
 	}
-	parent := filepath.Join(root, cmp.Or(slug(project.Name), "project"))
-	// A folder the owner chose may hold a repository named as the Project.
-	if def, _ := m.defaultWorktreesDir(); root != def && inGitRepo(ctx, parent) {
-		return "", nil, none, newError(http.StatusConflict, "%s is inside a git repository; choose another folder for new worktrees in Settings", parent)
-	}
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", nil, none, newError(http.StatusConflict, "could not make the worktrees folder: %s", shortError(err))
 	}
-	path := filepath.Join(parent, strings.ReplaceAll(branch, "/", "-"))
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		return "", nil, none, newError(http.StatusConflict, "the worktree folder %s already exists", path)
 	}
@@ -522,6 +516,109 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	}
 	workdir := filepath.Join(path, filepath.FromSlash(strings.TrimSpace(string(prefix))))
 	return workdir, &store.WebPlace{Mode: placeWorktree, Branch: branch, Base: base, Worktree: path}, undo, nil
+}
+
+// placeInstructionsLocked tells the agent of a Thread on a branch uam made
+// where it works and how its work leaves: push its own branch and open the
+// pull or merge request into the base, as the Copilot CLI's own worktree
+// flow does, so it never has to ask which branch to push. "" elsewhere.
+func (m *Manager) placeInstructionsLocked(s *webSession) string {
+	p := s.place
+	if p == nil || p.Branch == "" || (p.Mode != placeWorktree && p.Mode != placeBranch) {
+		return ""
+	}
+	where := "the Project's folder"
+	if p.Mode == placeWorktree {
+		where = "a git worktree of the Project's repository"
+		if project := m.projects[s.projectID]; project != nil {
+			where += " (main checkout " + project.Dir + ")"
+		}
+	}
+	base, into := "", "the repository's default branch"
+	if p.Base != "" {
+		base, into = ", started from "+p.Base, p.Base
+	}
+	return fmt.Sprintf("uam place: you work in %s on the branch %s%s, made for this Thread. Commit there. When the owner asks you to push, run `git push -u origin HEAD`: that pushes %s, never the base branch. When the owner asks for a pull or merge request, open it from %s into %s, following the git rules above. Do not push to %s, merge into it or switch branches unless the owner asks for exactly that, and do not ask which branch to push.",
+		where, p.Branch, base, p.Branch, p.Branch, into, into)
+}
+
+// copilotWorktreeSettings reads the Copilot CLI's worktree settings for the
+// repository at top. worktreeBaseRef comes from the repository's
+// .github/copilot/settings.local.json, then its settings.json, then the
+// user's settings.json in COPILOT_HOME, the CLI's own order.
+// worktreePathTemplate comes from the user's file only: a repository must
+// not choose where on disk its files are checked out. top "" reads the
+// user's file only.
+func (m *Manager) copilotWorktreeSettings(top string) (pathTemplate, baseRef string) {
+	var files []string
+	if top != "" {
+		files = append(files, filepath.Join(top, ".github", "copilot", "settings.local.json"), filepath.Join(top, ".github", "copilot", "settings.json"))
+	}
+	user := ""
+	if scope, err := m.configurationScope(""); err == nil {
+		user = filepath.Join(scope.base, "settings.json")
+		files = append(files, user)
+	}
+	for _, file := range files {
+		var s struct {
+			PathTemplate string `json:"worktreePathTemplate"`
+			BaseRef      string `json:"worktreeBaseRef"`
+		}
+		// shortcut: plain JSON only; a file with comments is skipped like a missing one.
+		b, err := os.ReadFile(file) // #nosec G304 -- the Copilot CLI's own settings files.
+		if err != nil || json.Unmarshal(b, &s) != nil {
+			continue
+		}
+		baseRef = cmp.Or(baseRef, s.BaseRef)
+		if file == user {
+			pathTemplate = s.PathTemplate
+		}
+	}
+	return pathTemplate, baseRef
+}
+
+// worktreeStart is the ref a new worktree starts from and the name recorded
+// as its base ("" for a detached HEAD): base when given; else, by
+// worktreeBaseRef, the remote's
+// default branch for "defaultBranch" or the Project's current branch for
+// "head", the CLI's default.
+func worktreeStart(ctx context.Context, repo *gitRepo, base, baseRef string) (start, name string) {
+	if base != "" {
+		return base, base
+	}
+	if baseRef == "defaultBranch" {
+		out, code, _, err := runGit(ctx, repo.git, repo.top, 4096, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+		if ref := strings.TrimSpace(string(out)); err == nil && code == 0 && ref != "" {
+			return ref, strings.TrimPrefix(ref, "origin/")
+		}
+	}
+	// A detached HEAD records no base: the agent is then told the default branch.
+	current, _ := readBranch(ctx, repo.top)
+	return "HEAD", current
+}
+
+// worktreePath is where the worktree of branch goes, as the Copilot CLI
+// places its own: by the owner's worktreePathTemplate ({repoPath},
+// {repo}, {branch}, {branchSlug}, leading ~), else
+// <repository>.worktrees/<branchSlug> beside the repository.
+func worktreePath(template, top, branch string) (string, error) {
+	branchSlug := strings.ReplaceAll(branch, "/", "-")
+	if template == "" {
+		return filepath.Join(top+".worktrees", branchSlug), nil
+	}
+	path := template
+	if rest, ok := strings.CutPrefix(path, "~"); ok && (rest == "" || rest[0] == '/') {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", newError(http.StatusConflict, "the server has no home directory for worktrees")
+		}
+		path = home + rest
+	}
+	path = strings.NewReplacer("{repoPath}", top, "{repo}", filepath.Base(top), "{branchSlug}", branchSlug, "{branch}", branch).Replace(path)
+	if !filepath.IsAbs(path) {
+		return "", newError(http.StatusConflict, "the Copilot setting worktreePathTemplate %q is not an absolute path or ~/…", clipRunes(displaytext.Sanitize(template), maxDetailRunes))
+	}
+	return filepath.Clean(path), nil
 }
 
 // busyThreads returns the IDs and names of the Threads in the repository
@@ -567,6 +664,7 @@ func (m *Manager) SwitchBranch(ctx context.Context, id string, req PlaceRequest)
 	err = s.readOnlyLocked()
 	own := s.place != nil && s.place.Worktree != ""
 	project := Project{ID: s.projectID, Dir: s.workdir}
+	hint := firstNonEmpty(s.name, s.title)
 	m.mu.Unlock()
 	switch {
 	case err != nil:
@@ -589,7 +687,7 @@ func (m *Manager) SwitchBranch(ctx context.Context, id string, req PlaceRequest)
 			return SessionSummary{}, err
 		}
 	} else {
-		branch, err := freeBranch(ctx, repo)
+		branch, err := freeBranch(ctx, repo, hint)
 		if err != nil {
 			return SessionSummary{}, err
 		}
@@ -607,7 +705,6 @@ func (m *Manager) SwitchBranch(ctx context.Context, id string, req PlaceRequest)
 		s.branch = place.Branch
 	}
 	m.changedLocked(s, before)
-	m.kickPlaceNameLocked(s)
 	m.mu.Unlock()
 	m.refreshBranches(ctx, true, project.ID)
 	return m.Summary(id)
@@ -642,86 +739,6 @@ func (s *webSession) clonedPlace() *store.WebPlace {
 	}
 	clone := *s.place
 	return &clone
-}
-
-// kickPlaceNameLocked renames the branch uam made for the Thread to
-// uam/<title> once the Thread has a name or a title, unless the branch was
-// pushed. It runs once per Thread: a rename that fails is not retried.
-// Without a name it waits while a title is on its way.
-func (m *Manager) kickPlaceNameLocked(s *webSession) {
-	// Not before the Thread is listed: a create that fails takes the branch back.
-	if m.closed || s.place == nil || s.place.Named || s.placeNaming || m.sessions[s.id] != s || s.name == "" && (s.titling || s.titleWait != nil) {
-		return
-	}
-	want := slug(firstNonEmpty(s.name, s.title))
-	if want == "" {
-		return
-	}
-	s.placeNaming = true
-	dir, old := s.workdir, s.place.Branch
-	m.wg.Add(1)
-	go func() {
-		defer log.Recover("branch naming", &m.mu)
-		defer m.wg.Done()
-		renamed := nameBranch(m.ctx, dir, old, branchPrefix+want)
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		s.placeNaming = false
-		if s.removed || s.place == nil || s.place.Branch != old || m.ctx.Err() != nil {
-			return
-		}
-		before := m.summaryLocked(s)
-		place := *s.place
-		place.Named = true
-		if renamed != "" {
-			place.Branch = renamed
-			if s.branch == old {
-				s.branch = renamed
-			}
-		}
-		s.place = &place
-		m.changedLocked(s, before)
-	}()
-}
-
-// nameBranch renames the local branch old in the repository holding dir to
-// want, or to want-<old's digits> when want is taken, and returns the new
-// name; "" when it left old as it is: pushed, gone, or git refused.
-func nameBranch(ctx context.Context, dir, old, want string) string {
-	repo, _, err := openRepo(ctx, dir)
-	if err != nil || repo == nil || !refExists(ctx, repo, "refs/heads/"+old) {
-		return ""
-	}
-	if pushed(ctx, repo, old) {
-		log.Info("web thread branch kept its name: it was pushed", "branch", old)
-		return ""
-	}
-	next := want
-	if refExists(ctx, repo, "refs/heads/"+next) {
-		next = want + "-" + strings.TrimPrefix(old, branchPrefix)
-		if refExists(ctx, repo, "refs/heads/"+next) {
-			return ""
-		}
-	}
-	if _, err := runGitWrite(ctx, repo.top, nil, "branch", "-m", old, next); err != nil {
-		log.Info("web thread branch not renamed", "branch", old, "error", err)
-		return ""
-	}
-	return next
-}
-
-// pushed reports whether branch has an upstream or a remote-tracking
-// branch of the same name.
-func pushed(ctx context.Context, repo *gitRepo, branch string) bool {
-	upstream, code, _, err := runGit(ctx, repo.git, repo.top, 4096, "for-each-ref", "--format=%(upstream)", "refs/heads/"+branch)
-	if err != nil || code != 0 || strings.TrimSpace(string(upstream)) != "" {
-		return true
-	}
-	remotes, code, _, err := runGit(ctx, repo.git, repo.top, maxStatusBytes, "for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes")
-	if err != nil || code != 0 {
-		return true
-	}
-	return slices.Contains(strings.Split(string(remotes), "\n"), branch)
 }
 
 // ProjectBranches lists the branches of the Project's repository, local and

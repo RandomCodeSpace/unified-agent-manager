@@ -15,7 +15,7 @@ func switchProject(t *testing.T, ts *testServer) (repo, project string) {
 	repo = worktreeRepo(t)
 	gitIn(t, repo, "remote", "add", "origin", "https://example.invalid/repo.git")
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/remote-only", "feature")
-	ts.m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, ts.m)
 	return repo, addProject(t, ts.m, repo)
 }
 

@@ -34,11 +34,27 @@ func worktreeRepo(t *testing.T) string {
 	return repo
 }
 
+// useWorktreeRoot puts new worktrees in a temporary folder, as
+// <root>/<repository folder name>/<branch slug>, by the Copilot CLI's
+// worktreePathTemplate in a temporary COPILOT_HOME, and returns root.
+func useWorktreeRoot(t *testing.T, m *Manager) string {
+	t.Helper()
+	root := t.TempDir()
+	m.worktreeRoot = root
+	home := t.TempDir()
+	t.Setenv("COPILOT_HOME", home)
+	settings, _ := json.Marshal(map[string]string{"worktreePathTemplate": root + "/{repo}/{branchSlug}"})
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 // worktreeThread starts a Thread of a Project at repo in a new worktree from
 // base, with worktrees under a temporary root.
 func worktreeThread(t *testing.T, ts *testServer, repo, base string) (SessionSummary, string) {
 	t.Helper()
-	ts.m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, ts.m)
 	project := addProject(t, ts.m, repo)
 	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Place: &PlaceRequest{Mode: placeWorktree, Base: base}})
 	if err != nil {
@@ -284,7 +300,7 @@ func TestCreateOnNewBranch(t *testing.T) {
 func TestNewBranchRefusedWhileAThreadWorksInTheFolder(t *testing.T) {
 	repo := worktreeRepo(t)
 	ts := newTestServer(t, ServerConfig{})
-	ts.m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, ts.m)
 	project := addProject(t, ts.m, repo)
 	other, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "Write docs"})
 	if err != nil {
@@ -329,7 +345,7 @@ func TestFailedCreateTakesTheWorktreeBack(t *testing.T) {
 }
 
 func worktreeThreadErr(t *testing.T, ts *testServer, repo string) (SessionSummary, error) {
-	ts.m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, ts.m)
 	p, err := ts.m.AddProject(repo, "")
 	if err != nil {
 		return SessionSummary{}, err
@@ -337,53 +353,55 @@ func worktreeThreadErr(t *testing.T, ts *testServer, repo string) (SessionSummar
 	return ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: p.ID, Place: &PlaceRequest{Mode: placeWorktree}})
 }
 
-// The branch takes the Thread's name once it has one; the folder keeps its
-// name, so the open conversation's folder never moves.
-func TestWorktreeBranchTakesTheTitle(t *testing.T) {
+// The branch is named once, from the Thread's name, when the worktree is
+// made, and keeps that name: the Copilot CLI never renames a worktree's
+// branch either.
+func TestWorktreeBranchIsNamedOnceFromTheThread(t *testing.T) {
 	repo := worktreeRepo(t)
 	ts := newTestServer(t, ServerConfig{})
-	sum, _ := worktreeThread(t, ts, repo, "")
-	if _, err := ts.m.Rename(sum.ID, "Fix the parser!"); err != nil {
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Name: "Fix the parser!", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	var got SessionSummary
-	waitUntil(t, "branch", func() bool {
-		got, _ = ts.m.Summary(sum.ID)
-		return got.Worktree.Branch == "uam/fix-the-parser"
-	})
-	if got.Branch != "uam/fix-the-parser" || got.Worktree.Path != sum.Worktree.Path || got.Workdir != sum.Workdir {
-		t.Fatalf("summary = %+v", got)
+	if sum.Branch != "uam/fix-the-parser" || sum.Worktree.Branch != sum.Branch || filepath.Base(sum.Worktree.Path) != "uam-fix-the-parser" {
+		t.Fatalf("summary = %+v", sum)
 	}
-	if out := gitOutput(t, sum.Workdir, "symbolic-ref", "--short", "HEAD"); out != "uam/fix-the-parser" {
-		t.Fatalf("HEAD = %q", out)
-	}
-	// Named once: a later name leaves the branch alone.
 	if _, err := ts.m.Rename(sum.ID, "Something else"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
 	if got, _ := ts.m.Summary(sum.ID); got.Worktree.Branch != "uam/fix-the-parser" {
-		t.Fatalf("renamed again: %+v", got.Worktree)
+		t.Fatalf("renamed: %+v", got.Worktree)
+	}
+	if out := gitOutput(t, sum.Workdir, "symbolic-ref", "--short", "HEAD"); out != "uam/fix-the-parser" {
+		t.Fatalf("HEAD = %q", out)
+	}
+	// A name a local or a remote branch has gets random digits, so a push
+	// never lands on an older branch.
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/uam/add-tests", "main")
+	again, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Name: "Add tests", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := again.Worktree.Branch; !strings.HasPrefix(b, "uam/add-tests-") || len(b) != len("uam/add-tests-")+8 {
+		t.Fatalf("branch = %q", b)
 	}
 }
 
-// A pushed branch keeps its name.
-func TestPushedBranchKeepsItsName(t *testing.T) {
+// The agent is told its branch, its base and how its work leaves, so it
+// pushes its own branch without asking which.
+func TestWorktreeThreadIsToldItsBranchAndBase(t *testing.T) {
 	repo := worktreeRepo(t)
 	ts := newTestServer(t, ServerConfig{})
-	sum, _ := worktreeThread(t, ts, repo, "")
-	gitIn(t, repo, "update-ref", "refs/remotes/origin/"+sum.Worktree.Branch, sum.Worktree.Branch)
-	if _, err := ts.m.Rename(sum.ID, "Fix the parser"); err != nil {
-		t.Fatal(err)
-	}
-	waitUntil(t, "branch", func() bool {
-		ts.m.mu.Lock()
-		defer ts.m.mu.Unlock()
-		s := ts.m.sessions[sum.ID]
-		return s.place.Named && !s.placeNaming
-	})
-	if got, _ := ts.m.Summary(sum.ID); got.Worktree.Branch != sum.Worktree.Branch {
-		t.Fatalf("pushed branch renamed: %+v", got.Worktree)
+	sum, _ := worktreeThread(t, ts, repo, "feature")
+	opens := ts.prov.Opens()
+	got := opens[len(opens)-1].Instructions
+	for _, want := range []string{"git worktree", repo, sum.Worktree.Branch, "started from feature", "`git push -u origin HEAD`", "into feature", "do not ask which branch to push"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("instructions lack %q: %s", want, got)
+		}
 	}
 }
 
@@ -393,7 +411,7 @@ func TestWorktreeThreadSurvivesRestart(t *testing.T) {
 	st := openTestStore(t)
 	prov := agenttest.NewProvider("fake", allCaps)
 	m := startManager(t, st, prov)
-	m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, m)
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, m, repo), Place: &PlaceRequest{Mode: placeWorktree, Base: "feature"}})
 	if err != nil {
 		t.Fatal(err)
