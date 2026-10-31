@@ -62,6 +62,28 @@ func TestEditScopeKeepsEditToolsInTheThreadFolder(t *testing.T) {
 	}
 }
 
+// A Thread folder reached through a link (a linked home or worktrees folder)
+// keeps its edits allowed: the edit path is resolved, so the folder must be.
+func TestEditScopeAllowsAThreadFolderBehindALink(t *testing.T) {
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	s := budgetSession(t, m, sum.ID)
+	link := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Symlink(s.workdir, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	m.mu.Lock()
+	s.workdir = link
+	m.mu.Unlock()
+	for _, path := range []string{"src/a.go", filepath.Join(link, "b.go")} {
+		if v := m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "edit", Workdir: link, Args: map[string]any{"path": path}}); v.Deny != "" {
+			t.Fatalf("%s: deny = %q", path, v.Deny)
+		}
+	}
+}
+
 // A path in a Project, or below its folder, starts the Thread there with no
 // question; the new Thread is in yolo only when its creator is.
 func TestCreateTaskPathInAProject(t *testing.T) {

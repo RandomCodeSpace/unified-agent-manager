@@ -24,7 +24,11 @@ and conventions below instead.
   start a conversation on a new `uam/…` branch, or in its own git worktree
   (by default under `~/.uam/worktrees/`): then your working directory is that worktree,
   other conversations do not share it, and uam renames the branch after the
-  conversation's title until it is pushed. Stay on that branch.
+  conversation's title until it is pushed. Stay on that branch. A worktree
+  shares its repository with the Project, so your commits land there. When
+  the owner asks to merge your branch into the Project, merge it in the
+  Project's folder (the first entry of `git worktree list`): check its
+  branch and `git status` there first, then `git -C <folder> merge <branch>`.
 - **Steer**: a message the owner sends while you work. It reaches you before
   your next step. A **queued** message waits until the turn ends.
 - **Safe / Assisted / Yolo**: the permission policy. In Safe each permission
@@ -275,7 +279,8 @@ Use it when the owner asks for work to run as its own Thread, and for any
 change outside your own Thread's folder: uam refuses edit tools there
 (`uam scope:`), because such a change is tracked by no Thread. Do not write
 outside your folder with shell commands either; uam cannot see where they
-write, but the rule is the same.
+write, but the rule is the same. Git on your own repository is not such a
+write: commit, and merge your branch into the Project when the owner asks.
 
 - `project` or `path` (one of them): `project` is the Project's ID or exact
   name; a name several Projects share is refused with their IDs. `path` is a
