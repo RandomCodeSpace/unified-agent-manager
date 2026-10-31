@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -263,28 +262,24 @@ func TestForkTakesTheSourceTitle(t *testing.T) {
 	}
 }
 
-// A new branch waits for the model's title, not the fallback, before it
-// takes the Thread's title as its name.
-func TestWorktreeBranchWaitsForTheModelTitle(t *testing.T) {
+// A new branch is named from the prompt when it is made and keeps that name
+// when the model's title arrives.
+func TestWorktreeBranchKeepsItsNameWhenTheTitleArrives(t *testing.T) {
 	m, prov, _, _ := titleManager(t)
-	release := make(chan struct{})
 	prov.SetTitleHook(func(context.Context, agentapi.TitleRequest) (string, error) {
-		<-release
 		return "Fix the parser", nil
 	})
-	m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, m)
 	project := addProject(t, m, worktreeRepo(t))
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Prompt: "please look at the parser crash", Place: &PlaceRequest{Mode: placeWorktree}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := summaryOf(t, m, sum.ID); got.Title != "please look at the parser crash" || !got.TitlePending {
-		t.Fatalf("before the model's title: %+v", got)
+	if sum.Worktree.Branch != "uam/please-look-at-the-parser-crash" {
+		t.Fatalf("branch = %q", sum.Worktree.Branch)
 	}
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(t, "the model's title", func() bool { return summaryOf(t, m, sum.ID).Title == "Fix the parser" })
 	if got := summaryOf(t, m, sum.ID); got.Worktree.Branch != sum.Worktree.Branch {
-		t.Fatalf("the branch took the fallback: %q", got.Worktree.Branch)
+		t.Fatalf("renamed to %q", got.Worktree.Branch)
 	}
-	close(release)
-	waitUntil(t, "the branch name", func() bool { return summaryOf(t, m, sum.ID).Worktree.Branch == "uam/fix-the-parser" })
 }

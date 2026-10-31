@@ -1227,6 +1227,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	disabled := p.disabledMCPServers()
 	rules, coauthor := p.git()
 	system := taskSystem + "\n\n" + rules
+	if req.Instructions != "" {
+		system += "\n\n" + req.Instructions
+	}
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{

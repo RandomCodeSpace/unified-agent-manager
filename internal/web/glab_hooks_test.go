@@ -106,6 +106,13 @@ func TestGlabLintPush(t *testing.T) {
 		{"static", "./.gitlab-ci.yml is invalid.\n1 jobs:test unknown keys: scrpt", true, false, true},
 		{"include", "./.gitlab-ci.yml is invalid.\n1 include project not found", true, true, false},
 		{"access", "./.gitlab-ci.yml is invalid.\n1 include access denied", true, true, false},
+		// GitLab's own wording for includes added in the commits being pushed.
+		{"new-local-include", "./.gitlab-ci.yml is invalid.\n1 Local file `/new.yml` does not exist!", true, false, false},
+		{"new-project-file", "./.gitlab-ci.yml is invalid.\n1 Project `group/scratch` file `new.yml` does not exist!", true, true, false},
+		{"misspelled-include", "./.gitlab-ci.yml is invalid.\n1 Local file `nwe.yml` does not exist!", true, true, true},
+		{"include-word-elsewhere", "./.gitlab-ci.yml is invalid.\n1 jobs:include-docs config contains unknown keys: scrpt\n2 jobs:deploy needs build job, but build was not found", true, true, true},
+		{"remote-include", "./.gitlab-ci.yml is invalid.\n1 Remote file `https://example.com/ci.yml` could not be fetched because of a timeout error!", true, true, false},
+		{"missing-need", "./.gitlab-ci.yml is invalid.\n1 deploy job needs build job, but build does not exist in the pipeline.", true, true, true},
 		{"api-error", "HTTP 503 service unavailable", true, true, false},
 		{"valid", "CI/CD YAML is valid!", true, true, false},
 		{"timeout", "", true, true, false},
@@ -135,6 +142,8 @@ func TestGlabLintPush(t *testing.T) {
 				file = ".gitlab-ci.yml"
 			}
 			glabTestWrite(t, filepath.Join(dir, file), "test:\n  scrpt: echo fixture\n")
+			// An include file the push adds, which GitLab does not have yet.
+			glabTestWrite(t, filepath.Join(dir, "new.yml"), "jobs: {}\n")
 			glabTestGit(t, dir, "add", ".")
 			glabTestGit(t, dir, "commit", "-m", "change")
 			gate := glabGate{Dir: dir, Host: "gitlab.com", Path: "group/scratch", executable: bin}

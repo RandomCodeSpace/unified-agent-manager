@@ -62,86 +62,106 @@ func TestWorktreesDirSettingIsChecked(t *testing.T) {
 	}
 }
 
-// New worktrees go in the chosen folder, made private on first use; the
-// worktrees already made stay where they are and are still listed, removed
-// on settling and removable, after the setting changes again and after
-// their Thread is deleted.
-func TestNewWorktreesGoInTheChosenFolder(t *testing.T) {
+// New worktrees go where the Copilot CLI puts its own: beside the
+// repository as <repository>.worktrees/<branch slug> when the owner set no
+// worktreePathTemplate. A repository's own Copilot settings choose the base
+// (worktreeBaseRef) but never the folder. A worktree an earlier version made
+// in a uam worktrees folder is still listed and removable.
+func TestNewWorktreesGoWhereTheCopilotCLIPutsThem(t *testing.T) {
 	repo := worktreeRepo(t)
+	t.Cleanup(func() { _ = os.RemoveAll(repo + ".worktrees") })
 	ts := newTestServer(t, ServerConfig{})
-	first, project := worktreeThread(t, ts, repo, "")
-	chosen := filepath.Join(t.TempDir(), "trees")
-	if _, err := setWorktreesDir(t, ts.m, chosen); err != nil {
-		t.Fatal(err)
-	}
-	second, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: project, Place: &PlaceRequest{Mode: placeWorktree}})
+	ts.m.worktreeRoot = t.TempDir()
+	t.Setenv("COPILOT_HOME", t.TempDir())
+	project := addProject(t, ts.m, repo)
+	first, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "First", Place: &PlaceRequest{Mode: placeWorktree}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Dir(filepath.Dir(second.Worktree.Path)) != chosen {
-		t.Fatalf("second worktree at %q, want under %q", second.Worktree.Path, chosen)
-	}
-	if info, err := os.Stat(chosen); err != nil || info.Mode().Perm() != 0o700 {
-		t.Fatalf("chosen folder = %v, %v", info, err)
-	}
-	// Folders uam did not make there are not worktrees.
-	if err := os.MkdirAll(filepath.Join(chosen, "photos", "2026"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	listed := func() []string {
-		t.Helper()
-		list, err := ts.m.ListWorktrees(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if dir := ts.m.Settings().WorktreesDir; dir != "" && list.Root != dir || list.DefaultRoot != ts.m.worktreeRoot {
-			t.Fatalf("roots = %q, %q", list.Root, list.DefaultRoot)
-		}
-		var paths []string
-		for _, e := range list.Worktrees {
-			paths = append(paths, e.Path)
-		}
-		slices.Sort(paths)
-		return paths
-	}
-	want := []string{first.Worktree.Path, second.Worktree.Path}
-	slices.Sort(want)
-	if got := listed(); !slices.Equal(got, want) {
-		t.Fatalf("listed = %q, want %q", got, want)
+	if want := filepath.Join(repo+".worktrees", "uam-first"); first.Worktree.Path != want {
+		t.Fatalf("worktree at %q, want %q", first.Worktree.Path, want)
 	}
 
-	// Back to the default: the chosen folder's worktree is still listed,
-	// even once its Thread is deleted (it has changes, so it stays).
-	if _, err := setWorktreesDir(t, ts.m, ""); err != nil {
+	// The repository picks the remote's default branch as the base; its
+	// folder template is ignored.
+	writeRepoFile(t, repo, ".github/copilot/settings.json", `{"worktreeBaseRef":"defaultBranch","worktreePathTemplate":"`+t.TempDir()+`/{branch}"}`)
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/feature", "feature")
+	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature")
+	second, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "Second", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	writeRepoFile(t, second.Worktree.Path, "notes.txt", "keep me\n")
-	if _, err := ts.m.Archive(second.ID); err != nil {
+	if want := filepath.Join(repo+".worktrees", "uam-second"); second.Worktree.Path != want {
+		t.Fatalf("second worktree at %q, want %q", second.Worktree.Path, want)
+	}
+	if _, err := os.Stat(filepath.Join(second.Worktree.Path, "feature-only.go")); err != nil {
+		t.Fatalf("not started from the default branch: %v", err)
+	}
+	ts.m.mu.Lock()
+	base := ts.m.sessions[second.ID].place.Base
+	ts.m.mu.Unlock()
+	if base != "feature" {
+		t.Fatalf("base = %q", base)
+	}
+
+	// A worktree in the folder earlier versions used.
+	old := filepath.Join(ts.m.worktreeRoot, "demo", "uam-old")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "uam/old", old, "main")
+	// A worktree of the owner's own, on a branch uam did not make, is not one.
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "mine", filepath.Join(t.TempDir(), "mine"), "main")
+	// Nor is a Project that is itself a linked worktree on a uam/… branch.
+	asProject := filepath.Join(t.TempDir(), "as-project")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "uam/as-project", asProject, "main")
+	addProject(t, ts.m, asProject)
+	list, err := ts.m.ListWorktrees(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.m.Delete(second.ID); err != nil {
-		t.Fatal(err)
+	var paths []string
+	for _, e := range list.Worktrees {
+		paths = append(paths, e.Path)
 	}
-	if got := listed(); !slices.Equal(got, want) {
-		t.Fatalf("after reset and delete = %q, want %q", got, want)
+	slices.Sort(paths)
+	want := []string{old, first.Worktree.Path, second.Worktree.Path}
+	slices.Sort(want)
+	if !slices.Equal(paths, want) || list.Root != "<repository>.worktrees/<branch>" {
+		t.Fatalf("listed %q under %q, want %q", paths, list.Root, want)
 	}
-	// It is still removable from Settings.
-	body, _ := json.Marshal(map[string]any{"path": second.Worktree.Path, "force": true})
+	body, _ := json.Marshal(map[string]any{"path": old})
 	if w := ts.do(http.MethodPost, "/api/worktrees/remove", string(body), withCookie(ts)); w.Code != http.StatusNoContent {
 		t.Fatalf("remove = %d %s", w.Code, w.Body)
 	}
-	if !worktreeGone(second.Worktree.Path) {
+	if !worktreeGone(old) {
 		t.Fatal("not removed")
 	}
+}
 
-	// A worktree made before the folder changed is removed on settling.
-	if _, err := setWorktreesDir(t, ts.m, filepath.Join(t.TempDir(), "elsewhere")); err != nil {
+// A worktree reached through a link is listed once, by the path its Thread
+// was made with, though git lists the resolved one.
+func TestWorktreeBehindALinkIsListedOnce(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	ts.m.worktreeRoot = t.TempDir()
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "trees")
+	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ts.m.Settle(first.ID); err != nil {
+	home := t.TempDir()
+	t.Setenv("COPILOT_HOME", home)
+	writeRepoFile(t, home, "settings.json", `{"worktreePathTemplate":"`+link+`/{branchSlug}"}`)
+	project := addProject(t, ts.m, repo)
+	sum, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "Linked", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "first worktree removed", func() bool { return worktreeGone(first.Worktree.Path) })
+	list, err := ts.m.ListWorktrees(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Worktrees) != 1 || list.Worktrees[0].Path != sum.Worktree.Path || list.Worktrees[0].TaskID != sum.ID {
+		t.Fatalf("listed %+v, want only %q", list.Worktrees, sum.Worktree.Path)
+	}
 }
 
 // A worktrees folder left for another joins the stored earlier ones, newest

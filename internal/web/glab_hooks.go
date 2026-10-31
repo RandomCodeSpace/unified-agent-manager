@@ -311,6 +311,29 @@ func glabDeny(a []string) string {
 
 var glabCIFile = regexp.MustCompile(`(^|/)\.gitlab-ci\.ya?ml$|(^|/)\.gitlab/ci/[^\x00\r\n]*\.ya?ml$`)
 
+// glabIncludeUnread reports a lint that failed on an include GitLab could not
+// read. GitLab reads includes from what it already has, so a file added in
+// the commits being pushed reads as missing ("Local file `ci/a.yml` does not
+// exist!"); the push itself is what would make it readable. A missing file
+// that is not among changed (the push's files) is a real error, such as a
+// misspelled path. Each diagnostic line is judged on its own.
+func glabIncludeUnread(output string, changed []string) bool {
+	for line := range strings.SplitSeq(output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "include") && (strings.Contains(lower, "not found") || strings.Contains(lower, "access")) ||
+			strings.Contains(lower, "could not be fetched") {
+			return true
+		}
+		if m := glabMissingFile.FindStringSubmatch(line); m != nil && slices.Contains(changed, strings.TrimPrefix(m[1], "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// glabMissingFile is GitLab's missing include file, local or in a project.
+var glabMissingFile = regexp.MustCompile("[Ff]ile `([^`]+)` does not exist")
+
 func glabLintPush(ctx context.Context, gate glabGate) agentapi.ToolVerdict {
 	ctx, cancel := context.WithTimeout(ctx, glabTimeout)
 	defer cancel()
@@ -352,8 +375,7 @@ func glabLintPush(ctx context.Context, gate glabGate) agentapi.ToolVerdict {
 			args = append(args, "--dry-run", "--ref", branch, "--include-jobs")
 		}
 		output, runErr := glabRun(ctx, gate, glabTimeout, "ci lint", args...)
-		lower := strings.ToLower(output)
-		if strings.Contains(lower, "include") && (strings.Contains(lower, "not found") || strings.Contains(lower, "access")) {
+		if glabIncludeUnread(output, strings.Split(changed, "\x00")) {
 			continue
 		}
 		var exit *exec.ExitError

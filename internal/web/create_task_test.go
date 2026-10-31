@@ -257,7 +257,7 @@ func TestCreateTaskModel(t *testing.T) {
 func TestCreateTaskInNewWorktree(t *testing.T) {
 	repo := worktreeRepo(t)
 	ts := newTestServer(t, ServerConfig{})
-	ts.m.worktreeRoot = t.TempDir()
+	useWorktreeRoot(t, ts.m)
 	project := addProject(t, ts.m, repo)
 	_, conv := createSession(t, ts.m, ts.prov)
 

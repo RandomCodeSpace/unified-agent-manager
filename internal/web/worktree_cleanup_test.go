@@ -27,11 +27,6 @@ func TestSettleRemovesTheWorktreeAndReopenRecreatesIt(t *testing.T) {
 	if _, err := ts.m.Rename(sum.ID, "Fix the parser"); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "branch named", func() bool {
-		got, _ := ts.m.Summary(sum.ID)
-		branch = got.Worktree.Branch
-		return branch == "uam/fix-the-parser"
-	})
 	if _, err := ts.m.Settle(sum.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +96,7 @@ func TestSettleKeepsAWorktreeWithChanges(t *testing.T) {
 	if got, _ := ts.m.Summary(sum.ID); got.Worktree.SizeBytes != *e.SizeBytes {
 		t.Fatalf("summary size = %d, want %d", got.Worktree.SizeBytes, *e.SizeBytes)
 	}
-	if list.Root != ts.m.worktreeRoot || list.Disk == nil || list.Disk.TotalBytes == 0 || len(list.Removed) != 0 {
+	if list.Root != ts.m.worktreeRoot+"/{repo}/{branchSlug}" || list.Disk == nil || list.Disk.TotalBytes == 0 || len(list.Removed) != 0 {
 		t.Fatalf("list = %+v", list)
 	}
 }

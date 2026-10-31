@@ -392,8 +392,6 @@ type webSession struct {
 	// linkOpens is the branch the Thread's branch link opens, as read for
 	// branch linkFor when the Thread was last opened (checkBranchLink).
 	linkFor, linkOpens string
-	// placeNaming is set while the place's branch takes the Thread's title.
-	placeNaming bool
 	// removed is set once the session was deleted; operations waiting on op
 	// must not act on it.
 	removed bool
@@ -2790,7 +2788,6 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title, s.titleFallback = title, false
-			m.kickPlaceNameLocked(s)
 		}
 	case agentapi.EventExit:
 		// The conversation is gone. Report it when it ran or waited for
@@ -2888,7 +2885,6 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		}
 		if s.titleWait != nil {
 			m.titleAfterReplyLocked(s)
-			m.kickPlaceNameLocked(s) // when the wait ended without a job
 		}
 		m.replyFallbackLocked(s)
 		m.wrapTurnEndLocked(s, turn.State)
@@ -3040,7 +3036,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 		}
 		defer release()
 		workdir, place = req.sameWorkdir, req.samePlace
-	} else if workdir, place, undoPlace, err = m.makePlace(m.ctx, project, req.Place); err != nil {
+	} else if workdir, place, undoPlace, err = m.makePlace(m.ctx, project, req.Place, firstNonEmpty(req.Name, req.Prompt)); err != nil {
 		return SessionSummary{}, err
 	}
 	registered := false
@@ -3116,7 +3112,6 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	registered = true
 	log.Info("web session created", "session", id, "provider", prov.Name())
 	m.mu.Lock()
-	m.kickPlaceNameLocked(s)
 	if switched {
 		// The Project and the Threads sharing its folder are on the new branch.
 		m.kickBranchLocked(req.ProjectID)
@@ -3342,6 +3337,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	req.Hooks.Succeeded = func(ctx context.Context, use agentapi.ToolUse) { m.succeededToolUse(ctx, s, use) }
 	req.Hooks.Prompt = func(context.Context) string { return m.takeHostNotes(s) }
 	req.SkillDirectories = m.skillDirs
+	req.Instructions = m.placeInstructionsLocked(s)
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100
 	}
@@ -3907,8 +3903,6 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 			if plan != nil && !plan.afterReply {
 				m.startTitleLocked(s, plan, blobs, "")
 			}
-			// The branch waits for a title on its way.
-			m.kickPlaceNameLocked(s)
 			m.changedLocked(s, before)
 			m.mu.Unlock()
 		}
@@ -4786,7 +4780,6 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	s.name = clean
 	s.renames++
 	m.changedLocked(s, before)
-	m.kickPlaceNameLocked(s)
 	return m.summaryLocked(s), nil
 }
 
