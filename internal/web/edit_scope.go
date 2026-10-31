@@ -20,7 +20,8 @@ import (
 func (m *Manager) editScopeDenyLocked(s *webSession, use agentapi.ToolUse) string {
 	for _, path := range trailPaths(use) {
 		path = resolvedPath(path)
-		if s.isPlanPath(path) || withinDir(s.workdir, path) || withinDir(resolvedPath(os.TempDir()), path) {
+		// path is resolved, so the folder must be too: a worktree under a linked home or worktrees folder.
+		if s.isPlanPath(path) || withinDir(resolvedPath(s.workdir), path) || withinDir(resolvedPath(os.TempDir()), path) {
 			continue
 		}
 		if dir := m.sessionStateDirLocked(s); dir != "" && withinDir(dir, path) {
