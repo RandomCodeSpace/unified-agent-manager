@@ -2504,6 +2504,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     turnChanges: (id: string, timingId: string, signal?: AbortSignal) => call<TurnChanges>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/changes`, undefined, false, signal),
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
     todoHistory: (id: string, signal?: AbortSignal) => call<TodoHistory>('GET', `/api/sessions/${enc(id)}/todos/history`, undefined, false, signal),
+    /** The provider's estimate of one prompt's AI credits on a credit-budget Thread's model; no `credits` without one. */
+    budgetPrediction: (id: string, signal?: AbortSignal) => call<{ credits?: number }>('GET', `/api/sessions/${enc(id)}/budget/prediction`, undefined, false, signal),
     contextBreakdown: (id: string, attribution = false, signal?: AbortSignal) => call<ContextBreakdown>('GET', `/api/sessions/${enc(id)}/context${attribution ? '?attribution=true' : ''}`, undefined, false, signal),
     /** Null until the conversation has initialized its context. */
     contextHeaviest: async (id: string, signal?: AbortSignal) => (await call<{ heaviest: ContextHeaviest | null }>('GET', `/api/sessions/${enc(id)}/context/heaviest`, undefined, false, signal)).heaviest,

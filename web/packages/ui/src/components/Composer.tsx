@@ -355,6 +355,31 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
+/**
+ * With an AI-credit budget, the provider's estimate of a prompt's credits on the current model when it is more than
+ * the budget has left; '' otherwise, while it is read, or when the provider has none. It never blocks a send.
+ */
+function useBudgetWarning(session: SessionDetail): string {
+  const api = useApi();
+  const b = session.budget;
+  const open = !!session.id && !!b?.credits && !b.reached && !b.wrapping_up;
+  const key = `${session.id}\u0000${session.model ?? ''}`;
+  const [predicted, setPredicted] = useState<{ key: string; credits: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    api.budgetPrediction(session.id, controller.signal).then(
+      (r) => { if (!controller.signal.aborted && r.credits) setPredicted({ key, credits: r.credits }); },
+      () => {},
+    );
+    return () => controller.abort();
+  }, [api, session.id, key, open]);
+  if (!open || predicted?.key !== key) return '';
+  const left = Math.max(0, (b?.credits ?? 0) - (b?.spent ?? 0));
+  return predicted.credits > left ? `A prompt on this model often uses about ${formatCredits(predicted.credits)} AI credits; the budget has ${formatCredits(left)} left.` : '';
+}
+
+
 /** Why a subagent's model and effort cannot change. */
 const SPAWNED = 'Set when the Thread spawned it; a subagent cannot change it.';
 
@@ -362,6 +387,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const api = useApi();
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
+  const budgetWarning = useBudgetWarning(session);
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
@@ -1487,7 +1513,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </span>
         </p>
       )}
-      {!subagent && (locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
+      {!subagent && (locked || resendable || budgetWarning || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && session.stage === 'settled' && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1519,6 +1545,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               {notice}
             </Note>
           )}
+          {budgetWarning && !locked && <Note tone="warn" role="status">{budgetWarning}</Note>}
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter sends your message after this turn.</Note>}

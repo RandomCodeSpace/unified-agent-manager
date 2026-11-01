@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -619,5 +620,56 @@ func TestHandoffFailedToolsNameTheirFileAndError(t *testing.T) {
 	got := failedTools(items, time.Time{}, nil)
 	if want := []string{"`view`: `/w/a.go` — Path does not exist (subagent)", "`apply_patch`: `b.go`"}; !slices.Equal(got, want) {
 		t.Fatalf("failed = %q, want %q", got, want)
+	}
+}
+
+type predictingConversation struct {
+	*agenttest.Conversation
+	credits float64
+	err     error
+	calls   int
+}
+
+func (c *predictingConversation) PredictTurnCredits(context.Context) (float64, error) {
+	c.calls++
+	return c.credits, c.err
+}
+
+func TestBudgetPredictionOnlyForAnOpenCreditBudget(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, gitRepoFixture(t))
+	pc := &predictingConversation{Conversation: conv, credits: 3.5}
+	m.mu.Lock()
+	m.sessions[sum.ID].conv = pc
+	m.mu.Unlock()
+	if got, ok, err := m.BudgetPrediction(t.Context(), sum.ID); err != nil || !ok || got != 3.5 {
+		t.Fatalf("prediction = %v %v %v", got, ok, err)
+	}
+	for _, bad := range []struct {
+		credits float64
+		err     error
+	}{{0, nil}, {-1, nil}, {math.NaN(), nil}, {math.Inf(1), nil}, {4, agentapi.ErrUnsupported}} {
+		pc.credits, pc.err = bad.credits, bad.err
+		if got, ok, err := m.BudgetPrediction(t.Context(), sum.ID); err != nil || ok || got != 0 {
+			t.Fatalf("prediction %v/%v = %v %v %v", bad.credits, bad.err, got, ok, err)
+		}
+	}
+	// A quota-only budget, a reached one or none asks the provider nothing.
+	pc.credits, pc.err, pc.calls = 3.5, nil, 0
+	if _, err := m.SetBudget(sum.ID, 0, 50); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := m.BudgetPrediction(t.Context(), sum.ID); ok || pc.calls != 0 {
+		t.Fatalf("quota budget predicted: ok=%v calls=%d", ok, pc.calls)
+	}
+	if _, err := m.SetBudget(sum.ID, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	reportUnits(conv, 7)
+	if _, ok, _ := m.BudgetPrediction(t.Context(), sum.ID); ok || pc.calls != 0 {
+		t.Fatalf("reached budget predicted: ok=%v calls=%d", ok, pc.calls)
+	}
+	if _, _, err := m.BudgetPrediction(t.Context(), "nope"); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("unknown Thread = %v", err)
 	}
 }

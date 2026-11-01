@@ -223,6 +223,22 @@ export function budgetTasks(dir: string): MockTask[] {
         },
       ],
     }),
+    // Under its budget, idle: the provider's estimate of a prompt is more than what is left.
+    task({
+      id: 't-near',
+      project_id: 'p1',
+      workdir: dir,
+      model: 'gpt-6-luna',
+      name: 'Trim the pager fixtures',
+      title: '',
+      state: 'completed',
+      usage: { ai_units: 9.1 },
+      budget: { credits: 10, spent: 8.5 },
+      capabilities: { ...CAPS, usage: true },
+      created_at: ago(12),
+      updated_at: ago(2),
+      items: [{ id: 'i1', kind: 'user', time: ago(12), text: 'Trim the pager fixtures to the cases the tests read.' }],
+    }),
   ];
 }
 

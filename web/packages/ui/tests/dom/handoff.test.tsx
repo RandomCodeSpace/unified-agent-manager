@@ -40,3 +40,17 @@ test('a handoff shows uam facts under the reply, and Continue only opens a new T
   expect(fetch.mock.calls.some(([url, init]) => String(url).endsWith('/api/sessions') && init?.method === 'POST')).toBe(false);
   expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
 });
+
+test('under a credit budget the composer warns when a prompt may use more than is left, and Send stays enabled', async () => {
+  const { user } = await openBudgetTask('t-near');
+  const note = await screen.findByText('A prompt on this model often uses about 4.0 AI credits; the budget has 1.5 left.');
+  expect(note.getAttribute('role')).toBe('status');
+  await user.type(composer(), 'One more fixture');
+  expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBeNull();
+});
+
+test('a Thread at its budget shows no estimate', async () => {
+  await openBudgetTask('t-handoff');
+  await screen.findByRole('region', { name: 'Handoff' });
+  expect(screen.queryByText(/often uses about/)).toBeNull();
+});
