@@ -3219,7 +3219,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: rec.Web.Title, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: rec.Web.Title, mode: s.mode}
 	if rec.Web.Place != nil {
 		s.persisted.place = *rec.Web.Place
 	}
