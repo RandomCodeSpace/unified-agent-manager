@@ -1497,7 +1497,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         label: scope === 'workspace' ? `Uncommitted changes in ${p?.name ?? t.workdir}, from any source, versus HEAD` : scope === 'turn' ? 'Files the agent edited in its latest turn, compared with HEAD.' : "Files this thread's agent edited, compared with HEAD. Changes made to them by anything else show too.",
         supported: true,
         counts: { task: mine.length, turn: turn.length, workspace: all.length },
-        files: files.map(({ path: fp, status, additions, deletions, patch }) => ({ path: fp, status, additions, deletions, digest: `${patch.length}` })),
+        files: files.map(({ path: fp, status, additions, deletions, patch, committed }) => ({ path: fp, status, additions, deletions, digest: `${patch.length}`, ...(scope !== 'workspace' && committed ? { committed } : {}) })),
+        ...(scope !== 'workspace' && files.some((f) => f.committed) ? { commits: [{ hash: '4c1d9e2', subject: 'test(vterm): replay focus events on redraw', files: 1 }, { hash: '8a07b3f', subject: 'ci: pin Go 1.26.6 and race-test vterm', files: 1 }] } : {}),
       });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/changes\/revert$/)) && method === 'POST') {

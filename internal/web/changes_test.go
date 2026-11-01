@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -31,7 +32,8 @@ func gitRepoFixture(t *testing.T) string {
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command(git, append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		// The history predates the Threads the tests start, edits dated back included.
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_COMMITTER_DATE=@"+strconv.FormatInt(time.Now().Add(-24*time.Hour).Unix(), 10))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -797,5 +799,65 @@ func TestFirstNonEmpty(t *testing.T) {
 		if got := firstNonEmpty(tc.in...); got != tc.want {
 			t.Errorf("firstNonEmpty(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestTaskChangesKeepCommittedEdits(t *testing.T) {
+	dir := gitRepoFixture(t)
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, dir)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	conv.EmitItem(toolEdit("e1", "edit", "tracked.txt", agentapi.ToolCompleted, time.Now()))
+	conv.EmitItem(toolEdit("e2", "create", filepath.Join(dir, "sub/new file.txt"), agentapi.ToolCompleted, time.Now()))
+	// The Thread commits its edit, dated after it started.
+	commit := exec.Command("git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-am", "agent")
+	commit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_COMMITTER_DATE=@"+strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v\n%s", err, out)
+	}
+	byPath := func() map[string]ChangedFile {
+		t.Helper()
+		got, err := m.Changes(t.Context(), sum.ID, ScopeTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string]ChangedFile{}
+		for _, f := range got.Files {
+			files[f.Path] = f
+		}
+		return files
+	}
+	files := byPath()
+	if f := files["tracked.txt"]; f.Committed != committedAll || f.Additions != 2 || f.Deletions != 1 {
+		t.Fatalf("committed file = %+v, want committed +2 -1", f)
+	}
+	if got, _ := m.Changes(t.Context(), sum.ID, ScopeTask); len(got.Commits) != 1 || got.Commits[0].Subject != "agent" || got.Commits[0].Files != 1 {
+		t.Fatalf("commits = %+v, want the Thread's one commit of one file", got.Commits)
+	}
+	if f, ok := files["sub/new file.txt"]; !ok || f.Committed != "" {
+		t.Fatalf("uncommitted file = %+v (%v), want listed without a mark", f, ok)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("one\nthree\nfour\nfive\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if f := byPath()["tracked.txt"]; f.Committed != committedPart || f.Additions != 3 || f.Deletions != 1 {
+		t.Fatalf("partly committed file = %+v, want partly +3 -1", f)
+	}
+	diff, err := m.FileChange(t.Context(), sum.ID, ScopeTask, "tracked.txt")
+	if err != nil || !strings.Contains(diff.Patch, "-two\n+three\n+four\n+five\n") {
+		t.Fatalf("diff = %q, %v; want the change since the Thread started", diff.Patch, err)
+	}
+	if err := m.RevertChange(t.Context(), sum.ID, "tracked.txt", ""); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "tracked.txt")); string(data) != "one\ntwo\n" {
+		t.Fatalf("reverted file = %q, want it as the Thread found it", data)
+	}
+	if f, ok := byPath()["tracked.txt"]; ok {
+		t.Fatalf("reverted file still listed: %+v", f)
 	}
 }

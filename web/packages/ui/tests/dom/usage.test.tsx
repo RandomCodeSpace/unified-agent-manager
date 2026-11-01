@@ -61,6 +61,8 @@ describe('Usage popover', () => {
   });
 
   test('stale quota keeps the number but clears the pace assessment', async () => {
+    // A weekday mid-month, so there is a pace to clear.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-10-14T12:00:00Z') });
     const user = userEvent.setup();
     vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
     const quota = { provider: 'copilot', type: 'ai_credits', used: 0, entitlement: 7000, remaining_percent: 100, unlimited: false, overage: 0 };

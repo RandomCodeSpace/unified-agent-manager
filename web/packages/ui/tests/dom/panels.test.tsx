@@ -11,9 +11,15 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: /^Open changes, 3 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files by this thread/)).toBeTruthy();
-    // Only this Thread's changes: no scopes to pick, no commit form.
-    expect(sheet.queryByRole('radio')).toBeNull();
+    // Only this Thread's changes: no scopes to pick, no commit form; the one choice narrows them by commit state.
+    expect(sheet.getAllByRole('radio').map((r) => r.textContent)).toEqual(['All 3', 'Not committed 2', 'Committed 1']);
     expect(sheet.queryByRole('region', { name: 'Commit' })).toBeNull();
+    expect(sheet.getByRole('navigation', { name: 'Changed files' })).toBeTruthy();
+    await user.click(sheet.getByRole('radio', { name: /^Committed/ }));
+    await waitFor(() => expect(sheet.queryByRole('region', { name: '.github/workflows/ci.yml' })).toBeNull());
+    expect(sheet.getByRole('region', { name: 'internal/vterm/redraw_test.go' })).toBeTruthy();
+    expect(sheet.getByText('test(vterm): replay focus events on redraw')).toBeTruthy();
+    await user.click(sheet.getByRole('radio', { name: /^All/ }));
     expect(sheet.getByText('CI workflow')).toBeTruthy();
     expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
     await user.click(sheet.getByRole('button', { name: 'Refresh' }));

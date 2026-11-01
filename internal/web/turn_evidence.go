@@ -1057,7 +1057,7 @@ func (m *Manager) TurnEvidence(ctx context.Context, id string, since, until time
 // to the repository, with the line counts of those it lists; relative to
 // workdir without git.
 func turnFiles(ctx context.Context, workdir string, edits map[string]time.Time, facts turnFacts) []TurnFile {
-	l, err := listTaskChanges(ctx, workdir, edits, facts.start)
+	l, err := listTaskChanges(ctx, workdir, edits, facts.start, time.Time{})
 	resolve := func(p string) (string, bool) { return relativeTo(p, workdir), true }
 	if err == nil && l.repo != nil {
 		inRepo := repoPaths(l.repo.top, workdir)

@@ -676,6 +676,18 @@ type ChangedFile struct {
 	// Digest changes whenever the file's working-tree content may have
 	// changed; it is empty where the scope cannot tell.
 	Digest string `json:"digest,omitempty"`
+	// Committed is "committed" when the Thread's commits hold all of the
+	// file's change since the Thread started, "partly" when the working copy
+	// has more, and empty when none of it is committed (task and turn scopes).
+	Committed string `json:"committed,omitempty"`
+}
+
+// ChangeCommit is one commit since the session base that touched the
+// Thread's files, newest first: Files counts those files it touched.
+type ChangeCommit struct {
+	Hash    string `json:"hash"`
+	Subject string `json:"subject"`
+	Files   int    `json:"files"`
 }
 
 // ScopeCounts are the changed-file counts of the git-based scopes.
@@ -693,6 +705,9 @@ type Changes struct {
 	Supported bool          `json:"supported"`
 	Reason    string        `json:"reason"`
 	Files     []ChangedFile `json:"files"`
+	// Commits are the commits holding the task or turn scope's committed
+	// files, at most maxChangeCommits, newest first.
+	Commits []ChangeCommit `json:"commits,omitempty"`
 	// Prefix is the Thread's folder inside the repository, such as "sub/",
 	// on the git scopes: Files are repository paths, and files open in the
 	// folder ("" when it is the top level).
