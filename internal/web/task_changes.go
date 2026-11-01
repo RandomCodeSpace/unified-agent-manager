@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -34,8 +36,8 @@ import (
 // shell, a script) are not edit tools and are not attributed.
 
 const (
-	taskLabel    = "Files this thread's agent edited, compared with HEAD. Changes made to them by anything else show too."
-	turnLabel    = "Files the agent edited in its latest turn, compared with HEAD."
+	taskLabel    = "Files this thread's agent edited, compared with how they were when the thread started, its commits included. Changes made to them by anything else show too."
+	turnLabel    = "Files the agent edited in its latest turn, compared with how they were when the thread started."
 	partialEdits = "edits from before this thread's history was read may be missing"
 )
 
@@ -139,9 +141,9 @@ func (m *Manager) recountDiff(s *webSession) {
 		}
 		m.mu.Lock()
 		s.diffDirty = false
-		workdir, edits, start := s.workdir, maps.Clone(s.edits), s.turnStart
+		workdir, edits, start, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.changesSince()
 		m.mu.Unlock()
-		l, err := listTaskChanges(m.ctx, workdir, edits, start)
+		l, err := listTaskChanges(m.ctx, workdir, edits, start, since)
 		m.mu.Lock()
 		if err == nil {
 			m.setDiffLocked(s, l.stat())
@@ -170,10 +172,15 @@ func (m *Manager) setDiffLocked(s *webSession, d *DiffStat) {
 type taskListing struct {
 	all        Changes
 	repo       *gitRepo
+	base       string // the session base; "" when the subsets compare with HEAD
 	task, turn []ChangedFile
 }
 
-func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.Time, turnStart time.Time) (taskListing, error) {
+// listTaskChanges lists the working tree's changes with the task and turn
+// subsets. With since set, the subsets compare the edited files with the
+// session base (sessionBase) instead of HEAD, so files the Thread committed
+// stay listed, marked Committed; without it they compare with HEAD alone.
+func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.Time, turnStart, since time.Time) (taskListing, error) {
 	all, repo, err := workspaceListing(ctx, workdir)
 	l := taskListing{all: all, repo: repo, task: []ChangedFile{}, turn: []ChangedFile{}}
 	if err != nil || repo == nil {
@@ -187,7 +194,11 @@ func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.
 			inTurn[rel] = inTurn[rel] || !at.Before(turnStart)
 		}
 	}
-	for _, f := range all.Files {
+	files := all.Files
+	if l.base = repo.sessionBase(ctx, since); l.base != "" {
+		files = repo.withCommitted(ctx, l.base, files, slices.Sorted(maps.Keys(inTask)))
+	}
+	for _, f := range files {
 		if inTask[f.Path] {
 			l.task = append(l.task, f)
 		}
@@ -196,6 +207,125 @@ func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.
 		}
 	}
 	return l, nil
+}
+
+// Committed marks on ChangedFile.
+const (
+	committedAll  = "committed"
+	committedPart = "partly"
+)
+
+// changesSince is when s's changes start: its creation, or an earlier edit
+// (an imported or forked conversation). The caller holds Manager.mu.
+func (s *webSession) changesSince() time.Time {
+	since := s.createdAt
+	for _, at := range s.edits {
+		if !at.IsZero() && (since.IsZero() || at.Before(since)) {
+			since = at
+		}
+	}
+	return since
+}
+
+// sessionBase is the commit HEAD's first-parent history held at since (the
+// newest committed then), or the empty tree when none is that old; "" when
+// since is unset or the repository has no HEAD. Others' commits made after
+// since on the same files count as the Thread's, as uncommitted edits do.
+func (r *gitRepo) sessionBase(ctx context.Context, since time.Time) string {
+	if since.IsZero() || !r.hasHead {
+		return ""
+	}
+	out, code, _, err := runGit(ctx, r.git, r.top, 4096, "rev-list", "-1", "--first-parent", "--before=@"+strconv.FormatInt(since.Unix(), 10), "HEAD")
+	if err != nil || code != 0 {
+		return ""
+	}
+	if base := strings.TrimSpace(string(out)); base != "" {
+		return base
+	}
+	out, code, _, err = runGit(ctx, r.git, r.top, 4096, "hash-object", "-t", "tree", "/dev/null")
+	if err != nil || code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// committedSince maps each of paths that differs between base and HEAD to
+// its status letter there.
+func (r *gitRepo) committedSince(ctx context.Context, base string, paths []string) map[string]string {
+	committed := map[string]string{}
+	if len(paths) == 0 {
+		return committed
+	}
+	args := append([]string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "--no-renames", "--name-status", "-z", base, "HEAD", "--"}, paths...)
+	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, args...)
+	if err != nil || code != 0 {
+		return committed
+	}
+	fields := strings.Split(string(out), "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		if fields[i] != "" {
+			committed[fields[i+1]] = fields[i][:1]
+		}
+	}
+	return committed
+}
+
+// withCommitted adds to files (the listing against HEAD) those of paths
+// committed since base, with their counts against base and their Committed
+// mark; a committed file whose working copy is back as it was at base drops
+// out.
+func (r *gitRepo) withCommitted(ctx context.Context, base string, files []ChangedFile, paths []string) []ChangedFile {
+	committed := r.committedSince(ctx, base, paths)
+	if len(committed) == 0 {
+		return files
+	}
+	names := slices.Sorted(maps.Keys(committed))
+	args := append([]string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "--no-renames", "--numstat", "-z", base, "--"}, names...)
+	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, args...)
+	if err != nil || code != 0 {
+		return files
+	}
+	type stat struct {
+		add, del int
+		binary   bool
+	}
+	stats := map[string]stat{}
+	for _, rec := range strings.Split(string(out), "\x00") {
+		parts := strings.SplitN(rec, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		add, errA := strconv.Atoi(parts[0])
+		del, errD := strconv.Atoi(parts[1])
+		stats[parts[2]] = stat{add, del, errA != nil || errD != nil}
+	}
+	kept := make([]ChangedFile, 0, len(files)+len(committed))
+	listed := map[string]bool{}
+	for _, f := range files {
+		listed[f.Path] = true
+		if _, ok := committed[f.Path]; !ok {
+			kept = append(kept, f)
+			continue
+		}
+		st, ok := stats[f.Path]
+		if !ok {
+			continue // back as it was at base
+		}
+		if f.Status != "deleted" && committed[f.Path] == "A" {
+			f.Status = "added"
+		}
+		f.Additions, f.Deletions, f.Binary, f.Committed = st.add, st.del, st.binary, committedPart
+		kept = append(kept, f)
+	}
+	for _, p := range names {
+		st, ok := stats[p]
+		if listed[p] || !ok {
+			continue
+		}
+		f := ChangedFile{Path: p, Status: statusName(committed[p][0], ' '), Additions: st.add, Deletions: st.del, Binary: st.binary, Committed: committedAll}
+		kept = append(kept, f)
+	}
+	return kept
 }
 
 // stat totals the task subset; nil when it is empty or unknown.
@@ -219,9 +349,9 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		return Changes{}, err
 	}
 	m.mu.Lock()
-	workdir, edits, start, known := s.workdir, maps.Clone(s.edits), s.turnStart, s.editsKnown
+	workdir, edits, start, known, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.editsKnown, s.changesSince()
 	m.mu.Unlock()
-	l, err := listTaskChanges(ctx, workdir, edits, start)
+	l, err := listTaskChanges(ctx, workdir, edits, start, since)
 	out := l.all
 	if err != nil {
 		return out, err
@@ -247,6 +377,13 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		if !known {
 			out.Reason = joinReasons(out.Reason, partialEdits)
 		}
+		var committed []string
+		for _, f := range out.Files {
+			if f.Committed != "" {
+				committed = append(committed, f.Path)
+			}
+		}
+		out.Commits = l.repo.commitsSince(ctx, l.base, committed)
 	}
 	if rel, err := filepath.Rel(realPath(l.repo.top), realPath(workdir)); err == nil && rel != "." && filepath.IsLocal(rel) {
 		out.Prefix = filepath.ToSlash(rel) + "/"
@@ -255,14 +392,15 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 	return out, nil
 }
 
-// taskFileDiff is one file of the task or turn scope compared with HEAD.
+// taskFileDiff is one file of the task or turn scope: compared with HEAD,
+// or with the session base when the Thread's commits changed it.
 func (m *Manager) taskFileDiff(ctx context.Context, id, scope, path string) (agentapi.FileDiff, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return agentapi.FileDiff{}, err
 	}
 	m.mu.Lock()
-	workdir, edits, start := s.workdir, maps.Clone(s.edits), s.turnStart
+	workdir, edits, start, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.changesSince()
 	m.mu.Unlock()
 	repo, reason, err := openRepo(ctx, workdir)
 	if err != nil {
@@ -274,10 +412,73 @@ func (m *Manager) taskFileDiff(ctx context.Context, id, scope, path string) (age
 	resolve := repoPaths(repo.top, workdir)
 	for p, at := range edits {
 		if rel, ok := resolve(p); ok && rel == path && (scope == ScopeTask || !at.Before(start)) {
+			if base := repo.committedBase(ctx, since, path); base != "" {
+				return repo.baseFileDiff(ctx, base, path)
+			}
 			return workspaceFileDiff(ctx, workdir, path)
 		}
 	}
 	return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not among the files this thread edited")
+}
+
+const maxChangeCommits = 20
+
+// commitsSince lists the commits after base on HEAD's history that touched
+// paths, newest first, with how many of paths each touched.
+func (r *gitRepo) commitsSince(ctx context.Context, base string, paths []string) []ChangeCommit {
+	if base == "" || len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{literalPathspecs, "log", "--no-color", "-n", strconv.Itoa(maxChangeCommits), "--format=%x1e%h%x1f%s", "--name-only", base + "..HEAD", "--"}, paths...)
+	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, args...)
+	if err != nil || code != 0 {
+		return nil
+	}
+	var commits []ChangeCommit
+	for _, rec := range strings.Split(string(out), "\x1e")[1:] {
+		head, names, _ := strings.Cut(rec, "\n")
+		hash, subject, _ := strings.Cut(head, "\x1f")
+		c := ChangeCommit{Hash: hash, Subject: clipRunes(displaytext.Sanitize(subject), maxNameRunes)}
+		for _, name := range strings.Split(names, "\n") {
+			if name != "" {
+				c.Files++
+			}
+		}
+		commits = append(commits, c)
+	}
+	return commits
+}
+
+// committedBase is the session base when the Thread's commits changed path
+// since it, else "".
+func (r *gitRepo) committedBase(ctx context.Context, since time.Time, path string) string {
+	base := r.sessionBase(ctx, since)
+	if base == "" || len(r.committedSince(ctx, base, []string{path})) == 0 {
+		return ""
+	}
+	return base
+}
+
+// baseFileDiff is path's working copy compared with base.
+func (r *gitRepo) baseFileDiff(ctx context.Context, base, path string) (agentapi.FileDiff, error) {
+	patch, code, stderr, err := runGit(ctx, r.git, r.top, maxDiffBytes+1, literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "--no-renames", base, "--", path)
+	if err != nil {
+		return agentapi.FileDiff{}, err
+	}
+	if code != 0 {
+		return agentapi.FileDiff{}, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
+	}
+	diff := agentapi.FileDiff{Path: path, Status: "modified", Patch: clampText(string(patch), maxDiffBytes)}
+	switch {
+	case strings.Contains(diff.Patch, "\nnew file mode "):
+		diff.Status = "added"
+	case strings.Contains(diff.Patch, "\ndeleted file mode "):
+		diff.Status = "deleted"
+	}
+	diff.Truncated = len(patch) > maxDiffBytes
+	diff.Additions, diff.Deletions = countPatch(diff.Patch)
+	diff.Binary = binaryPatch(diff.Patch)
+	return diff, nil
 }
 
 // digestFiles sets each file's Digest from its size and modification time,

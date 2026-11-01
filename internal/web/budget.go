@@ -294,7 +294,7 @@ type handoffRepo struct {
 // folder's own git status does not see. Edits outside the folder are left
 // out: git runs only where the Thread works.
 var handoffFiles = func(ctx context.Context, workdir string, edits map[string]time.Time, turnStart, since time.Time) []handoffRepo {
-	files, err := listTaskChanges(ctx, workdir, edits, turnStart)
+	files, err := listTaskChanges(ctx, workdir, edits, turnStart, time.Time{})
 	main := handoffRepo{files: files, err: err}
 	main.commits, main.more = handoffCommits(ctx, files.repo, since)
 	repos := []handoffRepo{main}
@@ -326,7 +326,7 @@ var handoffFiles = func(ctx context.Context, workdir string, edits map[string]ti
 			continue
 		}
 		r := handoffRepo{label: filepath.ToSlash(rel)}
-		r.files, r.err = listTaskChanges(ctx, top, abs, turnStart)
+		r.files, r.err = listTaskChanges(ctx, top, abs, turnStart, time.Time{})
 		r.commits, r.more = handoffCommits(ctx, r.files.repo, since)
 		repos = append(repos, r)
 	}

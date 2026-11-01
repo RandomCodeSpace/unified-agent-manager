@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ChevronDown, Copy, Ellipsis, Eye, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, Undo2, X } from 'lucide-react';
+import { ChevronDown, Copy, Ellipsis, Eye, FileDiff, GitCommitHorizontal, MessageSquarePlus, RefreshCw, ShieldAlert, Undo2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { diffWordsWithSpace, parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type SessionSummary } from '../api';
@@ -13,6 +13,7 @@ import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu, type ActionItem } from './ui/menu';
+import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
 /** What Changes opens on: a turn's edited files (its first one scrolled to), or one file and line to comment on (Lens). */
@@ -116,6 +117,18 @@ export function ChangesSheet({
   const files = useMemo(() => byRisk(data?.supported ? data.files : []), [data]);
   const countsKnown = files.every(f => !f.counts_unknown);
   const adds = files.reduce((n, f) => n + f.additions, 0);
+  const committedCount = files.filter(f => f.committed === 'committed').length;
+  // Files whose whole change is committed go below the rest, which still need a look; the filter narrows to one group.
+  const [filter, setFilter] = useState<'all' | 'open' | 'committed'>('all');
+  const groups = useMemo(() => {
+    if (!committedCount) return [{ key: 'all' as const, files }];
+    const pending = files.filter(f => f.committed !== 'committed'), done = files.filter(f => f.committed === 'committed');
+    return [
+      ...(filter !== 'committed' && pending.length ? [{ key: 'open' as const, files: pending }] : []),
+      ...(filter !== 'open' && done.length ? [{ key: 'committed' as const, files: done }] : []),
+    ];
+  }, [files, committedCount, filter]);
+  const listed = useMemo(() => groups.flatMap(g => g.files), [groups]);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
 
   // Viewed marks and line comments, per Task in localStorage; every change writes through.
@@ -232,9 +245,29 @@ export function ChangesSheet({
     if (left && body.current && files.length) return restoreScroll(body.current, left.scrollTop);
   }, [left, files.length]);
   const jump = (path: string) => {
+    if (!listed.some(f => f.path === path)) setFilter('all');
     setFolds(f => ({ ...f, [path]: false }));
     requestAnimationFrame(() => body.current?.querySelector(`[data-change-file="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   };
+
+  // The files on screen, for the Change Map's marks.
+  const [visible, setVisible] = useState<ReadonlySet<string>>(new Set());
+  const listedKey = listed.map(f => f.path).join('\n');
+  useEffect(() => {
+    const root = body.current;
+    if (!root || !listedKey) return;
+    const on = new Set<string>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const path = (e.target as HTMLElement).dataset.changeFile ?? '';
+        if (e.isIntersecting) on.add(path);
+        else on.delete(path);
+      }
+      setVisible(new Set(on));
+    }, { root });
+    root.querySelectorAll('[data-change-file]').forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [listedKey]);
 
   const confirm = useConfirm<ChangeFile>();
   const [reverting, setReverting] = useState(false);
@@ -265,6 +298,7 @@ export function ChangesSheet({
         {data?.supported && (
           <span className="line-clamp-2 min-w-0 text-caption leading-tight tabular-nums text-muted">
             <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'} by this thread{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}</span>
+            {committedCount > 0 && <> · <span className="whitespace-nowrap">{committedCount} committed</span></>}
             {files.length > 0 && <> · <span className="whitespace-nowrap">{viewedCount} of {files.length} viewed</span></>}
           </span>
         )}
@@ -284,18 +318,23 @@ export function ChangesSheet({
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}
       {revertError && <Note tone="error" role="alert" className="shrink-0 px-3 pb-1">{revertError}</Note>}
-      {files.length > 1 && (
-        <nav aria-label="Changed files" className="flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2">
-          {files.map(f => (
-            <button key={f.path} type="button" title={f.path} className="flex shrink-0 items-center gap-1.5 rounded-full bg-tint-well px-2.5 py-0.5 text-caption text-ink hover:bg-tint-hover" onClick={() => jump(f.path)}>
-              <FileIcon path={f.path} className="size-3.5" />
-              {splitPath(f.path).name}
-              {!f.counts_unknown && <span className="tabular-nums"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span></span>}
-            </button>
-          ))}
-        </nav>
+      {committedCount > 0 && (
+        <Segmented
+          size="sm"
+          aria-label="Show files"
+          className="mx-3 mb-2 self-start"
+          value={filter}
+          onValueChange={(v) => setFilter(v as typeof filter)}
+          items={[
+            { value: 'all', label: <>All <span className="ml-1 text-faint tabular-nums">{files.length}</span></> },
+            { value: 'open', label: <>Not committed <span className="ml-1 text-faint tabular-nums">{files.length - committedCount}</span></>, disabled: files.length === committedCount },
+            { value: 'committed', label: <>Committed <span className="ml-1 text-faint tabular-nums">{committedCount}</span></> },
+          ]}
+        />
       )}
-      <div ref={body} className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3" aria-busy={!data && !error ? true : undefined} onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
+      <div className="flex min-h-40 flex-1">
+      {listed.length > 1 && <ChangeMap groups={groups} review={review} comments={comments} visible={visible} onJump={jump} />}
+      <div ref={body} className={cn('@container min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-3 pb-3', listed.length > 1 ? 'pl-1' : 'pl-3')} aria-busy={!data && !error ? true : undefined} onScroll={(e) => { scrolled.current = e.currentTarget.scrollTop; }}>
         {error && (
           <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">Could not load the changes: {error}</span>
@@ -304,9 +343,11 @@ export function ChangesSheet({
         )}
         {!data && !error && <Skeleton label="Loading the changes…" rows={3} className="gap-2" rowClassName="h-6 w-full" />}
         {data && !data.supported && <Note>{data.reason || 'Not available for this thread.'}</Note>}
-        {data?.supported && files.length === 0 && <Note>No changes from this thread: it has not edited a file that still differs from HEAD.</Note>}
-        <div className="flex flex-col gap-3">
-          {files.map((f) => (
+        {data?.supported && files.length === 0 && <Note>No changes from this thread: it has not edited a file that still differs from how it was when the thread started.</Note>}
+        {groups.map(g => (
+        <div key={g.key} className="flex flex-col gap-3">
+          {g.key !== 'all' && <GroupHead group={g.key} files={g.files} commits={g.key === 'committed' ? data?.commits : undefined} />}
+          {g.files.map((f) => (
             <FileCard
               key={f.path}
               sessionId={session.id}
@@ -326,6 +367,8 @@ export function ChangesSheet({
             />
           ))}
         </div>
+        ))}
+      </div>
       </div>
       {editable && (comments.length > 0 || sendNote) && (
         <CommentBatch comments={comments} working={working} sending={sending} note={sendNote} onOpen={jump} onRemove={removeComment} onSend={sendComments} />
@@ -334,12 +377,93 @@ export function ChangesSheet({
         {...confirm.props}
         className="max-w-88"
         title="Revert this file?"
-        description={confirm.target ? `${confirm.target.path} goes back to how it is at HEAD${confirm.target.status === 'untracked' || confirm.target.status === 'added' ? ': the new file is deleted' : ''}. Changes anything else made to it are lost too.` : undefined}
+        description={confirm.target ? `${confirm.target.path} goes back to how it was before this thread changed it${confirm.target.status === 'untracked' || confirm.target.status === 'added' ? ': the new file is deleted' : ''}. Changes anything else made to it are lost too.` : undefined}
         confirmLabel="Revert file"
         busy={reverting}
         onConfirm={revertFile}
       />
     </SidePanel>
+  );
+}
+
+const fileLines = (f: ChangeFile) => (f.binary || f.counts_unknown ? 1 : f.additions + f.deletions);
+const changeCounts = (f: ChangeFile) => (f.binary ? 'binary' : f.counts_unknown ? 'counts unknown' : `+${f.additions} −${f.deletions}`);
+
+/**
+ * The Change Map: one bar per listed file down the panel's edge, its height following the file's changed lines
+ * (square-rooted, so one large file does not crowd out the rest), green over red in their shares. Viewed files dim,
+ * files with comments carry a dot, the files on screen are ringed, and a rule parts the groups. A bar jumps to its file.
+ */
+function ChangeMap({ groups, review, comments, visible, onJump }: Readonly<{
+  groups: { key: string; files: ChangeFile[] }[];
+  review: Review;
+  comments: ReviewComment[];
+  visible: ReadonlySet<string>;
+  onJump: (path: string) => void;
+}>) {
+  const commented = new Set(comments.map(c => c.path));
+  // shortcut: bars shrink to 3px and the rail clips past about 100 files; add scrolling if Threads get that big.
+  return (
+    <nav aria-label="Changed files" className="flex w-9 shrink-0 flex-col gap-1 overflow-hidden py-1 pr-1.5 pl-3">
+      {groups.map((g, gi) => [
+        gi > 0 && <span key={`rule-${g.key}`} aria-hidden="true" className="my-1 shrink-0 border-t border-dashed border-faint" />,
+        ...g.files.map(f => {
+          const lines = fileLines(f);
+          const adds = f.binary || f.counts_unknown ? 1 : f.additions / Math.max(1, lines);
+          return (
+            <Tip key={f.path} label={`${f.path} · ${changeCounts(f)}`} side="right">
+              <button
+                type="button"
+                aria-label={`Go to ${f.path}, ${changeCounts(f)}`}
+                aria-current={visible.has(f.path) ? 'location' : undefined}
+                className={cn(
+                  'relative flex min-h-[3px] max-h-12 w-full flex-col overflow-hidden rounded-xs bg-tint-well transition-opacity duration-100 hover:opacity-100',
+                  viewState(review, f) === 'viewed' && 'opacity-40',
+                  visible.has(f.path) && 'ring-1 ring-accent ring-offset-1 ring-offset-canvas',
+                )}
+                style={{ flexGrow: Math.sqrt(lines) + 1, flexBasis: 0 }}
+                onClick={() => onJump(f.path)}
+              >
+                {f.binary || f.counts_unknown ? <span className="flex-1 bg-faint" /> : <>
+                  <span className="bg-success" style={{ flexGrow: adds }} />
+                  <span className="bg-error" style={{ flexGrow: 1 - adds }} />
+                </>}
+                {commented.has(f.path) && <span aria-hidden="true" className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-accent ring-1 ring-canvas" />}
+              </button>
+            </Tip>
+          );
+        }),
+      ])}
+    </nav>
+  );
+}
+
+/** A group's head: what it holds and its line counts, and for committed files the Thread's commits holding them. */
+function GroupHead({ group, files, commits }: Readonly<{ group: 'open' | 'committed'; files: ChangeFile[]; commits?: { hash: string; subject: string; files: number }[] }>) {
+  const known = files.every(f => !f.counts_unknown);
+  const adds = files.reduce((n, f) => n + f.additions, 0), dels = files.reduce((n, f) => n + f.deletions, 0);
+  return (
+    <div className="flex flex-col gap-1 pt-1">
+      <h3 className="flex items-baseline gap-1.5 text-caption">
+        <span className="text-meta font-medium tracking-wide text-faint uppercase">{group === 'open' ? 'Not committed' : 'Committed'}</span>
+        <span className="text-muted tabular-nums">
+          {files.length} {files.length === 1 ? 'file' : 'files'}
+          {commits?.length ? ` · ${commits.length} ${commits.length === 1 ? 'commit' : 'commits'}` : ''}
+          {known && <> · <span className="text-success">+{adds}</span> <span className="text-error">−{dels}</span></>}
+        </span>
+      </h3>
+      {commits && commits.length > 0 && (
+        <ul className="flex flex-col">
+          {commits.map(c => (
+            <li key={c.hash} className="flex items-baseline gap-2 px-1 text-caption">
+              <code className="shrink-0 font-mono text-code-sm text-faint">{c.hash}</code>
+              <span className="min-w-0 flex-1 truncate text-ink" title={c.subject}>{c.subject}</span>
+              <span className="shrink-0 text-muted tabular-nums">{c.files} {c.files === 1 ? 'file' : 'files'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -394,6 +518,11 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
         </span>
         {risk && <span className="inline-flex shrink-0 items-center gap-1 text-meta text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
         {viewed === 'changed' && <span className="shrink-0 text-meta text-warning">Changed since viewed</span>}
+        {f.committed && (
+          <Tip label={f.committed === 'committed' ? 'All of this change is in commits.' : 'Part of this change is in commits; the rest is not committed yet.'}>
+            <span className="inline-flex shrink-0 items-center gap-1 text-meta text-muted"><GitCommitHorizontal aria-hidden="true" className="size-3" />{f.committed === 'committed' ? 'Committed' : 'Partly committed'}</span>
+          </Tip>
+        )}
         {f.binary || f.counts_unknown ? <span className="shrink-0 text-caption text-muted">{f.binary ? 'binary' : '—'}</span> : (
           <span className="shrink-0 text-caption tabular-nums"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span></span>
         )}

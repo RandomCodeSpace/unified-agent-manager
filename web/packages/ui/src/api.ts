@@ -1584,6 +1584,8 @@ export interface ChangeFile {
   deletions: number;
   /** Changes whenever the file's content may have; absent where the scope cannot tell. */
   digest?: string;
+  /** On the task and turn scopes: all of the file's change since the Thread started is in commits, or only part of it; absent when none is. */
+  committed?: 'committed' | 'partly';
 }
 
 export interface Changes {
@@ -1594,6 +1596,8 @@ export interface Changes {
   files: ChangeFile[];
   /** The Thread's folder inside the repository ("sub/") on the git scopes: `files` are repository paths. */
   prefix?: string;
+  /** The commits holding the task or turn scope's committed files, newest first; `files` counts the Thread's files each touched. */
+  commits?: { hash: string; subject: string; files: number }[];
   /** File counts of the task, turn and workspace scopes; set on those scopes. */
   counts?: { task: number; turn: number; workspace: number };
 }

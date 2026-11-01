@@ -19,6 +19,8 @@ export interface MockChange {
   /** Tasks whose edit tools touched it (the "This task" scope); `turn` lists those that did in their latest turn. */
   by?: string[];
   turn?: string[];
+  /** How much of its change the Thread already committed. */
+  committed?: 'committed' | 'partly';
 }
 
 export interface MockState {
@@ -1276,6 +1278,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         deletions: 1,
         by: ['t1'],
         turn: ['t1'],
+        committed: 'partly',
         patch: `--- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
 @@ -14,4 +14,5 @@ jobs:
@@ -1293,6 +1296,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         deletions: 0,
         by: ['t1', 't20'],
         turn: ['t1', 't20'],
+        committed: 'committed',
         patch: `--- a/internal/vterm/redraw_test.go
 +++ b/internal/vterm/redraw_test.go
 @@ -88,2 +88,14 @@ func TestRedrawReplaysPrivateModes(t *testing.T) {

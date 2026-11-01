@@ -13,7 +13,9 @@ import (
 
 // RevertChange puts back one change (hunk), or the whole of path, in a file
 // this Thread edited: the hunk as the task scope's patch shows it, applied in
-// reverse; the whole file from HEAD, or removed when HEAD has no such file.
+// reverse; the whole file as it was before the Thread changed it (HEAD, or
+// the session base when its commits changed the file), or removed when that
+// has no such file.
 func (m *Manager) RevertChange(ctx context.Context, id, path, hunk string) error {
 	if path == "" {
 		return newError(http.StatusBadRequest, "path is required")
@@ -25,6 +27,7 @@ func (m *Manager) RevertChange(ctx context.Context, id, path, hunk string) error
 	defer unlock()
 	m.mu.Lock()
 	err = t.session.readOnlyLocked()
+	since := t.session.changesSince()
 	edited := false
 	resolve := repoPaths(repo.top, t.workdir)
 	for p := range t.session.edits {
@@ -43,7 +46,11 @@ func (m *Manager) RevertChange(ctx context.Context, id, path, hunk string) error
 	if hunk != "" {
 		err = revertHunk(ctx, repo.top, path, hunk)
 	} else {
-		err = revertFile(ctx, repo, path)
+		source := "HEAD"
+		if base := repo.committedBase(ctx, since, path); base != "" {
+			source = base
+		}
+		err = revertFile(ctx, repo, path, source)
 	}
 	if err != nil {
 		return err
@@ -120,15 +127,16 @@ func hunkCount(s string) int {
 	return n
 }
 
-// revertFile restores path from HEAD, or removes it when HEAD has no such
-// file (a file the Thread created). The removal stays inside the repository.
-func revertFile(ctx context.Context, repo *gitRepo, path string) error {
+// revertFile restores path from source (a commit), or removes it when source
+// has no such file (a file the Thread created). The removal stays inside the
+// repository.
+func revertFile(ctx context.Context, repo *gitRepo, path, source string) error {
 	if repo.hasHead {
-		_, err := runGitWrite(ctx, repo.top, nil, "cat-file", "-e", "HEAD:"+path)
+		_, err := runGitWrite(ctx, repo.top, nil, "cat-file", "-e", source+":"+path)
 		var gerr *gitError
 		switch {
 		case err == nil:
-			if _, err := runGitWrite(ctx, repo.top, nil, "restore", "--source=HEAD", "--worktree", "--", path); err != nil {
+			if _, err := runGitWrite(ctx, repo.top, nil, "restore", "--source="+source, "--worktree", "--", path); err != nil {
 				return gitFailed("git restore failed", err)
 			}
 			return nil
