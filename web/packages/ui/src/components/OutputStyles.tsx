@@ -16,9 +16,12 @@ const PROVIDER_LABEL = "Copilot's own";
 
 const firstLine = (text: string) => text.split('\n', 1)[0];
 
-/** Select items for a Project's choice: the default (named), the provider's own, then the library. A name no longer listed stays, marked. */
-export function styleItems(settings: Settings, chosen: string): SelectOption[] {
-  const lib = settings.output_styles ?? [];
+/** The styles on offer: the built-in ones (from meta) first, then the owner's library. */
+const offered = (settings: Settings, builtin: readonly OutputStyle[]) => [...builtin, ...(settings.output_styles ?? [])];
+
+/** Select items for a Project's choice: the default (named), the provider's own, then the styles on offer. A name no longer offered stays, marked. */
+export function styleItems(settings: Settings, chosen: string, builtin: readonly OutputStyle[] = []): SelectOption[] {
+  const lib = offered(settings, builtin);
   return [
     { value: '', label: `Default (${settings.output_style || PROVIDER_LABEL})` },
     { value: PROVIDER_STYLE, label: PROVIDER_LABEL },
@@ -31,8 +34,8 @@ export function styleItems(settings: Settings, chosen: string): SelectOption[] {
  * A Thread's output style, as the Tools panel's Style tab: picked before the first message (its Project's,
  * else the default, unless the owner picks one here), then fixed for the Thread's life.
  */
-export function StyleChoices({ settings, chosen, reason, onChange }: Readonly<{ settings: Settings; chosen: string; reason?: string; onChange: (style: string) => void }>) {
-  const lib = settings.output_styles ?? [];
+export function StyleChoices({ settings, builtin = [], chosen, reason, onChange }: Readonly<{ settings: Settings; builtin?: readonly OutputStyle[]; chosen: string; reason?: string; onChange: (style: string) => void }>) {
+  const lib = offered(settings, builtin);
   const missing = chosen && chosen !== PROVIDER_STYLE && !lib.some((s) => s.name === chosen);
   const rows = [
     { id: '', name: 'Project or default', description: `The Project's style, else the default (${settings.output_style || PROVIDER_LABEL}).`, disabled: false },
@@ -59,7 +62,7 @@ export function StyleChoices({ settings, chosen, reason, onChange }: Readonly<{ 
 }
 
 /** Settings: the style library, saved as a whole, and the default style, saved on change. */
-export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ settings: Settings; saving: boolean; onSave: (patch: Pick<Settings, 'output_styles' | 'output_style'>) => void }>) {
+export function OutputStyleSettings({ settings, builtin = [], saving, onSave }: Readonly<{ settings: Settings; builtin?: readonly OutputStyle[]; saving: boolean; onSave: (patch: Pick<Settings, 'output_styles' | 'output_style'>) => void }>) {
   const saved = settings.output_styles ?? [];
   // Each row keeps its key while rows are added or removed: saved ones count down from -1, added ones up from 0.
   const added = useRef(0);
@@ -67,7 +70,8 @@ export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ set
   const rows = draft ?? saved.map((s, i) => ({ ...s, key: -1 - i }));
   const set = (i: number, patch: Partial<OutputStyle>) => setDraft(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const names = rows.map((r) => r.name.trim().toLowerCase());
-  const invalid = rows.some((r, i) => !r.name.trim() || !r.text.trim() || names.indexOf(names[i]) !== i || names[i] === PROVIDER_STYLE.toLowerCase());
+  const reserved = [PROVIDER_STYLE, ...builtin.map((b) => b.name)].map((n) => n.toLowerCase());
+  const invalid = rows.some((r, i) => !r.name.trim() || !r.text.trim() || names.indexOf(names[i]) !== i || reserved.includes(names[i]));
   const trimmed = rows.map((r) => ({ name: r.name.trim(), text: r.text.trim() }));
   const changed = draft !== null && JSON.stringify(trimmed) !== JSON.stringify(saved);
   return (
@@ -76,9 +80,18 @@ export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ set
         <h3 className="text-ui font-medium text-ink"><label htmlFor="output-style-default">Default style</label></h3>
         <Note id="output-style-default-help">What Threads use unless their Project or the Thread picks another.</Note>
         <Select id="output-style-default" aria-describedby="output-style-default-help" className="mt-1 max-w-sm" disabled={saving} value={settings.output_style ?? ''}
-          items={[{ value: '', label: PROVIDER_LABEL }, ...saved.map((s) => ({ value: s.name, label: s.name }))]}
+          items={[{ value: '', label: PROVIDER_LABEL }, ...offered(settings, builtin).map((s) => ({ value: s.name, label: s.name }))]}
           onValueChange={(output_style) => output_style !== (settings.output_style ?? '') && onSave({ output_style })} />
       </div>
+      {builtin.length > 0 && <div className="flex min-w-0 flex-col gap-2">
+        <h3 className="text-ui font-medium text-ink">Built in</h3>
+        {builtin.map((b) => (
+          <details key={b.name} className="rounded-sm bg-tint-well px-2.5 py-2">
+            <summary className="cursor-default text-ui text-ink">{b.name}</summary>
+            <p className="mt-2 text-caption whitespace-pre-line text-muted">{b.text}</p>
+          </details>
+        ))}
+      </div>}
       <form className="flex min-w-0 flex-col gap-3" onSubmit={(e) => {
         e.preventDefault();
         if (!saving && changed && !invalid) onSave({ output_styles: trimmed });
@@ -100,7 +113,7 @@ export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ set
           <Button type="submit" variant="primary" loading={saving} disabled={!changed || invalid}>Save library</Button>
           {changed && <Button variant="subtle" disabled={saving} onClick={() => setDraft(null)}>Discard</Button>}
         </div>
-        {changed && invalid && <Note tone="error">Each style needs a unique name and some text; "{PROVIDER_STYLE}" is reserved.</Note>}
+        {changed && invalid && <Note tone="error">Each style needs a unique name and some text; "{PROVIDER_STYLE}" and built-in names are reserved.</Note>}
       </form>
     </div>
   );

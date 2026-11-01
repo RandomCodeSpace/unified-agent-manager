@@ -41,3 +41,18 @@ test('with no styles the library says how to start', () => {
   render(<OutputStyleSettings settings={{} as Settings} saving={false} onSave={vi.fn()} />);
   expect(screen.getByText(/No styles yet/)).toBeTruthy();
 });
+
+test('built-in styles show read only, can be the default, and reserve their names', async () => {
+  const onSave = vi.fn();
+  const builtin = [{ name: 'Simplified Technical English', text: 'Write in ASD-STE100.\nBe brief.' }];
+  render(<OutputStyleSettings settings={{} as Settings} builtin={builtin} saving={false} onSave={onSave} />);
+  expect(screen.getByText('Built in')).toBeTruthy();
+  expect(screen.getByText('Simplified Technical English', { selector: 'summary' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Add style' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Style name' }), 'simplified technical english');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Style text' }), 'Mine.');
+  expect(screen.getByRole('button', { name: 'Save library' }).hasAttribute('disabled')).toBe(true);
+  await userEvent.click(screen.getByRole('combobox'));
+  await userEvent.click(await screen.findByRole('option', { name: 'Simplified Technical English' }));
+  expect(onSave).toHaveBeenCalledWith({ output_style: 'Simplified Technical English' });
+});

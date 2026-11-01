@@ -247,6 +247,7 @@ export function seed(): MockState {
   const meta: Meta = {
     version: 'dev-mock',
     capabilities: ['unarchive-v1'],
+    output_styles: [{ name: 'Simplified Technical English', text: 'Write in ASD-STE100 Simplified Technical English. Be brief.\n\nGive the answer first. One topic in each sentence. Use the active voice.' }],
     recent_workdirs: ['/home/user/projects/unified-agent-manager', '/home/user/dotfiles', '/home/user/projects/notes-site', '/home/user/projects/scratch'],
     providers: [
       {
