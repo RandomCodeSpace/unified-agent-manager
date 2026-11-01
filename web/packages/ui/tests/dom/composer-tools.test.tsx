@@ -19,6 +19,7 @@ const metrics: TaskUsageMetrics = { started_at: '2026-10-09T00:00:00Z', current_
 
 function draw(selected: SessionDetail = session, onAgent = vi.fn()) {
   vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  vi.spyOn(api, 'contextHeaviest').mockResolvedValue(null);
   vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [{ id: 'reviewer', name: 'reviewer', display_name: 'Reviewer', description: 'Reviews a change', source: 'project' }] } as Awaited<ReturnType<typeof api.taskAgents>>);
   const view = render(<ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={selected} onAgent={onAgent} /></AppContext.Provider></ApiContext.Provider>);

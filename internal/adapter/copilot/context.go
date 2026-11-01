@@ -17,6 +17,7 @@ const (
 	maxContextSources = 200
 	maxContextLabel   = 512
 	maxContextID      = 1024
+	maxContextHeavy   = 5
 )
 
 type contextSession interface {
@@ -30,6 +31,15 @@ func (a sdkSessionAdapter) ContextInfo(ctx context.Context, req *rpc.MetadataCon
 
 func (a sdkSessionAdapter) ContextAttribution(ctx context.Context) (*rpc.MetadataContextAttributionResult, error) {
 	return a.s.RPC.Metadata.GetContextAttribution(ctx)
+}
+
+// heaviestSession isolates the experimental heaviest-messages RPC.
+type heaviestSession interface {
+	ContextHeaviestMessages(context.Context, *rpc.MetadataContextHeaviestMessagesRequest) (*rpc.MetadataContextHeaviestMessagesResult, error)
+}
+
+func (a sdkSessionAdapter) ContextHeaviestMessages(ctx context.Context, req *rpc.MetadataContextHeaviestMessagesRequest) (*rpc.MetadataContextHeaviestMessagesResult, error) {
+	return a.s.RPC.Metadata.GetContextHeaviestMessages(ctx, req)
 }
 
 func (c *conversation) contextReader() (contextSession, error) {
@@ -108,6 +118,38 @@ func (c *conversation) ContextAttribution(ctx context.Context) (*agentapi.Contex
 		}
 		seen[entry.ID] = true
 		out.Entries = append(out.Entries, agentapi.ContextSource{ID: strings.Clone(entry.ID), Kind: contextLabel(entry.Kind), Label: contextLabel(entry.Label), ParentID: strings.Clone(parent), Tokens: entry.Tokens})
+	}
+	return out, nil
+}
+
+func (c *conversation) ContextHeaviestMessages(ctx context.Context) (*agentapi.ContextHeaviest, error) {
+	if c.isClosed() {
+		return nil, agentapi.ErrClosed
+	}
+	reader, ok := c.sess.(heaviestSession)
+	if !ok {
+		return nil, agentapi.ErrUnsupported
+	}
+	limit := int64(maxContextHeavy)
+	res, err := reader.ContextHeaviestMessages(ctx, &rpc.MetadataContextHeaviestMessagesRequest{Limit: &limit})
+	if err != nil {
+		return nil, contextReadError(err)
+	}
+	if res == nil {
+		return nil, errors.New("copilot returned no heaviest messages result")
+	}
+	if res.TotalTokens < 0 {
+		return nil, errors.New("copilot returned invalid context counts")
+	}
+	out := &agentapi.ContextHeaviest{TotalTokens: res.TotalTokens, Messages: []agentapi.ContextMessage{}}
+	for _, m := range res.Messages {
+		if len(out.Messages) == maxContextHeavy {
+			break
+		}
+		if !contextIdentity(m.ID) || m.Tokens < 0 {
+			continue
+		}
+		out.Messages = append(out.Messages, agentapi.ContextMessage{ID: strings.Clone(m.ID), Role: contextLabel(m.Role), Label: contextLabel(m.Label), Tokens: m.Tokens})
 	}
 	return out, nil
 }

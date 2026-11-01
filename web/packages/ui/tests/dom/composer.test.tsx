@@ -151,11 +151,11 @@ describe('pickers', () => {
 
   test('a command that cannot run is dimmed and says why', async () => {
     const { user } = await openTask('t3');
-    await user.type(composer(), '/compact');
-    const row = await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/compact/ });
+    await user.type(composer(), '/share');
+    const row = await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/share/ });
     expect(row.getAttribute('aria-disabled')).toBe('true');
     expect(row.className).toContain('opacity-45');
-    expect(await screen.findAllByText('This native command has no supported web handler yet')).not.toHaveLength(0);
+    expect(await screen.findAllByText('Publishing and remote sessions are not supported by the web client')).not.toHaveLength(0);
   });
 
   test('a longer command output opens in the side panel, in mono with its lines, not in the composer', async () => {

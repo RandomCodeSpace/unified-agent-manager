@@ -143,6 +143,12 @@ export interface ContextAttribution extends Pick<ContextInfo, 'model' | 'total_t
   truncated?: boolean;
 }
 
+/** The largest messages in context, most expensive first; ids are stable only within one read. */
+export interface ContextHeaviest {
+  total_tokens: number;
+  messages: { id: string; role: string; label: string; tokens: number }[];
+}
+
 /** Read only for the current reader, never attached to Task stream or history state. */
 export interface ContextBreakdown {
   info?: ContextInfo;
@@ -2499,6 +2505,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
     todoHistory: (id: string, signal?: AbortSignal) => call<TodoHistory>('GET', `/api/sessions/${enc(id)}/todos/history`, undefined, false, signal),
     contextBreakdown: (id: string, attribution = false, signal?: AbortSignal) => call<ContextBreakdown>('GET', `/api/sessions/${enc(id)}/context${attribution ? '?attribution=true' : ''}`, undefined, false, signal),
+    /** Null until the conversation has initialized its context. */
+    contextHeaviest: async (id: string, signal?: AbortSignal) => (await call<{ heaviest: ContextHeaviest | null }>('GET', `/api/sessions/${enc(id)}/context/heaviest`, undefined, false, signal)).heaviest,
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
       call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),
     changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),

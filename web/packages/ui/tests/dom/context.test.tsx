@@ -1,11 +1,12 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
 import { api, type ContextAttribution, type ContextBreakdown, type ContextInfo, type SessionDetail } from '../../src/api';
 import { AppContext, type AppContextValue } from '../../src/components/common';
 import { ComposerTools } from '../../src/components/ComposerTools';
 
+beforeEach(() => { vi.spyOn(api, 'contextHeaviest').mockResolvedValue(null); });
 afterEach(() => vi.restoreAllMocks());
 
 const session = { id: 'task-1', conversation_id: 'conv-1', provider: 'copilot', model: 'auto', open: true, context: { used: 50, limit: 200 }, capabilities: { context_breakdown: true } } as unknown as SessionDetail;
@@ -32,7 +33,7 @@ test('context categories and sources read only when requested and never sum capa
   expect(screen.getByText('Latest prompt: 60 tokens')).toBeTruthy();
   expect(screen.getByText('Cached in latest call: 20 tokens')).toBeTruthy();
   // One Context section: no second "Latest report" disagreeing with the breakdown.
-  expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Context', 'Capacity', 'Sources']);
+  expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Context', 'Capacity', 'Sources', 'Largest messages']);
   expect(screen.queryByText(/not reported yet|occupied|MCP tools are included/)).toBeNull();
   expect(read).toHaveBeenCalledTimes(1);
   expect(read.mock.calls[0].slice(0, 2)).toEqual(['task-1', false]);
@@ -146,4 +147,28 @@ test('changing the owning API closes and disposes the old reader before another 
   await screen.findByText(/Counted for remote-model/);
   expect(remote).toHaveBeenCalledTimes(1);
   expect(local).toHaveBeenCalledTimes(1);
+});
+
+test('the largest messages read once per opening and Compact now runs /compact only between turns', async () => {
+  const command = vi.spyOn(api, 'command').mockResolvedValue({ request_id: 'r', status: 'accepted', time: '' });
+  vi.spyOn(api, 'contextBreakdown').mockImplementation(async () => ({ info: { ...info, total_tokens: command.mock.calls.length ? 30 : 75 } }));
+  const heaviest = vi.spyOn(api, 'contextHeaviest').mockResolvedValue({ total_tokens: 75, messages: [{ id: 'm1', role: 'tool', label: 'tool: bash', tokens: 40 }] });
+  const view = draw({ ...session, state: 'working' } as SessionDetail);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
+  expect(await screen.findByText('tool: bash')).toBeTruthy();
+  expect(screen.getByText('tool: bash').closest('li')?.textContent).toBe('tool: bash40 tokens');
+  expect(heaviest).toHaveBeenCalledTimes(1);
+  const compact = screen.getByRole('button', { name: 'Compact now' });
+  expect(compact.hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText(/uses model tokens/)).toBeTruthy();
+  // Token churn while open does not poll the list.
+  view.select({ ...session, state: 'completed', context: { used: 50, limit: 200, prompt: 61 } } as SessionDetail);
+  expect(heaviest).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByRole('button', { name: 'Compact now' }));
+  expect(command.mock.calls[0].slice(0, 3)).toEqual(['task-1', 'compact', '']);
+  expect(await screen.findByText('Compacted: 75 → 30 tokens in context.')).toBeTruthy();
+  await waitFor(() => expect(heaviest).toHaveBeenCalledTimes(2));
+  command.mockResolvedValue({ request_id: 'r', status: 'rejected', error: 'compaction failed', time: '' });
+  await userEvent.click(screen.getByRole('button', { name: 'Compact now' }));
+  expect(await screen.findByText('compaction failed')).toBeTruthy();
 });

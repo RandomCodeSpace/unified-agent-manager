@@ -1353,6 +1353,17 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         return json(202, sub);
       }
       if (busy(t)) return fail(409, 'the provider is still running a turn');
+      // Compaction finishes before the reply and reports what it freed in a transcript notice.
+      if (name === 'compact') {
+        const used = t.context?.used ?? 84_300;
+        const freed = Math.round(used * 0.6);
+        touch(t, { context: { ...t.context, used: used - freed, limit: t.context?.limit ?? 200_000 } });
+        pushItem(t, { id: nextId('n'), kind: 'notice', text: `Compacted the conversation · freed ${freed.toLocaleString('en-US')} tokens.`, time: now() });
+        const sub: Submission = { request_id: String(body.request_id ?? ''), status: 'accepted', time: now(), command_result: { kind: 'completed' } };
+        t.last_submission = sub;
+        broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+        return json(202, sub);
+      }
       const extras = checkExtras(t, body);
       if (extras instanceof Response) return extras;
       const args = String(body.arguments ?? '').trim();
@@ -1534,6 +1545,18 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
           { id: 'mcp-uam', kind: 'MCP tools', label: 'uam', tokens: 1_700 },
         ],
       } });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/context\/heaviest$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const used = t.context?.used ?? 84_300;
+      return json(200, { heaviest: { total_tokens: used, messages: [
+        { id: 'h1', role: 'tool', label: 'tool: view', tokens: Math.round(used * 0.18) },
+        { id: 'h2', role: 'tool', label: 'tool: bash', tokens: Math.round(used * 0.11) },
+        { id: 'h3', role: 'user', label: 'user', tokens: Math.round(used * 0.06) },
+        { id: 'h4', role: 'assistant', label: 'assistant', tokens: Math.round(used * 0.04) },
+        { id: 'h5', role: 'tool', label: 'skill: uam', tokens: Math.round(used * 0.03) },
+      ] } });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/usage-metrics$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

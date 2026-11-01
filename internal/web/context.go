@@ -15,10 +15,49 @@ type ContextBreakdown struct {
 	Attribution *agentapi.ContextAttribution `json:"attribution,omitempty"`
 }
 
+// ContextHeaviest is the on-demand list of the largest messages in context,
+// under the same rules as ContextBreakdown.
+func (m *Manager) ContextHeaviest(ctx context.Context, id string) (*agentapi.ContextHeaviest, error) {
+	var out *agentapi.ContextHeaviest
+	err := m.readContext(ctx, id, func(ctx context.Context, conv agentapi.Conversation) error {
+		reader, ok := conv.(agentapi.ContextHeaviestReader)
+		if !ok {
+			return agentapi.ErrUnsupported
+		}
+		var err error
+		out, err = reader.ContextHeaviestMessages(ctx)
+		return err
+	})
+	return out, err
+}
+
 func (m *Manager) ContextBreakdown(ctx context.Context, id string, attribution bool) (ContextBreakdown, error) {
-	s, err := m.lookup(id)
+	var out ContextBreakdown
+	err := m.readContext(ctx, id, func(ctx context.Context, conv agentapi.Conversation) error {
+		reader, ok := conv.(agentapi.ContextReader)
+		if !ok {
+			return agentapi.ErrUnsupported
+		}
+		var err error
+		if attribution {
+			out.Attribution, err = reader.ContextAttribution(ctx)
+		} else {
+			out.Info, err = reader.ContextInfo(ctx)
+		}
+		return err
+	})
 	if err != nil {
 		return ContextBreakdown{}, err
+	}
+	return out, nil
+}
+
+// readContext runs one metadata read against the Thread's open conversation
+// and discards it when the Thread or its model selection changed meanwhile.
+func (m *Manager) readContext(ctx context.Context, id string, read func(context.Context, agentapi.Conversation) error) error {
+	s, err := m.lookup(id)
+	if err != nil {
+		return err
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
@@ -29,47 +68,38 @@ func (m *Manager) ContextBreakdown(ctx context.Context, id string, attribution b
 	}
 	m.mu.Unlock()
 	if err != nil {
-		return ContextBreakdown{}, err
+		return err
 	}
 	if err = m.checkHolder(s); err != nil {
-		return ContextBreakdown{}, err
+		return err
 	}
 	m.mu.Lock()
 	if m.closed || s.removed || s.conv == nil || s.state() == StateStarting || s.stage != StageActive {
 		m.mu.Unlock()
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread's context is no longer available")
+		return newError(http.StatusConflict, "the Thread's context is no longer available")
 	}
 	conv, gen, convID := s.conv, s.gen, s.convID
 	model, effort, tier := s.model, s.effort, s.contextSize
 	m.mu.Unlock()
-	reader, ok := conv.(agentapi.ContextReader)
-	if !ok {
-		return ContextBreakdown{}, newError(http.StatusConflict, "this provider does not support context breakdown")
-	}
 	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
 	defer cancel()
-	var out ContextBreakdown
-	if attribution {
-		out.Attribution, err = reader.ContextAttribution(ctx)
-	} else {
-		out.Info, err = reader.ContextInfo(ctx)
-	}
+	err = read(ctx, conv)
 	m.mu.Lock()
 	current := !m.closed && !s.removed && s.conv == conv && s.gen == gen && s.convID == convID && s.model == model && s.effort == effort && s.contextSize == tier && s.stage == StageActive
 	m.mu.Unlock()
 	if !current {
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread or model selection changed; reopen context breakdown")
+		return newError(http.StatusConflict, "the Thread or model selection changed; reopen context breakdown")
 	}
 	if errors.Is(err, agentapi.ErrUnsupported) {
-		return ContextBreakdown{}, newError(http.StatusConflict, "this runtime does not support context breakdown")
+		return newError(http.StatusConflict, "this runtime does not support context breakdown")
 	}
 	if errors.Is(err, agentapi.ErrClosed) {
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread's context is no longer available")
+		return newError(http.StatusConflict, "the Thread's context is no longer available")
 	}
 	if err != nil {
-		return ContextBreakdown{}, newError(http.StatusBadGateway, "the provider could not read context breakdown")
+		return newError(http.StatusBadGateway, "the provider could not read context breakdown")
 	}
-	return out, nil
+	return nil
 }
 
 func (s *Server) handleContextBreakdown(w http.ResponseWriter, r *http.Request) {
@@ -84,4 +114,15 @@ func (s *Server) handleContextBreakdown(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleContextHeaviest(w http.ResponseWriter, r *http.Request) {
+	out, err := s.m.ContextHeaviest(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Heaviest *agentapi.ContextHeaviest `json:"heaviest"`
+	}{out})
 }

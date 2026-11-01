@@ -60,3 +60,25 @@ type ContextSource struct {
 	ParentID string `json:"parent_id,omitempty"`
 	Tokens   int64  `json:"tokens"`
 }
+
+// ContextHeaviestReader reads the largest messages in the current window of
+// an already-open conversation, most expensive first. Nil means the runtime
+// has not initialized that snapshot.
+type ContextHeaviestReader interface {
+	ContextHeaviestMessages(context.Context) (*ContextHeaviest, error)
+}
+
+// ContextHeaviest is bounded display metadata: each label is the runtime's
+// short, truncated preview of its message.
+type ContextHeaviest struct {
+	TotalTokens int64            `json:"total_tokens"`
+	Messages    []ContextMessage `json:"messages"`
+}
+
+// ContextMessage identifies a message only within its snapshot.
+type ContextMessage struct {
+	ID     string `json:"id"`
+	Role   string `json:"role"`
+	Label  string `json:"label"`
+	Tokens int64  `json:"tokens"`
+}

@@ -20,6 +20,13 @@ type fakeContextSession struct {
 	err                         error
 	infoCalls, attributionCalls int
 	request                     *rpc.MetadataContextInfoRequest
+	heaviest                    *rpc.MetadataContextHeaviestMessagesResult
+	heaviestRequest             *rpc.MetadataContextHeaviestMessagesRequest
+}
+
+func (f *fakeContextSession) ContextHeaviestMessages(_ context.Context, request *rpc.MetadataContextHeaviestMessagesRequest) (*rpc.MetadataContextHeaviestMessagesResult, error) {
+	f.heaviestRequest = request
+	return f.heaviest, f.err
 }
 
 func (f *fakeContextSession) ContextInfo(_ context.Context, request *rpc.MetadataContextInfoRequest) (*rpc.MetadataContextInfoResult, error) {
@@ -134,5 +141,38 @@ func TestContextReaderUninitializedUnsupportedAndClosedAreDistinct(t *testing.T)
 	}
 	if before != reader.infoCalls+reader.attributionCalls {
 		t.Fatal("closed reader reached native SDK")
+	}
+}
+
+func TestContextHeaviestMessagesBoundsRowsAndLabels(t *testing.T) {
+	h := openWeb(t)
+	res := &rpc.MetadataContextHeaviestMessagesResult{TotalTokens: 900, Messages: []rpc.ContextHeaviestMessage{
+		{ID: "a", Role: "tool", Label: "tool: bash\x1b[31m", Tokens: 400},
+		{ID: "bad\nid", Role: "user", Label: "dropped", Tokens: 300},
+		{ID: "neg", Role: "user", Label: "dropped", Tokens: -1},
+	}}
+	for i := range 10 {
+		res.Messages = append(res.Messages, rpc.ContextHeaviestMessage{ID: fmt.Sprintf("m%d", i), Role: "assistant", Label: "reply", Tokens: 10})
+	}
+	reader := &fakeContextSession{fakeSession: h.fs, heaviest: res}
+	c := h.conv.(*conversation)
+	c.sess = reader
+	got, err := c.ContextHeaviestMessages(context.Background())
+	if err != nil || got.TotalTokens != 900 || len(got.Messages) != maxContextHeavy || got.Messages[0].Label != "tool: bash" || got.Messages[1].ID != "m0" {
+		t.Fatalf("heaviest = %+v, %v", got, err)
+	}
+	if reader.heaviestRequest == nil || reader.heaviestRequest.Limit == nil || *reader.heaviestRequest.Limit != maxContextHeavy {
+		t.Fatalf("request = %+v", reader.heaviestRequest)
+	}
+	if len(h.fs.sent) != 0 || len(h.sink.all()) != 0 {
+		t.Fatal("metadata read ran a turn or emitted transcript data")
+	}
+	reader.err = &copilot.RPCError{Code: -32601}
+	if _, err := c.ContextHeaviestMessages(context.Background()); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("missing method = %v", err)
+	}
+	c.sess = h.fs
+	if _, err := c.ContextHeaviestMessages(context.Background()); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("unsupported session = %v", err)
 	}
 }
