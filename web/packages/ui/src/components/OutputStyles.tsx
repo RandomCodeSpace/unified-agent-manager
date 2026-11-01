@@ -1,7 +1,7 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { Check, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PROVIDER_STYLE, type OutputStyle, type Settings } from '../api';
 import { Note } from './common';
 import { Button } from './ui/button';
@@ -61,12 +61,15 @@ export function StyleChoices({ settings, chosen, reason, onChange }: Readonly<{ 
 /** Settings: the style library, saved as a whole, and the default style, saved on change. */
 export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ settings: Settings; saving: boolean; onSave: (patch: Pick<Settings, 'output_styles' | 'output_style'>) => void }>) {
   const saved = settings.output_styles ?? [];
-  const [draft, setDraft] = useState<OutputStyle[] | null>(null);
-  const rows = draft ?? saved;
+  // Each row keeps its key while rows are added or removed: saved ones count down from -1, added ones up from 0.
+  const added = useRef(0);
+  const [draft, setDraft] = useState<(OutputStyle & { key: number })[] | null>(null);
+  const rows = draft ?? saved.map((s, i) => ({ ...s, key: -1 - i }));
   const set = (i: number, patch: Partial<OutputStyle>) => setDraft(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const names = rows.map((r) => r.name.trim().toLowerCase());
   const invalid = rows.some((r, i) => !r.name.trim() || !r.text.trim() || names.indexOf(names[i]) !== i || names[i] === PROVIDER_STYLE.toLowerCase());
-  const changed = draft !== null && JSON.stringify(draft.map((r) => ({ name: r.name.trim(), text: r.text.trim() }))) !== JSON.stringify(saved);
+  const trimmed = rows.map((r) => ({ name: r.name.trim(), text: r.text.trim() }));
+  const changed = draft !== null && JSON.stringify(trimmed) !== JSON.stringify(saved);
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-1">
@@ -78,12 +81,12 @@ export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ set
       </div>
       <form className="flex min-w-0 flex-col gap-3" onSubmit={(e) => {
         e.preventDefault();
-        if (!saving && changed && !invalid) onSave({ output_styles: rows.map((r) => ({ name: r.name.trim(), text: r.text.trim() })) });
+        if (!saving && changed && !invalid) onSave({ output_styles: trimmed });
       }}>
         <h3 className="text-ui font-medium text-ink">Library</h3>
         {rows.length === 0 && <Note>No styles yet. Add one to pick it here, in a Project or in a Thread's Tools.</Note>}
         {rows.map((r, i) => (
-          <fieldset key={i} className="flex min-w-0 flex-col gap-2">
+          <fieldset key={r.key} className="flex min-w-0 flex-col gap-2">
             <legend className="sr-only">Style {i + 1}</legend>
             <div className="flex items-center gap-2">
               <Input aria-label="Style name" className="min-w-0 flex-1" maxLength={MAX_NAME} placeholder="Name" value={r.name} readOnly={saving} onChange={(e) => set(i, { name: e.target.value })} />
@@ -93,7 +96,7 @@ export function OutputStyleSettings({ settings, saving, onSave }: Readonly<{ set
           </fieldset>
         ))}
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" disabled={saving || rows.length >= MAX_STYLES} onClick={() => setDraft([...rows, { name: '', text: '' }])}><Plus aria-hidden="true" />Add style</Button>
+          <Button variant="secondary" disabled={saving || rows.length >= MAX_STYLES} onClick={() => setDraft([...rows, { name: '', text: '', key: added.current++ }])}><Plus aria-hidden="true" />Add style</Button>
           <Button type="submit" variant="primary" loading={saving} disabled={!changed || invalid}>Save library</Button>
           {changed && <Button variant="subtle" disabled={saving} onClick={() => setDraft(null)}>Discard</Button>}
         </div>
