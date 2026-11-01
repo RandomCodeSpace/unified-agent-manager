@@ -647,6 +647,9 @@ type OpenRequest struct {
 	// Instructions is this conversation's own text for the system message,
 	// after the provider's rules, on create and on every reopen; "" for none.
 	Instructions string
+	// OutputStyle replaces the provider's own response style instructions;
+	// "" keeps them.
+	OutputStyle string
 	// CompactionThreshold is the share of the context window (0 to 1) at
 	// which the conversation starts compacting; 0 keeps the provider default.
 	// It applies on create and on every reopen.

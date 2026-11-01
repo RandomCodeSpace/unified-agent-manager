@@ -514,6 +514,8 @@ type WebState struct {
 	// Agent is the ID of the selected custom agent; empty means the
 	// provider's default agent.
 	Agent string `json:"agent,omitempty"`
+	// OutputStyle names the Thread's own style; "" uses its Project's.
+	OutputStyle string `json:"output_style,omitempty"`
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
@@ -635,6 +637,7 @@ type webStateAlias WebState
 var knownWebStateFields = map[string]struct{}{
 	"native_changes": {},
 	"agent":          {},
+	"output_style":   {},
 	"turn":           {},
 	"turn_timings":   {},
 	// Retired: the generated subagent summaries of older versions. Known, so
@@ -699,6 +702,13 @@ func (w *WebState) UnmarshalJSON(data []byte) error {
 
 // WebProject is a directory the web interface groups Tasks under. There is
 // at most one per Dir.
+// WebOutputStyle is one named response style: Text replaces the provider's
+// own style instructions.
+type WebOutputStyle struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
 type WebProject struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -719,6 +729,9 @@ type WebProject struct {
 	// BranchLink is the Project's branch link: absent until detected or
 	// set, empty once the owner cleared it.
 	BranchLink *string `json:"branch_link,omitempty"`
+	// OutputStyle names the Project's style for its Threads; "" uses the
+	// default.
+	OutputStyle string `json:"output_style,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -765,14 +778,15 @@ type WebTaskDefaults struct {
 type webProjectAlias WebProject
 
 var knownWebProjectFields = map[string]struct{}{
-	"id":          {},
-	"name":        {},
-	"dir":         {},
-	"created_at":  {},
-	"defaults":    {},
-	"badge":       {},
-	"charts":      {},
-	"branch_link": {},
+	"id":           {},
+	"name":         {},
+	"dir":          {},
+	"created_at":   {},
+	"defaults":     {},
+	"badge":        {},
+	"charts":       {},
+	"branch_link":  {},
+	"output_style": {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {
@@ -852,6 +866,10 @@ type WebSettings struct {
 	// CommitPrompt is the instructions for commit messages; the built-in
 	// ones when empty.
 	CommitPrompt string `json:"commit_prompt,omitempty"`
+	// OutputStyles is the owner's library of response styles, by unique
+	// name; OutputStyle names the default one, "" for the provider's own.
+	OutputStyles []WebOutputStyle `json:"output_styles,omitempty"`
+	OutputStyle  string           `json:"output_style,omitempty"`
 	// CoAuthor is the co-author trailer of agents' commits. Off when absent.
 	CoAuthor WebCoAuthor `json:"coauthor,omitzero"`
 	// WorktreesDir is the absolute folder new Thread worktrees go in;
@@ -1116,6 +1134,8 @@ var knownWebSettingsFields = map[string]struct{}{
 	"gitlab_auto_investigate": {},
 	"gitlab_mr_prompt":        {},
 	"commit_prompt":           {},
+	"output_style":            {},
+	"output_styles":           {},
 	"coauthor":                {},
 	"worktrees_dir":           {},
 	"worktree_roots":          {},

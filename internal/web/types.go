@@ -124,6 +124,9 @@ type Project struct {
 	// the owner cleared it, which turns the link off and is never detected
 	// again.
 	BranchLink *string `json:"branch_link,omitempty"`
+	// OutputStyle names the Project's style (output_style.go); "" uses the
+	// default.
+	OutputStyle string `json:"output_style,omitempty"`
 	// linkTried is set once this run tried to detect a nil BranchLink.
 	linkTried bool
 }
@@ -201,6 +204,10 @@ type Settings struct {
 	// CommitPrompt is the owner's instructions for commit messages
 	// (git_rules.go); omitted while the default is used.
 	CommitPrompt string `json:"commit_prompt,omitempty"`
+	// OutputStyles is the library of response styles (output_style.go);
+	// OutputStyle names the default, "" for the provider's own.
+	OutputStyles []store.WebOutputStyle `json:"output_styles,omitempty"`
+	OutputStyle  string                 `json:"output_style,omitempty"`
 	// CoAuthor is the Co-authored-by trailer of agents' commits; omitted
 	// while off, the default.
 	CoAuthor store.WebCoAuthor `json:"coauthor,omitzero"`
@@ -293,10 +300,13 @@ type SessionSummary struct {
 	Capabilities agentapi.Capabilities `json:"capabilities"`
 	ProjectID    string                `json:"project_id"`
 	// Model is the selected model; empty means the provider default.
-	Model       string            `json:"model"`
-	Effort      string            `json:"effort"`
-	ContextSize string            `json:"context_size"`
-	Agent       string            `json:"agent,omitempty"` // custom agent ID; "" is the provider's default
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+	Agent       string `json:"agent,omitempty"` // custom agent ID; "" is the provider's default
+	// OutputStyle names the Thread's own style; "" uses its Project's
+	// (output_style.go).
+	OutputStyle string            `json:"output_style,omitempty"`
 	Context     *agentapi.Context `json:"context,omitempty"`
 	// Usage is the AI units the Task's conversation used, main agent and
 	// subagents together, once the provider reports them; it is not

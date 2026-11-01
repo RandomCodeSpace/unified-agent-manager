@@ -96,6 +96,14 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	if got := last.CoauthorEnabled; got == nil || !*got {
 		t.Fatalf("CoauthorEnabled = %v, want true", got)
 	}
+	// An output style replaces the CLI's tone section; the appended text stays.
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-4", Workdir: "/work", OutputStyle: "Be terse.", Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	styled := copilot.SystemMessageConfig{Mode: "customize", Content: taskSystem + "\n\nCommit messages:\nBe brief.", Sections: map[string]copilot.SectionOverride{copilot.SectionTone: {Action: copilot.SectionActionReplace, Content: "Be terse."}}}
+	if got := h.fc.create[len(h.fc.create)-1].SystemMessage; got == nil || !reflect.DeepEqual(*got, styled) {
+		t.Fatalf("system message with output style = %+v", got)
+	}
 }
 
 // taskSystem carries the rules every turn needs, since an agent rarely loads

@@ -855,7 +855,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'commit_prompt' && key !== 'coauthor' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'commit_prompt' && key !== 'output_style' && key !== 'output_styles' && key !== 'coauthor' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
       if (body.drawio !== undefined) {
         const drawio = body.drawio as { origin?: unknown; enabled?: unknown } | null;
         if (!drawio || typeof drawio.origin !== 'string' || typeof drawio.enabled !== 'boolean') return fail(400, 'drawio must be {origin, enabled}');
@@ -924,6 +924,18 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         if ([...prompt].length > 4000) return fail(400, 'gitlab_mr_prompt must be at most 4000 characters');
         st.settings = { ...st.settings, gitlab_mr_prompt: prompt && prompt !== DEFAULT_MR_PROMPT ? prompt : undefined };
         broadcast('settings', { settings: st.settings });
+      }
+      if (body.output_styles !== undefined) {
+        if (!Array.isArray(body.output_styles)) return fail(400, 'output_styles must be a list of {name, text}');
+        const lib = (body.output_styles as { name?: unknown; text?: unknown }[]).map((s) => ({ name: String(s.name ?? '').trim(), text: String(s.text ?? '').trim() }));
+        if (lib.some((s, n) => !s.name || !s.text || [...s.text].length > 2000 || s.name.toLowerCase() === 'copilot' || lib.findIndex((o) => o.name.toLowerCase() === s.name.toLowerCase()) !== n)) return fail(400, 'each output style needs a unique name and 1 to 2000 characters of text');
+        const keep = lib.some((s) => s.name === st.settings.output_style);
+        st.settings = { ...st.settings, output_styles: lib.length ? lib : undefined, ...(keep ? {} : { output_style: undefined }) };
+      }
+      if (body.output_style !== undefined) {
+        const name = String(body.output_style).trim();
+        if (name && !st.settings.output_styles?.some((s) => s.name === name)) return fail(400, `output style "${name}" is not in the library`);
+        st.settings = { ...st.settings, output_style: name || undefined };
       }
       if (body.commit_prompt !== undefined) {
         if (typeof body.commit_prompt !== 'string') return fail(400, 'commit_prompt must be a string');
@@ -997,11 +1009,14 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if (p.no_git) return fail(422, 'git has no origin remote here that uam can read');
       return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}` });
     }
+    const unknownStyle = (style: unknown) => typeof style === 'string' && style !== '' && style !== 'Copilot' && !st.settings.output_styles?.some((o) => o.name === style);
     if ((r = m(/^\/api\/projects\/([^/]+)$/))) {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        if (body.name === undefined && body.branch_link === undefined) return fail(400, 'name or branch_link is required');
+        if (body.name === undefined && body.branch_link === undefined && body.output_style === undefined) return fail(400, 'name, branch_link or output_style is required');
+        if (unknownStyle(body.output_style)) return fail(400, `output style "${String(body.output_style)}" is not in the library`);
+        if (body.output_style !== undefined) p.output_style = String(body.output_style) || undefined;
         const link = body.branch_link === undefined ? p.branch_link : String(body.branch_link).trim();
         if (link && (!link.startsWith('https://') || link.split('{branch}').length !== 2)) return fail(400, 'the branch link must contain {branch} exactly once, where the branch name goes');
         if (body.name !== undefined) p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
@@ -1088,6 +1103,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       const sel = checkSelection(assisted ? { ...body, mode: 'safe' } : body);
       if (typeof sel === 'string') return fail(400, sel);
       if (unknownAgent(body.agent)) return fail(400, `custom agent "${String(body.agent)}" is not offered for this project`);
+      if (unknownStyle(body.output_style)) return fail(400, `output style "${String(body.output_style)}" is not in the library`);
       const { provider, model, effort, context_size } = sel;
       const mode = assisted ? 'assisted' : sel.mode;
       const prompt = String(body.prompt ?? '').trim();
@@ -1124,6 +1140,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         effort,
         context_size,
         ...(body.agent ? { agent: String(body.agent) } : {}),
+        // Pinned at creation like the service: the Thread's pick, else its Project's, else the default.
+        output_style: [body.output_style, st.projects.find((p) => p.id === body.project_id)?.output_style, st.settings.output_style].find((n) => n === 'Copilot' || (typeof n === 'string' && st.settings.output_styles?.some((o) => o.name === n))) as string | undefined ?? 'Copilot',
         mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',

@@ -442,3 +442,84 @@ func TestGitHubMCPSetting(t *testing.T) {
 		t.Fatalf("after a restart the provider was given %v", again.given())
 	}
 }
+
+// The output style library is checked and stored. A new Thread pins its
+// own choice, else its Project's, else the default; later changes to the
+// Project or default leave it as it is, while edits to its style's text
+// reach its next open.
+func TestOutputStyles(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	patch := func(path, body string, want int) string {
+		t.Helper()
+		w := ts.do(http.MethodPatch, path, body, withCookie(ts))
+		if w.Code != want {
+			t.Fatalf("PATCH %s %s = %d %s, want %d", path, body, w.Code, w.Body, want)
+		}
+		return w.Body.String()
+	}
+	for _, body := range []string{`{"output_styles":null}`, `{"output_styles":[{"name":"","text":"x"}]}`, `{"output_styles":[{"name":"copilot","text":"x"}]}`,
+		`{"output_styles":[{"name":"A","text":"x"},{"name":"a","text":"y"}]}`, `{"output_styles":[{"name":"A","text":"` + strings.Repeat("é", maxOutputStyleRunes+1) + `"}]}`,
+		`{"output_style":"Missing"}`} {
+		patch("/api/settings", body, http.StatusBadRequest)
+	}
+	if got := patch("/api/settings", `{"output_styles":[{"name":" Terse ","text":" Be terse. "},{"name":"Warm","text":"Be warm."}],"output_style":"Terse"}`, http.StatusOK); !strings.Contains(got, `"output_styles":[{"name":"Terse","text":"Be terse."},{"name":"Warm","text":"Be warm."}],"output_style":"Terse"`) {
+		t.Fatalf("set = %s", got)
+	}
+	if cfg, err := ts.m.store.Load(); err != nil || cfg.WebSettings.OutputStyle != "Terse" || len(cfg.WebSettings.OutputStyles) != 2 {
+		t.Fatalf("stored=%+v err=%v", cfg.WebSettings, err)
+	}
+	pid := addProject(t, ts.m, t.TempDir())
+	create := func(style string) SessionSummary {
+		t.Helper()
+		sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: pid, Name: "task", OutputStyle: style})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sum
+	}
+	opened := func() string {
+		t.Helper()
+		opens := ts.prov.Opens()
+		return opens[len(opens)-1].OutputStyle
+	}
+	if sum := create(""); sum.OutputStyle != "Terse" || opened() != "Be terse." {
+		t.Fatalf("default: pinned %q, opened with %q", sum.OutputStyle, opened())
+	}
+	patch("/api/projects/"+pid, `{"output_style":"Missing"}`, http.StatusBadRequest)
+	patch("/api/projects/"+pid, `{"output_style":"Warm"}`, http.StatusOK)
+	warm := create("")
+	if warm.OutputStyle != "Warm" || opened() != "Be warm." {
+		t.Fatalf("project: pinned %q, opened with %q", warm.OutputStyle, opened())
+	}
+	if _, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: pid, Name: "task", OutputStyle: "Missing"}); err == nil {
+		t.Fatal("created with a style not in the library")
+	}
+	if sum := create("Copilot"); sum.OutputStyle != "Copilot" || opened() != "" {
+		t.Fatalf("own: pinned %q, opened with %q", sum.OutputStyle, opened())
+	}
+	// The Project's later change leaves the Thread pinned; the Thread is no
+	// longer patchable.
+	patch("/api/projects/"+pid, `{"output_style":"Copilot"}`, http.StatusOK)
+	s, err := ts.m.lookup(warm.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := func() string {
+		ts.m.mu.Lock()
+		defer ts.m.mu.Unlock()
+		return ts.m.outputStyleLocked(s)
+	}
+	if style() != "Be warm." {
+		t.Fatalf("after a Project change = %q", style())
+	}
+	patch("/api/sessions/"+warm.ID, `{"output_style":"Terse"}`, http.StatusBadRequest)
+	// Dropping the default from the library clears it; a Thread whose style
+	// left the library gets the provider's own.
+	if got := patch("/api/settings", `{"output_styles":[{"name":"Warm","text":"Warmer."}]}`, http.StatusOK); strings.Contains(got, `"output_style":`) || style() != "Warmer." {
+		t.Fatalf("default kept = %s, style %q", got, style())
+	}
+	patch("/api/settings", `{"output_styles":[{"name":"Calm","text":"Be calm."}]}`, http.StatusOK)
+	if style() != "" {
+		t.Fatalf("after removal = %q", style())
+	}
+}

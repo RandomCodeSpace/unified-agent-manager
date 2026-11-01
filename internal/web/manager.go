@@ -338,11 +338,14 @@ type webSession struct {
 	effort      string
 	contextSize string
 	agent       string // custom agent ID; "" is the provider's default
-	context     *agentapi.Context
-	usage       *agentapi.Usage
-	name        string
-	title       string
-	lastModel   string
+	style       string // the Thread's output style name; "" is its Project's
+	// openStyle is the style text the open conversation was given.
+	openStyle string
+	context   *agentapi.Context
+	usage     *agentapi.Usage
+	name      string
+	title     string
+	lastModel string
 	// renames counts Rename calls, so a title job knows when a rename came
 	// while it ran.
 	renames uint64
@@ -653,6 +656,7 @@ type persistKey struct {
 	budget                                                                                                           store.Budget
 	handoff                                                                                                          store.WebHandoff
 	agent                                                                                                            string
+	style                                                                                                            string
 	place                                                                                                            store.WebPlace
 }
 
@@ -723,7 +727,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, budget: s.budget}
 	if s.handoff != nil {
 		k.handoff = *s.handoff
@@ -827,12 +831,12 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts), BranchLink: loadedBranchLink(p.BranchLink)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts), BranchLink: loadedBranchLink(p.BranchLink), OutputStyle: p.OutputStyle}
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
-		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, OutputStyles: cfg.WebSettings.OutputStyles, OutputStyle: cfg.WebSettings.OutputStyle, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
 	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
 	m.setGitRules(m.settings)
 	m.setPolicy(m.settings)
@@ -1015,7 +1019,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 			usage := agentapi.Context(*web.Context)
 			s.context = &usage
 		}
-		s.agent = web.Agent
+		s.agent, s.style = web.Agent, web.OutputStyle
 		if web.Budget != nil {
 			s.budget = *web.Budget
 		}
@@ -1288,7 +1292,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	out := SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, OutputStyle: s.style, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, RealWorkdir: s.realWorkdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
@@ -1545,12 +1549,12 @@ func projectExists(id string) *Error {
 // UpdateProject renames a Project. An empty name resets it to the
 // directory's base name.
 func (m *Manager) UpdateProject(id, name string) (Project, error) {
-	return m.patchProject(id, &name, nil)
+	return m.patchProject(id, &name, nil, nil)
 }
 
 // patchProject sets the Project's name and branch link, each when given.
 // An empty branch link turns the link off.
-func (m *Manager) patchProject(id string, name, branchLink *string) (Project, error) {
+func (m *Manager) patchProject(id string, name, branchLink, outputStyle *string) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1576,12 +1580,21 @@ func (m *Manager) patchProject(id string, name, branchLink *string) (Project, er
 		}
 		next.BranchLink = &link
 	}
+	if outputStyle != nil {
+		m.mu.Lock()
+		err = checkOutputStyleChoice(m.settings.OutputStyles, *outputStyle)
+		m.mu.Unlock()
+		if err != nil {
+			return Project{}, err
+		}
+		next.OutputStyle = *outputStyle
+	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		stored.Name, stored.BranchLink = next.Name, next.BranchLink
+		stored.Name, stored.BranchLink, stored.OutputStyle = next.Name, next.BranchLink, next.OutputStyle
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {
@@ -1766,6 +1779,12 @@ type SettingsPatch struct {
 	GitLabMRPrompt *string
 	// CommitPrompt sets the commit message instructions the same way.
 	CommitPrompt *string
+	// OutputStyles replaces the output style library; a default no longer
+	// in it is cleared.
+	OutputStyles *[]store.WebOutputStyle
+	// OutputStyle sets the default style by name; "" keeps the provider's
+	// own.
+	OutputStyle *string
 	// CoAuthor sets the co-author trailer; a name must fit on one line.
 	CoAuthor *store.WebCoAuthor
 	// WorktreesDir sets the folder new worktrees go in; "" puts the
@@ -1879,6 +1898,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			commitPrompt = ""
 		}
 	}
+	var outputStyles []store.WebOutputStyle
+	if p.OutputStyles != nil {
+		var err error
+		if outputStyles, err = cleanOutputStyles(*p.OutputStyles); err != nil {
+			return Settings{}, err
+		}
+	}
 	var coauthor store.WebCoAuthor
 	if p.CoAuthor != nil {
 		coauthor = store.WebCoAuthor{Enabled: p.CoAuthor.Enabled, Name: strings.TrimSpace(p.CoAuthor.Name)}
@@ -1980,6 +2006,19 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.CommitPrompt != nil {
 		next.CommitPrompt = commitPrompt
 	}
+	if p.OutputStyles != nil {
+		next.OutputStyles = outputStyles
+		if !hasOutputStyle(outputStyles, next.OutputStyle) {
+			next.OutputStyle = ""
+		}
+	}
+	if p.OutputStyle != nil {
+		name := strings.TrimSpace(*p.OutputStyle)
+		if name != "" && !hasOutputStyle(next.OutputStyles, name) {
+			return Settings{}, newError(http.StatusBadRequest, msgUnknownOutputName, name)
+		}
+		next.OutputStyle = name
+	}
 	if p.CoAuthor != nil {
 		next.CoAuthor = coauthor
 	}
@@ -2030,7 +2069,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.CommitPrompt == current.CommitPrompt && next.CoAuthor == current.CoAuthor && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.CommitPrompt == current.CommitPrompt && next.OutputStyle == current.OutputStyle && slices.Equal(next.OutputStyles, current.OutputStyles) && next.CoAuthor == current.CoAuthor && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	var oldRoots []string
@@ -2048,6 +2087,8 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
 		cfg.WebSettings.GitLabMRPrompt = next.GitLabMRPrompt
 		cfg.WebSettings.CommitPrompt = next.CommitPrompt
+		cfg.WebSettings.OutputStyles = next.OutputStyles
+		cfg.WebSettings.OutputStyle = next.OutputStyle
 		cfg.WebSettings.CoAuthor = next.CoAuthor
 		cfg.WebSettings.DrawIO = store.WebDrawIO(next.DrawIO)
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
@@ -2468,7 +2509,7 @@ func (m *Manager) flush() (err error) {
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
-				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
+				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
@@ -2900,6 +2941,9 @@ type CreateRequest struct {
 	Effort      string `json:"effort"`
 	ContextSize string `json:"context_size"`
 	Agent       string `json:"agent"` // custom agent ID; "" is the provider's default
+	// OutputStyle is the Thread's own output style name; "" uses its
+	// Project's (output_style.go).
+	OutputStyle string `json:"output_style,omitempty"`
 	Name        string `json:"name"`
 	Prompt      string `json:"prompt"`
 	RequestID   string `json:"request_id"`
@@ -2989,6 +3033,12 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 	if err := m.checkAgent(prov.Name(), workdir, req.Agent); err != nil {
 		return nil, "", "", err
 	}
+	m.mu.Lock()
+	err = checkOutputStyleChoice(m.settings.OutputStyles, req.OutputStyle)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, "", "", err
+	}
 	return prov, workdir, mode, nil
 }
 
@@ -3056,7 +3106,10 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	if switched && place == nil {
 		s.branch, _ = readBranch(m.ctx, workdir)
 	}
-	s.effort, s.contextSize, s.agent = req.Effort, req.ContextSize, req.Agent
+	s.effort, s.contextSize, s.agent, s.style = req.Effort, req.ContextSize, req.Agent, req.OutputStyle
+	m.mu.Lock()
+	m.pinOutputStyleLocked(s, req.ProjectID)
+	m.mu.Unlock()
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
 	s.routineID = req.routineID
@@ -3099,7 +3152,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, OutputStyle: s.style, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
 	}
 	check := req.gitlabRegister
 	if req.spawnedBy != "" {
@@ -3166,7 +3219,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: rec.Web.Title, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: rec.Web.Title, mode: s.mode}
 	if rec.Web.Place != nil {
 		s.persisted.place = *rec.Web.Place
 	}
@@ -3338,6 +3391,8 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	req.Hooks.Prompt = func(context.Context) string { return m.takeHostNotes(s) }
 	req.SkillDirectories = m.skillDirs
 	req.Instructions = m.placeInstructionsLocked(s)
+	req.OutputStyle = m.outputStyleLocked(s)
+	s.openStyle = req.OutputStyle
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100
 	}

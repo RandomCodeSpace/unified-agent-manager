@@ -9,6 +9,7 @@ import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { GitLabSettings } from './GitLabSettings';
 import { GitSettings } from './GitSettings';
+import { OutputStyleSettings } from './OutputStyles';
 import { restartOffered, UamService } from './UamService';
 import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
@@ -1005,6 +1006,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // UAM's own rules for commits and pull requests, beside the instruction files but saved on the server for every project.
   cards.instructions = <>
     {cards.instructions}
+    {loaded ? <Section id="output-style" title="Output styles" help="How agents write their replies: tone, length, formatting. A style replaces Copilot's own style instructions rather than adding to them, so it costs only its own length in the context. A Thread picks up a change from its next turn.">
+      {api.supports('output-style-v1') ? <OutputStyleSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="output styles" />}
+    </Section> : <PendingSection id="output-style" title="Output styles" label="Loading settings…" />}
     {loaded ? <Section id="git" title="Commits & pull requests" help="UAM's own rules for every project, whatever the scope above. Agents and their subagents follow them when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
       {api.supports('git-rules-v1') ? <GitSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="commit and pull request instructions" />}
     </Section> : <PendingSection id="git" title="Commits & pull requests" label="Loading settings…" />}
