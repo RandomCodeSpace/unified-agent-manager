@@ -197,7 +197,7 @@ func TestDetectBranchLinkRoute(t *testing.T) {
 	auth := withCookie(ts)
 	p := addProject(t, ts.m, dir)
 	none := addProject(t, ts.m, bare)
-	if _, err := ts.m.patchProject(p, nil, new(string)); err != nil {
+	if _, err := ts.m.patchProject(p, nil, new(string), nil); err != nil {
 		t.Fatal(err)
 	}
 	w := ts.do(http.MethodPost, "/api/projects/"+p+"/branch-link/detect", "", auth)

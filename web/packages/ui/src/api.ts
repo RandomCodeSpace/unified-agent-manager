@@ -619,6 +619,10 @@ export interface Settings {
   commit_prompt?: string;
   /** The Co-authored-by trailer of agents' commits (`git-rules-v1`); an empty name lets the provider pick one. Absent while off with no name kept. */
   coauthor?: { enabled: boolean; name?: string };
+  /** The output style library (`output-style-v1`): named texts that replace the provider's own response style. PATCH replaces the list; a default no longer in it is cleared. */
+  output_styles?: OutputStyle[];
+  /** The default style's name; absent for the provider's own. */
+  output_style?: string;
   /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
   worktrees_dir?: string;
   /** The draw.io editor for drawings (`drawings-v1`): its origin and whether it is on; absent while Excalidraw, the built-in editor, is used. */
@@ -842,6 +846,12 @@ export interface Configuration {
   conflict_warnings?: string[];
 }
 
+/** One named response style; `text` replaces the provider's own style instructions. */
+export interface OutputStyle { name: string; text: string }
+
+/** The name a Thread or Project picks for the provider's own style; absent (or '') inherits instead. */
+export const PROVIDER_STYLE = 'Copilot';
+
 export interface Project {
   id: string;
   name: string;
@@ -856,6 +866,8 @@ export interface Project {
   charts?: number;
   /** An https address with `{branch}` where the branch name goes, detected from origin or set in Edit project; '' once cleared (no link), absent until detected. */
   branch_link?: string;
+  /** The output style its Threads use (`output-style-v1`): a library name or `PROVIDER_STYLE`; absent uses the default. */
+  output_style?: string;
 }
 
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
@@ -929,6 +941,8 @@ export interface SessionSummary {
   effort?: string;
   context_size?: string;
   /** The custom agent's ID, selected on every open before anything is sent; absent means the provider's default agent. */
+  /** The Thread's output style (`output-style-v1`), pinned when it started: a library name or `PROVIDER_STYLE`; absent for Threads from before styles. On create, absent uses the Project's, else the default. */
+  output_style?: string;
   agent?: string;
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
@@ -2340,7 +2354,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
     createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
-    updateProject: (id: string, body: { name: string; branch_link?: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
+    updateProject: (id: string, body: { name: string; branch_link?: string; output_style?: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
     detectBranchLink: (id: string) => call<{ branch_link: string }>('POST', `/api/projects/${enc(id)}/branch-link/detect`),
     deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
     /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
@@ -2412,6 +2426,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       effort?: string;
       context_size?: string;
       agent?: string;
+      output_style?: string;
       mode?: PermissionMode;
       name?: string;
       prompt?: string;

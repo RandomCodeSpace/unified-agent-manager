@@ -1243,7 +1243,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:                providers,
 			Models:                   models,
 			Tools:                    uamTools,
-			SystemMessage:            &copilot.SystemMessageConfig{Mode: "append", Content: system},
+			SystemMessage:            systemMessage(system, req.OutputStyle),
 			CoauthorEnabled:          copilot.Bool(coauthor),
 			Streaming:                copilot.Bool(true),
 			EnableFileChangeTracking: copilot.Bool(true),
@@ -1271,7 +1271,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:        providers,
 			Models:           models,
 			Tools:            uamTools,
-			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: system},
+			SystemMessage:    systemMessage(system, req.OutputStyle),
 			CoauthorEnabled:  copilot.Bool(coauthor),
 			Streaming:        copilot.Bool(true),
 			// Native capture survives only when the resumed session has a valid

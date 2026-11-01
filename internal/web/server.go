@@ -639,17 +639,18 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       *string `json:"name"`
-		BranchLink *string `json:"branch_link"`
+		Name        *string `json:"name"`
+		BranchLink  *string `json:"branch_link"`
+		OutputStyle *string `json:"output_style"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.BranchLink == nil {
-		writeError(w, http.StatusBadRequest, "name or branch_link is required")
+	if body.Name == nil && body.BranchLink == nil && body.OutputStyle == nil {
+		writeError(w, http.StatusBadRequest, "name, branch_link or output_style is required")
 		return
 	}
-	p, err := s.m.patchProject(r.PathValue("id"), body.Name, body.BranchLink)
+	p, err := s.m.patchProject(r.PathValue("id"), body.Name, body.BranchLink, body.OutputStyle)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -755,6 +756,18 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.CommitPrompt = new(string)
 			if json.Unmarshal(raw, patch.CommitPrompt) != nil || string(raw) == "null" {
 				writeError(w, http.StatusBadRequest, "commit_prompt must be a string")
+				return
+			}
+		case "output_styles":
+			patch.OutputStyles = new([]store.WebOutputStyle)
+			if json.Unmarshal(raw, patch.OutputStyles) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "output_styles must be a list of {name, text}")
+				return
+			}
+		case "output_style":
+			patch.OutputStyle = new(string)
+			if json.Unmarshal(raw, patch.OutputStyle) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "output_style must be a string")
 				return
 			}
 		case "coauthor":
@@ -1014,6 +1027,7 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	if body.Mode != nil {
 		if summary, err = s.m.SetMode(id, *body.Mode); err != nil {
 			writeFailure(w, err)

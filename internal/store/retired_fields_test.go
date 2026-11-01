@@ -118,6 +118,18 @@ func TestEveryWebStateFieldIsKnown(t *testing.T) {
 	}
 }
 
+func TestEveryWebProjectFieldIsKnown(t *testing.T) {
+	for f := range reflect.TypeFor[WebProject]().Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, ok := knownWebProjectFields[name]; !ok {
+			t.Errorf("%s (%s) is missing from knownWebProjectFields", name, f.Name)
+		}
+	}
+}
+
 // A cleared agent and capture mark stay cleared after a save.
 func TestClearedAgentAndNativeChangesStayCleared(t *testing.T) {
 	var web WebState

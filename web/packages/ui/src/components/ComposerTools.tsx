@@ -12,7 +12,8 @@ import { contextLabel, ContextReport, ContextRing, contextShown } from './Compos
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
-import { clockTime } from './common';
+import { clockTime, useApp } from './common';
+import { StyleChoices } from './OutputStyles';
 import { PART_TONE, useActions } from './Subagents';
 import { Counts, Tile, UsageTab } from './TaskUsage';
 import { Button } from './ui/button';
@@ -21,11 +22,11 @@ import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
-export type Tool = 'context' | 'usage' | 'agent';
+export type Tool = 'context' | 'usage' | 'agent' | 'style';
 /** Opens the panel on a tab (the `/context` action); false when the Task has no such tab. */
 export interface ToolsHandle { open: (tool: Tool) => boolean }
 
-const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent: 'Agent' };
+const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent: 'Agent', style: 'Style' };
 
 /**
  * The composer's Tools: one button for the Task's context, usage and custom agent, opening one
@@ -38,12 +39,16 @@ const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent:
  * shown in the Conversation pane) it is read-only and scoped to it: Usage (tokens, tool calls,
  * time, runs) and Agent (name, type, description); no context meter, as none is reported per subagent.
  */
-export function ComposerTools({ session, model, agentReason, onAgent, subagent, ref }: Readonly<{
+export function ComposerTools({ session, model, agentReason, onAgent, onStyle, styleReason, subagent, ref }: Readonly<{
   session: SessionDetail;
   model?: Model;
   /** Why the agent cannot change now. */
   agentReason?: string;
   onAgent: (agent: string) => void;
+  /** Sets a new Thread's output style; the Style tab shows with a style library or a pinned style. */
+  onStyle?: (style: string) => void;
+  /** Why the style cannot change: a started Thread keeps the style it began with. */
+  styleReason?: string;
   subagent?: Subagent;
   ref?: Ref<ToolsHandle>;
 }>) {
@@ -58,10 +63,13 @@ export function ComposerTools({ session, model, agentReason, onAgent, subagent, 
   const { agents, error: agentsError } = useTaskAgents(session, !!session.capabilities.custom_agents, opens);
   const agentShown = !!(session.capabilities.custom_agents && (session.agent || agents?.length || agentsError));
   const skills = session.skills_loaded ?? [];
+  const { settings } = useApp();
+  const styleShown = !!onStyle && api.supports('output-style-v1') && !!(settings.output_styles?.length || session.output_style);
   const tools: Tool[] = subagent ? ['usage', 'agent'] : [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
     ...(agentShown || skills.length ? ['agent' as const] : []),
+    ...(styleShown ? ['style' as const] : []),
   ];
   const [chosen, setChosen] = useState<Tool>('context');
   if (reader && (reader.scope !== scope || reader.owner !== api)) setReader(null);
@@ -111,6 +119,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, subagent, 
           {agentShown && <PanelSection label="Agent"><AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} /></PanelSection>}
           <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>
         </> : <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />)}
+        {tab === 'style' && onStyle && <StyleChoices settings={settings} chosen={session.output_style ?? ''} reason={styleReason} onChange={onStyle} />}
         </>}
       </Tabs.Panel>
       {!sheet && <PanelFoot>

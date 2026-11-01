@@ -151,3 +151,36 @@ test('/context opens Tools on its Context tab', async () => {
   const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
   expect(panel.getByRole('tab', { name: 'Context' }).getAttribute('aria-selected')).toBe('true');
 });
+
+test('with a style library, the Style tab picks the Thread\'s output style', async () => {
+  vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as Awaited<ReturnType<typeof api.taskAgents>>);
+  const styled = { ...app, settings: { output_styles: [{ name: 'Terse', text: 'Be terse.\nNo filler.' }], output_style: 'Terse' } } as unknown as AppContextValue;
+  const onStyle = vi.fn();
+  render(<ApiContext.Provider value={api}><AppContext.Provider value={styled}><ComposerTools session={session} onAgent={vi.fn()} onStyle={onStyle} /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await userEvent.click(panel.getByRole('tab', { name: 'Style' }));
+  const inherit = panel.getByRole('radio', { name: /Project or default.*\(Terse\)/ });
+  expect(inherit.getAttribute('aria-checked')).toBe('true');
+  await userEvent.click(panel.getByRole('radio', { name: /Terse.*Be terse\./ }));
+  expect(onStyle).toHaveBeenCalledWith('Terse');
+  await userEvent.click(panel.getByRole('radio', { name: /Copilot's own/ }));
+  expect(onStyle).toHaveBeenCalledWith('Copilot');
+});
+
+test('a started Thread shows its pinned style, read only', async () => {
+  vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as Awaited<ReturnType<typeof api.taskAgents>>);
+  const styled = { ...app, settings: { output_styles: [{ name: 'Terse', text: 'Be terse.' }] } } as unknown as AppContextValue;
+  render(<ApiContext.Provider value={api}><AppContext.Provider value={styled}><ComposerTools session={{ ...session, output_style: 'Terse' }} onAgent={vi.fn()} onStyle={vi.fn()} styleReason="Fixed when the Thread started." /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await userEvent.click(panel.getByRole('tab', { name: 'Style' }));
+  const terse = panel.getByRole('radio', { name: /Terse/ });
+  expect(terse.getAttribute('aria-checked')).toBe('true');
+  expect(terse.hasAttribute('data-disabled')).toBe(true);
+  expect(panel.getByText('Fixed when the Thread started.')).toBeTruthy();
+});

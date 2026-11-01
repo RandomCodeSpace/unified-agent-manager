@@ -6,6 +6,7 @@ import { describeError, isStatus, type Project, type SessionSummary } from '../a
 import { Loading, Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
 import { cleanPath } from '../lib/folders';
+import { styleItems } from './OutputStyles';
 import { PreviousSessionsDialog, canImport } from './PreviousSessions';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -235,10 +236,12 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
  */
 export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onUpdated, onRemoved, onRoutines }: DialogLifecycle & { project: Project; tasks: SessionSummary[]; onUpdated: (p: Project) => void; onRemoved: (id: string) => void; onRoutines?: () => void }) {
   const api = useApi();
-  const { meta } = useApp();
+  const { meta, settings } = useApp();
   const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
   const [link, setLink] = useState(project.branch_link ?? '');
+  const [style, setStyle] = useState(project.output_style ?? '');
+  const styled = api.supports('output-style-v1') && !!settings.output_styles?.length;
   const [detecting, setDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,7 +257,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
     try {
       // An untouched link is not sent, so a rename never turns off one still to be detected.
       const changed = link.trim() !== (project.branch_link ?? '');
-      onUpdated(await api.updateProject(project.id, { name: name.trim(), ...(changed && { branch_link: link.trim() }) }));
+      onUpdated(await api.updateProject(project.id, { name: name.trim(), ...(changed && { branch_link: link.trim() }), ...(style !== (project.output_style ?? '') && { output_style: style }) }));
       onClose();
     } catch (err) {
       setError(describeError(err));
@@ -312,6 +315,11 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
             </Button>
           </div>
         </Field>
+        {styled && (
+          <Field id="edit-output-style" label="Output style" hint="How agents in this Project's Threads write their replies; a Thread can pick its own in Tools." hintVisible>
+            <Select id="edit-output-style" aria-describedby="edit-output-style-hint" value={style} items={styleItems(settings, project.output_style ?? '')} onValueChange={setStyle} />
+          </Field>
+        )}
         {error && (
           <Note tone="error" role="alert">
             {error}
