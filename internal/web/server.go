@@ -279,6 +279,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/sessions/{id}/context", s.handleContextBreakdown)
 	mux.HandleFunc("GET /api/sessions/{id}/context/heaviest", s.handleContextHeaviest)
+	mux.HandleFunc("GET /api/sessions/{id}/budget/prediction", s.handleBudgetPrediction)
 	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFileList((*Manager).Files))
 	mux.HandleFunc("POST /api/sessions/{id}/files/resolve", s.handleResolveFiles)
 	mux.HandleFunc("GET /api/sessions/{id}/files/tree", s.handleTree)

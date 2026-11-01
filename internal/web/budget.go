@@ -225,6 +225,46 @@ func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSu
 	return m.summaryLocked(s), nil
 }
 
+// BudgetPrediction is the provider's estimate of the AI credits the next
+// prompt of a Thread with a credit budget may use (agentapi.LimitPredictor);
+// ok is false without one. It reads no model and changes nothing.
+func (m *Manager) BudgetPrediction(ctx context.Context, id string) (credits float64, ok bool, err error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return 0, false, err
+	}
+	m.mu.Lock()
+	var conv agentapi.Conversation
+	if !m.closed && !s.removed && s.stage == StageActive && s.budget.Credits > 0 && !s.budget.Reached {
+		conv = s.conv
+	}
+	m.mu.Unlock()
+	p, ok := conv.(agentapi.LimitPredictor)
+	if !ok {
+		return 0, false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	credits, err = p.PredictTurnCredits(ctx)
+	if err != nil || !(credits > 0) || math.IsInf(credits, 0) {
+		return 0, false, nil
+	}
+	return credits, true, nil
+}
+
+func (s *Server) handleBudgetPrediction(w http.ResponseWriter, r *http.Request) {
+	credits, ok, err := s.m.BudgetPrediction(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	out := map[string]float64{}
+	if ok {
+		out["credits"] = credits
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // The wrap-up. At its budget a running turn is not stopped. A tool already
 // running finishes (tools cost no AI credits; model calls do), and so does
 // the model call in flight. Every further tool call is denied with the

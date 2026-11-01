@@ -1530,6 +1530,12 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if (!f) return fail(404, 'file not found');
       return json(200, f);
     }
+    // The provider's estimate of one prompt on a credit-budget Thread (budget.go BudgetPrediction).
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/budget\/prediction$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      return json(200, t.budget?.credits && !t.budget.reached ? { credits: 4 } : {});
+    }
     // The Tools panel's native reads and `/btw`: context categories, usage metrics and an aside answer.
     if ((r = m(/^\/api\/sessions\/([^/]+)\/context$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

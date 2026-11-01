@@ -63,3 +63,10 @@ type UsageMetricAgent struct {
 	AIUnits       float64            `json:"ai_units"`
 	Models        []UsageMetricModel `json:"models"`
 }
+
+// LimitPredictor estimates, without running a model, the AI credits one
+// prompt run on the conversation's current model is likely to cost. A
+// non-positive result or an error means no estimate.
+type LimitPredictor interface {
+	PredictTurnCredits(context.Context) (float64, error)
+}
