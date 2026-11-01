@@ -54,6 +54,9 @@ func TestTitleRunsInAToollessThrowawaySessionItDeletes(t *testing.T) {
 		!off(cfg.EnableFileHooks) || !off(cfg.EnableHostGitOperations) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.Streaming) {
 		t.Fatalf("discovery, store or streaming not off: %+v", cfg)
 	}
+	if cfg.ReasoningSummary != copilot.ReasoningSummaryNone || cfg.SkipEmbeddingRetrieval == nil || !*cfg.SkipEmbeddingRetrieval {
+		t.Fatalf("reasoning summary %q, skip embedding retrieval %v", cfg.ReasoningSummary, cfg.SkipEmbeddingRetrieval)
+	}
 	if cfg.InfiniteSessions == nil || !off(cfg.InfiniteSessions.Enabled) || cfg.Memory == nil || cfg.Memory.Enabled {
 		t.Fatalf("infinite sessions %+v, memory %+v", cfg.InfiniteSessions, cfg.Memory)
 	}
