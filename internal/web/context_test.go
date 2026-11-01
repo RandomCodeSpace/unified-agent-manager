@@ -17,8 +17,15 @@ type contextConversation struct {
 	info                        *agentapi.ContextInfo
 	attribution                 *agentapi.ContextAttribution
 	readErr                     error
+	heaviest                    *agentapi.ContextHeaviest
 	infoCalls, attributionCalls int
+	heaviestCalls               int
 	during                      func()
+}
+
+func (c *contextConversation) ContextHeaviestMessages(context.Context) (*agentapi.ContextHeaviest, error) {
+	c.heaviestCalls++
+	return c.heaviest, c.readErr
 }
 
 func (c *contextConversation) ContextInfo(context.Context) (*agentapi.ContextInfo, error) {
@@ -179,5 +186,30 @@ func TestContextBreakdownErrorAndAuthenticatedReadRoute(t *testing.T) {
 		if w := ts.do(http.MethodGet, path, "", withCookie(ts)); w.Code != test.status || strings.Contains(w.Body.String(), "private raw body") {
 			t.Fatalf("provider failure = %d %s", w.Code, w.Body)
 		}
+	}
+}
+
+func TestContextHeaviestRouteReadsOnDemandUnderTheBreakdownRules(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, base := createSession(t, ts.m, ts.prov)
+	c := attachContextReader(ts.m, sum.ID, base)
+	c.heaviest = &agentapi.ContextHeaviest{TotalTokens: 17, Messages: []agentapi.ContextMessage{{ID: "m1", Role: "tool", Label: "tool: bash", Tokens: 9}}}
+	path := "/api/sessions/" + sum.ID + "/context/heaviest"
+	if w := ts.do(http.MethodGet, path, ""); w.Code != http.StatusUnauthorized || c.heaviestCalls != 0 {
+		t.Fatalf("unauthenticated heaviest = %d", w.Code)
+	}
+	w := ts.do(http.MethodGet, path, "", withCookie(ts))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"label":"tool: bash"`) || c.heaviestCalls != 1 || c.infoCalls != 0 || len(base.Sends()) != 0 {
+		t.Fatalf("heaviest route = %d %s", w.Code, w.Body)
+	}
+	c.readErr = errors.New("private raw body")
+	if w := ts.do(http.MethodGet, path, "", withCookie(ts)); w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "private raw body") {
+		t.Fatalf("provider failure = %d %s", w.Code, w.Body)
+	}
+	ts.m.mu.Lock()
+	ts.m.sessions[sum.ID].conv = base
+	ts.m.mu.Unlock()
+	if w := ts.do(http.MethodGet, path, "", withCookie(ts)); w.Code != http.StatusConflict {
+		t.Fatalf("unsupported provider = %d %s", w.Code, w.Body)
 	}
 }

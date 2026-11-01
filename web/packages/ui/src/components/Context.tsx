@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type ContextAttribution, type ContextBreakdown, type SessionDetail } from '../api';
+import { LIVE, describeError, newRequestId, type ContextAttribution, type ContextBreakdown, type ContextHeaviest, type SessionDetail } from '../api';
 import { contextLabel } from './ComposerUsage';
 import { Button } from './ui/button';
 import { PanelSection } from './ui/panel';
@@ -36,6 +36,60 @@ function Sources({ attribution }: Readonly<{ attribution: ContextAttribution }>)
   </>;
 }
 
+/** Read once per opening of the tab (and again after Compact now), never polled. */
+function Heaviest({ session, version }: Readonly<{ session: SessionDetail; version: number }>) {
+  const api = useApi();
+  const [data, setData] = useState<ContextHeaviest | null>();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    api.contextHeaviest(session.id, controller.signal).then(
+      (next) => { if (!controller.signal.aborted) { setData(next); setError(''); } },
+      (err: unknown) => { if (!controller.signal.aborted) setError(describeError(err)); },
+    );
+    return () => controller.abort();
+  }, [api, session.id, version]);
+  let status = '';
+  if (error) status = error;
+  else if (data === undefined) status = 'Loading the largest messages…';
+  else if (!data?.messages.length) status = 'No messages reported.';
+  if (status) return <p role="status" className="text-caption text-muted">{status}</p>;
+  return <ul className="space-y-2">{data!.messages.map((message) => <li key={message.id} className="flex items-start justify-between gap-4">
+    <span className="min-w-0 break-words text-ui">{message.label || message.role || 'Message'}</span>
+    <span className="shrink-0 text-caption tabular-nums">{tokens(message.tokens)}</span>
+  </li>)}</ul>;
+}
+
+/** Runs the Thread's own `/compact` command (the CLI's command calls the same history.compact RPC). */
+function CompactNow({ session, total, onDone }: Readonly<{ session: SessionDetail; total: number; onDone: () => void }>) {
+  const api = useApi();
+  const [running, setRunning] = useState(false);
+  const [note, setNote] = useState('');
+  const turn = LIVE.includes(session.state) || !!session.compacting;
+  async function run() {
+    setRunning(true);
+    setNote('');
+    try {
+      const sub = await api.command(session.id, 'compact', '', newRequestId());
+      if (sub.status === 'accepted') {
+        const after = await api.contextBreakdown(session.id).catch(() => undefined);
+        const now = (after?.info ?? after?.attribution)?.total_tokens;
+        setNote(now === undefined ? 'Compacted.' : `Compacted: ${number.format(total)} → ${tokens(now)} in context.`);
+        onDone();
+      } else setNote(sub.error || 'The compaction outcome is unknown.');
+    } catch (err: unknown) {
+      setNote(describeError(err));
+    } finally {
+      setRunning(false);
+    }
+  }
+  return <div className="mt-2 space-y-1">
+    <Button size="sm" variant="subtle" disabled={turn || running} onClick={() => void run()} aria-describedby="compact-now-help">{running ? 'Compacting…' : 'Compact now'}</Button>
+    <p id="compact-now-help" className="text-caption text-muted">Between turns only. Summarizes older messages, which uses model tokens.</p>
+    {note && <p role="status" className="text-caption text-muted">{note}</p>}
+  </div>;
+}
+
 /**
  * Mounted only while the reader is open. Closing, navigating or changing selection aborts and drops the data.
  * It reads again when the Task's pushed context report or state changes, so the counts stay current while open.
@@ -45,6 +99,7 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
   const [view, setView] = useState<ContextBreakdown | null>(null);
   const [error, setError] = useState('');
   const [sources, setSources] = useState(false);
+  const [compacted, setCompacted] = useState(0);
   const live = [session.context?.used, session.context?.limit, session.state, session.compacting].join('\u0000');
   useEffect(() => {
     if (!session.open) return;
@@ -79,6 +134,7 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
         {children}
       </div>
       {shown && <div className="mt-2"><Counts rows={occupied} /></div>}
+      {shown && <CompactNow session={session} total={shown.total_tokens} onDone={() => setCompacted((n) => n + 1)} />}
     </PanelSection>
     {shown && <>
       <PanelSection label="Capacity">
@@ -91,6 +147,7 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
       <PanelSection label="Sources">
         {attribution ? <Sources attribution={attribution} /> : sources ? <p role="status" className="text-caption text-muted">Loading context sources…</p> : <Button size="sm" variant="subtle" onClick={() => setSources(true)}>Show sources</Button>}
       </PanelSection>
+      <PanelSection label="Largest messages"><Heaviest session={session} version={compacted} /></PanelSection>
     </>}
   </>;
 }
