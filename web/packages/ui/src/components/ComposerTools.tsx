@@ -65,7 +65,8 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   const skills = session.skills_loaded ?? [];
   const { settings, meta } = useApp();
   const builtin = meta?.output_styles ?? [];
-  const styleShown = !!onStyle && api.supports('output-style-v1') && !!(settings.output_styles?.length || builtin.length || session.output_style);
+  // A new Thread picks from what is on offer; a started one only shows the style it pinned.
+  const styleShown = !!onStyle && api.supports('output-style-v1') && (styleReason ? !!session.output_style : !!(settings.output_styles?.length || builtin.length));
   const tools: Tool[] = subagent ? ['usage', 'agent'] : [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
