@@ -31,7 +31,7 @@ export const SETTINGS_GROUPS = [
     { id: 'agents', label: 'Agents', blurb: 'Named agents a thread can switch to.', keywords: 'custom agent persona' },
     { id: 'skills', label: 'Skills', blurb: 'Know-how and scripts agents load when they need them.', keywords: 'skill npx install SKILL.md' },
     { id: 'hooks', label: 'Hooks', blurb: 'Commands that run on agent events.', keywords: 'hook event pre tool post command' },
-    { id: 'instructions', label: 'Instructions', blurb: 'AGENTS.md, copilot-instructions.md, and rules for commits and pull requests.', keywords: 'agents.md copilot-instructions system prompt rules git commit commits message conventional pull request pr merge request mr title description co-author coauthor co-authored-by trailer attribution' },
+    { id: 'instructions', label: 'Instructions', blurb: 'AGENTS.md, copilot-instructions.md, output styles, and rules for commits and pull requests.', keywords: 'agents.md copilot-instructions system prompt output style styles tone concise brief simplified technical english ste asd-ste100 rules git commit commits message conventional pull request pr merge request mr title description co-author coauthor co-authored-by trailer attribution' },
     { id: 'mcp', label: 'MCP servers', blurb: 'Tools agents call from other programs and services.', keywords: 'mcp server servers tools http sse command github' },
   ] },
   { label: 'Server', scope: 'service', pages: [
