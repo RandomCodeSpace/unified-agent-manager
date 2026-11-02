@@ -465,6 +465,8 @@ export const SIGNED_OUT = 'provider_signed_out';
 export const ACCOUNT_NOT_LINKED = 'account_not_linked';
 
 export interface Meta {
+  /** Output styles built into uam (`output-style-v1`), read only and offered next to `Settings.output_styles`. */
+  output_styles?: OutputStyle[];
   instance_id?: string;
   protocol_major?: number;
   capabilities?: string[];

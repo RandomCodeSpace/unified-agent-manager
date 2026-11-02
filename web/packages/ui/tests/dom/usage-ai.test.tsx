@@ -13,10 +13,16 @@ import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage
 import { renderApp, sidebar } from './render';
 
 beforeEach(() => {
+  // The usage pace depends on the day of the month: mid-month, 4% used is under pace and shows no pace chip.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
   vi.spyOn(api, 'tokenPrices').mockResolvedValue(tokenPriceFixture());
   vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 const QUOTA: Quota = { provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 };
 const IDLE: ModelCalls = { threads: 0, subagents: 0, background: 0, local: 0, busy: 0, model_threads: [], subagent_threads: [], local_threads: [] };

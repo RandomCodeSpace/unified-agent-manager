@@ -22,6 +22,37 @@ const (
 	msgUnknownOutputName = "output style %q is not in the library"
 )
 
+// builtinOutputStyles ship with uam: offered everywhere next to the
+// library, read only, and their names are reserved.
+var builtinOutputStyles = []store.WebOutputStyle{{
+	Name: "Simplified Technical English",
+	// ASD-STE100 writing rules plus brevity.
+	Text: "Write in ASD-STE100 Simplified Technical English. Be brief.\n" +
+		"\n" +
+		"Length:\n" +
+		"- Give the answer first. No preamble, no restating the question, no closing summary.\n" +
+		"- Use only the words the reader needs. Stop when the answer is complete.\n" +
+		"- Prefer a short list or table to long paragraphs. Maximum 6 sentences in a paragraph.\n" +
+		"\n" +
+		"Sentences:\n" +
+		"- One topic in each sentence.\n" +
+		"- Instructions: maximum 20 words. Descriptions: maximum 25 words.\n" +
+		"- Write instructions in the imperative (\"Run the test.\"). Give one instruction in each sentence, unless the actions occur at the same time.\n" +
+		"- Use the active voice. Use the simple tenses (present, past, future).\n" +
+		"- Keep articles (\"the\", \"a\") and use them where possible.\n" +
+		"\n" +
+		"Words:\n" +
+		"- Use simple, common words. Use each word with one meaning only.\n" +
+		"- Do not use phrasal verbs (\"set up\", \"find out\"). Use one verb (\"install\", \"find\").\n" +
+		"- Do not use -ing words as verbs or nouns, except in technical names.\n" +
+		"- Do not use idioms, slang, humour or filler (\"basically\", \"just\", \"simply\", \"I think\").\n" +
+		"- Use the same term for the same thing every time.\n" +
+		"\n" +
+		"Keep exact: code, commands, file paths, identifiers, error messages and quoted text. Do not simplify them.\n" +
+		"\n" +
+		"Warnings and cautions: start with a simple command, then give the reason.",
+}}
+
 // cleanOutputStyles checks a library: trimmed, non-empty unique names and
 // texts within their limits.
 func cleanOutputStyles(in []store.WebOutputStyle) ([]store.WebOutputStyle, error) {
@@ -36,6 +67,8 @@ func cleanOutputStyles(in []store.WebOutputStyle) ([]store.WebOutputStyle, error
 			return nil, newError(http.StatusBadRequest, "an output style name must be 1 to %d characters on one line", maxOutputStyleName)
 		case strings.EqualFold(st.Name, providerOutputStyle):
 			return nil, newError(http.StatusBadRequest, "%q is reserved for the provider's own style", providerOutputStyle)
+		case slices.ContainsFunc(builtinOutputStyles, func(b store.WebOutputStyle) bool { return strings.EqualFold(b.Name, st.Name) }):
+			return nil, newError(http.StatusBadRequest, "%q is a built-in style", st.Name)
 		case slices.ContainsFunc(out, func(o store.WebOutputStyle) bool { return strings.EqualFold(o.Name, st.Name) }):
 			return nil, newError(http.StatusBadRequest, "output style %q is listed twice", st.Name)
 		case st.Text == "" || utf8.RuneCountInString(st.Text) > maxOutputStyleRunes:
@@ -53,12 +86,14 @@ func hasOutputStyle(lib []store.WebOutputStyle, name string) bool {
 	return ok
 }
 
+// outputStyleText finds name in the library, then in the built-in styles.
 func outputStyleText(lib []store.WebOutputStyle, name string) (string, bool) {
-	i := slices.IndexFunc(lib, func(st store.WebOutputStyle) bool { return st.Name == name })
-	if i < 0 {
-		return "", false
+	for _, list := range [][]store.WebOutputStyle{lib, builtinOutputStyles} {
+		if i := slices.IndexFunc(list, func(st store.WebOutputStyle) bool { return st.Name == name }); i >= 0 {
+			return list[i].Text, true
+		}
 	}
-	return lib[i].Text, true
+	return "", false
 }
 
 // checkOutputStyleChoice checks a Thread's or Project's choice: "" to

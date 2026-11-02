@@ -523,3 +523,31 @@ func TestOutputStyles(t *testing.T) {
 		t.Fatalf("after removal = %q", style())
 	}
 }
+
+// The built-in style is offered in meta, usable as the default, a Project's
+// or a Thread's style without being in the library, and its name is reserved.
+func TestBuiltinOutputStyle(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	name := builtinOutputStyles[0].Name
+	if w := ts.do(http.MethodGet, "/api/meta", "", withCookie(ts)); !strings.Contains(w.Body.String(), `"output_styles":[{"name":"`+name+`"`) {
+		t.Fatalf("meta = %.300s", w.Body)
+	}
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"output_styles":[{"name":"simplified technical english","text":"x"}]}`, withCookie(ts)); w.Code != http.StatusBadRequest {
+		t.Fatalf("shadowing name = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"output_style":"`+name+`"}`, withCookie(ts)); w.Code != http.StatusOK {
+		t.Fatalf("default = %d %s", w.Code, w.Body)
+	}
+	// Saving an empty library keeps a built-in default.
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"output_styles":[]}`, withCookie(ts)); !strings.Contains(w.Body.String(), `"output_style":"`+name+`"`) {
+		t.Fatalf("default after an empty library = %s", w.Body)
+	}
+	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: addProject(t, ts.m, t.TempDir()), Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opens := ts.prov.Opens()
+	if sum.OutputStyle != name || opens[len(opens)-1].OutputStyle != builtinOutputStyles[0].Text {
+		t.Fatalf("pinned %q, opened with %.40q", sum.OutputStyle, opens[len(opens)-1].OutputStyle)
+	}
+}

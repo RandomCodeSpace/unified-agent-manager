@@ -241,7 +241,8 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const [name, setName] = useState(project.name);
   const [link, setLink] = useState(project.branch_link ?? '');
   const [style, setStyle] = useState(project.output_style ?? '');
-  const styled = api.supports('output-style-v1') && !!settings.output_styles?.length;
+  const builtin = meta?.output_styles ?? [];
+  const styled = api.supports('output-style-v1') && !!(settings.output_styles?.length || builtin.length);
   const [detecting, setDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -317,7 +318,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
         </Field>
         {styled && (
           <Field id="edit-output-style" label="Output style" hint="How agents in this Project's Threads write their replies; a Thread can pick its own in Tools." hintVisible>
-            <Select id="edit-output-style" aria-describedby="edit-output-style-hint" value={style} items={styleItems(settings, project.output_style ?? '')} onValueChange={setStyle} />
+            <Select id="edit-output-style" aria-describedby="edit-output-style-hint" value={style} items={styleItems(settings, project.output_style ?? '', builtin)} onValueChange={setStyle} />
           </Field>
         )}
         {error && (

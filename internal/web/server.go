@@ -610,7 +610,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	s.m.RefreshModels()
 	descriptor := s.federationDescriptor()
-	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs(), Service: s.m.serviceMeta(), Disk: s.m.Disk()}
+	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs(), Service: s.m.serviceMeta(), Disk: s.m.Disk(), OutputStyles: builtinOutputStyles}
 	if roots, err := s.grants.rootsForUse(); err == nil {
 		meta.TempRoot, meta.TempRootAliases = roots.canonical, roots.aliases
 	}

@@ -184,3 +184,17 @@ test('a started Thread shows its pinned style, read only', async () => {
   expect(terse.hasAttribute('data-disabled')).toBe(true);
   expect(panel.getByText('Fixed when the Thread started.')).toBeTruthy();
 });
+
+test('built-in styles from meta give every new Thread a Style tab', async () => {
+  vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as Awaited<ReturnType<typeof api.taskAgents>>);
+  const withBuiltin = { ...app, meta: { version: 'test', providers: [], output_styles: [{ name: 'Simplified Technical English', text: 'Write in ASD-STE100.' }] } } as unknown as AppContextValue;
+  const onStyle = vi.fn();
+  render(<ApiContext.Provider value={api}><AppContext.Provider value={withBuiltin}><ComposerTools session={session} onAgent={vi.fn()} onStyle={onStyle} /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await userEvent.click(panel.getByRole('tab', { name: 'Style' }));
+  await userEvent.click(panel.getByRole('radio', { name: /Simplified Technical English/ }));
+  expect(onStyle).toHaveBeenCalledWith('Simplified Technical English');
+});

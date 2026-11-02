@@ -928,13 +928,13 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if (body.output_styles !== undefined) {
         if (!Array.isArray(body.output_styles)) return fail(400, 'output_styles must be a list of {name, text}');
         const lib = (body.output_styles as { name?: unknown; text?: unknown }[]).map((s) => ({ name: String(s.name ?? '').trim(), text: String(s.text ?? '').trim() }));
-        if (lib.some((s, n) => !s.name || !s.text || [...s.text].length > 2000 || s.name.toLowerCase() === 'copilot' || lib.findIndex((o) => o.name.toLowerCase() === s.name.toLowerCase()) !== n)) return fail(400, 'each output style needs a unique name and 1 to 2000 characters of text');
-        const keep = lib.some((s) => s.name === st.settings.output_style);
+        if (lib.some((s, n) => !s.name || !s.text || [...s.text].length > 2000 || s.name.toLowerCase() === 'copilot' || !!st.meta.output_styles?.some((b) => b.name.toLowerCase() === s.name.toLowerCase()) || lib.findIndex((o) => o.name.toLowerCase() === s.name.toLowerCase()) !== n)) return fail(400, 'each output style needs a unique name and 1 to 2000 characters of text');
+        const keep = [...(st.meta.output_styles ?? []), ...lib].some((s) => s.name === st.settings.output_style);
         st.settings = { ...st.settings, output_styles: lib.length ? lib : undefined, ...(keep ? {} : { output_style: undefined }) };
       }
       if (body.output_style !== undefined) {
         const name = String(body.output_style).trim();
-        if (name && !st.settings.output_styles?.some((s) => s.name === name)) return fail(400, `output style "${name}" is not in the library`);
+        if (name && ![...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((s) => s.name === name)) return fail(400, `output style "${name}" is not in the library`);
         st.settings = { ...st.settings, output_style: name || undefined };
       }
       if (body.commit_prompt !== undefined) {
@@ -1009,7 +1009,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if (p.no_git) return fail(422, 'git has no origin remote here that uam can read');
       return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}` });
     }
-    const unknownStyle = (style: unknown) => typeof style === 'string' && style !== '' && style !== 'Copilot' && !st.settings.output_styles?.some((o) => o.name === style);
+    const unknownStyle = (style: unknown) => typeof style === 'string' && style !== '' && style !== 'Copilot' && ![...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((o) => o.name === style);
     if ((r = m(/^\/api\/projects\/([^/]+)$/))) {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
@@ -1141,7 +1141,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         context_size,
         ...(body.agent ? { agent: String(body.agent) } : {}),
         // Pinned at creation like the service: the Thread's pick, else its Project's, else the default.
-        output_style: [body.output_style, st.projects.find((p) => p.id === body.project_id)?.output_style, st.settings.output_style].find((n) => n === 'Copilot' || (typeof n === 'string' && st.settings.output_styles?.some((o) => o.name === n))) as string | undefined ?? 'Copilot',
+        output_style: [body.output_style, st.projects.find((p) => p.id === body.project_id)?.output_style, st.settings.output_style].find((n) => n === 'Copilot' || (typeof n === 'string' && [...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((o) => o.name === n))) as string | undefined ?? 'Copilot',
         mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',

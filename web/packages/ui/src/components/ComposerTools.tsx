@@ -63,8 +63,10 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   const { agents, error: agentsError } = useTaskAgents(session, !!session.capabilities.custom_agents, opens);
   const agentShown = !!(session.capabilities.custom_agents && (session.agent || agents?.length || agentsError));
   const skills = session.skills_loaded ?? [];
-  const { settings } = useApp();
-  const styleShown = !!onStyle && api.supports('output-style-v1') && !!(settings.output_styles?.length || session.output_style);
+  const { settings, meta } = useApp();
+  const builtin = meta?.output_styles ?? [];
+  // A new Thread picks from what is on offer; a started one only shows the style it pinned.
+  const styleShown = !!onStyle && api.supports('output-style-v1') && (styleReason ? !!session.output_style : !!(settings.output_styles?.length || builtin.length));
   const tools: Tool[] = subagent ? ['usage', 'agent'] : [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
@@ -119,7 +121,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
           {agentShown && <PanelSection label="Agent"><AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} /></PanelSection>}
           <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>
         </> : <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />)}
-        {tab === 'style' && onStyle && <StyleChoices settings={settings} chosen={session.output_style ?? ''} reason={styleReason} onChange={onStyle} />}
+        {tab === 'style' && onStyle && <StyleChoices settings={settings} builtin={builtin} chosen={session.output_style ?? ''} reason={styleReason} onChange={onStyle} />}
         </>}
       </Tabs.Panel>
       {!sheet && <PanelFoot>

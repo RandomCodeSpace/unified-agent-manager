@@ -277,6 +277,9 @@ type Meta struct {
 	// Disk is the filesystem holding the Thread worktrees, low below 10%
 	// free; omitted when it cannot be read.
 	Disk *DiskInfo `json:"disk,omitempty"`
+	// OutputStyles are the built-in output styles (output_style.go), read
+	// only and offered next to the owner's library.
+	OutputStyles []store.WebOutputStyle `json:"output_styles,omitempty"`
 }
 
 // SessionSummary is one web session (a Task) as listed.
