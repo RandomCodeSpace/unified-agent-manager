@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,33 @@ func TestUamSkillCoversHostTools(t *testing.T) {
 	}
 	if strings.Contains(skill, "/api/") {
 		t.Error("SKILL.md names a web API route")
+	}
+}
+
+// The uam tool section of the skill documents exactly the ops the tool offers.
+func TestUamSkillCoversUamOps(t *testing.T) {
+	data, err := builtinSkills.ReadFile("skills/uam/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, ok := strings.Cut(string(data), "\n## Knowing uam: the uam tool\n")
+	if !ok {
+		t.Fatal("SKILL.md lacks the uam tool section")
+	}
+	section, _, _ = strings.Cut(section, "\n## ")
+	documented := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([a-z_]+) \\{").FindAllStringSubmatch(section, -1) {
+		documented[m[1]] = true
+	}
+	for op := range uamShapes {
+		if !documented[op] {
+			t.Errorf("SKILL.md does not document uam op %s", op)
+		}
+	}
+	for op := range documented {
+		if _, ok := uamShapes[op]; !ok {
+			t.Errorf("SKILL.md documents uam op %s, which the tool does not offer", op)
+		}
 	}
 }
 

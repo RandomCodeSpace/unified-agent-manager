@@ -13,7 +13,7 @@ export interface UnsavedTarget {
   paths: string[];
   /** Puts the Thread away anyway (`force`). */
   force: () => Promise<unknown>;
-  /** Opens the Thread's Changes on All changes; absent for another machine's Thread. */
+  /** Opens the Thread's Changes; absent for another machine's Thread. */
   openChanges?: () => void;
 }
 

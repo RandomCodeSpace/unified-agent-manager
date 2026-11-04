@@ -37,10 +37,10 @@ and conventions below instead.
   request waits for the owner. In Assisted a reviewer model checks each
   request: the ones it approves run without waiting, the rest wait for the
   owner.
-- **Changes**: the owner's diff view. It opens on **This thread**: the files
-  you or your subagents edited with an edit tool, compared with `HEAD`.
-  Files written by shell commands, or changed by another Thread, show only
-  under **All changes**, the whole working tree against `HEAD`.
+- **Changes**: the owner's diff view of the files you or your subagents
+  edited with an edit tool, compared with how they were when the Thread
+  started, your commits included. Files written only by shell commands, or
+  changed only by another Thread, do not show there.
 
 When uam attaches a `uam trail:` note, another running Thread recently edited that file; re-read it before relying on its contents.
 
