@@ -527,7 +527,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
     );
   } else {
     rowClass = cn(
-      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color] duration-100 focus-visible:-outline-offset-2',
+      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised in-data-[theme=dark]:ring-1 in-data-[theme=dark]:ring-faint transition-[background-color] duration-100 focus-visible:-outline-offset-2',
       selected ? 'bg-tint-selected' : 'bg-raised',
       readOnly(s) && !selected && 'text-muted',
       unavailable && !selected && 'opacity-60',

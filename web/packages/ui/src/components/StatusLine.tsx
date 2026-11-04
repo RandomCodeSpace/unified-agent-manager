@@ -346,7 +346,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
       return r && (
         <>
           {ledgerStamp(r, r.at ? clockTime(r.at) : '')}
-          {r.removed && <span className="text-faint"> · removed from the list since</span>}
+          {r.removed && <span className="text-muted"> · removed from the list since</span>}
         </>
       );
     },

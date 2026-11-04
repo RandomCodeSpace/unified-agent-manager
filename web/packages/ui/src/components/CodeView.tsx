@@ -58,7 +58,7 @@ export function CodeView({ path, text, line, changes, focus, onFocus }: Readonly
       {changes?.map((c, i) => (
         <div key={`${c.hunk}-${c.run}`} aria-hidden="true" className={cn('pointer-events-none absolute inset-x-0', c.added ? 'bg-diff-add-bg shadow-[inset_3px_0_0_var(--color-success)]' : 'h-0.5 bg-error', i === focus && 'outline-1 outline-focus')} style={{ ...top(c.line), height: c.added ? `${c.added}lh` : undefined }} />
       ))}
-      <ol aria-hidden="true" className="sticky left-0 z-10 bg-canvas pr-3 pl-3 text-right text-faint tabular-nums select-none">
+      <ol aria-hidden="true" className="sticky left-0 z-10 bg-canvas pr-3 pl-3 text-right text-muted tabular-nums select-none">
         {Array.from({ length: slices.lines }, (_, i) => <li key={i} ref={i + 1 === target ? mark : undefined} className={cn(i + 1 === marked && 'font-medium text-ink', added.has(i + 1) && 'font-medium text-success')}>{i + 1}</li>)}
       </ol>
       {/* relative: paints the code over the absolute change bands before it. */}
