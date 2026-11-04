@@ -363,11 +363,11 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     const overview = await screen.findByRole('figure');
-    expect(overview.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
+    expect(overview.textContent).toContain('$2.00 · 1,500 · 17.3% cached');
     expect(overview.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: /All models/ }));
     const all = screen.getByRole('figure');
-    expect(all.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
+    expect(all.textContent).toContain('$2.00 · 1,500 · 17.3% cached');
     expect(all.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: 'About claude-sonnet-5 token split' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('Cache hit: 17.3% of input tokens served by cache reads. Cache writes are not hits.'));

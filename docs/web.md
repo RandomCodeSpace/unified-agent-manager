@@ -2540,9 +2540,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     opens (Tab reaches its controls); Esc closes it every time and gives focus
     back to the button that opened it.
   - With no Thread open, the main pane shows the UAM mark, "What are you
-    working on?", a **New thread** button and, once there are Threads,
-    **Recent threads**: up to six that are not archived, across all Projects,
-    latest update first; click one to open it. Without a Project it says
+    working on?", a **New thread** button and only what the sidebar cannot
+    show: **Needs you**, the active Threads waiting for you on every connected
+    instance, and **Budgets**, the active Threads with a budget and what they
+    have spent of it; latest update first, click one to open it. With nothing
+    waiting it says "Nothing needs you." Without a Project it says
     "Start with a project" and offers **Add project**. Settings → This browser →
     Theme picks Light, Dark or Match system (the default, which follows the
     OS as it changes); the choice is kept per browser.

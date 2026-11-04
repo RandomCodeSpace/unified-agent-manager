@@ -1,7 +1,7 @@
 import { DEFAULT_COMPACT_THRESHOLD, type Model, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
-import { compactTokens, contextText, estimateTurnCost, formatCredits, ringFraction, ringTone } from '../lib/cost';
-import { useApp } from './common';
+import { contextText, estimateTurnCost, formatCredits, ringFraction, ringTone } from '../lib/cost';
+import { Num, useApp } from './common';
 
 const tones = { accent: 'text-accent', attention: 'text-attention', danger: 'text-error', muted: 'text-muted' };
 
@@ -47,10 +47,10 @@ export function ContextReport({ session, model }: Readonly<{ session: SessionDet
   const cost = estimateTurnCost(model, context, session.context_size);
   return (
     <>
-      {context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% ({compactTokens(Math.round(context.limit * threshold))} tokens)</p>}
-      {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: {compactTokens(context.prompt)} tokens</p>}
-      {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
-      {cost !== null && context && <p className="text-caption">Estimate: ≈ {formatCredits(cost)} AI credits per model request at {compactTokens(context.used)} context tokens, input only. A prompt makes one or more requests. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
+      {context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% (<Num value={Math.round(context.limit * threshold)} /> tokens)</p>}
+      {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: <Num value={context.prompt} /> tokens</p>}
+      {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: <Num value={context.cached} /> tokens</p>}
+      {cost !== null && context && <p className="text-caption">Estimate: ≈ <Num value={cost} format={formatCredits} /> AI credits per model request at <Num value={context.used} /> context tokens, input only. A prompt makes one or more requests. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
     </>
   );
 }

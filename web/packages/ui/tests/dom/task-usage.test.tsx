@@ -87,9 +87,9 @@ test('the tab leads with the budget, then six figures for this Thread, then four
   await userEvent.click(budget.getByRole('button', { name: 'Change' }));
   expect((budget.getByLabelText(/Stop after/) as HTMLInputElement).value).toBe('20');
   expect(budget.getByRole('button', { name: 'Set budget' })).toBeTruthy();
-  // Six tiles, in order, with compact token counts and the code delta in two tones.
+  // Six tiles, in order, with token counts in the one format and the code delta in two tones.
   const tiles = [...panel.querySelectorAll('.grid-cols-3 > div')].map((el) => el.textContent);
-  expect(tiles).toEqual(['AI credits9.012 requests', 'Model time4m 12s47 calls · 38%', 'Local time6m 51s112 runs · 62%', 'Tokens in1.18M900K from cache', 'Tokens out41.9K12K reasoning', 'Code4 files+120 −33']);
+  expect(tiles).toEqual(['AI credits9.012 requests', 'Model time4m 12s47 calls · 38%', 'Local time6m 51s112 runs · 62%', 'Tokens in1.2M900.1K from cache', 'Tokens out41.9K12K reasoning', 'Code4 files+120 −33']);
   expect(screen.getByText('+120').className).toContain('text-success');
   expect(screen.getByText('−33').className).toContain('text-error');
   expect(screen.getByRole('region', { name: 'This Thread' }).textContent).toContain('2m 58s waiting on you (3 requests), not counted');
@@ -97,12 +97,14 @@ test('the tab leads with the budget, then six figures for this Thread, then four
   const folds = [...panel.querySelectorAll(':scope > div > details')] as HTMLDetailsElement[];
   expect(folds.map((d) => [d.querySelector('summary')!.textContent, d.open])).toEqual([['By model2 models', false], ['By agent2 agents', false], ['Local time by tool2 tools', false], ['Tokensby model and type', false]]);
   const rows = (d: HTMLElement) => [...d.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => c.textContent));
-  expect(rows(folds[0])).toEqual([['Model', 'Requests', 'PremiumA multiplier, not USD.', 'AI credits', 'In', 'Out'], ['model-a', '3', '0.5', 'Not reported', '100', '20'], ['model-b', '40', '1.5', '7.5', '1.18M', '41.9K']]);
+  expect(rows(folds[0])).toEqual([['Model', 'Requests', 'PremiumA multiplier, not USD.', 'AI credits', 'In', 'Out'], ['model-a', '3', '0.5', 'Not reported', '100', '20'], ['model-b', '40', '1.5', '7.5', '1.2M', '41.9K']]);
   expect(folds[0].textContent).toContain('model-b: last reported prompt cache expiry');
   expect(rows(folds[1])).toEqual([['Agent', 'AI credits', 'Model time', 'Model'], ['Main agent', '2.0', '58s', 'model-a'], ['explore(agent-1)', '7.5', '5s', 'model-b']]);
   expect(folds[2].textContent).toContain('bash');
-  expect(rows(folds[3])).toEqual([['Model', 'In', 'Out', 'Cache read', 'Cache write', 'Reasoning'], ['model-a', '100', '20', '80', '10', 'Not reported'], ['model-b', '1,180,000', '41,900', '900,000', '20,000', '12,000']]);
-  expect([...folds[3].querySelectorAll('dl > div')].map((el) => el.textContent)).toEqual(['prompt1,234,567', 'model-a · future11', 'model-b · image4,321', 'Latest main input tokens100', 'Latest main output tokens20']);
+  expect(rows(folds[3])).toEqual([['Model', 'In', 'Out', 'Cache read', 'Cache write', 'Reasoning'], ['model-a', '100', '20', '80', '10', 'Not reported'], ['model-b', '1.2M', '41.9K', '900K', '20K', '12K']]);
+  // Compact counts keep their exact value in the title.
+  expect(folds[3].querySelector('[title="1,180,000"]')?.textContent).toBe('1.2M');
+  expect([...folds[3].querySelectorAll('dl > div')].map((el) => el.textContent)).toEqual(['prompt1.2M', 'model-a · future11', 'model-b · image4,321', 'Latest main input tokens100', 'Latest main output tokens20']);
 });
 
 test('a subagent row is named by what it was asked to do, with its kind, not its ID', async () => {

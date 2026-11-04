@@ -9,7 +9,7 @@ import { localHints } from '../lib/fileReferences';
 import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { compactTokens } from '../lib/cost';
+import { formatCount, lineCountsText } from '../lib/cost';
 import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, ItemContext, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -791,10 +791,10 @@ function turnTodoBlocks(counts: TodoCounts, stopped: boolean): Block[] {
 
 /** The turn's one total change chip: "2 files" (with "+52 −3" when the counts are known), never a file's name. */
 function ChangedChip({ files, additions, deletions, expanded, onClick }: Readonly<{ files: number; additions?: number; deletions?: number; expanded?: boolean; onClick?: (button: HTMLButtonElement) => void }>) {
-  const label = `Changed ${files} ${files === 1 ? 'file' : 'files'}${additions !== undefined ? ` +${additions} −${deletions ?? 0}` : ''}`;
+  const label = `Changed ${files} ${files === 1 ? 'file' : 'files'}${additions !== undefined ? ` ${lineCountsText(additions, deletions ?? 0)}` : ''}`;
   const body = <>
     <FileDiff aria-hidden="true" className="size-3 shrink-0 text-muted" />
-    {files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <span className="text-success">+{additions}</span> <span className="text-error">−{deletions ?? 0}</span></>}
+    {files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <LineCounts additions={additions} deletions={deletions ?? 0} /></>}
   </>;
   const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-surface px-2 text-caption whitespace-nowrap tabular-nums text-ink';
   // Focused first (Safari does not focus a clicked button), so closing what it opens brings focus back here.
@@ -1002,7 +1002,7 @@ function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; liv
   const rate = timing.generation_ms ? Math.round(out / (timing.generation_ms / 1000)) : 0;
   const title = `${(timing.input_tokens ?? 0).toLocaleString()} tokens in · ${out.toLocaleString()} out${timing.generation_ms ? ` · ${Math.round(timing.generation_ms / 1000)}s generating` : ''}`;
   const words = <>
-    {compactTokens(out)} tokens
+    {formatCount(out)} tokens
     {rate > 0 && (
       <>
         <span aria-hidden="true" className="text-faint"> · </span>
@@ -1013,7 +1013,7 @@ function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; liv
   if (live) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
     <>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`${compactTokens(out)} tokens${rate > 0 ? `, ${rate} tok/s` : ''}`} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`${formatCount(out)} tokens${rate > 0 ? `, ${rate} tok/s` : ''}`} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
         {words}
       </button>
       {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
@@ -1337,7 +1337,7 @@ function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
     if (tool?.edit_event_id) return null;
     return (
       <span className="shrink-0 font-sans text-caption tabular-nums">
-        <span className="text-success">+{result.additions}</span> <span className="text-error">−{result.deletions}</span>
+        <LineCounts additions={result.additions} deletions={result.deletions} />
       </span>
     );
   }
@@ -1441,12 +1441,12 @@ function NativeEdit({ item, edit }: Readonly<{ item: Item; edit: NativeFileEdit 
   const [open, setOpen] = useDisclosure(JSON.stringify(['edit', item.agent_id ?? '', item.id, event, edit.path]));
   const known = edit.diff_status === 'available';
   const { state, visible, retry } = useEditDiff(item, event, edit.path, open && known);
-  const label = `${edit.path} ${known ? `+${edit.additions ?? 0} −${edit.deletions ?? 0}` : 'counts unavailable'}`;
+  const label = `${edit.path} ${known ? lineCountsText(edit.additions ?? 0, edit.deletions ?? 0) : 'counts unavailable'}`;
   return <div className="mb-1">
     <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="flex min-h-6 w-full items-center gap-2 rounded-sm px-1 text-left font-mono text-code-sm text-muted hover:bg-tint-well pointer-coarse:min-h-11" title={edit.path}>
       <ChevronRight className={cn('size-3 shrink-0', open && 'rotate-90')} />
       <span className="min-w-0 flex-1 truncate">{edit.path}</span>
-      {known ? <span className="shrink-0"><span className="text-success">+{edit.additions ?? 0}</span> <span className="text-error">−{edit.deletions ?? 0}</span></span> : <span className="shrink-0 font-sans text-meta">counts unavailable</span>}
+      {known ? <span className="shrink-0"><LineCounts additions={edit.additions ?? 0} deletions={edit.deletions ?? 0} /></span> : <span className="shrink-0 font-sans text-meta">counts unavailable</span>}
       <span className="sr-only">{edit.kind} diff</span>
     </button>
     {open && !known && <p role="status" className="p-2 text-caption text-muted">{EDIT_UNAVAILABLE[edit.diff_status] ?? 'This edit has no supported recorded diff.'}</p>}

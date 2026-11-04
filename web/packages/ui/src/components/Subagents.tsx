@@ -9,13 +9,13 @@ import { describeError, readOnly, type Interaction, type Item, type OutlineItem,
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
-import { compactTokens } from '../lib/cost';
+import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
 import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { BADGE_TEXT, Markdown, Note, Skeleton, Spinner, StepDots, SubagentIdleIcon, clockTime, useApp } from './common';
+import { BADGE_TEXT, Markdown, Note, Num, Skeleton, Spinner, StepDots, SubagentIdleIcon, clockTime, useApp } from './common';
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
@@ -417,7 +417,7 @@ export function SubagentChip({ subagents, calls, tones, reply }: Readonly<{ suba
   const c = countSubagents(subagents);
   const total = Math.max(calls, subagents.length);
   const tokens = totalTokens(subagents);
-  const lead = [subagentNoun(total), tokens ? `${compactTokens(tokens)} tokens` : ''].filter(Boolean).join(' · ');
+  const lead = [subagentNoun(total), tokens ? `${formatCount(tokens)} tokens` : ''].filter(Boolean).join(' · ');
   const partial = subagents.length < total ? `${subagents.length} of ${total} loaded` : '';
   return (
     <button
@@ -491,7 +491,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
           </span>
         )}
         <Took subagent={s} className="w-14 text-right" />
-        <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? compactTokens(s.tokens) : ''}</span>
+        <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? <Num value={s.tokens} /> : ''}</span>
       </button>
       {stopError && (
         <p role="alert" className={cn('pr-2 pb-1 text-caption text-error', UNDER_NAME)}>
@@ -778,7 +778,7 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
   else if (s.status === 'running') outcome = <p className={cn('text-ui', needsYou(caption) ? 'text-warning' : 'text-body')}>{caption || 'Working…'}</p>;
   else if (result) outcome = <div className="text-ui text-body"><Markdown text={result} /></div>;
   else outcome = <Note>No result recorded.</Note>;
-  const facts = [needsYou(caption) ? caption.split(':')[0] : STATUS_LABEL[s.status], s.type, s.tokens ? `${compactTokens(s.tokens)} tokens` : ''].filter(Boolean).join(' · ');
+  const facts = [needsYou(caption) ? caption.split(':')[0] : STATUS_LABEL[s.status], s.type, s.tokens ? `${formatCount(s.tokens)} tokens` : ''].filter(Boolean).join(' · ');
   const content = (close: ReactNode, lead?: ReactNode) => (
         <div className="flex min-h-0 flex-1 flex-col">
           <PanelHead className={cn('gap-1 pt-2 pr-3 pb-2', lead ? 'pl-2' : 'pl-4')}>

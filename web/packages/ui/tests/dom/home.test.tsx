@@ -9,40 +9,43 @@ import { renderApp, sidebar } from './render';
 afterEach(() => vi.restoreAllMocks());
 
 describe('Home', () => {
-  test('shows the six most recently updated tasks across projects, including settled tasks', async () => {
+  test('lists only what the sidebar cannot: Threads that need you and Thread budgets, never a recent list', async () => {
     const { projects, tasks } = data.seed();
-    const sessions: SessionSummary[] = Array.from({ length: 8 }, (_, i) => ({
-      ...tasks[0],
-      id: `recent-${i + 1}`,
-      name: `Recent thread ${i + 1}`,
-      project_id: projects[i % projects.length].id,
-      stage: i === 6 ? 'settled' : 'active',
-      state: 'completed',
-      subagents_running: 0,
-      pending: 0,
-      created_at: `2026-09-0${8 - i}T00:00:00Z`,
-      updated_at: `2026-10-0${i + 1}T00:00:00Z`,
-    }));
-    sessions.push(
-      { ...sessions[0], id: 'archived', name: 'Archived thread', stage: 'archived', updated_at: '2026-10-09T00:00:00Z' },
-      { ...sessions[0], id: 'removed-project', name: 'Removed project thread', project_id: 'removed', updated_at: '2026-10-10T00:00:00Z' },
-    );
+    const base = { ...tasks[0], state: 'completed', subagents_running: 0, pending: 0, budget: undefined } satisfies SessionSummary;
+    const sessions: SessionSummary[] = [
+      { ...base, id: 'quiet', name: 'Quiet thread', updated_at: '2026-10-09T00:00:00Z' },
+      { ...base, id: 'asks', name: 'Asks a question', state: 'awaiting_answer', pending: 1, updated_at: '2026-10-08T00:00:00Z' },
+      { ...base, id: 'settled-asks', name: 'Settled asker', stage: 'settled', state: 'awaiting_answer', pending: 1 },
+      { ...base, id: 'spends', name: 'Spends credits', budget: { credits: 25_000, spent: 12_345 } },
+      { ...base, id: 'reached', name: 'Out of budget', budget: { credits: 20, spent: 20.4, reached: true } },
+    ];
     const onSelect = vi.fn();
     const user = userEvent.setup();
     render(<Home projects={projects} sessions={sessions} hasNews={() => false} onNewTask={() => {}} onAddProject={() => {}} onSelect={onSelect} />);
 
-    const recent = within(screen.getByRole('region', { name: 'Recent threads' }));
-    const rows = recent.getAllByRole('button');
-    expect(rows).toHaveLength(6);
-    for (const [index, row] of rows.entries()) {
-      expect(within(row).getByText(`Recent thread ${8 - index}`)).toBeTruthy();
-    }
-    expect(within(rows[0]).getByText('dotfiles')).toBeTruthy();
-    expect(within(rows[1]).getByText('Settled')).toBeTruthy();
-    expect(recent.queryByText('Archived thread')).toBeNull();
-    expect(recent.queryByText('Removed project thread')).toBeNull();
-    await user.click(rows[1]);
-    expect(onSelect).toHaveBeenCalledWith('recent-7');
+    expect(screen.queryByRole('region', { name: 'Recent threads' })).toBeNull();
+    expect(screen.queryByText('Quiet thread')).toBeNull();
+    const needs = within(screen.getByRole('region', { name: 'Needs you' }));
+    expect(needs.getAllByRole('button')).toHaveLength(1);
+    expect(needs.queryByText('Settled asker')).toBeNull();
+    await user.click(needs.getByRole('button', { name: /Asks a question/ }));
+    expect(onSelect).toHaveBeenCalledWith('asks');
+
+    const budgets = within(screen.getByRole('region', { name: 'Budgets' }));
+    expect(within(budgets.getByRole('button', { name: /Out of budget/ })).getByText('Budget reached')).toBeTruthy();
+    // Credits use the one number format: compact from 10K, the exact value in the title.
+    const spent = within(budgets.getByRole('button', { name: /Spends credits/ })).getByText('12.3K');
+    expect(spent.getAttribute('title')).toBe('12,345');
+  });
+
+  test('with connected instances, a Thread that needs you on another instance shows on Home', () => {
+    const { projects, tasks } = data.seed();
+    const asks = { ...tasks[0], id: 'far', name: 'Waiting on the peer', state: 'awaiting_permission', pending: 1 } satisfies SessionSummary;
+    const machine = (id: string, sessions: SessionSummary[]) => ({ id, short: id, label: id, hasNews: () => false, state: { projects, sessions } });
+    render(<Home projects={projects} sessions={[]} hasNews={() => false} onNewTask={() => {}} onAddProject={() => {}} onSelect={() => {}}
+      machines={[machine('here', []), machine('peer', [asks])] as never} />);
+    const needs = within(screen.getByRole('region', { name: 'Needs you' }));
+    expect(needs.getByRole('button', { name: /Waiting on the peer.*peer/ })).toBeTruthy();
   });
 
   test('New task opens the project picker and composer without creating a task', async () => {
@@ -60,12 +63,12 @@ describe('Home', () => {
     expect(window.location.hash).toBe('');
   });
 
-  test('a recent task opens its conversation and updates the URL', async () => {
+  test('a Thread that needs you opens its conversation and updates the URL', async () => {
     const { user } = renderApp();
-    const recent = within(await screen.findByRole('region', { name: 'Recent threads' }));
-    await user.click(recent.getByRole('button', { name: /Fix re-attach redraw regression/ }));
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Fix re-attach redraw regression'));
-    expect(window.location.hash).toBe('#task=t1');
+    const needs = within(await screen.findByRole('region', { name: 'Needs you' }));
+    await user.click(needs.getByRole('button', { name: /Tidy zsh startup/ }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Tidy zsh startup'));
+    expect(window.location.hash).toMatch(/^#task=/);
     expect(await screen.findByRole('region', { name: 'Conversation' })).toBeTruthy();
   });
 
@@ -80,7 +83,7 @@ describe('Home', () => {
     const { user } = renderApp();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
-    expect(main.queryByRole('region', { name: 'Recent threads' })).toBeNull();
+    expect(main.queryByRole('region', { name: 'Needs you' })).toBeNull();
     expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(true);
     await act(async () => loadMeta(state.meta));
     await waitFor(() => expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(false));
@@ -99,7 +102,7 @@ describe('Home', () => {
     expect(await screen.findByRole('heading', { name: 'Start with a project' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
     expect(main.queryByRole('button', { name: 'New thread' })).toBeNull();
-    expect(main.queryByRole('region', { name: 'Recent threads' })).toBeNull();
+    expect(main.queryByRole('region', { name: 'Needs you' })).toBeNull();
     await user.click(main.getByRole('button', { name: 'Add project' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Choose a project folder' }));
     expect(await dialog.findByRole('textbox', { name: 'Folder path' })).toBeTruthy();

@@ -4,8 +4,8 @@ import { useCallback, useContext, useEffect, useState } from 'react';
 import { describeError, taskName, type ApiClient, type ConnectedStatus, type ModelCalls, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
-import { accountQuota, planName, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
-import { dateTime, Note, timeAgo, useApp } from './common';
+import { accountQuota, formatCount, planName, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
+import { dateTime, Note, Num, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeTokenReports, sumCacheSavings } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
 import { Button } from './ui/button';
@@ -235,7 +235,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
   const pace = quotaPace(quota, now, stale);
   const burn = stale ? null : quotaBurn(quota, now);
   const unit = quotaLabel(quota);
-  const n = (v: number) => Math.round(v).toLocaleString('en-US');
+  const n = (v: number) => formatCount(Math.round(v));
   // With the bar its legend says where the pace lands; without it, a row does.
   const projection = !burn && pace.daysAtPace !== null ? `About ${daysText(pace.daysAtPace, 'working day')} left` : null;
   const resetAt = pace.daysUntilReset !== null ? now + pace.daysUntilReset * 86400000 : null;
@@ -284,9 +284,9 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
  * words; the bar is an image named with the same.
  */
 function BurnBar({ burn, tone, used, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; used: number; entitlement: number }>) {
-  const n = (share: number) => Math.round(share * entitlement).toLocaleString('en-US');
+  const n = (share: number) => formatCount(Math.round(share * entitlement));
   // The reported count, as the headline prints it: the bar's share times the allowance can round to one more or less.
-  const usedText = Math.round(used).toLocaleString('en-US');
+  const usedText = formatCount(Math.round(used));
   const label = `${usedText} used; ${n(burn.elapsed)} is the even budget to date; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${n(burn.projected)} by the reset`}.`;
   return (
     <figure className="flex flex-col gap-1.5">
@@ -301,7 +301,7 @@ function BurnBar({ burn, tone, used, entitlement }: Readonly<{ burn: NonNullable
         <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs', QUOTA_FILLS[tone])} />Used {usedText}</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-0.5 rounded-full bg-ink" />Budget to date {n(burn.elapsed)}</span>
         <span className={cn('flex items-center gap-1', burn.runsOut && 'text-error')}><span className={cn('size-2 rounded-xs opacity-30', QUOTA_FILLS[tone])} />{burn.runsOut ? `Runs out ~${day(burn.runsOut)}` : `At this pace ~${n(burn.projected)}`}</span>
-        <span className="ml-auto">{entitlement.toLocaleString('en-US')}</span>
+        <span className="ml-auto"><Num value={entitlement} /></span>
       </figcaption>
     </figure>
   );

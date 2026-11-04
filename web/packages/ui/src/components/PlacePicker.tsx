@@ -150,10 +150,13 @@ function BranchMenu({ anchor, open, onClose, projectId, from, switching, existin
 /** `⑂ main ▾`: opens the branch menu. */
 function BranchButton({ refFn, open, onClick, children, name }: Readonly<{ refFn: (el: HTMLButtonElement | null) => void; open: boolean; onClick: () => void; children: ReactNode; name: string }>) {
   return (
-    <button ref={refFn} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Branch ${name}`} className={CHIP} onClick={onClick}>
-      {children}
-      <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-    </button>
+    // The face is the bare branch name; the tooltip says what it is, as the toolbar's pickers do.
+    <Tip label={`Branch: ${name}`} disabled={open}>
+      <button ref={refFn} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Branch ${name}`} className={CHIP} onClick={onClick}>
+        {children}
+        <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+      </button>
+    </Tip>
   );
 }
 

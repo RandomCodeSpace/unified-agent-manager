@@ -1,6 +1,6 @@
 import type { Meta, TokenCounts } from '../api';
 import { cn } from '../lib/cn';
-import { compactTokens } from '../lib/cost';
+import { formatCount, fullNumber } from '../lib/cost';
 import { aggregateUsageModels, cacheHitRate, splitTokens, type UsageModel } from '../lib/token-usage';
 import { HelpTip } from './ui/tooltip';
 
@@ -35,7 +35,7 @@ export function costText(value: number | null): string {
 }
 
 export function Count({ value }: Readonly<{ value: number }>) {
-  return <span title={`${compactTokens(value)} tokens`}>{compactTokens(value)}</span>;
+  return <span title={`${fullNumber(value)} tokens`}>{formatCount(value)}</span>;
 }
 
 /** The totals with a key to the bars: each part's swatch is that part's shade of the leading models' colours. */
@@ -67,12 +67,12 @@ function TokenSplitTip({ model, names }: Readonly<{ model: UsageModel; names?: N
     {name !== model.model && model.model && <span className="block text-meta opacity-70 [overflow-wrap:anywhere]">{model.model}</span>}
     <span className="mt-2 block space-y-1 tabular-nums">
       {PARTS.map(({ key, label }) => <span key={key} className="flex justify-between gap-4">
-        <span>{label}</span><span>{compactTokens(split[key])} <span className="opacity-70">({Math.round(split[key] / Math.max(1, total) * 100)}%)</span></span>
+        <span>{label}</span><span>{formatCount(split[key])} <span className="opacity-70">({Math.round(split[key] / Math.max(1, total) * 100)}%)</span></span>
       </span>)}
     </span>
-    <span className="mt-2 block text-meta opacity-70">Cache: {compactTokens(model.cache_read)} read · {compactTokens(model.cache_write)} written.</span>
+    <span className="mt-2 block text-meta opacity-70">Cache: {formatCount(model.cache_read)} read · {formatCount(model.cache_write)} written.</span>
     <span className="mt-2 block">{model.input > 0 ? `Cache hit: ${cacheHitText(model)} of input tokens served by cache reads. Cache writes are not hits.` : 'Cache hit unavailable: no recorded input tokens.'}</span>
-    {model.total !== total && <span className="mt-2 block">Reported total: {compactTokens(model.total)} tokens. The available split accounts for {compactTokens(total)} tokens.</span>}
+    {model.total !== total && <span className="mt-2 block">Reported total: {formatCount(model.total)} tokens. The available split accounts for {formatCount(total)} tokens.</span>}
     {model.cost_usd === null ? <span className="mt-2 block">Cost unavailable: prices or token counts are missing for this model.</span> : model.cost_partial && <span className="mt-2 block">Partial cost estimate: includes known costs only. Some usage is unpriced.</span>}
     {model.tools.length > 1 && <span className="mt-2 block space-y-1 pt-2">
       <span className="block text-meta opacity-70">By tool</span>
@@ -105,7 +105,7 @@ export function ModelRows({ models, colors, names, limit }: Readonly<{ models: U
         <div className="mb-1 flex min-w-0 items-center gap-2 text-caption">
           <ModelName model={model} names={names} />
           {/* One line: cost, tokens, cache hit; the tip says each in full. */}
-          <span className="shrink-0 whitespace-nowrap text-right tabular-nums" title={`Estimated cost ${costText(model.cost_usd)} in USD · ${compactTokens(model.total)} tokens · ${cacheHitText(model)} cache hit`}>{costText(model.cost_usd)} <span className="text-muted">· <Count value={model.total} /> · {cacheHitText(model)} cached</span></span>
+          <span className="shrink-0 whitespace-nowrap text-right tabular-nums" title={`Estimated cost ${costText(model.cost_usd)} in USD · ${formatCount(model.total)} tokens · ${cacheHitText(model)} cache hit`}>{costText(model.cost_usd)} <span className="text-muted">· <Count value={model.total} /> · {cacheHitText(model)} cached</span></span>
         </div>
         <TokenBar model={model} names={names} color={i === other ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
       </div>)}

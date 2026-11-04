@@ -38,7 +38,7 @@ const modules = {
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
   '../lib/transcript': transcript,
-  '../lib/cost': { compactTokens: (n) => String(n) },
+  '../lib/cost': { formatCount: (n) => String(n) },
   '../lib/historyState': history,
   '../lib/subagents': subagentsLib,
   '../lib/receipts': receiptsLib,

@@ -5,14 +5,13 @@ import { useApi } from '../ApiContext';
 import type { Model, SessionDetail, Subagent } from '../api';
 import { cn } from '../lib/cn';
 import { useCopied } from '../lib/clipboard';
-import { compactTokens } from '../lib/cost';
 import { runLines } from '../lib/subagents';
 import { duration } from '../lib/transcript';
 import { contextLabel, ContextReport, ContextRing, contextShown } from './ComposerUsage';
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
-import { clockTime, useApp } from './common';
+import { clockTime, Num, useApp } from './common';
 import { StyleChoices } from './OutputStyles';
 import { PART_TONE, useActions } from './Subagents';
 import { Counts, Tile, UsageTab } from './TaskUsage';
@@ -182,7 +181,7 @@ function SubagentTab({ subagent: s, tab, onRun }: Readonly<{ subagent: Subagent;
   return (
     <PanelSection label="This subagent">
       <div className="grid grid-cols-2 gap-2">
-        <Tile label="Tokens" value={s.tokens ? compactTokens(s.tokens) : '—'} sub="in and out, over all its runs" muted={!s.tokens} />
+        <Tile label="Tokens" value={s.tokens ? <Num value={s.tokens} /> : '—'} sub="in and out, over all its runs" muted={!s.tokens} />
         <Tile label="Tool calls" value={s.tool_calls ? String(s.tool_calls) : '—'} muted={!s.tool_calls} />
         <Tile label="Time" value={took || '—'} sub={s.status === 'running' ? 'so far' : undefined} muted={!took} />
         <Tile label="Runs" value={String(Math.max(1, s.runs?.length ?? 0))} />

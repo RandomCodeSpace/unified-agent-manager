@@ -2,7 +2,7 @@ import { Package } from 'lucide-react';
 import { useId, useRef, type ReactNode } from 'react';
 import type { TurnTiming } from '../api';
 import { cn } from '../lib/cn';
-import { compactTokens, formatCredits } from '../lib/cost';
+import { formatCount, formatCredits } from '../lib/cost';
 import { completedDuration, formatMs } from '../lib/transcript';
 import { clockTime } from './common';
 import { Key } from './InlinePicker';
@@ -15,7 +15,7 @@ function lines(timing: TurnTiming): { label: string; value: ReactNode }[] {
   const input = timing.input_tokens ?? 0;
   const cached = timing.cache_read_tokens ?? 0;
   const share = input > 0 && cached > 0 ? Math.round((cached / input) * 100) : 0;
-  const weight = [`${compactTokens(input)} in`, cached > 0 ? `${compactTokens(cached)} cache reads (${share}%)` : '', `${compactTokens(timing.output_tokens ?? 0)} out`].filter(Boolean).join(' · ');
+  const weight = [`${formatCount(input)} in`, cached > 0 ? `${formatCount(cached)} cache reads (${share}%)` : '', `${formatCount(timing.output_tokens ?? 0)} out`].filter(Boolean).join(' · ');
   const credits = (timing.nano_aiu ?? 0) / 1e9;
   const premium = timing.premium_cost ?? 0;
   const postage = credits > 0

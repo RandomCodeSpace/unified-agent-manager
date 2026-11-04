@@ -10,6 +10,7 @@ import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
 import { BADGE_TEXT, BAR_ROW, barCard, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { lineCountsText } from '../lib/cost';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
@@ -355,7 +356,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
       <span className="mt-1 block text-on-primary/70">
         <span className="block">{status}</span>
         {taskBranch(s, project) && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{taskBranch(s, project)}</span>}
-        {diff && diff.files > 0 && <span className="block">{diff.files} {diff.files === 1 ? 'file' : 'files'} changed · +{diff.additions} −{diff.deletions} lines</span>}
+        {diff && diff.files > 0 && <span className="block">{diff.files} {diff.files === 1 ? 'file' : 'files'} changed · {lineCountsText(diff.additions, diff.deletions)} lines</span>}
         {stopsSettle && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
       </span>
     </>

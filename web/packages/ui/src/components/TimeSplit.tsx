@@ -4,6 +4,7 @@ import { useApi } from '../ApiContext';
 import { describeError, LIVE, type SessionSummary, type TimeSplit } from '../api';
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
+import { formatCount } from '../lib/cost';
 import { Blocks, type Block } from './ui/blocks';
 import { Tip } from './ui/tooltip';
 
@@ -13,9 +14,8 @@ export const TIME_SPLIT_CAPABILITY = 'time-split-v1';
 /** Tool rows shown before the rest fold. */
 const TOP_TOOLS = 5;
 
-const number = new Intl.NumberFormat('en-US');
 export const time = (ms: number) => (ms <= 0 ? '0s' : formatMs(ms) ?? '0s');
-export const plural = (n: number, one: string, many = `${one}s`) => `${number.format(n)} ${n === 1 ? one : many}`;
+export const plural = (n: number, one: string, many = `${one}s`) => `${formatCount(n)} ${n === 1 ? one : many}`;
 
 /**
  * The Thread's split, read from its journal on mount and again when its state, usage or context report changes (as
