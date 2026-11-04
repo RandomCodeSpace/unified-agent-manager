@@ -29,7 +29,7 @@ import { WorktreesSettings } from './WorktreesSettings';
 import { diskLowText, percentFree, sizeText } from '../lib/worktrees';
 import { purposeLabel, resumeText } from '../lib/utility';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
-import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { MOTION_NOTICE, loadMotion, markMotionNoticed, motionNoticeDue, saveMotion, type Motion } from '../lib/motion';
 import { loadTodoGraph, saveTodoGraph, type TodoGraphStyle } from '../lib/todoGraph';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
@@ -467,7 +467,7 @@ function NotifyRow() {
 type Catalog = ReturnType<typeof useApp>['meta'];
 
 /** What needs the user, marked on its page in the rail. */
-function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; drawioProblem: string | null }>): Partial<Record<SettingsPage, PageAttention>> {
+function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem, motionNotice }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; drawioProblem: string | null; motionNotice: boolean }>): Partial<Record<SettingsPage, PageAttention>> {
   const attention: Partial<Record<SettingsPage, PageAttention>> = {};
   if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
   else if (pausedPurposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.map(purposeLabel).join(', ')}` };
@@ -478,6 +478,7 @@ function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKe
   else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
   if (restart) attention.uam = { tone: 'warning', text: 'Restart available' };
   if (meta?.disk?.low) attention.worktrees = { tone: 'warning', text: diskLowText(meta.disk) };
+  if (motionNotice) attention.browser = { tone: 'warning', text: MOTION_NOTICE };
   return attention;
 }
 
@@ -645,6 +646,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [error, setError] = useState<string | null>(null);
   const [drawioProblem, setDrawioProblem] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  // The one-time reduced-motion dot on This browser, due when Settings opens and gone once that page has been on screen.
+  const [motionDue] = useState(motionNoticeDue);
   const [todoGraph, setTodoGraph] = useState(loadTodoGraph);
   const [theme, setTheme] = useState(loadTheme);
   const [scrolled, sentinel] = useScrolled();
@@ -742,7 +745,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   const accounts = (meta?.providers ?? []).filter((p) => p.capabilities.account);
   const missingKeys = configured.filter((p) => !p.key_present);
-  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem });
+  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem, motionNotice: motionDue && !visited.has('browser') });
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
   const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme });
@@ -754,6 +757,10 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   else if (shown) onScreen = [shown];
   const visible = new Set(onScreen);
   if ([...visible].some((id) => !visited.has(id))) setVisited(new Set([...visited, ...visible]));
+  const motionSeen = motionDue && visited.has('browser');
+  useEffect(() => {
+    if (motionSeen) markMotionNoticed();
+  }, [motionSeen]);
   const railCurrent = railCurrentPage(searching, shown, visible, matches);
   // A page's line: its blurb on a phone only (the rail says it on a wide screen), and where it is saved unless that is
   // the server, which the rail's group heading says once.
@@ -881,11 +888,12 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="text-ui font-medium text-ink">{m.name}</span>
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
-                    <span className="min-w-0 break-all">{[idLine, !offered && (idLine ? 'not offered now' : 'Not offered now')].filter(Boolean).join(' · ')}</span>
+                    <span id={`model-${p.key}-${m.id}-offer`} className="min-w-0 break-all">{[idLine, !offered && (idLine ? 'not offered now' : 'Not offered now')].filter(Boolean).join(' · ')}</span>
                     {p.usage && <span className="tabular-nums">{modelCostLine(m, false)}</span>}
                   </div>
                 </div>
-                <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
+                {/* A model the catalog does not offer has nothing to show or hide: its switch is off-limits until it returns, the line above saying why. */}
+                <Switch aria-label={`Show ${m.name}`} aria-describedby={offered ? undefined : `model-${p.key}-${m.id}-offer`} checked={shown} disabled={saving || !offered} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
               </div>;
             })}
             </div>
@@ -933,6 +941,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     skills: null,
     hooks: null,
     instructions: null,
+    'output-styles': loaded ? <Section id="output-style" title="Output styles" help="How agents write their replies: tone, length, formatting. A style replaces Copilot's own style instructions rather than adding to them, so it costs only its own length in the context. New Threads use a change; a started Thread keeps the style it began with.">
+      {api.supports('output-style-v1') ? <OutputStyleSettings settings={settings} builtin={meta?.output_styles} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="output styles" />}
+    </Section> : <PendingSection id="output-style" title="Output styles" label="Loading settings…" />,
     mcp: loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section id="mcp" title="MCP servers">
       <McpServersSettings terminal={!!settings.terminal} githubMcp={(meta?.providers ?? []).some((p) => p.capabilities.github_mcp) ? { on: !!settings.github_mcp, saving, onChange: (github_mcp) => void save({ github_mcp }) } : undefined} />
     </Section>,
@@ -1006,9 +1017,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // UAM's own rules for commits and pull requests, beside the instruction files but saved on the server for every project.
   cards.instructions = <>
     {cards.instructions}
-    {loaded ? <Section id="output-style" title="Output styles" help="How agents write their replies: tone, length, formatting. A style replaces Copilot's own style instructions rather than adding to them, so it costs only its own length in the context. New Threads use a change; a started Thread keeps the style it began with.">
-      {api.supports('output-style-v1') ? <OutputStyleSettings settings={settings} builtin={meta?.output_styles} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="output styles" />}
-    </Section> : <PendingSection id="output-style" title="Output styles" label="Loading settings…" />}
     {loaded ? <Section id="git" title="Commits & pull requests" help="UAM's own rules for every project, whatever the scope above. Agents and their subagents follow them when they commit and open pull or merge requests. A thread already open picks up a change the next time it reopens.">
       {api.supports('git-rules-v1') ? <GitSettings settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : <Unsupported what="commit and pull request instructions" />}
     </Section> : <PendingSection id="git" title="Commits & pull requests" label="Loading settings…" />}

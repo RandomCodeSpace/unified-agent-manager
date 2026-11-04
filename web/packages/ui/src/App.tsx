@@ -1808,14 +1808,15 @@ function TerminalDock({ project, thread, open, hidden, panel, onClose, onClosed 
         <div className={cn('flex min-h-0 flex-1 flex-col transition-transform duration-240 ease-app', shown && open ? 'translate-y-0' : 'translate-y-full')} inert={!open}>
           {/* Until the chunk lands, the panel's header as it first reads. */}
           <Suspense
-            fallback={
+            fallback={<>
               <div className="flex h-9 shrink-0 items-center gap-1.5 pr-1.5 pl-3">
                 <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
                 <span className="text-title text-ink">Terminal</span>
                 <span className="min-w-0 flex-1 truncate text-meta text-muted" title={dir}>{dir}</span>
                 <output className="shrink-0 text-meta text-muted">Connecting…</output>
               </div>
-            }
+              <p aria-hidden="true" className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted">Starting a shell…</p>
+            </>}
           >
             <TerminalPanel ref={panel} project={project} thread={thread} onClose={onClose} />
           </Suspense>
