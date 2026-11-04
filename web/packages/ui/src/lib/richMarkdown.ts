@@ -490,12 +490,13 @@ function summaryLead(tree: MdNode) {
 /**
  * The remark plugin; run it only on text that has finished arriving, so a block changes shape once.
  * `first`: whether this text opens the reply (a streamed reply renders in blocks, and only the first may hold its lead).
+ * `tally`: false for text a person wrote (a user message), whose counts are not test results the agent reported.
  */
-export function remarkRich(options: { first?: boolean } = {}) {
+export function remarkRich(options: { first?: boolean; tally?: boolean } = {}) {
   const visit = (node: MdNode) => {
     node.children?.forEach(visit);
     if (node.type === 'blockquote') alert(node);
-    if (node.type === 'paragraph') tally(node);
+    if (node.type === 'paragraph' && options.tally !== false) tally(node);
     // Lists from their parent, so a list sees the line before it ("pick one:").
     node.children?.forEach((list, i) => {
       if (list.type !== 'list' || statusList(list) || severityList(list) || fileList(list) || timeline(list) || choices(list, node.children![i - 1]) || factList(list)) return;

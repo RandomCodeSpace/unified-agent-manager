@@ -1296,7 +1296,8 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, first, brea
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
-    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first }]];
+    // Text with hard breaks is text a person wrote (a user message, a GitLab comment): no test tally on it.
+    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first, tally: !breaks }]];
     return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
   }, [breaks, origin, streaming, first]);
   return (

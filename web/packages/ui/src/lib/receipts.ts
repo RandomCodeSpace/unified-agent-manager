@@ -4,7 +4,8 @@ import { mainArgument, patchPaths, toolKind } from './transcript.ts';
 // Receipts (DESIGN.md Receipts): what a turn's last reply claims, checked against what the
 // turn's record shows. The reply names paths and commands in code spans and says whether tests
 // pass; the main agent's tool calls say what was changed, viewed and run, and how each run
-// ended. Deterministic: text and record in, stamps out. Never a model.
+// ended, and a claim they leave unseen is judged again against the calls of the subagents the
+// turn started. Deterministic: text and record in, stamps out. Never a model.
 
 /** `pending`: the evidence is on its way (a call's whole output is being read); never a final verdict. */
 export type Verdict = 'verified' | 'unseen' | 'contradicted' | 'pending';
@@ -20,6 +21,10 @@ export interface Stamp {
   itemId?: string;
   /** A pending stamp's call, whose whole body `settle` judges once read. */
   awaits?: Item;
+  /** The subagent whose call is the evidence, when not the main agent's. */
+  by?: { agentId: string; name: string };
+  /** Unseen in the main agent's calls: the turn's `task` calls whose subagents' calls `bySubagents` judges it against. */
+  subagentCalls?: string[];
 }
 
 /** Stamps shown at first; the rest wait behind "Show N more" rather than crowd the reply. */
@@ -219,7 +224,7 @@ export function claimsOf(text: string): Claim[] {
 
 /** `whole`: the output is all there (not held back by the compact view, not clipped), so it can decide. */
 interface Run { itemId: string; item: Item; command: string; exit?: number; failed: boolean; output: string; whole: boolean; tests?: { passed: number; failed: number } }
-interface Record { changed: Map<string, string>; viewed: Map<string, string>; runs: Run[]; subagents: number }
+interface Record { changed: Map<string, Item>; viewed: Map<string, Item>; runs: Run[]; subagents: string[] }
 
 const pathTokens = (command: string) => command.split(/\s+/).filter((t) => !t.startsWith('-') && looksLikePath(t)).map(cleanPath);
 
@@ -235,29 +240,29 @@ function runOf(item: Item, command: string): Run {
   return { itemId: item.id, item, command, exit, failed, output: tool.output ?? '', whole: !item.clipped && !(tool.has_output && !tool.output), tests: tool.tests };
 }
 
-/** What the turn's record shows, from the main agent's tool calls: paths changed and viewed (by the call that did it), the shell runs, and how many subagents it started. */
-function recordOf(items: readonly Item[]): Record {
-  const record: Record = { changed: new Map(), viewed: new Map(), runs: [], subagents: 0 };
+/** What the turn's record shows, from the main agent's tool calls (or, with `subagents`, from the subagents' only): paths changed and viewed (by the call that did it), the shell runs, and the `task` calls that started subagents. */
+function recordOf(items: readonly Item[], subagents = false): Record {
+  const record: Record = { changed: new Map(), viewed: new Map(), runs: [], subagents: [] };
   for (const item of items) {
-    if (item.kind !== 'tool' || !item.tool || item.agent_id) continue;
+    if (item.kind !== 'tool' || !item.tool || !item.agent_id !== !subagents) continue;
     const { tool } = item;
     const name = tool.name.toLowerCase();
     const kind = toolKind(name);
     const arg = argOf(tool);
-    for (const edit of tool.file_edits ?? []) record.changed.set(cleanPath(edit.path), item.id);
+    for (const edit of tool.file_edits ?? []) record.changed.set(cleanPath(edit.path), item);
     if (name === 'apply_patch') {
-      for (const p of tool.input ? patchPaths(tool.input) : arg.split(', ')) if (p) record.changed.set(cleanPath(p), item.id);
+      for (const p of tool.input ? patchPaths(tool.input) : arg.split(', ')) if (p) record.changed.set(cleanPath(p), item);
     } else if (['edit', 'write', 'create', 'str_replace_editor', 'str_replace_based_edit_tool'].includes(name)) {
-      if (arg) record.changed.set(cleanPath(arg), item.id);
+      if (arg) record.changed.set(cleanPath(arg), item);
     } else if (kind === 'file') {
-      if (arg && !record.viewed.has(cleanPath(arg))) record.viewed.set(cleanPath(arg), item.id);
+      if (arg && !record.viewed.has(cleanPath(arg))) record.viewed.set(cleanPath(arg), item);
     } else if (kind === 'command') {
       const command = arg.replace(/\s+/g, ' ').trim();
       if (!command) continue;
       record.runs.push(runOf(item, command));
       // What a shell read (cat, sed, head) counts as viewed.
-      if (/^(?:rtk\s+)?(cat|sed|head|tail|less|bat)\b/.test(command)) for (const p of pathTokens(command)) if (!record.viewed.has(p)) record.viewed.set(p, item.id);
-    } else if (kind === 'subagent') record.subagents++;
+      if (/^(?:rtk\s+)?(cat|sed|head|tail|less|bat)\b/.test(command)) for (const p of pathTokens(command)) if (!record.viewed.has(p)) record.viewed.set(p, item);
+    } else if (kind === 'subagent') record.subagents.push(item.id);
   }
   return record;
 }
@@ -270,8 +275,8 @@ function samePath(claim: string, recorded: string): boolean {
   return recorded.endsWith(`/${claim}`) || claim.endsWith(`/${recorded}`);
 }
 
-function findPath(paths: Map<string, string>, claim: string): string | undefined {
-  for (const [p, id] of paths) if (samePath(claim, p)) return id;
+function findPath(paths: Map<string, Item>, claim: string): Item | undefined {
+  for (const [p, item] of paths) if (samePath(claim, p)) return item;
   return undefined;
 }
 
@@ -297,9 +302,10 @@ function testStamp(claim: string, last: Run): Stamp {
 
 /** A pending stamp judged against its call's whole body (the item route's copy): the final verdict. */
 export function settle(stamp: Stamp, body: Item): Stamp {
-  if (!body.tool) return { claim: stamp.claim, kind: stamp.kind, verdict: 'unseen', note: 'test output unavailable', itemId: stamp.itemId };
+  const by = stamp.by && { by: stamp.by };
+  if (!body.tool) return { claim: stamp.claim, kind: stamp.kind, verdict: 'unseen', note: 'test output unavailable', itemId: stamp.itemId, ...by };
   // The route's copy is as whole as the record holds.
-  return testStamp(stamp.claim, { ...runOf(body, argOf(body.tool).replace(/\s+/g, ' ').trim()), whole: true });
+  return { ...testStamp(stamp.claim, { ...runOf(body, argOf(body.tool).replace(/\s+/g, ' ').trim()), whole: true }), ...by };
 }
 
 /**
@@ -312,29 +318,52 @@ export function receipts(text: string, items: readonly Item[]): Stamp[] {
   const claims = claimsOf(text);
   if (!claims.length) return [];
   const record = recordOf(items);
-  const aside = record.subagents ? ` · ${record.subagents} ${record.subagents === 1 ? 'subagent' : 'subagents'} ran` : '';
-  const where = record.subagents ? ' by the main agent' : ' this turn';
-  const stamps: Stamp[] = [];
-  for (const { kind, claim } of claims) {
-    if (kind === 'path') {
-      const changed = findPath(record.changed, claim);
-      if (changed) stamps.push({ claim, kind, verdict: 'verified', note: 'changed', itemId: changed });
-      else {
-        const viewed = findPath(record.viewed, claim);
-        if (viewed) stamps.push({ claim, kind, verdict: 'unseen', note: `viewed, not changed${aside}`, itemId: viewed });
-        else stamps.push({ claim, kind, verdict: 'unseen', note: `not changed${where}${aside}` });
-      }
-    } else if (kind === 'command') {
-      const run = findRun(record.runs, claim);
-      if (run) stamps.push({ claim, kind, verdict: run.failed ? 'contradicted' : 'verified', note: exitNote(run), itemId: run.itemId });
-      else stamps.push({ claim, kind, verdict: 'unseen', note: `not run${where}${aside}` });
-    } else {
-      const last = record.runs.filter((r) => TEST_COMMAND.test(r.command)).at(-1);
-      if (!last) stamps.push({ claim, kind, verdict: 'unseen', note: `no test command ran${record.subagents ? ' in the main agent’s work' : ' this turn'}${aside}` });
-      else stamps.push(testStamp(claim, last));
-    }
+  return claims.map(({ kind, claim }) => {
+    const stamp = judge(kind, claim, record);
+    // Unseen in the main agent's calls: its subagents' may show it, unless its own test run already answers (unclearly).
+    return record.subagents.length && stamp.verdict === 'unseen' && !(kind === 'tests' && stamp.itemId) ? { ...stamp, subagentCalls: record.subagents } : stamp;
+  });
+}
+
+/** One claim against a record. */
+function judge(kind: Stamp['kind'], claim: string, record: Record): Stamp {
+  const n = record.subagents.length;
+  const aside = n ? ` · ${n} ${n === 1 ? 'subagent' : 'subagents'} ran` : '';
+  const where = n ? ' by the main agent' : ' this turn';
+  if (kind === 'path') {
+    const changed = findPath(record.changed, claim);
+    if (changed) return { claim, kind, verdict: 'verified', note: 'changed', itemId: changed.id };
+    const viewed = findPath(record.viewed, claim);
+    if (viewed) return { claim, kind, verdict: 'unseen', note: `viewed, not changed${aside}`, itemId: viewed.id };
+    return { claim, kind, verdict: 'unseen', note: `not changed${where}${aside}` };
   }
-  return stamps;
+  if (kind === 'command') {
+    const run = findRun(record.runs, claim);
+    if (run) return { claim, kind, verdict: run.failed ? 'contradicted' : 'verified', note: exitNote(run), itemId: run.itemId };
+    return { claim, kind, verdict: 'unseen', note: `not run${where}${aside}` };
+  }
+  const last = record.runs.filter((r) => TEST_COMMAND.test(r.command)).at(-1);
+  if (!last) return { claim, kind, verdict: 'unseen', note: `no test command ran${n ? ' in the main agent’s work' : ' this turn'}${aside}` };
+  return testStamp(claim, last);
+}
+
+/**
+ * The stamps `receipts` left unseen in the main agent's calls (those with `subagentCalls`), judged
+ * again against the turn's subagents' calls: `work` is their items, `names` each one's name by id.
+ * Evidence there stamps the claim, labelled `by` its subagent. The main agent's own evidence always
+ * stands, so a claim both show is stamped once, from its call; one the subagents do not show
+ * either keeps its unseen stamp.
+ */
+export function bySubagents(stamps: readonly Stamp[], work: readonly Item[], names: ReadonlyMap<string, string>): Stamp[] {
+  const record = recordOf(work, true);
+  const agentOf = new Map(work.map((item) => [item.id, item.agent_id ?? '']));
+  return stamps.map((stamp) => {
+    if (!stamp.subagentCalls) return stamp;
+    const judged = judge(stamp.kind, stamp.claim, record);
+    if (judged.verdict === 'unseen') return stamp;
+    const agentId = agentOf.get(judged.itemId ?? '') ?? '';
+    return { ...judged, by: { agentId, name: names.get(agentId) || 'Subagent' } };
+  });
 }
 
 /** Whether the last turn's reply makes a claim the turn's own record contradicts, as its receipts would stamp it. */

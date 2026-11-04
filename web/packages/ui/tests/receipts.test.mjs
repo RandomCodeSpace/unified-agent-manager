@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { claimsOf, receipts, settle, lastTurnContradicted } from '../src/lib/receipts.ts';
+import { bySubagents, claimsOf, receipts, settle, lastTurnContradicted } from '../src/lib/receipts.ts';
 
 const at = (s) => `2026-10-09T10:00:${String(s).padStart(2, '0')}Z`;
 const call = (id, name, input, extra = {}, s = 1) => ({ id, kind: 'tool', time: at(s), tool: { name, status: 'completed', input: JSON.stringify(input), ...extra } });
@@ -151,6 +151,41 @@ test('a test run whose output the page has not loaded waits for it, then settles
 test('subagent calls and running calls are not evidence', () => {
   const items = [{ ...bash('b1', 'go test ./...'), agent_id: 'a1' }];
   assert.deepEqual(receipts('tests pass', items).map((s) => s.verdict), ['unseen']);
+});
+
+test('a claim the main agent leaves unseen is judged against its subagents\' calls, labelled with the subagent', () => {
+  const main = [call('t1', 'task', { agent_type: 'task', description: 'runner' })];
+  const child = (item) => ({ ...item, agent_id: 'a1' });
+  const names = new Map([['a1', 'runner']]);
+  const stamps = receipts('Updated `src/a.go`; all tests pass.', main);
+  assert.deepEqual(stamps.map((s) => s.subagentCalls), [['t1'], ['t1']]);
+  const work = [child(call('e1', 'edit', { path: 'src/a.go' })), child(bash('b1', 'go test ./...', 0, { output: 'ok  \tpkg\t0.2s' }))];
+  assert.deepEqual(bySubagents(stamps, work, names).map((s) => [s.claim, s.verdict, s.itemId, s.by]), [
+    ['src/a.go', 'verified', 'e1', { agentId: 'a1', name: 'runner' }],
+    ['all tests pass', 'verified', 'b1', { agentId: 'a1', name: 'runner' }],
+  ]);
+  // The subagent's failed run contradicts, labelled; its run whose output is not read yet waits for it, keeping the label as it settles.
+  const red = bySubagents(stamps, [child(bash('b1', 'go test ./...', 1))], names)[1];
+  assert.deepEqual([red.verdict, red.note, red.by.name], ['contradicted', 'last test run exit 1', 'runner']);
+  const held = child(bash('b1', 'go test ./...', 0, { has_output: true }));
+  const pending = bySubagents(stamps, [held], names)[1];
+  assert.equal(pending.verdict, 'pending');
+  assert.deepEqual(settle(pending, { ...held, tool: { ...held.tool, output: '--- FAIL: TestX' } }).by, { agentId: 'a1', name: 'runner' });
+  // Unknown never becomes success: a subagent transcript that shows nothing (or could not be read) leaves the claims unseen.
+  assert.deepEqual(bySubagents(stamps, [], names), stamps);
+  assert.deepEqual(bySubagents(stamps, [child(bash('b1', 'go test ./... | tail -3'))], names)[1], stamps[1]);
+});
+
+test('the main agent\'s own evidence stands: a claim both it and a subagent show is stamped once, from its call', () => {
+  const main = [call('t1', 'task', { agent_type: 'task' }), call('e0', 'edit', { path: 'src/a.go' }), bash('b0', 'go test ./...', 0, { output: 'ok' })];
+  const work = [{ ...call('e1', 'edit', { path: 'src/a.go' }), agent_id: 'a1' }, { ...bash('b1', 'go test ./...', 1), agent_id: 'a1' }];
+  const stamps = bySubagents(receipts('Updated `src/a.go`; all tests pass.', main), work, new Map([['a1', 'runner']]));
+  assert.deepEqual(stamps.map((s) => [s.verdict, s.itemId, s.by, s.subagentCalls]), [
+    ['verified', 'e0', undefined, undefined],
+    ['verified', 'b0', undefined, undefined],
+  ]);
+  // A main test run whose result is unclear (piped, no output) is not replaced by a subagent's run.
+  assert.equal(receipts('tests pass', [main[0], bash('b0', 'go test ./... | tail')])[0].subagentCalls, undefined);
 });
 
 test('a file the reply names as someone else\'s work, a refusal and quoted text claim nothing; its own work still does', () => {
