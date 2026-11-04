@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -516,6 +517,155 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	}
 	workdir := filepath.Join(path, filepath.FromSlash(strings.TrimSpace(string(prefix))))
 	return workdir, &store.WebPlace{Mode: placeWorktree, Branch: branch, Base: base, Worktree: path}, undo, nil
+}
+
+// branchWorktree makes the worktree of a branch of a Thread that runs in its
+// own worktree (source): a new branch at the source worktree's HEAD, with
+// its uncommitted tracked changes and its untracked, not ignored files, so
+// the branch continues from what the conversation saw. The source is only
+// read. A source worktree uam removed, which held no changes, starts the
+// branch from the source's branch. It returns the branch's folder, its place
+// and the function that takes them back.
+func (m *Manager) branchWorktree(ctx context.Context, project Project, source store.WebPlace, hint string) (string, *store.WebPlace, func(), error) {
+	none := func() {}
+	repo, reason, err := openRepo(ctx, project.Dir)
+	if err != nil {
+		return "", nil, none, err
+	}
+	if repo == nil {
+		return "", nil, none, newError(http.StatusConflict, "%s", reason)
+	}
+	start := source.Branch
+	_, statErr := os.Stat(source.Worktree)
+	if statErr == nil {
+		out, code, stderr, err := runGit(ctx, repo.git, source.Worktree, 4096, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return "", nil, none, err
+		}
+		if code != 0 {
+			return "", nil, none, newError(http.StatusConflict, "could not read the worktree's commit: %s", gitMessage(stderr))
+		}
+		start = strings.TrimSpace(string(out))
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return "", nil, none, newError(http.StatusConflict, "could not read the worktree: %s", shortError(statErr))
+	}
+	branch, err := freeBranch(ctx, repo, hint)
+	if err != nil {
+		return "", nil, none, err
+	}
+	folder, place, undo, err := m.makeWorktree(ctx, project, repo, branch, start)
+	if err != nil {
+		return "", nil, none, err
+	}
+	place.Base = source.Base
+	if statErr == nil {
+		if err := copyWorktreeState(ctx, repo.git, source.Worktree, place.Worktree); err != nil {
+			undo()
+			return "", nil, none, newError(http.StatusConflict, "could not copy the worktree's uncommitted files to the branch: %s", shortError(err))
+		}
+	}
+	return folder, place, undo, nil
+}
+
+// copyWorktreeState copies the uncommitted tracked changes and the untracked,
+// not ignored files of the worktree from into the worktree to, at the same
+// commit. from is only read.
+func copyWorktreeState(ctx context.Context, git, from, to string) error {
+	patch, err := os.CreateTemp("", "uam-branch-*.patch")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(patch.Name()) }()
+	if err := patch.Close(); err != nil {
+		return err
+	}
+	// Fixed prefixes, no external diff or textconv: a patch git apply takes
+	// whatever the repository's diff settings are.
+	// shortcut: submodule changes are not carried; carry them if branches of such worktrees need them.
+	_, code, stderr, err := runGit(ctx, git, from, 4096, "diff", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative",
+		"--src-prefix=a/", "--dst-prefix=b/", "--ignore-submodules=all", "--output="+patch.Name(), "HEAD")
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("git diff: %s", gitMessage(stderr))
+	}
+	if info, err := os.Stat(patch.Name()); err != nil {
+		return err
+	} else if info.Size() > 0 {
+		if _, err := runGitWrite(ctx, to, nil, "apply", "--binary", "--whitespace=nowarn", patch.Name()); err != nil {
+			return err
+		}
+	}
+	out, code, stderr, err := runGit(ctx, git, from, maxStatusBytes, "ls-files", "-z", "--others", "--exclude-standard")
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("git ls-files: %s", gitMessage(stderr))
+	}
+	if len(out) >= maxStatusBytes {
+		return errors.New("too many untracked files")
+	}
+	src, err := os.OpenRoot(from)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = src.Close() }()
+	dst, err := os.OpenRoot(to)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dst.Close() }()
+	for name := range strings.SplitSeq(string(out), "\x00") {
+		// A nested repository is listed as its folder and not copied.
+		if name == "" || strings.HasSuffix(name, "/") {
+			continue
+		}
+		if err := copyUntracked(src, dst, filepath.FromSlash(name)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// copyUntracked copies the file or symlink name from src to dst; a file gone
+// since it was listed is skipped.
+func copyUntracked(src, dst *os.Root, name string) error {
+	info, err := src.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := dst.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+		return err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		target, err := src.Readlink(name)
+		if err != nil {
+			return err
+		}
+		return dst.Symlink(target, name)
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	in, err := src.Open(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // placeInstructionsLocked tells the agent of a Thread on a branch uam made

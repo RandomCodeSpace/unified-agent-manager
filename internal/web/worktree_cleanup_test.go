@@ -217,18 +217,6 @@ func TestSettledWorktreeThreadKeepsItsBranch(t *testing.T) {
 	}
 }
 
-// Branching from a turn is refused in a worktree with the reason and what
-// to do instead.
-func TestWorktreeThreadForkSaysWhy(t *testing.T) {
-	repo := worktreeRepo(t)
-	ts := newTestServer(t, ServerConfig{})
-	sum, _ := worktreeThread(t, ts, repo, "")
-	_, err := ts.m.Fork(sum.ID, ForkRequest{UserItemID: "u-1", RequestID: mustUUID(t)})
-	if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "Project folder") || !strings.Contains(err.Error(), "Run again") {
-		t.Fatalf("fork = %v", err)
-	}
-}
-
 // A removed log that cannot be read is kept as it is: a removal is listed
 // in memory but does not overwrite the file and lose its history. A missing
 // file is only an empty log.

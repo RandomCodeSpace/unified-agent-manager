@@ -475,9 +475,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     (`GET /api/projects/{id}/files?base=<branch>`).
     `GET /api/projects/{id}/branches` lists the local and remote branches,
     most recently committed first.
-  - A Thread in a worktree cannot be branched from a turn yet: the branch
-    would start in the Project's folder. Run again starts the new Thread in
-    the same worktree, on the same branch.
+  - Branching a Thread in a worktree from a turn (Branch from here) makes a
+    new worktree on a new branch for the branched Thread, at the source
+    worktree's commit, with the source's uncommitted changes to tracked
+    files and its untracked files that are not ignored, so the branch
+    continues from what the conversation saw. Submodule changes are not
+    carried. The source worktree is not changed. If the source's worktree
+    was removed, the new one starts from the source's branch. If the copy
+    fails, the new worktree and branch are removed and nothing is branched.
   - Settling, archiving or deleting a Thread removes its worktree with
     `git worktree remove`; the branch stays, so its commits do too, and the
     Thread still shows it. A worktree with changed or untracked files is
@@ -1753,7 +1758,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   they show as chips and thumbnails as in the source, also after the source is
   deleted. Both Threads use the
   same Project and current files. This creates no Git branch or isolated
-  workspace. If the native result is uncertain, UAM keeps the request and
+  workspace, except for a Thread in its own worktree: its branch gets a new
+  worktree with the source's files (see Worktrees). If the native result is uncertain, UAM keeps the request and
   refuses to create another branch automatically. The picker's **Dismiss**
   clears that one request so you can branch again; a Copilot session may still
   exist for it. When the branch was created but could not be added as a Thread
