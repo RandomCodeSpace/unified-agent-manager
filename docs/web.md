@@ -469,7 +469,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     `git push -u origin HEAD` and open pull or merge requests into the base,
     so it never asks which branch to push.
   - Everything of the Thread follows its folder: Files, `@` references,
-    file links and previews, images, Changes and Commit/Push/Pull, the GitLab
+    file links and previews, images, Changes, the GitLab
     panel, receipts, and the terminal opened from the Thread. A draft
     Thread's `@` list shows the chosen base branch's files
     (`GET /api/projects/{id}/files?base=<branch>`).
@@ -2138,7 +2138,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   confirmation (after Archive's own dialog). Either way it hangs
   under the sidebar row or the control that asked, read as it was
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
-  **Open Changes** (the Thread's Changes on All changes), Cancel and
+  **Open Changes** (the Thread's Changes), Cancel and
   **Settle anyway** or **Archive anyway**. A clean Thread settles at once,
   and a clean Archive asks as before.
 
@@ -2203,35 +2203,22 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   appears only when the record itself is gone or the provider cannot page
   it.
 - **Changes**: the "Changes" button in the Thread header shows how many
-  tracked files in the Thread's repository are not committed (the count on
-  its sidebar row, so a folder holding only new, untracked files reads 0, as
-  its tip says; an older service without that count makes it the
-  default scope's file count) and opens the changes beside the conversation with the diff (a
+  files this Thread changed (the count on its sidebar row) and opens the
+  changes beside the conversation with the diff (a
   full-screen sheet on a narrow window). Closed and opened again in the same
-  Thread, it comes back on the scope, file and scroll you left; a turn's
-  View changes opens on that turn instead. When the default scope has no
-  files and All changes has some, it opens on All changes. The scopes at the top depend on
-  the Thread. A Copilot Thread whose conversation records its own file
-  changes (every Thread created since that record exists) has two:
-  **This thread** (the default) is Copilot's record of the files this
-  conversation changed, over its whole life, so a file stays listed after
-  it is committed; while the conversation is closed, a Git-based list of
-  the files its agent edited, compared with `HEAD`, stands in. The
-  Thread's total (the summary's `diff`, the row tip's `+N −M`) is that
-  record's count: while the conversation is open, UAM reads it again a
-  second after the last of a burst of edits and when a turn ends, so it is
-  filled in without opening Changes; a closed conversation is not reopened
-  for it. **All
-  changes** is every uncommitted change in the working tree, from any
-  Thread or source: what is left to commit. Other Threads have three
-  scopes, each with its file count: **This thread** (the default) lists the
-  files this Thread's agent or its subagents edited with an edit tool
-  (create, write, edit or a patch; one that failed is left out), compared
-  with `HEAD`; **Last turn** narrows that to the files edited since the
-  latest prompt you sent (a steer joins the running turn and does not start
-  a new one); **All changes** as above. A file this Thread edited shows
-  everything that differs from `HEAD`, including changes something else
-  made to it; a file changed back or committed drops out. Files written by
+  Thread, it comes back at the scroll you left; a turn's
+  View changes opens on that turn instead. There is one list, with no
+  scopes to choose: the files this Thread's agent or its subagents edited
+  with an edit tool (create, write, edit or a patch; one that failed is
+  left out), compared with how they were when the Thread started, its
+  commits included. When some of those files are committed, **All**, **Not
+  committed** and **Committed** narrow the list, and the committed group
+  names the Thread's commits. The Thread's total (the summary's `diff`,
+  the row tip's `+N −M`) is that list's count: UAM recounts it a second
+  after the last of a burst of edits, so it is filled in without opening
+  Changes. A file this Thread edited shows everything that differs,
+  including changes something else made to it; a file changed back drops
+  out. Files written by
   shell commands are not attributed to the Thread. Until a Thread's history
   has been read, edits from before it may be missing, and the panel says
   so. Each file shows its status and `+added −removed` lines; where its
@@ -2252,51 +2239,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   wide window this panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
-  An open panel on the active, visible Thread refreshes its selected scope
+  An open panel on the active, visible Thread refreshes its list
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
-- **Commit, Push and Pull**: under the file list, the Changes panel shows the
-  branch, how many commits it is ahead of or behind its upstream (as last
-  fetched), and Push and Pull. "Commit" opens a message box and a checkbox for
-  every changed file. The boxes start on this Thread's files only (those its
-  edit tools touched, as the Thread records them; a shell command's edits are
-  not counted), never on another Thread's or on a file nobody is known to have
-  edited. After a restart, edits made before the Thread's history was read
-  again may be unknown: the panel says so and you check the files yourself.
-  A note says how many changed files are left out. The message and the
-  checked files are kept per Thread while Changes is closed.
-  Generate (then Regenerate) asks the Utility model for a message from the
-  chosen files' diff and the repository's last 20 commit subjects, so it
-  follows their style, Conventional Commits included. It never commits, and
-  it counts toward Background AI's daily limit: while that pauses it, the
-  panel says so and you write the message yourself. The
-  message is yours to edit and is committed exactly as written: uam adds no
-  co-author, sign-off or AI credit, and removes any the model wrote. A counter
-  shows the subject's length against 72 characters. "Commit n files" stages
-  exactly those files, deletions included, and commits them; files you
-  staged yourself stay staged and out of the commit. The repository's hooks
-  run, and a hook's refusal shows its output and leaves the index as it
-  was: the files staged for that commit are unstaged again. A file that was staged as new
-  and then deleted has nothing to commit and is left out of the commit, and
-  out of the index. "Commit and push" also pushes.
-  Push never forces: it pushes to the branch's upstream, or, without one, to
-  `origin` under the branch's name and sets that as its upstream. A branch
-  whose upstream is another local branch is not pushed: Push says there is
-  no remote to go to and moves nothing. Pull only
-  fast-forwards; when both sides have new commits it says so and changes
-  nothing. A push the remote refuses for commits the branch lacks says to
-  pull first only when the branch has no commits of its own; otherwise it
-  says to merge or rebase onto the remote yourself. A binary file's change
-  reads "binary" in the list and says so in place of a diff. The service runs git without a terminal, so a remote that needs a
-  password, or an SSH key the service's environment cannot use, fails with
-  git's message. While any Thread in the same repository could still be
-  writing there (mid-turn, starting, with prompts queued, or with subagents
-  or background jobs still running), the panel names it and Commit, Push and
-  Pull wait; while a commit, push or pull runs, a turn starting in that
-  repository waits for it. So an agent's edits are never committed half
-  done. After a commit or a pull, every Thread's change count in that
-  repository is recounted.
 - **Go to file**: Alt+P, or the Files button left of the branch under the
   composer, opens Go to file over the dimmed page (a bottom sheet on a
   phone). Its head names the branch and the folder it shows (the Thread's
@@ -3059,7 +3005,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   must first restore the recorded settings successfully.
 - **Detached shells (Copilot).** While a shell Copilot started detached
   is running, Copilot CLI 1.0.92 and 1.0.93 report it in a form the
-  Copilot SDK cannot read (still so in SDK 1.0.26), so the Thread's
+  Copilot SDK cannot read (still so in SDK 1.0.28), so the Thread's
   background tasks cannot be read either. The chip says Status unavailable
   and lists the shells reported before, or does not appear when none were;
   nothing can be stopped from it. The shell shows within 15 seconds of
