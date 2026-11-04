@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,5 +237,73 @@ func TestForkWorktreeThreadDismissRemovesItsWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(source.Worktree.Path); err != nil {
 		t.Fatalf("source worktree removed: %v", err)
+	}
+}
+
+// A dismissed branch request's clean worktree goes, but a branch with commits
+// since the fork is kept.
+func TestForkWorktreeThreadDismissKeepsACommittedBranch(t *testing.T) {
+	m, p, st, source, repo := worktreeForkManager(t)
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { return "", agentapi.ErrForkUncertain }
+	if _, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}); !errors.Is(err, errForkUncertain) {
+		t.Fatalf("fork = %v", err)
+	}
+	var fork store.WebFork
+	for _, pending := range pendingForks(t, st) {
+		fork = pending
+	}
+	if fork.Place == nil || fork.Start == "" {
+		t.Fatalf("reservation = %+v", fork)
+	}
+	writeRepoFile(t, fork.Place.Worktree, "done.txt", "work\n")
+	gitIn(t, fork.Place.Worktree, "add", "done.txt")
+	gitIn(t, fork.Place.Worktree, "commit", "-q", "-m", "work")
+	if err := m.DismissFork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "worktree removed", func() bool { return worktreeGone(fork.Place.Worktree) })
+	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if out := gitOutput(t, repo, "branch", "--list", fork.Place.Branch); out == "" {
+			t.Fatal("branch with a commit removed")
+		}
+	}
+}
+
+// Changes inside a submodule or a nested repository cannot be carried: the
+// branch is refused before any worktree is made.
+func TestForkWorktreeThreadRefusesUncarriedChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		prepare    func(t *testing.T, dir string)
+	}{
+		{"dirty submodule", "lib", func(t *testing.T, dir string) {
+			sub := branchRepo(t)
+			gitIn(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib")
+			gitIn(t, dir, "commit", "-q", "-m", "add lib")
+			writeRepoFile(t, dir, "lib/scratch.txt", "dirty\n")
+		}},
+		{"nested repository", "nested/", func(t *testing.T, dir string) {
+			nested := filepath.Join(dir, "nested")
+			gitIn(t, dir, "init", "-q", nested)
+			writeRepoFile(t, nested, "file.txt", "x\n")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, p, st, source, repo := worktreeForkManager(t)
+			tc.prepare(t, source.Worktree.Path)
+			_, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+			if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "submodules or nested repositories: "+tc.path) {
+				t.Fatalf("fork = %v", err)
+			}
+			if p.forkCount() != 0 || len(pendingForks(t, st)) != 0 {
+				t.Fatal("forked or reserved")
+			}
+			if out := gitOutput(t, repo, "worktree", "list", "--porcelain"); strings.Count(out, "worktree ") != 2 {
+				t.Fatalf("worktrees = %q", out)
+			}
+			if out := gitOutput(t, repo, "branch", "--list", "uam/*"); strings.Count(out, "uam/") != 1 {
+				t.Fatalf("branches = %q", out)
+			}
+		})
 	}
 }

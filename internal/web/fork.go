@@ -109,9 +109,9 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		}
 	}
 	var place *store.WebPlace
-	folder, undoPlace := "", func() {}
+	folder, start, undoPlace := "", "", func() {}
 	if sourcePlace != nil && sourcePlace.Worktree != "" {
-		if folder, place, undoPlace, err = m.branchWorktree(m.ctx, Project{ID: create.ProjectID, Dir: workdir}, *sourcePlace, hint); err != nil {
+		if folder, place, start, undoPlace, err = m.branchWorktree(m.ctx, Project{ID: create.ProjectID, Dir: workdir}, *sourcePlace, hint); err != nil {
 			return SessionSummary{}, err
 		}
 	}
@@ -144,7 +144,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		return SessionSummary{}, err
 	}
 	reservation := store.WebFork{
-		Place: place, Folder: folder,
+		Place: place, Folder: folder, Start: start,
 		ID: targetID, Provider: prov.Name(), SourceConversationID: convID, ProjectID: create.ProjectID, Workdir: workdir,
 		Effort: create.Effort, ContextSize: create.ContextSize, Agent: create.Agent, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
 		Lineage: store.ForkLineage{SourceTaskID: id, UserItemID: req.UserItemID, UserEventID: boundary.UserEventID, ToEventID: boundary.ToEventID, RequestID: req.RequestID, Model: req.Model},

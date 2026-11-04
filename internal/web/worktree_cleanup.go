@@ -491,13 +491,14 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 
 // kickForkWorktreesRemoveLocked removes in the background the worktrees and
 // branches made for branch requests that were dismissed or lost their
-// source. One a Thread uses, or with changes, is kept.
+// source. One a Thread uses, or with changes, is kept, and so is a branch
+// with commits since the fork's start.
 func (m *Manager) kickForkWorktreesRemoveLocked(forks []store.WebFork) {
 	for _, fork := range forks {
 		if m.closed || fork.Place == nil || fork.Place.Worktree == "" {
 			continue
 		}
-		path, branch, dir := fork.Place.Worktree, fork.Place.Branch, fork.Workdir
+		path, branch, dir, start := fork.Place.Worktree, fork.Place.Branch, fork.Workdir, fork.Start
 		m.wg.Add(1)
 		go func() {
 			defer log.Recover("branch request worktree remove", &m.mu)
@@ -517,12 +518,33 @@ func (m *Manager) kickForkWorktreesRemoveLocked(forks []store.WebFork) {
 				log.Info("branch request worktree kept", "path", path, "error", err)
 				return
 			}
+			log.Info("branch request worktree removed", "path", path)
+			if ahead := commitsSince(m.ctx, dir, start, branch); ahead != "0" {
+				log.Info("branch request branch kept: it has commits since the fork or they could not be counted", "branch", branch, "commits", ahead)
+				return
+			}
 			if _, err := runGitWrite(m.ctx, dir, nil, "branch", "-D", branch); err != nil {
 				log.Warn("branch request branch not removed", "branch", branch, "error", err)
 			}
-			log.Info("branch request worktree removed", "path", path)
 		}()
 	}
+}
+
+// commitsSince counts the commits on branch since start in the repository
+// at dir, or says why it could not.
+func commitsSince(ctx context.Context, dir, start, branch string) string {
+	git, err := lookGit()
+	if err != nil || start == "" {
+		return "unknown"
+	}
+	out, code, stderr, err := runGit(ctx, git, dir, 4096, "rev-list", "--count", "--end-of-options", start+".."+branch)
+	if err != nil {
+		return "unknown: " + shortError(err)
+	}
+	if code != 0 {
+		return "unknown: " + gitMessage(stderr)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // restoreWorktree recreates the worktree of an active Thread from its

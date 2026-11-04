@@ -479,10 +479,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     new worktree on a new branch for the branched Thread, at the source
     worktree's commit, with the source's uncommitted changes to tracked
     files and its untracked files that are not ignored, so the branch
-    continues from what the conversation saw. Submodule changes are not
-    carried. The source worktree is not changed. If the source's worktree
+    continues from what the conversation saw. Changes inside submodules or
+    nested repositories cannot be carried: the branch is then refused,
+    naming their paths. The source worktree is not changed. If the source's worktree
     was removed, the new one starts from the source's branch. If the copy
     fails, the new worktree and branch are removed and nothing is branched.
+    Dismissing an unresolved branch request, or deleting its source Thread,
+    removes its worktree too, unless a Thread uses it or it has changes,
+    and its branch, unless the branch has commits since the fork.
   - Settling, archiving or deleting a Thread removes its worktree with
     `git worktree remove`; the branch stays, so its commits do too, and the
     Thread still shows it. A worktree with changed or untracked files is
