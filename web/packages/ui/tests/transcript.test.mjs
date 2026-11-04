@@ -448,3 +448,22 @@ test('interruptedCall names the last turn\'s started call that never ended, and 
   assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { text: 'edit x.go', prompt: 'Re-run the interrupted tool call: `edit x.go`', waiting: true });
   assert.deepEqual(interruptedCall([tool('t5', 'pending', 'bash', '{"command":"echo y > b.txt"}')]), { text: 'echo y > b.txt', prompt: 'Re-run the interrupted command: `echo y > b.txt`', waiting: true });
 });
+
+test('interruptedCall names the command whose shell a cut read_bash polled', () => {
+  // Luna's run: bash returned after its initial wait while the command kept running, then read_bash was cut.
+  const items = [
+    { id: 'u1', kind: 'user', time: '', text: 'run sleep 60' },
+    { id: 'b1', kind: 'tool', time: '', tool: { name: 'bash', status: 'completed', input: '{"command":"sleep 60 && echo done","mode":"async","initial_wait":5}', output: '<command with shellId: 1 is still running after 5 seconds>' } },
+    { id: 'r1', kind: 'tool', time: '', tool: { name: 'read_bash', status: 'running', input: '{"shellId":"1","delay":30}' } },
+  ];
+  assert.deepEqual(interruptedCall(items), { text: 'sleep 60 && echo done', prompt: 'Re-run the interrupted command: `sleep 60 && echo done`', waiting: false });
+  // Compact rows (no input or output): the service's shell_id and the row argument do the same.
+  const compact = [
+    items[0],
+    { id: 'b1', kind: 'tool', time: '', tool: { name: 'bash', status: 'completed', display_arg: 'sleep 60 && echo done', shell_id: '1' } },
+    { id: 'r1', kind: 'tool', time: '', tool: { name: 'read_bash', status: 'running', display_arg: '1', shell_id: '1' } },
+  ];
+  assert.equal(interruptedCall(compact).text, 'sleep 60 && echo done');
+  // No loaded call started that shell: the follow-up names itself, as before.
+  assert.deepEqual(interruptedCall([items[0], items[2]]), { text: 'read_bash 1', prompt: 'Re-run the interrupted tool call: `read_bash 1`', waiting: false });
+});

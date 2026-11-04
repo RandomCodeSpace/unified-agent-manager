@@ -121,10 +121,27 @@ export function readableInput(name: string, input: string): { kind: 'command' | 
   return command ? { kind: 'command', text: command } : { kind: 'input', text: input };
 }
 
+/** The shell a call started or names: the service's `shell_id`, else its input's `shellId`, else its result's. */
+function shellOf(tool: ToolCall): string {
+  const named = tool.shell_id ?? inputOf(tool)?.shellId;
+  if (typeof named === 'string' && named) return named;
+  return toolKind(tool.name) === 'command' ? /shellId: ([^\s>]+)/.exec(tool.output ?? '')?.[1] ?? '' : '';
+}
+
+/** A call as the interrupted card names it: a command tool's command whole (its row argument in a compact row), else name and argument. */
+function callText(tool: ToolCall): { text: string; command: boolean } {
+  const read = tool.input ? readableInput(tool.name, tool.input) : null;
+  if (read?.kind === 'command') return { text: read.text.trim(), command: true };
+  const label = toolLabel(tool);
+  if (toolKind(tool.name) === 'command' && label.arg) return { text: label.arg, command: true };
+  return { text: `${label.name} ${label.arg}`.trim(), command: false };
+}
+
 /**
  * The last turn's main-agent tool call that never ended, as a restart left it: `text` names it
  * (a command whole), `prompt` is the re-run request, and `waiting` marks a call that was still
- * waiting on permission, so it never ran. Null when none.
+ * waiting on permission, so it never ran. A cut shell follow-up (read_bash, stop_bash, ...) names
+ * the command that started its shell, when that call is loaded. Null when none.
  */
 export function interruptedCall(items: readonly Item[]): { text: string; prompt: string; waiting: boolean } | null {
   for (let i = items.length - 1; i >= 0; i--) {
@@ -133,13 +150,16 @@ export function interruptedCall(items: readonly Item[]): { text: string; prompt:
     if (it.kind === 'user') return null;
     const tool = it.tool;
     if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending')) continue;
-    const read = tool.input ? readableInput(tool.name, tool.input) : null;
-    const label = toolLabel(tool);
-    const text = read?.kind === 'command' ? read.text.trim() : `${label.name} ${label.arg}`.trim();
-    const what = read?.kind === 'command' ? 'command' : 'tool call';
+    const shell = toolKind(tool.name) === 'command' ? '' : shellOf(tool);
+    let starter: ToolCall | undefined;
+    for (let j = i - 1; shell && j >= 0 && !starter; j--) {
+      const x = items[j].tool;
+      if (x && !items[j].agent_id && toolKind(x.name) === 'command' && shellOf(x) === shell) starter = x;
+    }
+    const { text, command } = callText(starter ?? tool);
     // A multi-line command or one with a backtick does not fit inline code.
     const quoted = /[`\n]/.test(text) ? `\n\n\`\`\`\n${text}\n\`\`\`` : ` \`${text}\``;
-    return { text, prompt: `Re-run the interrupted ${what}:${quoted}`, waiting: tool.status === 'pending' };
+    return { text, prompt: `Re-run the interrupted ${command ? 'command' : 'tool call'}:${quoted}`, waiting: tool.status === 'pending' };
   }
   return null;
 }
