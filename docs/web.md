@@ -84,11 +84,15 @@ The unit runs `<uam binary> __web` with the flags of that start
 (`--listen`, `--public-origin`, `--log-headers`). Its environment is only
 `HOME`, `PATH` and those of `UAM_CONFIG_DIR`, `UAM_SESSION_DIR`,
 `UAM_CACHE_DIR`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` that are set, as in a
-start from a clean shell. The access token stays in its file and no other
-variable is copied, so a service started at boot has no `UAM_BYOM_*` keys:
-a custom model that reads its key from the environment fails until you run
-`uam web stop`, then `uam web` from a shell that exports it. Each start
-rewrites the unit when the binary path, flags or those variables changed.
+start from a clean shell. The unit holds no secret: the access token stays
+in its file. The keys of custom models that read their key from a
+`UAM_BYOM_*` variable come from `boot-service.env` beside the access token
+file, which the unit loads with `EnvironmentFile=-` (a missing file is no
+error). Each `uam web` start rewrites that file, owner-only (0600) and
+atomically, with exactly those variables as that start has them; unset ones
+are left out, and with none the file is removed. A start from inside the
+unit's own service keeps the file as it is. Each start also rewrites the
+unit when the binary path, the flags or its environment changed.
 
 The unit restarts a service that fails, 10 seconds later, and gives up after
 five starts within two minutes. When a service started by hand already runs,
@@ -101,11 +105,12 @@ installed and `uam web` starts as before.
 
 `uam web status` shows the boot service: unavailable on this host (no
 systemd user session), not installed, enabled and starting at boot, or
-starting at login because lingering is off. It names the `UAM_BYOM_*`
-variables custom models read their key from, which the unit does not carry
-(names only, never values). It warns when logind's
+starting at login because lingering is off. It names (never shows) any
+`UAM_BYOM_*` variable a custom model reads its key from that was unset when
+`uam web` last wrote the key file. It warns when logind's
 `KillUserProcesses=yes` ends a `uam web` started from a login shell at
-logout. `uam web service remove` disables and deletes the unit and creates
+logout. `uam web service remove` disables and deletes the unit, deletes
+the key file, and creates
 `boot-service-removed` beside the access token file; `uam web` does not
 install the unit while that file exists. It leaves lingering on, since other
 user services may need it (`loginctl disable-linger` turns it off), and a

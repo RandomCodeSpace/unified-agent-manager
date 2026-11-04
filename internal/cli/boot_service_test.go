@@ -113,19 +113,63 @@ func TestBootServiceInstallsAndRefreshes(t *testing.T) {
 	if !strings.Contains(lines, "enabled; starts at login") || !strings.Contains(lines, "KillUserProcesses=yes") || strings.Contains(lines, "UAM_BYOM_") {
 		t.Fatalf("status = %q", lines)
 	}
+}
 
-	// A custom model whose key comes from the environment is named, by
-	// variable only; one with a saved key is not.
+// The boot service gets the keys custom models read from the environment
+// through an owner-only file holding exactly those variables, never through
+// the unit; status names (never shows) a key that was unset.
+func TestBootServiceKeyFile(t *testing.T) {
+	_, home := fakeSystemd(t, "running")
 	t.Setenv("UAM_BYOM_LAB", "lab-key-value")
+	t.Setenv("UAM_BYOM_GONE", "")
+	t.Setenv("UAM_UNRELATED", "unrelated-value")
 	cfg := `{"web_settings":{"custom_models":[` +
 		`{"name":"lab","base_url":"https://lab.example","model_id":"m","api_key_env":"UAM_BYOM_LAB"},` +
+		`{"name":"gone","base_url":"https://gone.example","model_id":"m","api_key_env":"UAM_BYOM_GONE"},` +
 		`{"name":"saved","base_url":"https://saved.example","model_id":"m","api_key_env":"","api_key":"sealed"}]}}`
 	if err := os.WriteFile(store.DefaultPath(), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines = strings.Join(bootServiceStatus(), "\n")
-	if !strings.Contains(lines, "environment has no UAM_BYOM_LAB;") || strings.Contains(lines, "lab-key-value") || strings.Contains(lines, "sealed") {
+	opts := webOptions{listen: "127.0.0.1:8260"}
+	captureCLIStdout(t, func() { installBootService("/usr/bin/uam", opts) })
+
+	info, err := os.Stat(bootEnvPath())
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("key file %v, mode %v; want 0600", err, info)
+	}
+	data, _ := os.ReadFile(bootEnvPath())
+	if string(data) != "UAM_BYOM_LAB='lab-key-value'\n" {
+		t.Fatalf("key file = %q", data)
+	}
+	unit := readUnit(t, home)
+	if !strings.Contains(unit, "EnvironmentFile=-"+bootEnvPath()+"\n") || strings.Contains(unit, "lab-key-value") || strings.Contains(unit, "UAM_BYOM_") {
+		t.Fatalf("unit:\n%s", unit)
+	}
+	lines := strings.Join(bootServiceStatus(), "\n")
+	if !strings.Contains(lines, "has no UAM_BYOM_GONE:") || strings.Contains(lines, "UAM_BYOM_LAB") || strings.Contains(lines, "lab-key-value") || strings.Contains(lines, "sealed") {
 		t.Fatalf("status = %q", lines)
+	}
+
+	// Started inside the unit, with fewer variables, the file stays as it is.
+	if err := os.WriteFile(selfCgroup, []byte("0::/user.slice/user-1000.slice/user@1000.service/app.slice/uam-web.service\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UAM_BYOM_LAB", "")
+	installBootService("/usr/bin/uam", opts)
+	if after, _ := os.ReadFile(bootEnvPath()); string(after) != string(data) {
+		t.Fatalf("key file rewritten inside the unit: %q", after)
+	}
+
+	// No model reads a key from the environment: the file goes.
+	if err := os.WriteFile(selfCgroup, []byte("0::/user.slice/user-1000.slice/session-1.scope\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.DefaultPath(), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installBootService("/usr/bin/uam", opts)
+	if _, err := os.Stat(bootEnvPath()); !os.IsNotExist(err) {
+		t.Fatalf("unused key file kept: %v", err)
 	}
 }
 
@@ -193,7 +237,13 @@ func TestWebServiceRemove(t *testing.T) {
 	captureCLIStdout(t, func() { installBootService("/usr/bin/uam", opts) })
 	readUnit(t, home)
 
+	if err := os.WriteFile(bootEnvPath(), []byte("UAM_BYOM_X='v'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "service", "remove"})) })
+	if _, err := os.Stat(bootEnvPath()); !os.IsNotExist(err) {
+		t.Fatalf("remove kept the key file: %v", err)
+	}
 	if !strings.Contains(out, "Boot service removed") || !strings.Contains(calls(), "systemctl --user disable uam-web.service") {
 		t.Fatalf("remove out %q, calls:\n%s", out, calls())
 	}

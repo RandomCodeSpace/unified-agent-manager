@@ -25,6 +25,7 @@ const (
 	bootUnitName    = "uam-web.service"
 	bootUnitMarker  = "# Written by uam web; remove it with: uam web service remove\n"
 	bootRemovedName = "boot-service-removed"
+	bootEnvName     = "boot-service.env"
 	bootUnavailable = "unavailable on this host (no systemd user session)"
 )
 
@@ -49,6 +50,62 @@ func bootUnitPath() (string, error) {
 // web does not install the unit again.
 func bootRemovedPath() string {
 	return filepath.Join(filepath.Dir(web.TokenPath()), bootRemovedName)
+}
+
+// bootEnvPath is the owner-only file that gives the boot service the API
+// keys custom models read from the environment.
+func bootEnvPath() string {
+	return filepath.Join(filepath.Dir(web.TokenPath()), bootEnvName)
+}
+
+// writeBootEnv writes, atomically and owner-only, the variables custom
+// models read their API key from, as this start has them; unset ones are
+// left out. With nothing to write the file is removed.
+func writeBootEnv() error {
+	path := bootEnvPath()
+	var b strings.Builder
+	for _, name := range byomKeyEnvs() {
+		v := os.Getenv(name)
+		// Single quotes keep the value literal; one that needs more is left out.
+		if v == "" || strings.ContainsAny(v, "'\r\n") {
+			continue
+		}
+		b.WriteString(name + "='" + v + "'\n")
+	}
+	if b.Len() == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), bootEnvName+".tmp.*") // created 0600
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// bootEnvNames lists the variable names in the boot service's key file.
+func bootEnvNames() []string {
+	data, err := os.ReadFile(bootEnvPath())
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for line := range strings.Lines(string(data)) {
+		if name, _, ok := strings.Cut(line, "="); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // bootRun runs a systemd tool from a fixed directory, with a time limit, and
@@ -98,6 +155,11 @@ func bootUnit(exe string, opts webOptions) (string, error) {
 		}
 		b.WriteString("Environment=" + v + "\n")
 	}
+	envFile := bootEnvPath()
+	if strings.ContainsAny(envFile, "\r\n") {
+		return "", errors.New("a line break cannot go in a systemd unit")
+	}
+	b.WriteString("EnvironmentFile=-" + strings.ReplaceAll(envFile, "%", "%%") + "\n")
 	argv := append([]string{exe, "__web"}, opts.args()...)
 	for i, a := range argv {
 		if argv[i], err = unitQuote(a, true); err != nil {
@@ -152,6 +214,9 @@ func installBootService(exe string, opts webOptions) {
 	if err != nil {
 		log.Warn("boot service", "err", err)
 		return
+	}
+	if err := writeBootEnv(); err != nil {
+		log.Warn("boot service: key file", "err", err)
 	}
 	if string(old) != unit {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- systemd's standard user unit directory.
@@ -208,8 +273,10 @@ func bootServiceStatus() []string {
 		}
 	}
 	lines := []string{"Boot service: " + line}
-	if names := byomKeyEnvs(); readErr == nil && isBootUnit(data) && len(names) > 0 {
-		lines = append(lines, "Warning: the boot service's environment has no "+strings.Join(names, ", ")+"; custom models that read their API key from it fail after a start at boot until uam web is started from a shell that exports it")
+	carried := bootEnvNames()
+	missing := slices.DeleteFunc(byomKeyEnvs(), func(n string) bool { return slices.Contains(carried, n) })
+	if readErr == nil && isBootUnit(data) && len(missing) > 0 {
+		lines = append(lines, "Warning: the boot service has no "+strings.Join(missing, ", ")+": unset when uam web last started; custom models that read their API key from it fail after a start at boot until uam web starts with it set")
 	}
 	if kill, _ := bootRun("busctl", "get-property", "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "KillUserProcesses"); kill == "b true" {
 		lines = append(lines, "Warning: logind ends a user's processes at logout (KillUserProcesses=yes), so a uam web started from a login shell stops then")
@@ -218,8 +285,7 @@ func bootServiceStatus() []string {
 }
 
 // byomKeyEnvs names the environment variables custom models read their API
-// key from (models with a saved key aside). The boot unit carries none of
-// them; only names are returned, never values.
+// key from (models with a saved key aside).
 func byomKeyEnvs() []string {
 	data, err := os.ReadFile(store.DefaultPath())
 	if err != nil {
@@ -268,6 +334,9 @@ func runWebService(args []string) error {
 		return err
 	}
 	if err := os.WriteFile(removed, []byte("uam web does not install its boot service while this file exists.\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.Remove(bootEnvPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if exists {
