@@ -1353,7 +1353,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent's version, computed from the drawing itself (nodes added, removed,
   renamed, restyled or moved by more than 8 px; edges added, removed,
   rebound or relabelled). A save also sends the Thread's session event, so
-  other browsers refresh. The agent learns of your edits as a note on your
+  other browsers refresh. `DELETE /api/sessions/{id}/drawings/{path}`
+  removes a drawing (204): its file and its record. It deletes only a
+  drawing of that Thread's record, which only a convert adds, so a file uam
+  did not create is 404; a path outside `docs/` is refused as for a save,
+  and a symbolic link in the drawing's place is refused (409) and left as it
+  is. A file already gone just loses its record. Every convert, save and
+  delete counts as an edit of the Thread, as an agent's edit tool would: the
+  file shows in the Thread's Changes and stops Settle and Archive while it
+  is not committed, also after a restart once the Thread's record is read
+  again. The agent learns of your edits as a note on your
   next message, "The user edited docs/flow.excalidraw since your version
   (v1 → v2): …", logged in the transcript as a one-line notice ("You edited
   docs/flow.excalidraw (v1 → v2).", without the change list), and through its
@@ -1372,8 +1381,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `enabled: true` runs the check again and is refused with its errors
   unless it passes; while enabled, every page's Content-Security-Policy
   gains `frame-src 'self' <origin>`, and is otherwise unchanged.
-  Session stats count `drawing.convert`, `drawing.save`, `drawing.read` and
-  `drawing.note`.
+  Session stats count `drawing.convert`, `drawing.save`, `drawing.delete`,
+  `drawing.read` and `drawing.note`.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
   flaky tests and report failures". **Routines** (the clock) in the
