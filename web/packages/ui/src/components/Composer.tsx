@@ -33,6 +33,7 @@ import { EditStrip, type Editing } from './EditResend';
 import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
 import { AlertDialog, PHONE, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu, type ActionItem } from './ui/menu';
@@ -1903,6 +1904,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {/* Saving a setting is words: the Task's state glyph is the one ring. */}
         {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
+        {/* The /btw mode cue, drawn with the text that names it: Send's icon alone does not say it asks aside. */}
+        {cmd?.name === ASIDE_COMMAND && asideOK && <Chip tone="accent" className="mr-1">Aside · not sent to the agent</Chip>}
         <Appear show={!subagent && (live || session.execution?.objective?.status === 'active')}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
