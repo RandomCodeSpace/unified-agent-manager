@@ -32,7 +32,7 @@ func listTasksRaw(ctx context.Context, api any, sessionID string) (raw json.RawM
 	if !f.IsValid() || f.Kind() != reflect.Pointer || f.IsNil() {
 		return nil, false, nil
 	}
-	m := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().MethodByName("Request")
+	m := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().MethodByName("Request") // #nosec G103 -- read-only access to the SDK's own client field, same type and address.
 	if !m.IsValid() {
 		return nil, false, nil
 	}
