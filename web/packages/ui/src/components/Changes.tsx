@@ -865,7 +865,7 @@ function renderHunk(h: DiffHunk, hi: number, notes?: LineNotes, from = 0, to = h
         <td colSpan={3}>
           {notes?.revert || notes?.open ? (
             <span className="sticky left-3 flex items-center gap-2 pr-3 font-sans">
-              <span className="min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
+              <span className="w-0 min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
               {first && <Button size="sm" variant="subtle" className="h-6 text-caption" onClick={() => notes.open?.({ side: first.side, line: first.line, code: first.code })}><MessageSquarePlus />Comment</Button>}
               {notes.revert && <Button size="sm" variant="subtle" className="h-6 text-caption" loading={notes.reverting === hi} disabled={notes.reverting != null} onClick={() => notes.revert?.(hi, hunkText(h))}><Undo2 />Revert</Button>}
             </span>

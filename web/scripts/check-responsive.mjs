@@ -1,5 +1,5 @@
 // Checks the dev mock at phone widths in the local Chromium: no page-level horizontal scroll, and no
-// control left outside the viewport unless a horizontal scroller holds it. Screenshots land in
+// control or diff code line left outside the viewport unless a horizontal scroller holds it. Screenshots land in
 // /tmp/responsive-check for a look.
 //
 //   cd web && npm run dev -- --port 5177   # in one shell, then
@@ -14,7 +14,7 @@ mkdirSync(out, { recursive: true });
 
 const measure = (page) => page.evaluate(() => {
   const off = [];
-  for (const e of document.querySelectorAll('button,a[href],input,textarea,select,[role=button],[role=tab],[role=radio],[role=switch],[role=menuitem]')) {
+  for (const e of document.querySelectorAll('button,a[href],input,textarea,select,[role=button],[role=tab],[role=radio],[role=switch],[role=menuitem],.diff td.code-cell')) {
     const r = e.getBoundingClientRect();
     if (!r.width || !r.height || (r.right <= innerWidth + 1 && r.left >= -1)) continue;
     // The closed drawer is aria-hidden and skipped (content-visibility: hidden), so its controls are not reachable anyway.
