@@ -1026,9 +1026,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div className="relative mt-2 flex min-h-0 flex-1 flex-col">
           {/* The subagent shown in the Thread's place, over its conversation, which keeps its place beneath. */}
           {viewed && <SubagentView session={session} subagent={viewed} />}
-          {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. */}
+          {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. Its opaque canvas lets Chrome composite the scroll at 1x (LCD text) instead of repainting every frame. */}
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-          <section aria-label="Conversation" inert={!!viewed} className="min-h-0 flex-1 scroll-pb-12 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+          <section aria-label="Conversation" inert={!!viewed} className="min-h-0 flex-1 scroll-pb-12 bg-canvas overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
             onKeyDown={e => {
               if (e.defaultPrevented) return;
               if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }

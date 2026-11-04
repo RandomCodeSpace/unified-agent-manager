@@ -358,13 +358,37 @@ function ensureFrame(): { queue: DiagramQueue; loaded: Promise<void> } {
   return { queue: q, loaded: ready };
 }
 
+/** How long scrolling must pause before a diagram renders. */
+const SCROLL_PAUSE = 150;
+let lastScroll = -Infinity;
+let watchingScroll = false;
+
+/**
+ * Resolves once no scroll has happened for SCROLL_PAUSE. The frame runs Mermaid on the page's main
+ * thread, and one render takes tens of milliseconds, so a render while the reader scrolls drops frames.
+ */
+function scrollPaused(): Promise<void> {
+  if (!watchingScroll) {
+    watchingScroll = true;
+    document.addEventListener('scroll', () => { lastScroll = Date.now(); }, { capture: true, passive: true });
+  }
+  return new Promise((resolve) => {
+    const check = () => {
+      const wait = lastScroll + SCROLL_PAUSE - Date.now();
+      if (wait > 0) setTimeout(check, wait);
+      else resolve();
+    };
+    check();
+  });
+}
+
 /** Renders Mermaid source to an SVG string; the same source renders once per page and scheme. */
 export function renderDiagram(source: string): Promise<Rendered> {
   const key = `${document.documentElement.dataset.theme ?? ''}\n${source}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const { queue: q, loaded: ready } = ensureFrame();
-  const p = ready.then(() => q.render(source, diagramTheme()));
+  const p = ready.then(scrollPaused).then(() => q.render(source, diagramTheme()));
   cache.set(key, p);
   p.catch((err: unknown) => {
     if (err instanceof DiagramError && err.transient) cache.delete(key);

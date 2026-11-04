@@ -243,6 +243,87 @@ export function budgetTasks(dir: string): MockTask[] {
   ];
 }
 
+/**
+ * `?mock&perf=2000`: Thread `t-perf`, a compact Thread with `count` items in turns of twenty, built
+ * the same on every load: prompts, thoughts, reads, searches, edits with diffs, shell output,
+ * subagents, todo writes, and replies with lists, code, tables and mermaid. scripts/perf.mjs measures it.
+ */
+export function perfTask(dir: string, count: number): MockTask {
+  const items: Item[] = [];
+  const subagents: Subagent[] = [];
+  const agentItems: Record<string, Item[]> = {};
+  const turn_timings: NonNullable<MockTask['turn_timings']> = [];
+  const at = (n: number) => count - n + 2;
+  const reply = (turn: number) => {
+    const parts = [`Package ${turn}: removed ${turn % 4} unused exports and updated the callers.`, '', `- \`pkg${turn}/src/index.ts\` (+${turn % 9} −${turn % 13})`, `- \`pkg${turn}/src/util.ts\`: kept \`pick\``, '- tests pass'];
+    if (turn % 3 === 0) parts.push('', '```mermaid', 'flowchart LR', `  A[pkg${turn}] --> B[core]`, '  B --> C[(store)]', '  A -.-> D{cli}', '```');
+    else if (turn % 3 === 1) parts.push('', '```ts', `export function pick${turn}<T>(o: T, keys: (keyof T)[]) {`, '  return Object.fromEntries(keys.map((k) => [k, o[k]]));', '}', '```');
+    else parts.push('', '| File | Removed | Result |', '|---|---|---|', `| index.ts | ${turn % 9} | pass |`, `| util.ts | ${turn % 13} | pass |`);
+    return parts.join('\n');
+  };
+  for (let n = 0; n < count; n++) {
+    const id = `p${n}`, turn = Math.floor(n / 20) + 1, min = at(n), file = `${dir}/pkg${turn}/src/index.ts`;
+    const time = ago(min);
+    switch (n % 20) {
+      case 0:
+        items.push({ id, kind: 'user', time, text: `Turn ${turn}: remove the unused exports from pkg${turn} and run its tests.` });
+        turn_timings.push({ id: `tt-p${turn}`, user_item_id: id, started_at: time, ended_at: ago(min - 19), state: 'completed', input_tokens: 40_000 + turn, output_tokens: 1_200, generation_ms: 30_000, todo: { done: turn % 4, total: 4, pending: 4 - (turn % 4), open: 4 - (turn % 4) } });
+        break;
+      case 1: case 10:
+        items.push({ id, kind: 'reasoning', time, text: `pkg${turn} exports ${(turn % 5) + 3} names. I will grep each for callers across the workspace before editing, then run only this package's tests.` });
+        break;
+      case 2: case 11: case 15:
+        items.push(tool(id, min, { name: 'view', title: `View pkg${turn}/src/index.ts`, status: 'completed', path: file, output: Array.from({ length: 12 }, (_, l) => `${l + 1}. export const helper${turn}x${l} = () => ${l};`).join('\n') }));
+        break;
+      case 3: case 16:
+        items.push(tool(id, min, { name: 'grep', title: `Search "helper${turn}" in packages/`, status: 'completed', output: `${(turn % 7) + 2} matches` }));
+        break;
+      case 4: case 14:
+        items.push({ id, kind: 'assistant', time, text: `Reading pkg${turn}: ${(turn % 5) + 3} exports, ${turn % 4} without callers.` });
+        break;
+      case 5: case 12: case 17:
+        items.push(tool(id, min, { name: 'edit', title: `Edit pkg${turn}/src/index.ts`, status: 'completed', path: file, output: EDIT_DIFF, edit_event_id: `edit-${id}`, file_edits: [{ path: `pkg${turn}/src/index.ts`, kind: 'modified', additions: 3, deletions: turn % 13, diff_status: 'available' }] }));
+        break;
+      case 6: case 13:
+        items.push(tool(id, min, { name: 'bash', title: `npm test -w pkg${turn}`, status: 'completed', input: JSON.stringify({ command: `npm test -w pkg${turn}` }), output: `${Array.from({ length: 8 }, (_, l) => `ok ${l + 1} - pkg${turn} case ${l + 1}`).join('\n')}\n# pass 8\n<shellId: ${n} completed with exit code 0>` }));
+        break;
+      case 7: {
+        const sid = `ps${turn}`;
+        items.push(tool(id, min, { name: 'task', title: `Audit callers of pkg${turn}`, status: 'completed', input: JSON.stringify({ description: `Audit callers of pkg${turn}` }), output: `pkg${turn}: ${turn % 4} exports without callers.` }));
+        subagents.push({ id: sid, parent_tool_call_id: id, name: `Audit callers of pkg${turn}`, description: `List the callers of pkg${turn}'s exports.`, status: 'completed', started_at: time, ended_at: ago(min - 1), model: 'gpt-5-mini', effort: 'low', tokens: 9_000 + turn, tool_calls: 3, result_summary: `pkg${turn}: ${turn % 4} exports without callers.` });
+        agentItems[sid] = [
+          tool(`${sid}-g`, min - 0.5, { name: 'grep', title: `Search "export" in pkg${turn}`, status: 'completed', output: '4 matches' }, sid),
+          { id: `${sid}-m`, kind: 'assistant', time: ago(min - 1), agent_id: sid, text: `pkg${turn}: ${turn % 4} exports without callers.` },
+        ];
+        break;
+      }
+      case 8: case 18:
+        items.push(tool(id, min, { name: 'sql', title: 'Update todos', status: 'completed', input: JSON.stringify({ query: `UPDATE todos SET status = 'done' WHERE id = 'pkg${turn}'` }), output: '1 row(s) updated.' }));
+        break;
+      default:
+        items.push({ id, kind: 'assistant', time, text: reply(turn) });
+    }
+  }
+  return task({
+    id: 't-perf',
+    project_id: 'p1',
+    workdir: dir,
+    model: 'claude-haiku-4.5',
+    last_model: 'claude-haiku-4.5',
+    name: `Performance fixture: ${count} items`,
+    title: '',
+    state: 'completed',
+    representation: 'compact-v1',
+    detail_stream: true,
+    created_at: ago(count + 10),
+    updated_at: ago(1),
+    items,
+    subagents,
+    agentItems,
+    turn_timings,
+  });
+}
+
 export function seed(): MockState {
   const wholeTexts: Record<string, string> = {};
   const meta: Meta = {
