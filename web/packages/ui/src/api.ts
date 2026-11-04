@@ -1069,6 +1069,8 @@ export interface ToolCall {
   output?: string;
   /** A shell command's exit code, when the provider reports it. */
   exit_code?: number;
+  /** The shell a command started or a follow-up (read_bash, stop_bash) names. */
+  shell_id?: string;
   /** Latest human status of a running call, at most 512 UTF-8 bytes; absent once it ends. */
   progress?: string;
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */

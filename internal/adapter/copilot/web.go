@@ -1285,6 +1285,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
+			// Keep false in every mode, Yolo included: a 2026-11-04 probe
+			// (CLI 1.0.105) with true after a kill -9 did not bring back the
+			// pending permission, left the session busy and swallowed the
+			// next prompt until Cancel. With false, a new prompt works.
 			ContinuePendingWork:     copilot.Bool(false),
 			OnPermissionRequest:     deferPermission,
 			OnUserInputRequest:      c.askUser,
@@ -4643,6 +4647,16 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			delete(t.clippedInput, d.ToolCallID)
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	case *rpc.PermissionRequestedData:
+		// Recorded history only (live permissions are handled before this):
+		// a call still waiting on permission never ran, so it reads pending.
+		if !t.permissionWait(permissionToolCallID(d.PermissionRequest), agentapi.ToolRunning, agentapi.ToolPending, &it) {
+			return it, false
+		}
+	case *rpc.PermissionCompletedData:
+		if d.ToolCallID == nil || !t.permissionWait(*d.ToolCallID, agentapi.ToolPending, agentapi.ToolRunning, &it) {
+			return it, false
+		}
 	case *rpc.ToolExecutionProgressData:
 		if t.isHidden(d.ToolCallID) || !t.toolProgress(d, &it) {
 			return it, false
@@ -4739,6 +4753,18 @@ func skillLoad(ev copilot.SessionEvent) (agentapi.SkillLoad, bool) {
 		load.Description = clip(strings.TrimSpace(displaytext.Sanitize(*description)), maxSkillDescription)
 	}
 	return load, true
+}
+
+// permissionWait moves the started call id from status from to status to
+// and reports the updated item; false when the call is not in from.
+func (t *transcript) permissionWait(id string, from, to agentapi.ToolStatus, it *agentapi.Item) bool {
+	tc := t.tools[id]
+	if tc == nil || tc.Status != from || t.toolAgents[id] != it.AgentID {
+		return false
+	}
+	tc.Status = to
+	it.ID, it.Kind, it.Tool, it.Clipped = id, agentapi.ItemTool, cloneTool(tc), t.clippedInput[id]
+	return true
 }
 
 func (t *transcript) toolProgress(d *rpc.ToolExecutionProgressData, it *agentapi.Item) bool {

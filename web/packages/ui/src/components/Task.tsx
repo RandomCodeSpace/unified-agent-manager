@@ -3,11 +3,11 @@ import { planKey } from '../lib/richMarkdown';
 import { ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, type Badge, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
-import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
@@ -30,7 +30,7 @@ import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
-import { HandoffCard } from './Handoff';
+import { HandoffCard, InterruptedCard } from './Handoff';
 import { DrawingsProvider } from './Drawing';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
@@ -421,6 +421,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   else if (working && lastTiming && !lastTiming.ended_at && lastTiming.id !== runningTiming) setRunningTiming(lastTiming.id);
   const compactWindow = session.representation === 'compact-v1';
   const liveItems = session.recent_items ?? session.items;
+  // A restart cut the turn while a tool call ran: its card offers Run again, which only drafts a prompt.
+  const cutCall = session.state === 'interrupted' ? interruptedCall(liveItems) : null;
+  const [seed, setSeed] = useState<{ text: string } | null>(null);
+  const loadCall = (itemId: string) => api.itemBody(session.id, itemId, '').then((body) => body.item);
   // A prompt begun since its end starts the next turn: the queue's next is sent with the state never seen turning.
   const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming && !liveItems.some((item) => item.kind === 'user' && !item.delivery && !(Date.parse(item.time) < Date.parse(lastTiming.ended_at!)));
   // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
@@ -1086,7 +1090,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                   <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
                 </Collapse>
               ))}
-              {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
+              {cutCall && !session.history_after ? (
+                <InterruptedCard lead={INTERRUPTED_TEXT} call={cutCall} onRunAgain={!readOnly(session) && !viewed ? async () => setSeed({ text: await rerunRequest(cutCall, loadCall) }) : undefined} onAskAgain={!readOnly(session) && !viewed ? async () => api.prompt(session.id, await rerunRequest(cutCall, loadCall), newRequestId(), 'send') : undefined} blocked={session.budget?.reached ? 'The budget is reached; raise it in Tools → Usage to ask again.' : ''} />
+              ) : session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
               {session.handoff && !live && !session.history_after && (
                 <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
               )}
@@ -1123,7 +1129,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </div>
           )}
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} seed={seed} />
           <ComposerFoot>
             <PlaceFoot session={session} project={project} />
             {/* At the right, an item of this row (the group is `contents`): the time split. What the turn waits on now is the strip's live line. */}

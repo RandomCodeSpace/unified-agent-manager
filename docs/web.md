@@ -1457,7 +1457,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the Thread), Stopped at the time limit, or Skipped and why. Routines are
   kept in `sessions.json`; the next run survives a restart. Firings missed
   while the service was down run once when it starts, not once each, and
-  a run the stop interrupted is recorded as failed. Pausing clears the
+  a run the stop interrupted is recorded as failed ("service restarted"):
+  its Thread fails and sends the usual failure notification. That run is not
+  run again, and the next scheduled run fires on time. Pausing clears the
   next run; resuming, or changing the schedule, sets it from then. Removing
   the Project removes its routines.
 - **Subagents**: when the agent delegates work to a subagent, the reply that
@@ -3001,6 +3003,21 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 - **Reboot.** A reboot ends the service and every running turn. Records keep
   the exact conversation IDs, so conversations can be reopened afterwards, but
   the interrupted turn is not continued. UAM does not install a boot service.
+- **Restart mid-turn.** A restart (or crash) never resumes or replays the turn
+  it cut, Yolo included: Copilot conversations reopen without continuing
+  pending work, so the next prompt runs normally. A shell command or tool
+  call that had started and not finished is shown as an **Interrupted** card
+  naming it. **Run again** only puts a prompt to run it again in the
+  composer; nothing runs until you send it, and the usual permission rules
+  apply. A call that was still waiting for your permission never ran: its
+  card says "Not run: it was waiting for your permission", and **Ask again**
+  sends the request to run it again at once, so the permission prompt comes
+  back after one click (never skipped). Neither button shows on a read-only
+  Thread, and Ask again is disabled while the budget is reached. Either
+  request quotes the command from the call's full record, never the card's
+  shortened label; when that record cannot be read, it names the call
+  instead so the agent uses its own record. A command
+  the restart did not stop may still have run to its end.
 - **Retired UAM terminal sessions.** Saved terminal records and profiles stay
   on disk but have no controls in current UAM. Use the older binary to stop
   existing terminal hosts before replacing it. Copilot conversations can

@@ -477,3 +477,32 @@ func TestReadHistoryKeepsShellExitCodes(t *testing.T) {
 		t.Fatalf("items = %+v", h.Items)
 	}
 }
+
+// A call whose permission was never answered (the CLI ended while it waited)
+// reads pending: it never ran. One answered then cut while it ran reads running.
+func TestReadHistoryMarksACallWaitingOnPermissionPending(t *testing.T) {
+	waiting, ran := "call-wait", "call-ran"
+	fc := &fakeClient{journal: []copilot.SessionEvent{
+		ev("u1", &rpc.UserMessageData{Content: "run them"}),
+		ev("s1", &rpc.ToolExecutionStartData{ToolCallID: ran, ToolName: "bash", Arguments: map[string]any{"command": "sleep 60"}}),
+		ev("p1", &rpc.PermissionRequestedData{RequestID: "r1", PermissionRequest: &rpc.PermissionRequestShell{ToolCallID: &ran, FullCommandText: "sleep 60"}}),
+		ev("c1", &rpc.PermissionCompletedData{RequestID: "r1", ToolCallID: &ran, Result: &rpc.PermissionApproved{}}),
+		ev("s2", &rpc.ToolExecutionStartData{ToolCallID: waiting, ToolName: "bash", Arguments: map[string]any{"command": "echo y > b.txt"}}),
+		ev("p2", &rpc.PermissionRequestedData{RequestID: "r2", PermissionRequest: &rpc.PermissionRequestShell{ToolCallID: &waiting, FullCommandText: "echo y > b.txt"}}),
+	}}
+	p := readerProvider(fc)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	h, err := p.ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "cut"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]agentapi.ToolStatus{}
+	for _, it := range h.Items {
+		if it.Tool != nil {
+			status[it.ID] = it.Tool.Status
+		}
+	}
+	if want := map[string]agentapi.ToolStatus{ran: agentapi.ToolRunning, waiting: agentapi.ToolPending}; !reflect.DeepEqual(status, want) {
+		t.Fatalf("tool statuses = %v, want %v", status, want)
+	}
+}

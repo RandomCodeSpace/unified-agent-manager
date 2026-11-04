@@ -770,6 +770,9 @@ var knownStates = map[string]bool{
 
 const interruptedDetail = "the uam web service stopped while this turn was running"
 
+// restartedDetail ends a routine run whose turn a restart interrupted.
+const restartedDetail = "service restarted"
+
 // Start checks providers, loads their model catalogs and the web records,
 // assigns records from before Projects existed to a Project, and gives each
 // Project without a valid badge one. A provider whose check fails is listed
@@ -2801,6 +2804,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			}
 			if s.context == nil || *s.context != usage {
 				s.context = &usage
+				// Not part of persistKey: without this the report is saved only
+				// if something else dirties the session before the next flush.
+				m.dirty[s.id] = struct{}{}
 			}
 		}
 	case agentapi.EventModelSelection:

@@ -443,8 +443,18 @@ func TestRoutineRestartRunsAMissedFiringOnce(t *testing.T) {
 	}
 	if k := routine(t, m2, project, kept.ID); !k.NextRun.Equal(kept.NextRun) || len(k.Runs) != 1 {
 		t.Fatalf("kept routine = %+v, next run was %v", k, kept.NextRun)
-	} else if k.Runs[0].ID != interrupted.ID || k.Runs[0].Outcome != RunFailed || !strings.Contains(k.Runs[0].Reason, "stopped") {
+	} else if k.Runs[0].ID != interrupted.ID || k.Runs[0].Outcome != RunFailed || k.Runs[0].Reason != restartedDetail {
 		t.Fatalf("interrupted run = %+v", k.Runs[0])
+	}
+	// The run's Thread failed, with the failure notice an unattended run needs.
+	if s := mustSummary(t, m2, interrupted.TaskID); s.State != StateFailed || s.StateDetail != restartedDetail {
+		t.Fatalf("interrupted run's thread = %s %q", s.State, s.StateDetail)
+	}
+	m2.mu.Lock()
+	notices := slices.Clone(m2.noticeJournal.records)
+	m2.mu.Unlock()
+	if !slices.ContainsFunc(notices, func(n sourceNotice) bool { return n.SessionID == interrupted.TaskID && n.Kind == noticeFailed }) {
+		t.Fatalf("notices = %+v, want a failure notice for the interrupted run", notices)
 	}
 }
 
@@ -512,6 +522,30 @@ func TestRunOutcomeNamesTheThread(t *testing.T) {
 		if outcome, reason, _ := m.runOutcome(r, &activeRun{taskID: id}, time.Now()); outcome != want[0] || reason != want[1] {
 			t.Fatalf("%s: outcome %q, reason %q", id, outcome, reason)
 		}
+	}
+}
+
+// An interruption that was not a uam restart is reported as such, still
+// failing the run's Thread with the failure notice.
+func TestRoutineRunInterruptedWithoutRestart(t *testing.T) {
+	m, _, _, project := newRoutineManager(t)
+	r := mustRoutine(t, m, project, hourly("Cut"))
+	run := runNow(t, m, project, r.ID)
+	m.mu.Lock()
+	m.sessions[run.TaskID].setBase(StateInterrupted, "the provider exited")
+	m.mu.Unlock()
+	m.checkRoutines()
+	if got := routine(t, m, project, r.ID).Runs[0]; got.Outcome != RunFailed || got.Reason != "interrupted" {
+		t.Fatalf("run = %+v", got)
+	}
+	if s := mustSummary(t, m, run.TaskID); s.State != StateFailed || s.StateDetail != "interrupted" {
+		t.Fatalf("thread = %s %q", s.State, s.StateDetail)
+	}
+	m.mu.Lock()
+	notices := slices.Clone(m.noticeJournal.records)
+	m.mu.Unlock()
+	if !slices.ContainsFunc(notices, func(n sourceNotice) bool { return n.SessionID == run.TaskID && n.Kind == noticeFailed }) {
+		t.Fatalf("notices = %+v, want a failure notice", notices)
 	}
 }
 

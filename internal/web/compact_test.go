@@ -126,6 +126,26 @@ func TestCompactTestCounts(t *testing.T) {
 	}
 }
 
+// A compact row keeps the shell a command started or a follow-up names,
+// though its input and output are dropped.
+func TestCompactShellID(t *testing.T) {
+	for _, tt := range []struct{ name, input, output, want string }{
+		{"async bash", `{"command":"sleep 60","mode":"async"}`, "<command started in background with shellId: 1>", "1"},
+		{"named shell", `{"command":"sleep 60","shellId":"sleep60"}`, "", "sleep60"},
+		{"read_bash", `{"shellId":"1","delay":5}`, "", "1"},
+		{"plain", `{"command":"ls"}`, "a.txt", ""},
+	} {
+		name := "bash"
+		if tt.name == "read_bash" {
+			name = "read_bash"
+		}
+		row := projectItem(agentapi.Item{ID: "x", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: name, Input: tt.input, Output: tt.output, Status: agentapi.ToolCompleted}})
+		if row.Tool.ShellID != tt.want {
+			t.Fatalf("%s: shell_id = %q, want %q", tt.name, row.Tool.ShellID, tt.want)
+		}
+	}
+}
+
 func TestCompactTestCountsReachPagesAndRowUpdates(t *testing.T) {
 	it := agentapi.Item{ID: "check", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"go test ./..."}`, Output: "ok\texample/pass\t0.01s\n", Status: agentapi.ToolCompleted}}
 	items := []agentapi.Item{it}

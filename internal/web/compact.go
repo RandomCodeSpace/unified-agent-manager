@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -38,6 +39,9 @@ type compactTool struct {
 	HasInput   bool               `json:"has_input"`
 	HasOutput  bool               `json:"has_output"`
 	Tests      *compactTestCounts `json:"tests,omitempty"`
+	// ShellID is the shell a command started or a follow-up (read_bash,
+	// stop_bash, ...) names, so a cut follow-up can name its command.
+	ShellID string `json:"shell_id,omitempty"`
 }
 type compactTestCounts struct {
 	Passed int `json:"passed"`
@@ -167,7 +171,7 @@ func projectItem(it agentapi.Item) compactItem {
 				paths = []string{tool.Declaration.Path}
 			}
 		}
-		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths}
+		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths, ShellID: shellID(&tool)}
 		if commandTools[strings.ToLower(tool.Name)] && (tool.Status == agentapi.ToolCompleted || tool.Status == agentapi.ToolFailed) && !it.Clipped && !strings.Contains(tool.Output, truncatedMarker) && len(commandChecks(toolCommand(&tool))) > 0 {
 			if counts := countsOf(tool.Output); counts != nil {
 				projected.Tests = &compactTestCounts{Passed: counts.passed, Failed: counts.failed}
@@ -446,6 +450,29 @@ func (m *Manager) CompactHistoryPage(id, agent, before, after string) (compactHi
 }
 
 // compactArgument is the argument tool is shown by and the path it names (toolargs.Compact).
+// shellIDText finds the shell a command tool's result names, e.g.
+// "<command started in background with shellId: 3>".
+var shellIDText = regexp.MustCompile(`shellId: ([^\s>]{1,64})`)
+
+// shellID is the shellId a tool's input names, else the one a command tool's
+// output reports; "" when neither does.
+func shellID(tool *agentapi.ToolCall) string {
+	if strings.Contains(tool.Input, `"shellId"`) {
+		var in struct {
+			ShellID string `json:"shellId"`
+		}
+		if json.Unmarshal([]byte(tool.Input), &in) == nil && in.ShellID != "" && len(in.ShellID) <= 64 {
+			return in.ShellID
+		}
+	}
+	if commandTools[strings.ToLower(tool.Name)] {
+		if m := shellIDText.FindStringSubmatch(tool.Output); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
 func compactArgument(tool *agentapi.ToolCall) (arg, path string) {
 	return toolargs.Compact(tool.Name, tool.Input)
 }

@@ -339,11 +339,13 @@ interface ComposerProps {
   /** A subagent fills the Conversation pane: the composer stays, read-only, showing its settings; `onThread` goes back to write. */
   subagent?: Subagent;
   onThread?: () => void;
+  /** Text to add to the draft, e.g. an interrupted card's Run again; a new object adds it again. Never sent by itself. */
+  seed?: { text: string } | null;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread || a.seed !== b.seed) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -386,7 +388,7 @@ const BUDGET_REACHED = 'budget_reached';
 /** Why a subagent's model and effort cannot change. */
 const SPAWNED = 'Set when the Thread spawned it; a subagent cannot change it.';
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread }: Readonly<ComposerProps>) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread, seed = null }: Readonly<ComposerProps>) {
   const api = useApi();
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
@@ -878,6 +880,21 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setUploads((resendable.attachments ?? []).flatMap((a) => (a.id ? [storedUpload(api, session.id, { id: a.id, name: a.name, size: a.size ?? 0, kind: kindOf(a.mime) })] : [])));
     textarea.current?.focus();
   }
+  // A seed joins the draft once, after any text already there; a remount does not add it again.
+  const [seeded, setSeeded] = useState(seed);
+  if (seed !== seeded) {
+    setSeeded(seed);
+    if (seed) {
+      const t = text.trim() ? `${text}\n\n${seed.text}` : seed.text;
+      updateText(t, t.length);
+    }
+  }
+  useEffect(() => {
+    const el = textarea.current;
+    if (!seeded || !el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [seeded]);
 
   const cmd = commands && !answering && !editing ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
