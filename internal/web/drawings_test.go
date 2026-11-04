@@ -482,6 +482,125 @@ func TestDeletingAThreadForgetsItsDrawings(t *testing.T) {
 	}
 }
 
+// DELETE removes a drawing uam created, file and entry, and nothing else: a
+// file it did not create, a path outside docs/ or with traversal, and a
+// symbolic link in the drawing's place are refused and left as they are.
+func TestDrawingDeleteRemovesOnlyItsOwnDrawings(t *testing.T) {
+	ts, sum, _, dir := drawingTask(t)
+	id := sum.ID
+	del := func(p string, opts ...reqOpt) int {
+		return ts.do(http.MethodDelete, "/api/sessions/"+id+"/drawings/"+p, "", opts...).Code
+	}
+	putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": sceneA(t), "format": "excalidraw", "origin": "convert"})
+	file := filepath.Join(dir, "docs", "flow.excalidraw")
+	if code := del("docs/flow.excalidraw"); code != http.StatusUnauthorized {
+		t.Fatalf("delete without sign-in = %d", code)
+	}
+	if code := del("docs/flow.excalidraw", withCookie(ts)); code != http.StatusNoContent {
+		t.Fatalf("delete = %d", code)
+	}
+	if _, err := os.Lstat(file); !os.IsNotExist(err) {
+		t.Fatalf("file after delete: %v", err)
+	}
+	if list, _ := ts.m.Drawings(id); len(list) != 0 || countOf(ts.m, "drawing.delete") != 1 {
+		t.Fatalf("drawings after delete = %+v", list)
+	}
+	if code := del("docs/flow.excalidraw", withCookie(ts)); code != http.StatusNotFound {
+		t.Fatalf("second delete = %d", code)
+	}
+	// A file uam did not create, even a drawing, is not uam's to delete.
+	mine := filepath.Join(dir, "docs", "mine.excalidraw")
+	writeFile(t, mine, sceneA(t))
+	writeFile(t, filepath.Join(dir, "notes.txt"), "keep\n")
+	for p, want := range map[string]int{"docs/mine.excalidraw": http.StatusNotFound, "notes.txt": http.StatusBadRequest, "docs/notes.txt": http.StatusBadRequest} {
+		if code := del(p, withCookie(ts)); code != want {
+			t.Fatalf("delete %s = %d, want %d", p, code, want)
+		}
+	}
+	for _, p := range []string{"docs/../notes.txt", "docs/../../flow.excalidraw", "/etc/flow.excalidraw", "docs//mine.excalidraw"} {
+		if err := ts.m.DeleteDrawing(id, p); err == nil {
+			t.Fatalf("DeleteDrawing(%q) passed", p)
+		}
+	}
+	for _, f := range []string{mine, filepath.Join(dir, "notes.txt")} {
+		if _, err := os.Stat(f); err != nil {
+			t.Fatalf("%s went: %v", f, err)
+		}
+	}
+	// A drawing replaced by a symbolic link is refused; neither the link nor
+	// its target goes.
+	putDrawing(ts, id, "docs/link.excalidraw", map[string]any{"content": sceneA(t), "format": "excalidraw", "origin": "convert"})
+	link := filepath.Join(dir, "docs", "link.excalidraw")
+	outside := filepath.Join(t.TempDir(), "outside.excalidraw")
+	writeFile(t, outside, sceneA(t))
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if code := del("docs/link.excalidraw", withCookie(ts)); code != http.StatusConflict {
+		t.Fatalf("delete a link = %d", code)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("the link went: %v", err)
+	}
+	if data, _ := os.ReadFile(outside); string(data) != sceneA(t) {
+		t.Fatal("the file outside the thread changed")
+	}
+	// A drawing whose file is already gone just loses its entry.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if code := del("docs/link.excalidraw", withCookie(ts)); code != http.StatusNoContent {
+		t.Fatalf("delete a missing file = %d", code)
+	}
+}
+
+// The drawing files uam writes are the Thread's edits: Changes lists them,
+// the Settle guard counts them, and they stay so once the provider's record
+// is read again (as after a restart); a deleted drawing no longer counts.
+func TestDrawingWritesAreTheThreadsEdits(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	g := newGitTask(t, repo)
+	if refused := unsavedRefusal(t, g.m, g.id); refused != nil {
+		t.Fatalf("refused before any drawing: %+v", refused)
+	}
+	if w, _ := putDrawing(g.ts, g.id, "docs/flow.excalidraw", map[string]any{"content": sceneA(t), "format": "excalidraw", "origin": "convert"}); w.Code != http.StatusOK {
+		t.Fatalf("convert = %d %s", w.Code, w.Body)
+	}
+	listed := func() bool {
+		changes, err := g.m.gitChanges(t.Context(), g.id, ScopeTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slices.ContainsFunc(changes.Files, func(f ChangedFile) bool { return f.Path == "docs/flow.excalidraw" })
+	}
+	if !listed() {
+		t.Fatal("the drawing is not in the Thread's Changes")
+	}
+	if refused := unsavedRefusal(t, g.m, g.id); refused == nil || !slices.Equal(refused.Refs, []string{"docs/flow.excalidraw"}) {
+		t.Fatalf("settle refusal = %+v", refused)
+	}
+	s, err := g.m.lookup(g.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.m.mu.Lock()
+	s.edits = nil
+	g.m.noteHistoryLocked(s, agentapi.History{}, true)
+	g.m.mu.Unlock()
+	if !listed() {
+		t.Fatal("the drawing left Changes once the record was read again")
+	}
+	if code := g.ts.do(http.MethodDelete, "/api/sessions/"+g.id+"/drawings/docs/flow.excalidraw", "", withCookie(g.ts)).Code; code != http.StatusNoContent {
+		t.Fatalf("delete = %d", code)
+	}
+	if refused := unsavedRefusal(t, g.m, g.id); refused != nil {
+		t.Fatalf("refused after the drawing was deleted: %+v", refused)
+	}
+}
+
 // uam_diagram_read lists the drawings, or describes one with the changes
 // since the agent's version, which then becomes the current one.
 func TestDiagramReadTool(t *testing.T) {

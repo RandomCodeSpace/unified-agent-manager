@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -339,14 +340,88 @@ func (m *Manager) SaveDrawing(id, p string, req DrawingSave) (DrawingSaveResult,
 	if err != nil {
 		return DrawingSaveResult{}, err
 	}
-	// After the index work, so drawings.mu is never held under mu's turn.
-	m.mu.Lock()
-	if s := m.sessions[id]; s != nil && !s.removed {
-		summary := m.summaryLocked(s)
-		m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
-	}
-	m.mu.Unlock()
+	m.drawingWritten(id, rel)
 	return out, nil
+}
+
+// drawingWritten records the drawing file rel uam wrote or removed as an
+// edit of the Task id and tells the pages. It runs after the index work, so
+// drawings.mu is never held under mu's turn.
+func (m *Manager) drawingWritten(id, rel string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if s == nil || s.removed {
+		return
+	}
+	if s.noteEdits(drawingEdit(s, rel, m.now())) {
+		m.kickDiffLocked(s)
+	}
+	summary := m.summaryLocked(s)
+	m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
+}
+
+// drawingEdit is uam's write of the drawing file rel as the completed edit
+// tool call noteEdits takes, so Changes and the Settle guard count the file
+// as the Thread's own.
+func drawingEdit(s *webSession, rel string, at time.Time) agentapi.Item {
+	input, _ := json.Marshal(map[string]string{"path": filepath.Join(s.workdir, filepath.FromSlash(rel))})
+	return agentapi.Item{Kind: agentapi.ItemTool, Time: at, Tool: &agentapi.ToolCall{Name: "create", Status: agentapi.ToolCompleted, Input: string(input)}}
+}
+
+// DeleteDrawing removes the drawing p of the Task id: its file and its
+// entry. Only a drawing in the Task's index, which only a convert adds, can
+// be deleted; a symbolic link or anything but a regular file is refused,
+// and a file already gone just drops the entry.
+func (m *Manager) DeleteDrawing(id, p string) error {
+	dir, err := m.sessionDir(id)
+	if err != nil {
+		return err
+	}
+	rel, _, err := drawingPath(p)
+	if err != nil {
+		return err
+	}
+	if err := m.removeDrawing(id, dir, rel); err != nil {
+		return err
+	}
+	m.drawingWritten(id, rel)
+	return nil
+}
+
+// removeDrawing is DeleteDrawing's file and index work, under drawings.mu.
+func (m *Manager) removeDrawing(id, dir, rel string) error {
+	m.drawings.mu.Lock()
+	defer m.drawings.mu.Unlock()
+	idx := m.drawingsLocked(id)
+	if idx.Drawings[rel] == nil {
+		return newError(http.StatusNotFound, "drawing not found")
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(rel)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case !info.Mode().IsRegular():
+		return newError(http.StatusConflict, "%s is not a regular file; uam leaves it alone", rel)
+	default:
+		if err := root.Remove(rel); err != nil {
+			log.Warn("remove a drawing failed", "session", id, "error", err)
+			return newError(http.StatusInternalServerError, "uam could not remove %s", rel)
+		}
+	}
+	delete(idx.Drawings, rel)
+	if err := m.saveDrawingsLocked(id, idx); err != nil {
+		log.Warn("write the drawings index failed", "session", id, "error", err)
+		return newError(http.StatusInternalServerError, "uam could not record the drawing")
+	}
+	m.count("drawing.delete")
+	return nil
 }
 
 // writeDrawing is SaveDrawing's file and index work, under drawings.mu.
@@ -579,6 +654,13 @@ func (s *Server) drawingRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("DELETE /api/sessions/{id}/drawings/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.m.DeleteDrawing(r.PathValue("id"), r.PathValue("path")); err != nil {
+			writeFailure(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/settings/drawio/check", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
