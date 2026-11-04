@@ -208,7 +208,8 @@ func Spawn(ctx context.Context, exe string, args []string) error {
 		// whose bus is at the standard place: point systemd-run at it.
 		if runtime := "/run/user/" + strconv.Itoa(os.Getuid()); os.Getenv("XDG_RUNTIME_DIR") == "" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
 			if _, err := os.Stat(filepath.Join(runtime, "bus")); err == nil {
-				env = append(env, "XDG_RUNTIME_DIR="+runtime)
+				// An empty but set bus address makes systemd-run refuse the bus.
+				env = append(env, "XDG_RUNTIME_DIR="+runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(runtime, "bus"))
 			}
 		}
 		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...), env...)
