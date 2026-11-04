@@ -203,16 +203,7 @@ func Spawn(ctx context.Context, exe string, args []string) error {
 	argv := append([]string{exe, "__web"}, args...)
 	if run := userScope(); run != "" {
 		unit := "uam-web-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-		var env []string
-		// A launcher with a cleared environment still runs under the manager,
-		// whose bus is at the standard place: point systemd-run at it.
-		if runtime := "/run/user/" + strconv.Itoa(os.Getuid()); os.Getenv("XDG_RUNTIME_DIR") == "" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
-			if _, err := os.Stat(filepath.Join(runtime, "bus")); err == nil {
-				// An empty but set bus address makes systemd-run refuse the bus.
-				env = append(env, "XDG_RUNTIME_DIR="+runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(runtime, "bus"))
-			}
-		}
-		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...), env...)
+		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...), UserBusEnv()...)
 		// systemd-run exits without a word when it cannot make the scope
 		// (no user bus here): start the service as before.
 		if !errors.Is(err, io.EOF) {
@@ -220,6 +211,20 @@ func Spawn(ctx context.Context, exe string, args []string) error {
 		}
 	}
 	return spawn(ctx, argv)
+}
+
+// UserBusEnv returns what to add to this process's environment for
+// systemctl --user and systemd-run --user: a launcher with a cleared
+// environment still runs under the user's manager, whose bus is at the
+// standard place.
+func UserBusEnv() []string {
+	if runtime := "/run/user/" + strconv.Itoa(os.Getuid()); os.Getenv("XDG_RUNTIME_DIR") == "" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		if _, err := os.Stat(filepath.Join(runtime, "bus")); err == nil {
+			// An empty but set bus address makes systemd-run refuse the bus.
+			return []string{"XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + filepath.Join(runtime, "bus")}
+		}
+	}
+	return nil
 }
 
 // userScope returns systemd-run when the launcher runs under the user's

@@ -63,6 +63,7 @@ usage:
                                    start the authenticated web service
   uam web status [--json]           show service status
   uam web stop                      stop the web service
+  uam web service remove            remove the boot service uam web installs
   uam web token set                 set the access token from stdin
   uam help
   uam version`)

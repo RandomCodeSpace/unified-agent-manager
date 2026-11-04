@@ -90,8 +90,8 @@ func webFlags(name string, args []string) (webOptions, error) {
 }
 
 // runWeb is `uam web [--listen addr] [--public-origin url]...
-// [--log-headers]`, `uam web status [--json]`, `uam web stop` and
-// `uam web token set`.
+// [--log-headers]`, `uam web status [--json]`, `uam web stop`,
+// `uam web service remove` and `uam web token set`.
 func runWeb(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -99,6 +99,8 @@ func runWeb(ctx context.Context, args []string) error {
 			return runWebStatus(args[1:])
 		case "stop":
 			return runWebStop(ctx, args[1:])
+		case "service":
+			return runWebService(args[1:])
 		case "token":
 			if len(args) < 2 || args[1] != "set" {
 				// Never echo the arguments: they may be a token.
@@ -144,6 +146,7 @@ func runWeb(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("uam web started (pid %d)\n", st.PID)
 	printWebAccess(st, token)
+	installBootService(exe, opts)
 	return nil
 }
 
@@ -214,6 +217,7 @@ func runWebStatus(args []string) error {
 	}
 	if !running {
 		fmt.Println("uam web is not running")
+		printBootService()
 		return nil
 	}
 	fmt.Printf("uam web is running (pid %d)\n", st.PID)
@@ -231,7 +235,14 @@ func runWebStatus(args []string) error {
 	printExposure(st)
 	fmt.Printf("  Version:  %s\n", st.Version)
 	fmt.Printf("  Started:  %s\n", st.StartedAt.Local().Format(time.RFC3339))
+	printBootService()
 	return nil
+}
+
+func printBootService() {
+	for _, line := range bootServiceStatus() {
+		fmt.Printf("  %s\n", line)
+	}
 }
 
 func runWebStop(ctx context.Context, args []string) error {

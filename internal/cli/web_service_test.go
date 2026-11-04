@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "__web" && os.Getenv("UAM_WEB_READY_FD") == "3" {
 		os.Exit(testWebService(os.Args[2:]))
 	}
+	// No test may install a unit or turn on lingering on the host: the
+	// boot service tests bring their own fake systemd tools.
+	bootTool = func(string) (string, error) { return "", errors.New("no systemd tools in tests") }
 	os.Exit(m.Run())
 }
 

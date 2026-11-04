@@ -45,7 +45,7 @@ func TestWebCommandsRouteBeforeStoreAndRejectHostNames(t *testing.T) {
 		t.Fatal("an invalid public origin must be rejected")
 	}
 	out := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status"})) })
-	if strings.TrimSpace(out) != "uam web is not running" {
+	if strings.TrimSpace(out) != "uam web is not running\n  Boot service: "+bootUnavailable {
 		t.Fatalf("status = %q", out)
 	}
 	out = captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status", "--json"})) })
@@ -91,6 +91,13 @@ func TestWebServiceOutlivesLauncherTerminal(t *testing.T) {
 		"UAM_SESSION_DIR="+sessionDir,
 		"UAM_CACHE_DIR="+filepath.Join(root, "cache"),
 	)
+	// The real binary finds the host's systemd: keep it from installing a unit.
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config", bootRemovedName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	listen := "127.0.0.1:" + freeTCPPort(t)
 	statePath := filepath.Join(sessionDir, "web.json")
 	t.Cleanup(func() {
@@ -187,7 +194,7 @@ func TestWebServiceOutlivesLauncherTerminal(t *testing.T) {
 	if _, err := http.Get(base + "/api/auth"); err == nil {
 		t.Fatal("the service still answers after stop")
 	}
-	if out := runUAM(t, binary, env, "web", "status"); strings.TrimSpace(out) != "uam web is not running" {
+	if out := runUAM(t, binary, env, "web", "status"); !strings.HasPrefix(out, "uam web is not running\n") {
 		t.Fatalf("status after stop = %q", out)
 	}
 
