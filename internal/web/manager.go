@@ -2804,6 +2804,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			}
 			if s.context == nil || *s.context != usage {
 				s.context = &usage
+				// Not part of persistKey: without this the report is saved only
+				// if something else dirties the session before the next flush.
+				m.dirty[s.id] = struct{}{}
 			}
 		}
 	case agentapi.EventModelSelection:
