@@ -121,11 +121,12 @@ const READER_SURFACE = cn('flex max-h-[min(80vh,var(--available-height))] max-w-
  * One anchored reader: on `sheet` (a phone, or no anchor) the bottom sheet, else a modal popover
  * placed against `anchor` on `side`, over the dim, with `lift` (the anchor by default) drawn above
  * the dim. Both are named `label`, carry `id`, take focus to `initialFocus` and give it back to
- * `finalFocus`; Esc, a press outside and the close button `children` is handed close it. The
+ * `finalFocus`; Esc, a press outside and the close button `children` is handed close it. Without
+ * `backdrop` it adds no dim of its own (it opens over one already there). The
  * popup is the reader surface capped at 80% of the viewport (`surface` replaces it), sized by
  * `className`; `sheetClassName` sizes the sheet.
  */
-export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instanceof Element ? anchor : null, liftClassName, label, side = 'bottom', align = 'start', sideOffset = 10, surface = READER_SURFACE, className, sheetClassName, initialFocus, finalFocus, onClose, onClosed, children }: Readonly<{
+export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instanceof Element ? anchor : null, liftClassName, label, side = 'bottom', align = 'start', sideOffset = 10, surface = READER_SURFACE, className, sheetClassName, initialFocus, finalFocus, backdrop = true, onClose, onClosed, children }: Readonly<{
   id: string;
   open: boolean;
   sheet: boolean;
@@ -142,6 +143,7 @@ export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instance
   sheetClassName?: string;
   initialFocus?: ComponentProps<typeof BasePopover.Popup>['initialFocus'];
   finalFocus?: ComponentProps<typeof BasePopover.Popup>['finalFocus'];
+  backdrop?: boolean;
   onClose: () => void;
   onClosed: () => void;
   children: (close: ReactNode) => ReactNode;
@@ -156,7 +158,7 @@ export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instance
   return (
     <BasePopover.Root open={open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
-        <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />
+        {backdrop && <BasePopover.Backdrop className={cn(backdropClass, 'duration-160')} />}
         {lift?.isConnected && <LiftedRow row={lift} className={liftClassName} />}
         <BasePopover.Positioner anchor={anchor} side={side} align={align} sideOffset={sideOffset} collisionPadding={12} className="z-50 outline-hidden">
           <BasePopover.Popup id={id} data-popup="" aria-label={label} aria-modal="true" initialFocus={initialFocus} finalFocus={finalFocus} className={cn(surface, className)}>

@@ -230,10 +230,10 @@ describe('subagents', () => {
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
     expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
     await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
-    // Its reader: beside the list, the sheet still open, its error whole; the conversation stays.
-    const peek = within(await screen.findByRole('dialog', { name: 'Run the accessibility linter' }));
+    // Its reader (in the list's place: no room beside the sheet here), the sheet still open, its error whole; the conversation stays.
+    const peek = within(await screen.findByRole('region', { name: 'Run the accessibility linter' }));
     expect(peek.getByText('axe-core is not installed in this project.')).toBeTruthy();
-    expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: /^Transcript of / })).toBeNull();
     await user.click(peek.getByRole('button', { name: 'Open as conversation' }));
     // The pane: its transcript in the Thread's place, the sheet gone, the bar red, the URL its own.
@@ -252,7 +252,16 @@ describe('subagents', () => {
     expect(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ })).toBeTruthy();
     expect(screen.queryByRole('group', { name: 'Subagents' })).toBeNull();
   });
-  test('the sheet opens on its first row: the arrows move at once, a row\'s reader closes back to that row, and the sheet back to its button', async () => {
+  // The sheet's box at a wide desktop: 900px of room left of it, so a row's reader opens beside it.
+  const roomBeside = () => {
+    const rect = HTMLElement.prototype.getBoundingClientRect;
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.matches('[data-popup]') ? DOMRect.fromRect({ x: 900, y: 100, width: 560, height: 500 }) : rect.call(this);
+    });
+    onTestFinished(() => spy.mockRestore());
+  };
+  test('the sheet opens on its first row: the arrows move at once, a row\'s reader beside it adds no dim and closes back to that row, and the sheet back to its button', async () => {
+    roomBeside();
     const { user } = await openTask('t8');
     const button = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
     const index = await openSubagentIndex(user);
@@ -264,17 +273,19 @@ describe('subagents', () => {
     expect(document.activeElement).toBe(rows[0]);
     await user.keyboard('{ArrowUp}');
     expect(document.activeElement).toBe(index.getByRole('searchbox', { name: 'Search subagents' }));
-    // Enter on a row: its reader, the row marked open; Esc closes the reader alone and focus goes back to the row.
+    // Enter on a row: its reader beside the sheet, the row marked open, one dim (the sheet's).
     rows[1].focus();
     await user.keyboard('{Enter}');
     const name = rows[1].getAttribute('aria-label')!.split(',')[0];
     const peek = await screen.findByRole('dialog', { name });
     expect(within(peek).getByRole('button', { name: 'Open as conversation' })).toBeTruthy();
     expect(rows[1].getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelectorAll('.bg-backdrop')).toHaveLength(1);
     // A press inside the reader is not a press away from the sheet.
     await user.click(within(peek).getByRole('heading', { name }));
     expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
     expect(screen.getByRole('dialog', { name })).toBeTruthy();
+    // Esc closes the reader alone and focus goes back to the row; Esc again closes the sheet.
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name })).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
@@ -282,6 +293,30 @@ describe('subagents', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+  test('with no room beside the sheet, a row\'s reader takes the list\'s place; Back and Esc return to the row', async () => {
+    const { user } = await openTask('t8');
+    const index = await openSubagentIndex(user);
+    const rows = index.getAllByRole('button', { name: /, (running|failed|completed|idle|stopped)/ });
+    await waitFor(() => expect(document.activeElement).toBe(rows[0]));
+    await user.keyboard('{ArrowDown}{Enter}');
+    const name = rows[1].getAttribute('aria-label')!.split(',')[0];
+    const peek = await index.findByRole('region', { name });
+    // In the sheet, focus on its heading; the list and its search are out of the way; no second dialog or dim.
+    await waitFor(() => expect(document.activeElement).toBe(within(peek).getByRole('heading', { name })));
+    expect(index.queryByRole('searchbox', { name: 'Search subagents' })).toBeNull();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(document.querySelectorAll('.bg-backdrop')).toHaveLength(1);
+    await user.click(within(peek).getByRole('button', { name: 'Back to the list' }));
+    expect(index.queryByRole('region', { name })).toBeNull();
+    expect(document.activeElement).toBe(rows[1]);
+    // Esc inside it is Back too: the sheet stays.
+    await user.keyboard('{Enter}');
+    await index.findByRole('region', { name });
+    await user.keyboard('{Escape}');
+    expect(index.queryByRole('region', { name })).toBeNull();
+    expect(document.activeElement).toBe(rows[1]);
+    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
   });
   test('a subagent waiting on the owner says what it needs', async () => {
     const state = mockData.seed();

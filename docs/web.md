@@ -1538,8 +1538,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   grouped by the message that started their reply, with filters by state. It
   opens with focus on the first row, and the arrow keys move between rows. A
   row there opens a reader beside the list with the subagent's state, time,
-  tokens and its whole result or error; **Open as conversation** shows it in
-  the conversation pane. Esc closes the reader and returns to the row. A
+  tokens and its whole result or error; where the window is too narrow for it
+  to sit beside the list, it replaces the list inside the sheet, with a Back
+  button. **Open as conversation** shows it in the conversation pane. Esc (or
+  Back) closes the reader and returns to the row. A
   running subagent waiting on you reads "Needs permission: <tool>" or "Needs
   answer" instead of its current step. The
   list holds the newest 200 subagents; when Copilot's record has older ones,
