@@ -376,8 +376,11 @@ function useBudgetWarning(session: SessionDetail): string {
   }, [api, session.id, key, open]);
   if (!open || predicted?.key !== key) return '';
   const left = Math.max(0, (b?.credits ?? 0) - (b?.spent ?? 0));
-  return predicted.credits > left ? `A prompt on this model often uses about ${formatCredits(predicted.credits)} AI credits; the budget has ${formatCredits(left)} left.` : '';
+  return predicted.credits > left ? `Estimate: a whole prompt on this model often uses about ${formatCredits(predicted.credits)} AI credits; the budget has ${formatCredits(left)} left.` : '';
 }
+
+/** The service's refusal of a send at the Thread's budget (budget.go errBudgetReached). */
+const BUDGET_REACHED = 'budget_reached';
 
 
 /** Why a subagent's model and effort cannot change. */
@@ -388,6 +391,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
   const budgetWarning = useBudgetWarning(session);
+  // A send the service refused at the budget before this client saw it reached; it holds until the budget changes.
+  const budgetKey = `${session.id}\u0000${JSON.stringify(session.budget ?? null)}`;
+  const [budgetRefused, setBudgetRefused] = useState('');
+  const atBudget = !newTask && !subagent && (!!session.budget?.reached || budgetRefused === budgetKey);
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
@@ -877,6 +884,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const commandBlocked = commandReason(descriptor, live) || (descriptor?.input_required && !cmd?.args ? `/${descriptor.name} needs ${descriptor.input_hint || 'an argument'}.` : '');
   /** Why nothing can be sent now; empty when it can. */
   function describeBlocked(): string {
+    if (atBudget && !answering && !cmd) return 'The budget is reached';
     if (uploading) return 'Wait for the upload to finish';
     if (refused) return 'Remove the attachment that was refused';
     if (pendingCommand) return 'Wait for the command list to load';
@@ -1008,6 +1016,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         setError('The conversation or its files changed. Check the strip, then send again.');
         return;
       }
+      if (errorCode(e) === BUDGET_REACHED) {
+        setBudgetRefused(budgetKey);
+        return;
+      }
       setError(`${describeError(e)}. Nothing will be retried automatically. Sending this edit again uses the same requests (${ids.rewind.slice(0, 8)}).`);
     } finally {
       setBusy(null);
@@ -1068,6 +1080,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       if (!cmd && promptMode === 'steer' && isStatus(e, 409) && e.message.includes('cannot steer a running turn')) {
         setSteerUnavailable('This agent cannot take a message during a turn');
         setError('This agent cannot take a message during a turn. Your message is still here; Enter sends it after this turn.');
+        return;
+      }
+      if (errorCode(e) === BUDGET_REACHED) {
+        setBudgetRefused(budgetKey);
         return;
       }
       if (errorCode(e) === SIGNED_OUT || errorCode(e) === ACCOUNT_NOT_LINKED) {
@@ -1517,7 +1533,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </span>
         </p>
       )}
-      {!subagent && (locked || resendable || budgetWarning || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
+      {!subagent && (locked || resendable || budgetWarning || atBudget || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && session.stage === 'settled' && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1550,6 +1566,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Note>
           )}
           {budgetWarning && !locked && <Note tone="warn" role="status">{budgetWarning}</Note>}
+          {atBudget && !locked && (
+            <Note tone="warn" role="status">
+              {session.budget?.wrapping_up ? 'Budget reached: the Thread is wrapping up and writing its handoff.' : 'Budget reached.'} Your draft is kept; raise or remove the budget to send it.{' '}
+              <Button size="sm" variant="subtle" onClick={() => { if (!tools.current?.open('usage')) setError('The usage control is unavailable now.'); }}>Change budget</Button>
+            </Note>
+          )}
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter sends your message after this turn.</Note>}
@@ -1745,7 +1767,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             const estimate = estimateTurnCost(m, session.context, contextSize);
             const prices = session.capabilities.usage ? modelCostLine(m, false) : '';
             const group = appSettings.custom_models?.find((c) => `${c.name}/${c.model_id}` === m.id)?.name;
-            return { value: m.id, label: <span className="flex items-center gap-2"><ModelIcon model={m.id} fallback={<span aria-hidden="true" className="size-4 shrink-0" />} className="size-4 shrink-0" />{m.name}</span>, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
+            return { value: m.id, label: <span className="flex items-center gap-2"><ModelIcon model={m.id} fallback={<span aria-hidden="true" className="size-4 shrink-0" />} className="size-4 shrink-0" />{m.name}</span>, group, description: [prices, session.capabilities.usage && estimate !== null ? `Estimate: ≈ ${formatCredits(estimate)} AI credits per model request, input only` : ''].filter(Boolean).join(' · ') };
           })}
           disabled={settingsLocked}
           // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.

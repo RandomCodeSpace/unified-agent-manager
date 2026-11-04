@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
+import { ApiError, api } from '../../src/api';
 import { composer, renderApp } from './render';
 
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
@@ -43,14 +44,48 @@ test('a handoff shows uam facts under the reply, and Continue only opens a new T
 
 test('under a credit budget the composer warns when a prompt may use more than is left, and Send stays enabled', async () => {
   const { user } = await openBudgetTask('t-near');
-  const note = await screen.findByText('A prompt on this model often uses about 4.0 AI credits; the budget has 1.5 left.');
+  const note = await screen.findByText('Estimate: a whole prompt on this model often uses about 4.0 AI credits; the budget has 1.5 left.');
   expect(note.getAttribute('role')).toBe('status');
   await user.type(composer(), 'One more fixture');
   expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBeNull();
+  expect(screen.queryByText(/Budget reached/)).toBeNull();
 });
 
-test('a Thread at its budget shows no estimate', async () => {
-  await openBudgetTask('t-handoff');
+test('a Thread at its budget shows no estimate, disables Send with the reason beside the composer, keeps the draft and opens the budget', async () => {
+  const { user, mock } = await openBudgetTask('t-handoff');
   await screen.findByRole('region', { name: 'Handoff' });
   expect(screen.queryByText(/often uses about/)).toBeNull();
+  const note = await screen.findByText(/^Budget reached\. Your draft is kept; raise or remove the budget to send it\./);
+  expect(note.getAttribute('role')).toBe('status');
+  await user.type(composer(), 'One more fixture');
+  const send = screen.getByRole('button', { name: 'Send. The budget is reached' });
+  expect(send.getAttribute('aria-disabled')).toBe('true');
+  await user.click(send);
+  await user.keyboard('{Enter}');
+  expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
+  expect(composer().value).toBe('One more fixture');
+  await user.click(screen.getByRole('button', { name: 'Change budget' }));
+  const tab = await screen.findByRole('tab', { name: 'Usage' });
+  expect(tab.getAttribute('aria-selected')).toBe('true');
+  expect(await screen.findByRole('region', { name: 'Budget' })).toBeTruthy();
+});
+
+test('a Thread wrapping up at its budget says so and refuses sends', async () => {
+  const { user } = await openBudgetTask('t-wrap');
+  await screen.findByText(/^Budget reached: the Thread is wrapping up and writing its handoff\. Your draft is kept/);
+  expect(screen.queryByText(/often uses about/)).toBeNull();
+  await user.type(composer(), 'Keep going');
+  expect(screen.getAllByRole('button', { name: /The budget is reached/ }).length).toBeGreaterThan(0);
+});
+
+test('a budget_reached refusal the client did not foresee keeps the draft and shows the budget note', async () => {
+  const { user } = await openBudgetTask('t-near');
+  const prompt = vi.spyOn(api, 'prompt').mockRejectedValueOnce(new ApiError(409, 'This Thread reached its budget. Raise or remove the budget to send more.', { code: 'budget_reached' }));
+  await user.type(composer(), 'Raced the limit');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  await screen.findByText(/^Budget reached\. Your draft is kept/);
+  expect(prompt).toHaveBeenCalledTimes(1);
+  expect(composer().value).toBe('Raced the limit');
+  expect(screen.getByRole('button', { name: 'Send. The budget is reached' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.queryByRole('alert')).toBeNull();
 });
