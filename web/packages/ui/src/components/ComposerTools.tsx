@@ -13,6 +13,7 @@ import { Key } from './InlinePicker';
 import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
 import { clockTime, Num, useApp } from './common';
 import { StyleChoices } from './OutputStyles';
+import { SkillChoices } from './SkillChoices';
 import { PART_TONE, useActions } from './Subagents';
 import { Counts, Tile, UsageTab } from './TaskUsage';
 import { Button } from './ui/button';
@@ -21,11 +22,11 @@ import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 
-export type Tool = 'context' | 'usage' | 'agent' | 'style';
+export type Tool = 'context' | 'usage' | 'agent' | 'style' | 'skills';
 /** Opens the panel on a tab (the `/context` action); false when the Task has no such tab. */
 export interface ToolsHandle { open: (tool: Tool) => boolean }
 
-const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent: 'Agent', style: 'Style' };
+const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent: 'Agent', style: 'Style', skills: 'Skills' };
 
 /**
  * The composer's Tools: one button for the Task's context, usage and custom agent, opening one
@@ -38,7 +39,7 @@ const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent:
  * shown in the Conversation pane) it is read-only and scoped to it: Usage (tokens, tool calls,
  * time, runs) and Agent (name, type, description); no context meter, as none is reported per subagent.
  */
-export function ComposerTools({ session, model, agentReason, onAgent, onStyle, styleReason, subagent, ref }: Readonly<{
+export function ComposerTools({ session, model, agentReason, onAgent, onStyle, styleReason, onSkills, subagent, ref }: Readonly<{
   session: SessionDetail;
   model?: Model;
   /** Why the agent cannot change now. */
@@ -48,6 +49,8 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   onStyle?: (style: string) => void;
   /** Why the style cannot change: a started Thread keeps the style it began with. */
   styleReason?: string;
+  /** Sets a new Thread's skill list; the Skills tab shows for a new Thread or a pinned list. A started Thread keeps it, like its style (`styleReason`). */
+  onSkills?: (skills: string[] | undefined) => void;
   subagent?: Subagent;
   ref?: Ref<ToolsHandle>;
 }>) {
@@ -66,11 +69,13 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   const builtin = meta?.output_styles ?? [];
   // A new Thread picks from what is on offer; a started one only shows the style it pinned.
   const styleShown = !!onStyle && api.supports('output-style-v1') && (styleReason ? !!session.output_style : !!(settings.output_styles?.length || builtin.length));
+  const skillsShown = !!onSkills && api.supports('thread-skills-v1') && (styleReason ? !!session.skills : true);
   const tools: Tool[] = subagent ? ['usage', 'agent'] : [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
     ...(agentShown || skills.length ? ['agent' as const] : []),
     ...(styleShown ? ['style' as const] : []),
+    ...(skillsShown ? ['skills' as const] : []),
   ];
   const [chosen, setChosen] = useState<Tool>('context');
   if (reader && (reader.scope !== scope || reader.owner !== api)) setReader(null);
@@ -121,6 +126,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
           <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>
         </> : <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />)}
         {tab === 'style' && onStyle && <StyleChoices settings={settings} builtin={builtin} chosen={session.output_style ?? ''} reason={styleReason} onChange={onStyle} />}
+        {tab === 'skills' && onSkills && <SkillChoices projectId={session.project_id} value={session.skills} thread reason={styleReason} onChange={onSkills} />}
         </>}
       </Tabs.Panel>
       {!sheet && <PanelFoot>

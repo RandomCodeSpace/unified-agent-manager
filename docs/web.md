@@ -718,6 +718,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   when the Project has no custom agents. uam keeps only the name,
   description, first time and count, never the skill's body. A Thread whose
   record is too large to read whole lists only the loads in the part read.
+- **Skills**: a Thread can be offered only some of the skills Copilot finds
+  for its folder, to save the context Copilot spends describing skills in
+  every request (it fills a fixed budget, so only a short list saves much).
+  Edit project sets the Project's list; a new Thread copies it when it
+  starts, or picks its own on the Skills tab of the composer's Tools panel
+  before its first message. A started Thread keeps its list, shown read-only
+  on that tab. On every open and resume uam asks Copilot for the folder's
+  skills and disables each one not on the list; uam's own skills are always
+  offered, and a failed lookup offers every skill rather than failing the
+  open. No list (Every skill) offers every skill. Needs `thread-skills-v1`.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is

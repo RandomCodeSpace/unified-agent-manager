@@ -123,7 +123,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 			usage := agentapi.Context(*web.Context)
 			s.context = &usage
 		}
-		s.agent, s.style = web.Agent, web.OutputStyle
+		s.agent, s.style, s.skillChoice = web.Agent, web.OutputStyle, web.Skills
 		if web.Budget != nil {
 			s.budget = *web.Budget
 		}

@@ -7,6 +7,7 @@ import { Loading, Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
 import { cleanPath } from '../lib/folders';
 import { styleItems } from './OutputStyles';
+import { SkillChoices } from './SkillChoices';
 import { PreviousSessionsDialog, canImport } from './PreviousSessions';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -243,6 +244,8 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const [style, setStyle] = useState(project.output_style ?? '');
   const builtin = meta?.output_styles ?? [];
   const styled = api.supports('output-style-v1') && !!(settings.output_styles?.length || builtin.length);
+  const [skills, setSkills] = useState(project.skills);
+  const skillsChanged = JSON.stringify(skills) !== JSON.stringify(project.skills);
   const [detecting, setDetecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -258,7 +261,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
     try {
       // An untouched link is not sent, so a rename never turns off one still to be detected.
       const changed = link.trim() !== (project.branch_link ?? '');
-      onUpdated(await api.updateProject(project.id, { name: name.trim(), ...(changed && { branch_link: link.trim() }), ...(style !== (project.output_style ?? '') && { output_style: style }) }));
+      onUpdated(await api.updateProject(project.id, { name: name.trim(), ...(changed && { branch_link: link.trim() }), ...(style !== (project.output_style ?? '') && { output_style: style }), ...(skillsChanged && { skills: skills ?? null }) }));
       onClose();
     } catch (err) {
       setError(describeError(err));
@@ -320,6 +323,14 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
           <Field id="edit-output-style" label="Output style" hint="How agents in this Project's Threads write their replies; a Thread can pick its own in Tools." hintVisible>
             <Select id="edit-output-style" aria-describedby="edit-output-style-hint" value={style} items={styleItems(settings, project.output_style ?? '', builtin)} onValueChange={setStyle} />
           </Field>
+        )}
+        {api.supports('thread-skills-v1') && (
+          <section aria-labelledby="edit-skills" className="flex min-w-0 flex-col gap-1">
+            <h3 id="edit-skills" className="text-caption text-muted">Skills for new Threads</h3>
+            <div className="max-h-64 overflow-y-auto overscroll-contain px-2">
+              <SkillChoices projectId={project.id} value={skills} onChange={setSkills} />
+            </div>
+          </section>
         )}
         {error && (
           <Note tone="error" role="alert">

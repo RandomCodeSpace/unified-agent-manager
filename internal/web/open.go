@@ -91,6 +91,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	req.SkillDirectories = m.skillDirs
 	req.Instructions = m.placeInstructionsLocked(s)
 	req.OutputStyle = m.outputStyleLocked(s)
+	req.Skills = s.skillChoice
 	s.openStyle = req.OutputStyle
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100

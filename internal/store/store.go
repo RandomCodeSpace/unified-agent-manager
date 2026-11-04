@@ -532,6 +532,9 @@ type WebState struct {
 	Agent string `json:"agent,omitempty"`
 	// OutputStyle names the Thread's own style; "" uses its Project's.
 	OutputStyle string `json:"output_style,omitempty"`
+	// Skills names the only skills the Thread's agent is offered, besides
+	// uam's own; nil offers every skill Copilot finds.
+	Skills *[]string `json:"skills,omitempty"`
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
@@ -683,6 +686,7 @@ var knownWebStateFields = map[string]struct{}{
 	"native_changes": {},
 	"agent":          {},
 	"output_style":   {},
+	"skills":         {},
 	"turn":           {},
 	"turn_timings":   {},
 	// Retired: the generated subagent summaries of older versions. Known, so
@@ -783,6 +787,9 @@ type WebProject struct {
 	// OutputStyle names the Project's style for its Threads; "" uses the
 	// default.
 	OutputStyle string `json:"output_style,omitempty"`
+	// Skills is the skill list a new Thread of the Project starts with; nil
+	// offers every skill.
+	Skills *[]string `json:"skills,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -838,6 +845,7 @@ var knownWebProjectFields = map[string]struct{}{
 	"charts":       {},
 	"branch_link":  {},
 	"output_style": {},
+	"skills":       {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {

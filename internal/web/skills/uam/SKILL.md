@@ -94,6 +94,13 @@ with buttons, use `uam_form` instead (see its reference file).
 - Text over 8 KiB the owner pastes or attaches arrives as a file path with its
   line count; read the parts you need.
 
+## Skills
+
+- The owner can limit the skills a Thread is offered (a Project default, or
+  the Thread's own list, fixed when it starts). uam's own skills are always
+  offered. When a skill you would use is not offered, do the work without
+  it, or tell the owner it is off for this Thread.
+
 ## When a uam tool is unavailable
 
 A uam tool call can fail, for instance after an MCP server changed its tools

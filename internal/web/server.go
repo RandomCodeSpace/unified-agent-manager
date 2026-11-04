@@ -266,6 +266,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)
 	mux.HandleFunc("GET /api/projects/{id}/agents", s.handleTaskAgents)
+	mux.HandleFunc("GET /api/projects/{id}/skills", s.handleSkillOptions)
 	mux.HandleFunc("GET /api/previous/counts", s.handlePreviousCounts)
 	mux.HandleFunc("POST /api/projects/{id}/previous/{conversation_id}/import", s.handleImport)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
@@ -654,15 +655,25 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		Name        *string `json:"name"`
 		BranchLink  *string `json:"branch_link"`
 		OutputStyle *string `json:"output_style"`
+		// Skills is a list of skill names, or null for every skill.
+		Skills json.RawMessage `json:"skills"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.BranchLink == nil && body.OutputStyle == nil {
-		writeError(w, http.StatusBadRequest, "name, branch_link or output_style is required")
+	if body.Name == nil && body.BranchLink == nil && body.OutputStyle == nil && body.Skills == nil {
+		writeError(w, http.StatusBadRequest, "name, branch_link, output_style or skills is required")
 		return
 	}
-	p, err := s.m.patchProject(r.PathValue("id"), body.Name, body.BranchLink, body.OutputStyle)
+	var skills *skillsPatch
+	if body.Skills != nil {
+		skills = &skillsPatch{}
+		if json.Unmarshal(body.Skills, &skills.list) != nil {
+			writeError(w, http.StatusBadRequest, "skills must be a list of skill names or null")
+			return
+		}
+	}
+	p, err := s.m.patchProject(r.PathValue("id"), body.Name, body.BranchLink, body.OutputStyle, skills)
 	if err != nil {
 		writeFailure(w, err)
 		return
