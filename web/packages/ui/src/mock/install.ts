@@ -1216,7 +1216,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
     }
 
     // Lifecycle: archived Tasks can be restored as Finished or deleted; busy Tasks cannot be put away.
-    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive|unarchive)$/)) && method === 'POST') {
+    // GET .../archive is Archive's dry run: the same refusal, else 204, and nothing moves.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive|unarchive)$/)) && (method === 'POST' || (method === 'GET' && r[2] === 'archive'))) {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       const stage = t.stage ?? 'active';
@@ -1227,6 +1228,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if ((r[2] === 'settle' || r[2] === 'archive') && p && (p.uncommitted > 0 || p.unpushed > 0) && body.force !== true && stage !== 'archived' && !(r[2] === 'settle' && stage !== 'active')) {
         return fail(409, 'This Thread\'s own changes are not saved anywhere else.', { code: 'unsaved_work', git_pending: { ...p }, refs: (st.changes[t.project_id] ?? []).slice(0, 3).map((c) => c.path) });
       }
+      if (method === 'GET') return json(204);
       switch (r[2]) {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} thread cannot be settled`);

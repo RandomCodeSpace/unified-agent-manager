@@ -671,25 +671,24 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
 test('Archive and a clean Settle on another machine’s rows run on that machine', async () => {
   const { user, calls } = federated();
   const nav = await taskRows();
-  const remote = () => calls.filter((call) => /\/(settle|archive)$/.test(call.path)).map((call) => `${call.owner} ${call.path.split('/').pop()}`);
+  const remote = () => calls.filter((call) => /\/(settle|archive)$/.test(call.path)).map((call) => `${call.owner} ${call.method === 'GET' ? 'check ' : ''}${call.path.split('/').pop()}`);
   // A clean Thread settles at once.
   const clean = await nav.findByRole('button', { name: /Bump dependencies/, description: 'Workstation B' });
   await user.hover(clean);
   await user.click(clean.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!);
   await waitFor(() => expect(remote()).toEqual(['b settle']));
-  // A shared folder's counts do not decide: today's dialog, then that machine's refusal asks.
+  // A shared folder's counts do not decide: that machine's dry run opens the unsaved question at once, and one click archives.
   const dirty = await nav.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   fireEvent.contextMenu(dirty);
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
-  await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this thread?' })).getByRole('button', { name: 'Archive thread' }));
   await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' })).getByRole('button', { name: 'Archive anyway' }));
-  await waitFor(() => expect(remote()).toEqual(['b settle', 'b archive', 'b archive']));
-  // A clean Thread's Archive keeps today's dialog.
+  await waitFor(() => expect(remote()).toEqual(['b settle', 'b check archive', 'b archive']));
+  // A clean Thread's Archive asks plainly.
   const other = await nav.findByRole('button', { name: /Draft release notes/, description: 'Workstation B' });
   fireEvent.contextMenu(other);
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
   await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this thread?' })).getByRole('button', { name: 'Archive thread' }));
-  await waitFor(() => expect(remote()).toEqual(['b settle', 'b archive', 'b archive', 'b archive']));
+  await waitFor(() => expect(remote()).toEqual(['b settle', 'b check archive', 'b archive', 'b check archive', 'b archive']));
 });
 
 test('a page load opens one stream, reads the catalogs once and reports what it shows once per stream', async () => {

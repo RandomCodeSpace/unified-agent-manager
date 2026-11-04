@@ -1173,7 +1173,17 @@ export default function App() {
       openUnsaved(target({ ...refused, anchor }));
     }
   }, [openUnsaved]);
-  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
+  /**
+   * Archive asks once: its dry run (`check`) reads the Thread's unsaved work before the popover opens, so it opens as
+   * the plain question or with the files. Any other failure (an older instance's 405) opens the plain one, whose
+   * request still meets the service's refusal in place.
+   */
+  const askArchive = useCallback((check: () => Promise<unknown>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, plain: () => Promise<unknown>) => {
+    const anchor = rowAnchor();
+    void check().then(() => null, unsavedRefusal).then((refused) => openUnsaved(refused ? target({ ...refused, anchor }) : { kind: 'archive', anchor, pending: null, paths: [], force: plain }));
+  }, [openUnsaved]);
+  /** This machine's Thread in the confirmation: its forced request, and Open Changes. */
+  const localTarget = useCallback((id: string, kind: UnsavedTarget['kind']) => (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>): UnsavedTarget => ({
     kind,
     ...refused,
     force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the thread`),
@@ -1182,7 +1192,8 @@ export default function App() {
       select(id);
       setChangesRequest({ id, at: Date.now() });
     },
-  }), () => api.changes(id, 'workspace')), `${kind} the thread`), [runTask, askUnsaved, api, select]);
+  }), [runTask, api, select]);
+  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), localTarget(id, kind), () => api.changes(id, 'workspace')), `${kind} the thread`), [runTask, askUnsaved, api, localTarget]);
 
   /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
   const rerun = useCallback((id: string, model?: string) => runTask(id, async () => {
@@ -1212,11 +1223,11 @@ export default function App() {
         select(id);
         return s;
       }, 'unarchive the thread').catch(() => {}) : undefined,
-      // Known unsaved work goes straight to its confirmation; otherwise the plain one, which a refusal fills in place.
+      // Known unsaved work goes straight to its confirmation; otherwise the dry run decides which one opens.
       archive: (id) => {
         const s = latestSessions.current.find((x) => x.id === id);
         if (s && putAwayWork(s)) void putAway(id, 'archive').catch(() => {});
-        else openUnsaved({ kind: 'archive', anchor: rowAnchor(), pending: null, paths: [], force: () => putAway(id, 'archive') });
+        else askArchive(() => api.archiveCheck(id), localTarget(id, 'archive'), () => putAway(id, 'archive'));
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
@@ -1235,7 +1246,7 @@ export default function App() {
         latestStartTask.current(projectId);
       },
     }),
-    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway, openUnsaved],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway, askArchive, localTarget],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1255,13 +1266,17 @@ export default function App() {
       });
     }
   }, []);
+  /** Another machine's Thread in the confirmation: its forced request, run against that machine. */
+  const remoteTarget = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>): UnsavedTarget => (
+    { kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the thread`) }
+  ), [runRemote]);
   /** Another machine's Settle or Archive: the same confirmation, its forced request run against that machine. */
   const remoteAway = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => askUnsaved(
     putAwayWork(m.state.sessions.find((s) => s.id === id)),
     () => m.client.stage(id, kind),
-    (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the thread`) }),
+    remoteTarget(m, id, kind),
     () => m.client.changes(id, 'workspace'),
-  ), [askUnsaved, runRemote]);
+  ), [askUnsaved, remoteTarget]);
   const go = federation?.go;
   // Row actions read their machine when they run: the machines are rebuilt on every streamed frame, and a new
   // context value would re-render each of that machine's rows.
@@ -1292,12 +1307,11 @@ export default function App() {
         open(id);
       }, 'unarchive the thread') : undefined,
       archive: (id) => {
-        const s = machine()?.state.sessions.find((x) => x.id === id);
-        if (s && putAwayWork(s)) run(id, (m) => remoteAway(m, id, 'archive'), 'archive the thread');
-        else openUnsaved({ kind: 'archive', anchor: rowAnchor(), pending: null, paths: [], force: async () => {
-          const m = machine();
-          if (m) await runRemote(m, id, () => remoteAway(m, id, 'archive'), 'archive the thread');
-        } });
+        const m = machine();
+        if (!m) return;
+        const s = m.state.sessions.find((x) => x.id === id);
+        if (s && putAwayWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the thread');
+        else askArchive(() => m.client.archiveCheck(id), remoteTarget(m, id, 'archive'), () => runRemote(m, id, () => remoteAway(m, id, 'archive'), 'archive the thread'));
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner }),
@@ -1305,7 +1319,7 @@ export default function App() {
       runAgain: (id) => run(id, async (m) => { open((await m.client.rerun(id, { request_id: newRequestId() })).id); }, 'run the thread again'),
       exportMarkdown: (id) => run(id, async (m) => { const f = await m.client.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread'),
     }];
-  })), [remoteKey, renaming, remoteBusy, runRemote, go, openTaskDialog, remoteAway, openUnsaved]);
+  })), [remoteKey, renaming, remoteBusy, runRemote, go, openTaskDialog, remoteAway, askArchive, remoteTarget]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({

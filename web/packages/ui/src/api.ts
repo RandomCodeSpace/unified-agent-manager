@@ -2452,6 +2452,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
     /** `force`: settle or archive even though the Thread has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
     stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`, body),
+    /** Archive's dry run: the 409 `unsaved_work` an unforced Archive would meet now (see `unsavedRefusal`), else nothing; nothing moves. */
+    archiveCheck: (id: string) => call<void>('GET', `/api/sessions/${enc(id)}/archive`),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
     cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),
