@@ -58,8 +58,8 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
   if (working || (ATTENTION.includes(session.state) && session.turn_activity?.phase?.kind === 'waiting')) {
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting, live: liveLine(session, compacting) };
     const turn = session.turn_timings?.at(-1);
-    // The Thread runs a turn whose timing has not come yet: all there is belongs to the last turn, which ended or was cut off.
-    if ((turn?.ended_at || (connected && turn?.state === 'unknown')) && LIVE.includes(session.state)) return null;
+    // The Thread runs a turn whose timing has not come yet: all there is belongs to the last turn, which ended or was cut off, so the line says "Working" alone.
+    if ((turn?.ended_at || (connected && turn?.state === 'unknown')) && LIVE.includes(session.state)) return { kind: 'working', lead: '', compacting };
     const activity = session.turn_activity;
     const todo = todoLine(activity?.todos, turn?.started_at);
     return { kind: 'working', lead: activity?.intent ?? '', compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), ...(session.compacting_background ? { background: true } : {}), todo, live: liveLine(session, compacting) };
@@ -225,14 +225,12 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   jump: boolean;
   onJump: MouseEventHandler<HTMLButtonElement>;
 }>) {
-  // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) would only
-  // repeat the turn card's head, "Working 18s": the strip says nothing then. Subagents that outlived the
-  // turn (`since`) are another matter: the head says "Took …", so the strip counts their time.
+  // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) says "Working":
+  // the strip is never blank while a turn works. Subagents that outlived the turn (`since`) also count their time.
   // Between a tool's end and the next model call nothing is live for a moment: the last live line holds for LIVE_HOLD_MS, so the strip does not blink.
   const held = useHeld(given?.kind === 'working' ? given.live : null, given?.kind === 'working', LIVE_HOLD_MS);
   const line = given?.kind === 'working' && !given.live && held ? { ...given, live: held } : given;
-  const bare = line?.kind === 'working' && !since && !line.todo && !line.lead && !line.compacting && !line.retry && !line.background && !line.live;
-  const shownLine = hidden || bare ? null : line;
+  const shownLine = hidden ? null : line;
   const index = useSubagentIndex();
   const any = !!index?.subagents.length;
   const subagents = hidden || !any ? undefined : index!.subagents;
@@ -265,8 +263,11 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
     if (wantLive) read(session.id);
   }, [wantLive, turns.length, session.id, read]);
   const shownView = known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
-  const view = hideTodos ? undefined : shownView;
   const working = line?.kind === 'working';
+  // Idle, the latest turn's card states these same counts (TurnTodo): the strip leaves them to it and keeps the history.
+  const latest = session.turn_timings?.at(-1);
+  const told = !working && !!shownView && !!latest?.ended_at && latest === turns.at(-1) && tallyWords(todoTally(latest.todo!)) === tallyWords(todoTally(shownView.counts));
+  const view = hideTodos || told ? undefined : shownView;
   const list = line?.kind === 'working' ? line.todo : undefined;
   // Idle, or working with a list the line says nothing of (untouched, all done), the counts alone draw the blocks.
   const tally = view ? (list ?? todoTally(view.counts)) : undefined;
@@ -530,12 +531,12 @@ function retrySentence(retry: Retry): string {
 }
 
 /** The working line's one slot in words, as the progress line's name starts. */
-function slotWords(line: Extract<Line, { kind: 'working' }>, outlived: boolean): string {
+function slotWords(line: Extract<Line, { kind: 'working' }>): string {
   const now = line.todo?.kind === 'list' ? line.todo.now : undefined;
   if (line.live) return [line.live.phase, line.live.detail].filter(Boolean).join(', ');
   if (line.compacting) return line.lead;
   if (line.todo?.kind !== 'carried' && now) return `Now: ${now}`;
-  return line.lead || (outlived ? 'Working' : '');
+  return line.lead || 'Working';
 }
 
 /**
@@ -556,7 +557,7 @@ function Progress({ line, since }: Readonly<{ line: Line; since?: string }>) {
       <span className="sr-only">
         {line.kind === 'working' ? (
           <>
-            {slotWords(line, !!since)}
+            {slotWords(line)}
             <ClockWords since={line.live?.since ?? since} />
             {line.retry && retrySentence(line.retry)}
             {line.background && '. Compacting in background'}
@@ -637,9 +638,9 @@ function Working({ line, since }: Readonly<{ line: Extract<Line, { kind: 'workin
         <span className="min-w-0 truncate text-ui text-body">
           <span className="text-muted">Now:</span> {now}
         </span>
-      ) : line.lead || since ? (
+      ) : (
         <span className="min-w-0 truncate text-ui text-body">{line.lead || 'Working'}</span>
-      ) : null}
+      )}
       {since && !line.live && <Clock since={since} />}
       {retry && (
         <>

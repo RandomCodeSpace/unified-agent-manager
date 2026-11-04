@@ -374,7 +374,8 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     headButton.current?.focus({ preventScroll: true });
     setOpen(false);
   };
-  const facts = [...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="whitespace-nowrap text-error">{p.text}</span>)].filter(Boolean);
+  // A failure says what broke beside its count; the whole line is its tooltip.
+  const facts = [...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
   return (
     <div ref={card} id={domId} className={CARD}>
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
@@ -387,6 +388,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
             aria-expanded={open}
             aria-controls={opened ? timelineId : undefined}
             title={text}
+            aria-label={`${[...counts, ...failures].map((p) => p.text).join(', ')}. Show the activity of this turn`}
             className={cn("relative -mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-2.5", summary.tone === 'attention' && 'text-attention')}
             onClick={toggle}
           >
@@ -398,7 +400,6 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
                 </Fragment>
               ))}
             </span>
-            <span className="sr-only">{failures.map((p) => ` · ${p.text}`).join('')} activity of this turn</span>
             <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
           </button>
         )}
@@ -1012,7 +1013,7 @@ function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; liv
   if (live) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
     <>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`${compactTokens(out)} tokens${rate > 0 ? `, ${rate} tok/s` : ''}`} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
         {words}
       </button>
       {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
@@ -1549,6 +1550,11 @@ function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string;
  * truncated with the whole text in its tooltip and in the button's accessible name. The
  * button opens the full question below; the disclosure outlives re-renders and history pages.
  */
+/** The most characters a settled question's button name has. */
+const NAME_MAX = 80;
+/** `text` cut to `max` characters, an ellipsis marking the cut. */
+const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
+
 function SettledQuestion({ id, asked }: Readonly<{ id: string; asked: AskedQuestion }>) {
   const [open, setOpen] = useDisclosure(`question:${id}`);
   const [opened, setOpened] = useState(open);
@@ -1558,7 +1564,11 @@ function SettledQuestion({ id, asked }: Readonly<{ id: string; asked: AskedQuest
   const question = (many ? asked.questions.map((q) => flat(q.text)).join(' · ') : flat(asked.questions[0]?.text ?? '')) || 'The agent asked a question.';
   const { marker, answer, tone } = settledAnswer(asked);
   const lead = many ? `${asked.questions.length} questions` : '';
-  const name = `${lead || 'Question'}: ${question} ${marker ? `${marker}: ` : ''}${answer}`;
+  // The name stays short (at most NAME_MAX): the whole question and answer are in the body it opens.
+  const said = clip(`${marker ? `${marker}: ` : ''}${answer}`, NAME_MAX / 2);
+  const head = `${lead || 'Question'}: `;
+  const short = clip(question, NAME_MAX - head.length - said.length - 2);
+  const name = `${head}${short}${/[.?!:…]$/.test(short) ? '' : '.'} ${said}`;
   return (
     <div className="@container">
       <button

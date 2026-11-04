@@ -53,7 +53,7 @@ test('the turn line counts thoughts, and what the tools did by kind and distinct
 
 test('the turn line keeps what needs attention explicit: failures, calls without a result, questions, requests, images', () => {
   const failed = summarizeTurn(entries(bash('c1', 'ls', at(1), { status: 'failed', output: 'boom' }), bash('c2', 'ls', at(2))), { live: false });
-  assert.deepEqual(failed, { parts: [{ text: '1 command', tone: 'muted' }, { text: '1 failed', tone: 'error' }], label: '1 command · 1 failed', tone: 'error', count: 2 });
+  assert.deepEqual(failed, { parts: [{ text: '1 command', tone: 'muted' }, { text: '1 failed', tone: 'error', reason: 'boom' }], label: '1 command · 1 failed', tone: 'error', count: 2 });
   // The turn ended before the call reported: no result. Live, the foot line names it and the line stays quiet.
   const open = bash('c3', 'npm test', at(3), { status: 'running', output: undefined });
   assert.deepEqual(summarizeTurn(entries(open), { live: false }).parts.map((p) => p.text), ['1 without a result']);

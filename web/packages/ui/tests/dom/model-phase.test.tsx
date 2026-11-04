@@ -167,10 +167,10 @@ describe('the live line at the strip', () => {
     // The next call comes within the hold: the line moves on without the strip leaving.
     view.rerender(draw(task({ kind: 'model', since: ago(0), calls: 1 })));
     expect(shown()).toMatch(/^Waiting for the model/);
-    // Nothing comes: once the hold passes, the bare strip goes.
+    // Nothing comes: once the hold passes, the strip says "Working", never blank while the turn works.
     view.rerender(draw(task(undefined)));
     await act(async () => { vi.advanceTimersByTime(LIVE_HOLD_MS); });
-    expect(shown()).toBeNull();
+    expect(shown()).toBe('Working');
     // A turn that ended drops it at once.
     view.rerender(draw(running));
     view.rerender(<StatusLine line={null} session={running} hidden={false} jump={false} onJump={() => {}} />);

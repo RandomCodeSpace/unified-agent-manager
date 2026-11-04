@@ -17,7 +17,7 @@ const sections = (dialog: HTMLElement) => Object.fromEntries([...dialog.querySel
 
 test("the turn head's tokens are a dialog button that opens nothing until pressed", () => {
   show(luna);
-  const button = screen.getByRole('button', { name: /^1\.2K tokens\s+39 tok\/s$/ });
+  const button = screen.getByRole('button', { name: '1.2K tokens, 39 tok/s' });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
   expect(button.title).toBe('128,412 tokens in · 1,214 out · 31s generating');

@@ -24,13 +24,14 @@ function draw(session: SessionDetail, { working = session.state === 'working', s
 /** The progress line's sentence, as a screen reader hears it, or null with no line. */
 const said = () => document.querySelector('.animate-fade-in + .sr-only')?.textContent ?? null;
 
-test('a working turn with nothing of its own draws no strip, its time being the turn card\'s; the intent, a retry, the list each bring it back, without a clock', () => {
+test('a working turn with nothing of its own says "Working", never a blank strip; the intent, a retry, the list each take its place, without a clock', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const onJump = vi.fn();
   const view = render(draw(task(), { onJump }));
   expect(screen.queryByRole('button')).toBeNull();
-  expect(screen.queryByText('Working')).toBeNull();
+  expect(screen.getByText('Working', { ignore: '.sr-only' })).toBeTruthy();
+  expect(said()).toBe('Working');
   view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } }), { onJump }));
   expect(screen.getByText('Building the index page', { ignore: '.sr-only' })).toBeTruthy();
   // The intent is plain words, not a button: nothing to peek at, and the arrow is the way to the bottom.
@@ -128,7 +129,7 @@ test('the line stays while a subagent outlives the turn', () => {
   }
 });
 
-test('a turn starting says nothing of the last one: no line until its timing comes, then still none while it has nothing of its own', () => {
+test('a turn starting says nothing of the last one: "Working" alone until its timing comes, and while it has nothing of its own', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 20_000);
   const before = { id: 'before', user_item_id: 'u0', state: 'cancelled', started_at: new Date(start - 30_000).toISOString(), ended_at: new Date(start - 10_000).toISOString() } as TurnTiming;
@@ -137,19 +138,19 @@ test('a turn starting says nothing of the last one: no line until its timing com
   expect(said()).toBe('Stopped');
   // The Thread works before the turn's timing comes: nothing of the last turn stands for this one.
   view.rerender(draw(task({ turn_timings: [before] })));
-  expect(said()).toBeNull();
+  expect(said()).toBe('Working');
   view.rerender(draw(task({ turn_timings: [before, next] })));
-  expect(said()).toBeNull();
+  expect(said()).toBe('Working');
   expect(statusLine(task({ turn_timings: [before, next] }), true, false)).toEqual({ kind: 'working', lead: '', compacting: false, retry: undefined, todo: undefined, live: null });
 });
 
-test('a turn a restart or close cut off gives the next one no line while it starts; a dropped stream keeps the running turn\'s', () => {
+test('a turn a restart or close cut off gives the next one "Working" alone while it starts; a dropped stream keeps the running turn\'s', () => {
   // The service marks such a turn unknown, without an end.
   const cut = { ...timing, user_item_id: 'u0', state: 'unknown' } as TurnTiming;
   // You reopen the Thread with a message: it starts, then works, before the new turn's timing comes.
   for (const state of ['starting', 'working'] as const) {
     const view = render(draw(task({ state, turn_timings: [cut] }), { working: true }));
-    expect(said()).toBeNull();
+    expect(said()).toBe('Working');
     view.unmount();
   }
   // The page lost its stream and marked the running turn unknown itself: the turn may still run.
@@ -397,13 +398,15 @@ test('the live region says a row done or newly blocked, at most one every 5s', (
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 const at = (m: number) => new Date(start - m * 60_000).toISOString();
+const quiet = { id: 'quiet-turn', user_item_id: 'u1', state: 'completed', started_at: at(4), ended_at: at(3) } as TurnTiming;
 const ended = { id: 'done-turn', user_item_id: 'u0', state: 'completed', started_at: at(10), ended_at: at(5), todo: { done: 1, total: 4, in_progress: 2, blocked: 1, open: 2 } } as TurnTiming;
 /** The names of the strip's buttons, in order. */
 const names = () => screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.querySelector(':scope > .sr-only')!.textContent);
 
 test('idle, the list and its history stay on the strip as two buttons alone; the list opens as the last turn left it; hidden, the arrow stands alone', async () => {
   const user = userEvent.setup();
-  const idle = task({ state: 'completed', turn_timings: [ended], turn_activity: { todos: listOf(rows(), { touched: false }) } });
+  // A later turn left the list alone, so no turn card states these counts.
+  const idle = task({ state: 'completed', turn_timings: [ended, quiet], turn_activity: { todos: listOf(rows(), { touched: false }) } });
   expect(stripHasTodos(idle)).toBe(true);
   expect(stripHasTodos(task({ state: 'completed' }))).toBe(false);
   const view = render(draw(idle));
@@ -435,6 +438,18 @@ test('idle, the list and its history stay on the strip as two buttons alone; the
   expect(names()).toEqual(['Jump to bottom']);
 });
 
+test('idle, a list the latest turn\'s card states with the same counts is not repeated on the strip; its history stays, and a working turn brings the list back', () => {
+  const idle = task({ state: 'completed', turn_timings: [ended], turn_activity: { todos: listOf(rows(), { touched: false }) } });
+  const view = render(draw(idle));
+  expect(names()).toEqual(['Todo history: 1 turn changed the list. Show the history']);
+  // The list changed since the turn ended: the strip shows the list as it is now.
+  view.rerender(draw(task({ state: 'completed', turn_timings: [ended], turn_activity: { todos: listOf(rows([{}, { status: 'done' }]), { touched: false }) } })));
+  expect(names()).toEqual(['Todo 2 of 4 done, 1 in progress, 1 blocked. Show the list', 'Todo history: 1 turn changed the list. Show the history']);
+  // A turn that works has the list on its strip.
+  view.rerender(draw(task({ turn_timings: [ended, timing], turn_activity: { todos: listOf(rows()) } })));
+  expect(names()[0]).toBe('Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list');
+});
+
 test('a closed Thread shows the last list uam kept; the history button opens the ledger: every row with its stamp, the removed ones marked', async () => {
   const user = userEvent.setup();
   const t1 = { id: 'turn-1', user_item_id: 'u1', state: 'completed', started_at: at(60), ended_at: at(50), todo: { done: 1, total: 2, pending: 1, open: 1 } } as TurnTiming;
@@ -464,7 +479,7 @@ test('a closed Thread shows the last list uam kept; the history button opens the
     ],
   };
   const todoHistory = vi.fn(async () => history);
-  const closed = task({ state: 'completed', turn_timings: [t1, t2], turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} } } });
+  const closed = task({ state: 'completed', turn_timings: [t1, t2, { id: 'turn-3', user_item_id: 'u3', state: 'completed', started_at: at(20), ended_at: at(10) } as TurnTiming], turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} } } });
   render(<ApiContext.Provider value={{ ...api, todoHistory }}>{draw(closed)}</ApiContext.Provider>);
   // With no conversation open the list is not known: the strip reads the last one uam kept, once.
   await screen.findByRole('button', { name: 'Todo 1 of 3 done, 1 in progress, 1 blocked. Show the list' });
