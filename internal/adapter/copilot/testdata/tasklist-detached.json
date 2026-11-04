@@ -1,0 +1,1 @@
+{"tasks":[{"type":"shell","id":"1","description":"Start detached sleep","status":"running","command":"sleep 120","attachmentMode":"detached","executionMode":"background","logPath":"/tmp/copilot-detached-1.log","pid":3892667.0,"startedAt":"2026-11-04T09:02:47.362Z"}]}

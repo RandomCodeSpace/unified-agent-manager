@@ -252,6 +252,12 @@ func (a sdkSessionAdapter) CancelSubagent(ctx context.Context, agentID string) (
 }
 
 func (a sdkSessionAdapter) ListTasks(ctx context.Context) ([]rpc.TaskInfo, error) {
+	if raw, ok, err := listTasksRaw(ctx, a.s.RPC.Tasks, a.s.SessionID); ok {
+		if err != nil {
+			return nil, err
+		}
+		return decodeTaskList(raw)
+	}
 	result, err := a.s.RPC.Tasks.List(ctx)
 	if err != nil {
 		return nil, err
