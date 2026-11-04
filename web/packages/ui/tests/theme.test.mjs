@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import { THEME_KEY, parseTheme, resolveTheme } from '../src/lib/theme.ts';
@@ -57,7 +57,8 @@ for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
     const pairs = [];
     for (const text of ['ink', 'body', 'muted', 'accent', 'link', 'file-link', 'attention', 'success', 'warning', 'error']) for (const ground of grounds) pairs.push([text, ground, 4.5]);
     for (const signal of ['attention', 'success', 'warning', 'error', 'info', 'accent']) pairs.push([signal, `${signal}-wash`, 4.5]);
-    for (const ground of grounds) pairs.push(['faint', ground, 3]);
+    // Faint draws glyphs and the dark Thread cards' edge against the rail; focus draws the focus ring.
+    for (const ground of grounds) pairs.push(['faint', ground, 3], ['focus', ground, 3]);
     pairs.push(['on-primary', 'primary', 4.5], ['on-accent', 'accent', 4.5], ['diff-add-text', 'diff-add-bg', 4.5], ['diff-del-text', 'diff-del-bg', 4.5]);
     for (const badge of Object.keys(tokens).filter((k) => k.startsWith('badge-'))) {
       pairs.push(['on-primary', badge, 4.5]);
@@ -67,3 +68,19 @@ for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
     for (const [fg, bg, min] of pairs) assert.ok(contrast(tokens[fg], tokens[bg]) >= min, `${fg} on ${bg}: ${contrast(tokens[fg], tokens[bg]).toFixed(2)} < ${min}`);
   });
 }
+
+test('faint never colours words: text that reads as faint is muted', () => {
+  // A tag with `text-faint` in its className must be self-closing (an icon), aria-hidden, an icon Button, or hold only punctuation.
+  const src = new URL('../src/', import.meta.url);
+  const tag = /<(\w+)((?:[^<>]|=>)*?className=["{][^"}]*?(?<=[\s"'])text-faint(?=[\s"'])(?:[^<>]|=>)*?)(\/?)>([^<]*)/g;
+  const words = [];
+  for (const file of readdirSync(src, { recursive: true }).filter((f) => f.endsWith('.tsx'))) {
+    for (const [, name, attrs, self, text] of readFileSync(new URL(file, src), 'utf8').matchAll(tag)) {
+      if (!self && name !== 'Button' && !attrs.includes('aria-hidden') && /[\p{L}\p{N}{]/u.test(text)) words.push(`${file}: <${name}>${text.trim()}`);
+    }
+  }
+  assert.deepEqual(words, []);
+  // In the stylesheet faint colours only glyphs: the facts arrow.
+  const rules = [...css.matchAll(/([^{}]+)\{[^}]*\bcolor: var\(--color-faint\)/g)].map((m) => m[1].trim());
+  assert.deepEqual(rules, ['.md-arrow']);
+});

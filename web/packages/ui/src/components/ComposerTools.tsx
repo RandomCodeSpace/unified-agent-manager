@@ -162,7 +162,7 @@ function SubagentTab({ subagent: s, tab, onRun }: Readonly<{ subagent: Subagent;
         <div className="flex flex-wrap items-center gap-1.5">
           {runs.map((r, i) => (
             <span key={i} className="contents">
-              {r.gapBefore && <span className="text-meta text-faint">Earlier runs not kept · latest runs</span>}
+              {r.gapBefore && <span className="text-meta text-muted">Earlier runs not kept · latest runs</span>}
               <button
                 type="button"
                 disabled={!r.started_at}

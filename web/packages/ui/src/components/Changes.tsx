@@ -326,9 +326,9 @@ export function ChangesSheet({
           value={filter}
           onValueChange={(v) => setFilter(v as typeof filter)}
           items={[
-            { value: 'all', label: <>All <span className="ml-1 text-faint tabular-nums">{files.length}</span></> },
-            { value: 'open', label: <>Not committed <span className="ml-1 text-faint tabular-nums">{files.length - committedCount}</span></>, disabled: files.length === committedCount },
-            { value: 'committed', label: <>Committed <span className="ml-1 text-faint tabular-nums">{committedCount}</span></> },
+            { value: 'all', label: <>All <span className="ml-1 text-muted tabular-nums">{files.length}</span></> },
+            { value: 'open', label: <>Not committed <span className="ml-1 text-muted tabular-nums">{files.length - committedCount}</span></>, disabled: files.length === committedCount },
+            { value: 'committed', label: <>Committed <span className="ml-1 text-muted tabular-nums">{committedCount}</span></> },
           ]}
         />
       )}
@@ -445,7 +445,7 @@ function GroupHead({ group, files, commits }: Readonly<{ group: 'open' | 'commit
   return (
     <div className="flex flex-col gap-1 pt-1">
       <h3 className="flex items-baseline gap-1.5 text-caption">
-        <span className="text-meta font-medium tracking-wide text-faint uppercase">{group === 'open' ? 'Not committed' : 'Committed'}</span>
+        <span className="text-meta font-medium tracking-wide text-muted uppercase">{group === 'open' ? 'Not committed' : 'Committed'}</span>
         <span className="text-muted tabular-nums">
           {files.length} {files.length === 1 ? 'file' : 'files'}
           {commits?.length ? ` · ${commits.length} ${commits.length === 1 ? 'commit' : 'commits'}` : ''}
@@ -456,7 +456,7 @@ function GroupHead({ group, files, commits }: Readonly<{ group: 'open' | 'commit
         <ul className="flex flex-col">
           {commits.map(c => (
             <li key={c.hash} className="flex items-baseline gap-2 px-1 text-caption">
-              <code className="shrink-0 font-mono text-code-sm text-faint">{c.hash}</code>
+              <code className="shrink-0 font-mono text-code-sm text-muted">{c.hash}</code>
               <span className="min-w-0 flex-1 truncate text-ink" title={c.subject}>{c.subject}</span>
               <span className="shrink-0 text-muted tabular-nums">{c.files} {c.files === 1 ? 'file' : 'files'}</span>
             </li>

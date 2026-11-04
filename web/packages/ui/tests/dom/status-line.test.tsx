@@ -489,7 +489,7 @@ test('a closed Thread shows the last list uam kept; the history button opens the
     `Write the READMEdone ${clock(at(34))} · turn 2 · removed from the list since, Done`,
     `Plan the pagesdone ${clock(at(55))} · turn 1, Done`,
   ]);
-  expect(within(reader).getByText('· removed from the list since').className).toContain('text-faint');
+  expect(within(reader).getByText('· removed from the list since').className).toContain('text-muted');
   expect(within(reader).getByText('Kept by uam when each turn ended')).toBeTruthy();
   expect(within(reader).getByText('Esc')).toBeTruthy();
   await user.keyboard('{Escape}');

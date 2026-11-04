@@ -319,7 +319,7 @@ function LiveClock({ timing }: Readonly<{ timing?: TurnTiming }>) {
 
 /**
  * The head's facts before its counts. Ended: when it ended, "Took 28m" with the time split in
- * `faint` parentheses, then the turn's tokens and generation speed, a button to its waybill.
+ * `muted` parentheses, then the turn's tokens and generation speed, a button to its waybill.
  * Running: "Working 8m" and the tokens and speed so far, which stay live.
  */
 function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean; timing?: TurnTiming; at?: string; entries: Entry[] }>): ReactNode[] {
@@ -332,7 +332,7 @@ function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean
     elapsed && (
       <span title={durationTitle(elapsed)}>
         <span className="whitespace-nowrap">Took <span className="font-medium text-ink">{elapsed}</span></span>
-        {split && <span className="text-faint" title={SPLIT_TITLE}> ({split})</span>}
+        {split && <span className="text-muted" title={SPLIT_TITLE}> ({split})</span>}
       </span>
     ),
     tokens,
@@ -467,7 +467,7 @@ function Rail({ icon, edge, dashed = false, className }: Readonly<{ icon?: React
 function StepFrame({ at, icon, iconClass, edge, dur, under, children, ref, ...rest }: Readonly<{ at?: string; icon: ReactNode; iconClass?: string; edge: Edge; dur?: string | null; under?: ReactNode; children: ReactNode; ref?: Ref<HTMLDivElement> } & Omit<HTMLAttributes<HTMLDivElement>, 'children'>>) {
   return (
     <div ref={ref} role="listitem" className={STEP_GRID} {...rest}>
-      <span className={cn(STEP_LINE, 'text-caption whitespace-nowrap tabular-nums text-faint')} title={at ? dateTime(at) : undefined}>
+      <span className={cn(STEP_LINE, 'text-caption whitespace-nowrap tabular-nums text-muted')} title={at ? dateTime(at) : undefined}>
         {at && <><span className="max-sm:hidden">{clockTime(at, true)}</span><span className="sm:hidden">{clockTime(at)}</span></>}
       </span>
       <Rail icon={icon} edge={edge} className={iconClass} />
@@ -710,7 +710,7 @@ function StepGap({ children, you = false }: Readonly<{ children: ReactNode; you?
     <div role="listitem" className={STEP_GRID}>
       <span />
       <Rail edge={EDGES[0]} dashed />
-      <span className={cn('col-span-2 flex min-h-[22px] items-center text-meta tabular-nums', you ? 'text-attention' : 'text-faint')}>{children}</span>
+      <span className={cn('col-span-2 flex min-h-[22px] items-center text-meta tabular-nums', you ? 'text-attention' : 'text-muted')}>{children}</span>
     </div>
   );
 }

@@ -755,7 +755,7 @@
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 500;
-    color: var(--color-faint);
+    color: var(--color-muted);
   }
   /* A step the todo list tracks shows its state's glyph where its number was. */
   .md-steps > li[data-state]:not([data-state='pending'])::before {
@@ -872,7 +872,7 @@
     background: var(--color-success);
   }
   .md-facts dd > del {
-    color: var(--color-faint);
+    color: var(--color-muted);
   }
   .md-arrow {
     margin: 0 6px;
@@ -966,7 +966,7 @@
     font-family: var(--font-sans);
     font-size: 12px;
     font-weight: 600;
-    color: var(--color-faint);
+    color: var(--color-muted);
   }
   /* Outline, pros and cons, timeline and summary lead (r22 7, 9, 10 and 3). */
   .md-outline {
@@ -1005,7 +1005,7 @@
     padding-top: 1px;
     font-family: var(--font-mono);
     font-size: 12px;
-    color: var(--color-faint);
+    color: var(--color-muted);
   }
   .md .md-pair {
     display: grid;
