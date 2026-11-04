@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -192,5 +193,48 @@ func TestForkWorktreeThreadWhoseWorktreeWasRemoved(t *testing.T) {
 	}
 	if _, err := os.Stat(source.Worktree.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("source worktree recreated: %v", err)
+	}
+}
+
+// Dismissing an uncertain branch request removes the worktree and branch
+// made for it; one with changes is kept.
+func TestForkWorktreeThreadDismissRemovesItsWorktree(t *testing.T) {
+	m, p, st, source, repo := worktreeForkManager(t)
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { return "", agentapi.ErrForkUncertain }
+	uncertain := func(model string) store.WebFork {
+		t.Helper()
+		req := ForkRequest{UserItemID: "u-original", Model: model, RequestID: mustUUID(t)}
+		if _, err := m.Fork(source.ID, req); !errors.Is(err, errForkUncertain) {
+			t.Fatalf("fork = %v", err)
+		}
+		for _, pending := range pendingForks(t, st) {
+			if pending.Lineage.RequestID == req.RequestID && pending.Place != nil {
+				return pending
+			}
+		}
+		t.Fatal("no reservation with a worktree")
+		return store.WebFork{}
+	}
+	clean, dirty := uncertain("a"), uncertain("")
+	writeRepoFile(t, dirty.Place.Worktree, "work.txt", "keep me\n")
+	for _, fork := range []store.WebFork{dirty, clean} {
+		if err := m.DismissFork(source.ID, ForkRequest{UserItemID: "u-original", Model: fork.Lineage.Model}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, "clean worktree and branch removed", func() bool {
+		return worktreeGone(clean.Place.Worktree) && gitOutput(t, repo, "branch", "--list", clean.Place.Branch) == ""
+	})
+	// The dirty one was dismissed first; git refuses to remove it.
+	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(dirty.Place.Worktree, "work.txt")); err != nil {
+			t.Fatalf("dirty worktree removed: %v", err)
+		}
+	}
+	if out := gitOutput(t, repo, "branch", "--list", dirty.Place.Branch); out == "" {
+		t.Fatal("dirty worktree's branch removed")
+	}
+	if _, err := os.Stat(source.Worktree.Path); err != nil {
+		t.Fatalf("source worktree removed: %v", err)
 	}
 }

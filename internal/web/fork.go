@@ -461,16 +461,24 @@ func (m *Manager) DismissFork(id string, req ForkRequest) error {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
-	return m.store.Update(func(cfg *store.Config) error {
+	var dropped store.WebFork
+	if err := m.store.Update(func(cfg *store.Config) error {
 		for requestID, pending := range cfg.WebForks {
 			if !forkMatches(pending.Lineage, id, req) {
 				continue
 			}
+			dropped = pending
 			delete(cfg.WebForks, requestID)
 			return nil
 		}
 		return newError(http.StatusNotFound, "no unresolved branch request for that reply and model")
-	})
+	}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.kickForkWorktreesRemoveLocked([]store.WebFork{dropped})
+	m.mu.Unlock()
+	return nil
 }
 
 func (s *Server) handleDismissFork(w http.ResponseWriter, r *http.Request) {

@@ -489,6 +489,42 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	}()
 }
 
+// kickForkWorktreesRemoveLocked removes in the background the worktrees and
+// branches made for branch requests that were dismissed or lost their
+// source. One a Thread uses, or with changes, is kept.
+func (m *Manager) kickForkWorktreesRemoveLocked(forks []store.WebFork) {
+	for _, fork := range forks {
+		if m.closed || fork.Place == nil || fork.Place.Worktree == "" {
+			continue
+		}
+		path, branch, dir := fork.Place.Worktree, fork.Place.Branch, fork.Workdir
+		m.wg.Add(1)
+		go func() {
+			defer log.Recover("branch request worktree remove", &m.mu)
+			defer m.wg.Done()
+			m.worktrees.ops.Lock()
+			defer m.worktrees.ops.Unlock()
+			if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+				return
+			}
+			m.mu.Lock()
+			inUse := m.worktrees.keep[path] > 0 || len(m.worktreeThreadsLocked()[path]) > 0
+			m.mu.Unlock()
+			if inUse {
+				return
+			}
+			if err := removeWorktree(m.ctx, path, false); err != nil {
+				log.Info("branch request worktree kept", "path", path, "error", err)
+				return
+			}
+			if _, err := runGitWrite(m.ctx, dir, nil, "branch", "-D", branch); err != nil {
+				log.Warn("branch request branch not removed", "branch", branch, "error", err)
+			}
+			log.Info("branch request worktree removed", "path", path)
+		}()
+	}
+}
+
 // restoreWorktree recreates the worktree of an active Thread from its
 // branch when it was removed, before its conversation opens there. The
 // caller holds s.op.
