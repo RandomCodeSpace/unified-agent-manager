@@ -598,8 +598,10 @@ type webSession struct {
 	// the now-unknown total after that activity invalidates it.
 	nativeDiffRevision uint64
 	// nativePaths are the files the latest native read listed: with edits,
-	// the Thread's own files the Settle guard checks (git_pending.go).
+	// the Thread's own files the Settle guard checks (git_pending.go). They
+	// persist, with when a read first listed them, for a closed Thread.
 	nativePaths            []string
+	nativePathsAt          time.Time
 	diffRunning, diffDirty bool
 	// targets caches folder searches for names that miss at the top of the
 	// Thread's folder (file_resolver.go).
@@ -741,6 +743,15 @@ func (s *webSession) key() persistKey {
 		k.place = *s.place
 	}
 	return k
+}
+
+// nativePathsRecord is s's native paths as stored; nil before a read. The
+// caller holds mu.
+func nativePathsRecord(s *webSession) *store.WebNativePaths {
+	if s.nativePaths == nil {
+		return nil
+	}
+	return &store.WebNativePaths{Paths: slices.Clone(s.nativePaths), At: s.nativePathsAt}
 }
 
 func busy(state string) bool {
@@ -1025,6 +1036,9 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		s.handoff = web.Handoff
 		s.memoryNotes = loadMemoryNotes(web.MemoryNotes)
+		if web.NativePaths != nil {
+			s.nativePaths, s.nativePathsAt = web.NativePaths.Paths, web.NativePaths.At
+		}
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -2513,7 +2527,7 @@ func (m *Manager) flush() (err error) {
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
-				MemoryNotes: slices.Clone(s.memoryNotes),
+				MemoryNotes: slices.Clone(s.memoryNotes), NativePaths: nativePathsRecord(s),
 			},
 		})
 	}
