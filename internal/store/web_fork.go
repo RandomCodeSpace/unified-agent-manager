@@ -30,4 +30,10 @@ type WebFork struct {
 	CreatedAt            time.Time   `json:"created_at"`
 	TailEventID          string      `json:"tail_event_id"`
 	Lineage              ForkLineage `json:"lineage"`
+	// Place and Folder are the new worktree a branch of a Thread in its own
+	// worktree runs in, and its folder there; Workdir stays the Project's.
+	// Start is the commit its branch was made at.
+	Place  *WebPlace `json:"place,omitempty"`
+	Folder string    `json:"folder,omitempty"`
+	Start  string    `json:"start,omitempty"`
 }

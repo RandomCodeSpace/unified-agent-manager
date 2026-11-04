@@ -2323,7 +2323,9 @@ func (m *Manager) deleteTask(id string) error {
 	case !archived:
 		return newError(http.StatusConflict, "only an archived thread can be deleted; archive it first")
 	}
+	var dropped []store.WebFork
 	if err := m.store.Update(func(cfg *store.Config) error {
+		dropped = nil
 		key := store.Key(s.provider, s.id)
 		if rec, ok := cfg.Sessions[key]; ok && rec.ID == s.id && rec.Surface == store.SurfaceWeb {
 			delete(cfg.Sessions, key)
@@ -2331,6 +2333,7 @@ func (m *Manager) deleteTask(id string) error {
 		// Its unresolved branch requests can no longer be reconciled.
 		for requestID, pending := range cfg.WebForks {
 			if pending.Provider == s.provider && pending.Lineage.SourceTaskID == s.id {
+				dropped = append(dropped, pending)
 				delete(cfg.WebForks, requestID)
 			}
 		}
@@ -2342,6 +2345,7 @@ func (m *Manager) deleteTask(id string) error {
 	m.mu.Lock()
 	conv := m.forgetLocked(s)
 	m.kickWorktreeRemoveLocked(s)
+	m.kickForkWorktreesRemoveLocked(dropped)
 	m.mu.Unlock()
 	if conv != nil {
 		m.closeConversation(conv)

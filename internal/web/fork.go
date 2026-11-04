@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -76,6 +77,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	}
 	key, gen, stop, sequence := s.key(), s.gen, s.stopSeq, s.turnSeq
 	convID, external := s.convID, s.conv == nil || s.imported || s.terminalID != ""
+	sourcePlace, hint := s.clonedPlace(), firstNonEmpty(s.name, s.title)
 	m.mu.Unlock()
 	prov, workdir, mode, err := m.checkCreate(&create)
 	if err != nil {
@@ -106,6 +108,21 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 			return SessionSummary{}, errHeldElsewhere
 		}
 	}
+	var place *store.WebPlace
+	folder, start, undoPlace := "", "", func() {}
+	if sourcePlace != nil && sourcePlace.Worktree != "" {
+		if folder, place, start, undoPlace, err = m.branchWorktree(m.ctx, Project{ID: create.ProjectID, Dir: workdir}, *sourcePlace, hint); err != nil {
+			return SessionSummary{}, err
+		}
+	}
+	// The worktree goes with the reservation: kept once it is saved, until a
+	// definite refusal releases it.
+	reserved := false
+	defer func() {
+		if !reserved {
+			undoPlace()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 	defer cancel()
 	boundary, err := forker.ReadForkBoundary(ctx, agentapi.ForkBoundaryRequest{ConversationID: convID, UserItemID: req.UserItemID})
@@ -127,6 +144,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		return SessionSummary{}, err
 	}
 	reservation := store.WebFork{
+		Place: place, Folder: folder, Start: start,
 		ID: targetID, Provider: prov.Name(), SourceConversationID: convID, ProjectID: create.ProjectID, Workdir: workdir,
 		Effort: create.Effort, ContextSize: create.ContextSize, Agent: create.Agent, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
 		Lineage: store.ForkLineage{SourceTaskID: id, UserItemID: req.UserItemID, UserEventID: boundary.UserEventID, ToEventID: boundary.ToEventID, RequestID: req.RequestID, Model: req.Model},
@@ -160,6 +178,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	}); err != nil {
 		return SessionSummary{}, fmt.Errorf("reserve task branch: %w", err)
 	}
+	reserved = true
 	providerID, err := forker.Fork(ctx, agentapi.ForkRequest{ForkBoundaryRequest: agentapi.ForkBoundaryRequest{ConversationID: convID, UserItemID: req.UserItemID}, Boundary: boundary})
 	if err != nil {
 		if errors.Is(err, agentapi.ErrForkUncertain) {
@@ -185,6 +204,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		}); saveErr != nil {
 			return SessionSummary{}, fmt.Errorf("branch refused, but its reservation could not be released: %w", saveErr)
 		}
+		undoPlace()
 		return SessionSummary{}, forkReadError(err)
 	}
 	if !store.ValidProviderSessionID(providerID) || providerID == convID {
@@ -230,9 +250,6 @@ func (m *Manager) forkAllowedLocked(s *webSession) error {
 	}
 	if s.opening != nil {
 		return newError(http.StatusConflict, "wait for the thread to finish opening before branching")
-	}
-	if s.place != nil && s.place.Worktree != "" {
-		return newError(http.StatusConflict, "a Thread in a worktree cannot be branched from a turn yet: the branch would start in the Project folder, without this worktree's files. Run again repeats the last message in the worktree")
 	}
 	if err := s.rewindHoldLocked(); err != nil {
 		return err
@@ -285,7 +302,14 @@ func (m *Manager) recordedFork(source string, req ForkRequest) (SessionSummary, 
 func forkSourcePresent(cfg *store.Config, fork store.WebFork) bool {
 	source, exists := cfg.Sessions[store.Key(fork.Provider, fork.Lineage.SourceTaskID)]
 	project, projectExists := cfg.WebProjects[fork.ProjectID]
-	return exists && source.ID == fork.Lineage.SourceTaskID && source.Agent == fork.Provider && source.Surface == store.SurfaceWeb && source.ProviderSessionID == fork.SourceConversationID && source.Workdir == fork.Workdir && source.Web != nil && source.Web.ProjectID == fork.ProjectID && projectExists && project.Dir == fork.Workdir
+	if !exists || source.Web == nil {
+		return false
+	}
+	sameFolder := source.Workdir == fork.Workdir
+	if fork.Place != nil { // the source runs in its own worktree, not the Project's folder
+		sameFolder = source.Web.Place != nil && source.Web.Place.Worktree != ""
+	}
+	return source.ID == fork.Lineage.SourceTaskID && source.Agent == fork.Provider && source.Surface == store.SurfaceWeb && source.ProviderSessionID == fork.SourceConversationID && sameFolder && source.Web.ProjectID == fork.ProjectID && projectExists && project.Dir == fork.Workdir
 }
 
 func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
@@ -300,9 +324,12 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	if workdir != fork.Workdir {
 		return SessionSummary{}, newError(http.StatusConflict, "the branch project directory changed")
 	}
-	s := newSession(fork.ID, fork.Provider, "", fork.Workdir, fork.ProviderSessionID, fork.CreatedAt)
+	s := newSession(fork.ID, fork.Provider, "", cmp.Or(fork.Folder, fork.Workdir), fork.ProviderSessionID, fork.CreatedAt)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
 	s.base, s.fork = StateClosed, &fork.Lineage
+	if s.place = loadedPlace(fork.Place); s.place != nil {
+		s.branch = s.place.Branch
+	}
 	// The branch starts with its source's name or title as its title, marked
 	// as the branch so the two read apart.
 	m.mu.Lock()
@@ -312,7 +339,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	}
 	m.mu.Unlock()
 	rec := store.SessionRecord{ID: s.id, Agent: s.provider, Workdir: s.workdir, Mode: s.mode, CreatedAt: s.createdAt, LastSeenAt: s.createdAt, Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: s.convID,
-		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork, Title: s.title}}
+		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork, Title: s.title, Place: s.clonedPlace()}}
 	check := func(cfg *store.Config) error {
 		if existing, exists := cfg.Sessions[store.Key(fork.Provider, fork.ID)]; exists {
 			if existing.ID == fork.ID && existing.ProviderSessionID == fork.ProviderSessionID && existing.Web != nil && existing.Web.Fork != nil && existing.Web.Fork.RequestID == fork.Lineage.RequestID {
@@ -434,16 +461,24 @@ func (m *Manager) DismissFork(id string, req ForkRequest) error {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
-	return m.store.Update(func(cfg *store.Config) error {
+	var dropped store.WebFork
+	if err := m.store.Update(func(cfg *store.Config) error {
 		for requestID, pending := range cfg.WebForks {
 			if !forkMatches(pending.Lineage, id, req) {
 				continue
 			}
+			dropped = pending
 			delete(cfg.WebForks, requestID)
 			return nil
 		}
 		return newError(http.StatusNotFound, "no unresolved branch request for that reply and model")
-	})
+	}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.kickForkWorktreesRemoveLocked([]store.WebFork{dropped})
+	m.mu.Unlock()
+	return nil
 }
 
 func (s *Server) handleDismissFork(w http.ResponseWriter, r *http.Request) {
