@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/web"
 )
 
@@ -74,6 +75,8 @@ func TestBootServiceInstallsAndRefreshes(t *testing.T) {
 	unit := readUnit(t, home)
 	for _, want := range []string{
 		bootUnitMarker,
+		"Restart=on-failure\nRestartSec=10\n",
+		"StartLimitBurst=5\n",
 		`Environment="HOME=` + home + `"`,
 		`Environment="PATH=/usr/bin:/bin"`,
 		`ExecStart="/opt/uam dir/uam" "__web" "--listen" "127.0.0.1:8261" "--public-origin" "https://uam.example.com" "--log-headers"`,
@@ -107,7 +110,21 @@ func TestBootServiceInstallsAndRefreshes(t *testing.T) {
 	}
 
 	lines := strings.Join(bootServiceStatus(), "\n")
-	if !strings.Contains(lines, "enabled; starts at login") || !strings.Contains(lines, "KillUserProcesses=yes") {
+	if !strings.Contains(lines, "enabled; starts at login") || !strings.Contains(lines, "KillUserProcesses=yes") || strings.Contains(lines, "UAM_BYOM_") {
+		t.Fatalf("status = %q", lines)
+	}
+
+	// A custom model whose key comes from the environment is named, by
+	// variable only; one with a saved key is not.
+	t.Setenv("UAM_BYOM_LAB", "lab-key-value")
+	cfg := `{"web_settings":{"custom_models":[` +
+		`{"name":"lab","base_url":"https://lab.example","model_id":"m","api_key_env":"UAM_BYOM_LAB"},` +
+		`{"name":"saved","base_url":"https://saved.example","model_id":"m","api_key_env":"","api_key":"sealed"}]}}`
+	if err := os.WriteFile(store.DefaultPath(), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Join(bootServiceStatus(), "\n")
+	if !strings.Contains(lines, "environment has no UAM_BYOM_LAB;") || strings.Contains(lines, "lab-key-value") || strings.Contains(lines, "sealed") {
 		t.Fatalf("status = %q", lines)
 	}
 }

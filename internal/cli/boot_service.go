@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,6 +17,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/web"
 )
 
@@ -82,7 +84,9 @@ func bootUnit(exe string, opts webOptions) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString(bootUnitMarker + "[Unit]\nDescription=uam web\n\n[Service]\n")
+	// A crashed service comes back; one that keeps failing (another service
+	// holds the lock, say) stops after five starts in two minutes.
+	b.WriteString(bootUnitMarker + "[Unit]\nDescription=uam web\nStartLimitIntervalSec=120\nStartLimitBurst=5\n\n[Service]\nRestart=on-failure\nRestartSec=10\n")
 	for _, name := range append([]string{"HOME", "PATH"}, daemonruntime.PathEnv...) {
 		i := slices.IndexFunc(env, func(kv string) bool { return strings.HasPrefix(kv, name+"=") })
 		if i < 0 || env[i] == name+"=" {
@@ -204,10 +208,41 @@ func bootServiceStatus() []string {
 		}
 	}
 	lines := []string{"Boot service: " + line}
+	if names := byomKeyEnvs(); readErr == nil && isBootUnit(data) && len(names) > 0 {
+		lines = append(lines, "Warning: the boot service's environment has no "+strings.Join(names, ", ")+"; custom models that read their API key from it fail after a start at boot until uam web is started from a shell that exports it")
+	}
 	if kill, _ := bootRun("busctl", "get-property", "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "KillUserProcesses"); kill == "b true" {
 		lines = append(lines, "Warning: logind ends a user's processes at logout (KillUserProcesses=yes), so a uam web started from a login shell stops then")
 	}
 	return lines
+}
+
+// byomKeyEnvs names the environment variables custom models read their API
+// key from (models with a saved key aside). The boot unit carries none of
+// them; only names are returned, never values.
+func byomKeyEnvs() []string {
+	data, err := os.ReadFile(store.DefaultPath())
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		WebSettings struct {
+			CustomModels []struct {
+				APIKeyEnv string `json:"api_key_env"`
+				APIKey    string `json:"api_key"`
+			} `json:"custom_models"`
+		} `json:"web_settings"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	var names []string
+	for _, m := range cfg.WebSettings.CustomModels {
+		if m.APIKeyEnv != "" && m.APIKey == "" && !slices.Contains(names, m.APIKeyEnv) {
+			names = append(names, m.APIKeyEnv)
+		}
+	}
+	return names
 }
 
 // runWebService is `uam web service remove`: it disables and deletes the

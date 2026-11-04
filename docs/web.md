@@ -90,8 +90,10 @@ a custom model that reads its key from the environment fails until you run
 `uam web stop`, then `uam web` from a shell that exports it. Each start
 rewrites the unit when the binary path, flags or those variables changed.
 
-The unit has no restart policy. When a service started by hand already runs,
-the unit's service finds the single-instance lock taken and exits once.
+The unit restarts a service that fails, 10 seconds later, and gives up after
+five starts within two minutes. When a service started by hand already runs,
+the unit's service finds the single-instance lock taken, so it gives up
+that way; a service stopped with `uam web stop` is not restarted.
 `uam web` while the unit's service runs shows that service, and `uam web
 stop` stops either one. uam never changes a `uam-web.service` it did not
 write. Without a systemd user manager (WSL, containers, macOS) nothing is
@@ -99,7 +101,9 @@ installed and `uam web` starts as before.
 
 `uam web status` shows the boot service: unavailable on this host (no
 systemd user session), not installed, enabled and starting at boot, or
-starting at login because lingering is off. It warns when logind's
+starting at login because lingering is off. It names the `UAM_BYOM_*`
+variables custom models read their key from, which the unit does not carry
+(names only, never values). It warns when logind's
 `KillUserProcesses=yes` ends a `uam web` started from a login shell at
 logout. `uam web service remove` disables and deletes the unit and creates
 `boot-service-removed` beside the access token file; `uam web` does not
