@@ -1,4 +1,5 @@
-import { taskName, type Item, type SessionSummary } from '../api';
+import { describeError, taskName, type Item, type SessionSummary } from '../api';
+import { useState } from 'react';
 import { Markdown } from './common';
 import { Button } from './ui/button';
 
@@ -51,27 +52,50 @@ export function HandoffCard({ session, items, onContinue }: Readonly<{
 }
 
 /**
- * The end of a turn a uam restart cut while a tool call ran: the call is never replayed. Run again
- * only drafts a prompt to run it again; nothing runs until the owner sends it, under the usual
- * permission rules.
+ * The end of a turn a uam restart cut during a tool call: the call is never replayed. A started
+ * call's Run again only drafts a prompt to run it again. A call that was waiting on permission
+ * never ran: Ask again sends the request at once, so the permission prompt comes back as usual.
  */
-export function InterruptedCard({ lead, call, onRunAgain }: Readonly<{
+export function InterruptedCard({ lead, call, onRunAgain, onAskAgain, blocked = '' }: Readonly<{
   lead: string;
-  call: { text: string; prompt: string };
-  /** Absent where the composer takes no message (a read-only Thread). */
+  call: { text: string; prompt: string; waiting: boolean };
+  /** Both absent where the Thread takes no message (read-only). */
   onRunAgain?: (prompt: string) => void;
+  onAskAgain?: (prompt: string) => Promise<unknown>;
+  /** Why a send is refused now (a reached budget); disables Ask again. */
+  blocked?: string;
 }>) {
+  const [asking, setAsking] = useState(false);
+  const [error, setError] = useState('');
+  async function askAgain() {
+    if (asking || blocked || !onAskAgain) return;
+    setAsking(true);
+    setError('');
+    try {
+      await onAskAgain(call.prompt);
+    } catch (e) {
+      setError(describeError(e));
+      setAsking(false);
+    }
+  }
   return (
     <section aria-label="Interrupted" className="flex min-w-0 flex-col gap-2 rounded-md bg-tint-well px-4 py-3 shadow-raised">
       <h3 className="text-eyebrow uppercase text-muted">Interrupted</h3>
-      <p className="text-ui text-body">{lead} This call had started and did not finish:</p>
+      <p className="text-ui text-body">{lead} {call.waiting ? 'Not run: it was waiting for your permission.' : 'This call had started and did not finish:'}</p>
       <code className="block rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink [overflow-wrap:anywhere] whitespace-pre-wrap">{call.text}</code>
-      {onRunAgain && (
+      {call.waiting && onAskAgain && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Button size="sm" variant="primary" disabled={asking || !!blocked} onClick={() => void askAgain()}>Ask again</Button>
+          <p className="min-w-48 flex-1 text-caption text-muted">{blocked || 'Sends a request to run it again; you are asked for permission as usual.'}</p>
+        </div>
+      )}
+      {!call.waiting && onRunAgain && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
           <Button size="sm" variant="primary" onClick={() => onRunAgain(call.prompt)}>Run again</Button>
           <p className="min-w-48 flex-1 text-caption text-muted">Puts a prompt to run it again in the composer; nothing runs until you send it.</p>
         </div>
       )}
+      {error && <p role="alert" className="text-caption text-error">{error}</p>}
     </section>
   );
 }

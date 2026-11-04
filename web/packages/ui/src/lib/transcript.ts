@@ -122,10 +122,11 @@ export function readableInput(name: string, input: string): { kind: 'command' | 
 }
 
 /**
- * The last turn's main-agent tool call that started and never ended, as a restart left it:
- * `text` names it (a command whole), `prompt` is the message Run again drafts. Null when none.
+ * The last turn's main-agent tool call that never ended, as a restart left it: `text` names it
+ * (a command whole), `prompt` is the re-run request, and `waiting` marks a call that was still
+ * waiting on permission, so it never ran. Null when none.
  */
-export function interruptedCall(items: readonly Item[]): { text: string; prompt: string } | null {
+export function interruptedCall(items: readonly Item[]): { text: string; prompt: string; waiting: boolean } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.agent_id) continue;
@@ -138,7 +139,7 @@ export function interruptedCall(items: readonly Item[]): { text: string; prompt:
     const what = read?.kind === 'command' ? 'command' : 'tool call';
     // A multi-line command or one with a backtick does not fit inline code.
     const quoted = /[`\n]/.test(text) ? `\n\n\`\`\`\n${text}\n\`\`\`` : ` \`${text}\``;
-    return { text, prompt: `Re-run the interrupted ${what}:${quoted}` };
+    return { text, prompt: `Re-run the interrupted ${what}:${quoted}`, waiting: tool.status === 'pending' };
   }
   return null;
 }

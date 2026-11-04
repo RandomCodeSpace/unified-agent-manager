@@ -3009,8 +3009,12 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   call that had started and not finished is shown as an **Interrupted** card
   naming it. **Run again** only puts a prompt to run it again in the
   composer; nothing runs until you send it, and the usual permission rules
-  apply. A permission that was waiting is not asked again. A command the
-  restart did not stop may still have run to its end.
+  apply. A call that was still waiting for your permission never ran: its
+  card says "Not run: it was waiting for your permission", and **Ask again**
+  sends the request to run it again at once, so the permission prompt comes
+  back after one click (never skipped). Neither button shows on a read-only
+  Thread, and Ask again is disabled while the budget is reached. A command
+  the restart did not stop may still have run to its end.
 - **Retired UAM terminal sessions.** Saved terminal records and profiles stay
   on disk but have no controls in current UAM. Use the older binary to stop
   existing terminal hosts before replacing it. Copilot conversations can

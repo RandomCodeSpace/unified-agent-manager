@@ -438,11 +438,13 @@ test('interruptedCall names the last turn\'s started call that never ended, and 
     tool('t2', 'running', 'bash', '{"command":"sleep 60","description":"Wait"}'),
     tool('s1', 'running', 'bash', '{"command":"subagent work"}', { agent_id: 'a1' }),
   ];
-  assert.deepEqual(interruptedCall(items), { text: 'sleep 60', prompt: 'Re-run the interrupted command: `sleep 60`' });
+  assert.deepEqual(interruptedCall(items), { text: 'sleep 60', prompt: 'Re-run the interrupted command: `sleep 60`', waiting: false });
   // Every call of the last turn ended: no card, and an earlier turn's open call does not count.
   assert.equal(interruptedCall(items.slice(0, 4)), null);
   assert.equal(interruptedCall([]), null);
   // A command that does not fit inline code is fenced; a non-shell tool is named with its argument.
   assert.equal(interruptedCall([tool('t3', 'running', 'bash', '{"command":"a\\nb"}')]).prompt, 'Re-run the interrupted command:\n\n```\na\nb\n```');
-  assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { text: 'edit x.go', prompt: 'Re-run the interrupted tool call: `edit x.go`' });
+  // A call still waiting on permission never ran: it is marked waiting.
+  assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { text: 'edit x.go', prompt: 'Re-run the interrupted tool call: `edit x.go`', waiting: true });
+  assert.deepEqual(interruptedCall([tool('t5', 'pending', 'bash', '{"command":"echo y > b.txt"}')]), { text: 'echo y > b.txt', prompt: 'Re-run the interrupted command: `echo y > b.txt`', waiting: true });
 });

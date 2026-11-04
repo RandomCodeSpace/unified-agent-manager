@@ -3,7 +3,7 @@ import { planKey } from '../lib/richMarkdown';
 import { ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, type Badge, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -1090,7 +1090,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 </Collapse>
               ))}
               {cutCall && !session.history_after ? (
-                <InterruptedCard lead={INTERRUPTED_TEXT} call={cutCall} onRunAgain={!readOnly(session) && !viewed ? (text) => setSeed({ text }) : undefined} />
+                <InterruptedCard lead={INTERRUPTED_TEXT} call={cutCall} onRunAgain={!readOnly(session) && !viewed ? (text) => setSeed({ text }) : undefined} onAskAgain={!readOnly(session) && !viewed ? (text) => api.prompt(session.id, text, newRequestId(), 'send') : undefined} blocked={session.budget?.reached ? 'The budget is reached; raise it in Tools → Usage to ask again.' : ''} />
               ) : session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
               {session.handoff && !live && !session.history_after && (
                 <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
