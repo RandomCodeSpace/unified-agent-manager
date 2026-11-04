@@ -922,9 +922,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   model call, and `cached`, how many of those came from the prompt cache, so
   an estimate can price the cached share at `cache_read`. The composer shows
   remaining credits in a popover chip, including stale state when a refresh
-  fails. The input-cost estimate beside it excludes output; the model menu
-  shows the same estimate for each model. No estimate appears without prices
-  or reported context.
+  fails. The estimate beside it is the AI credits of one model request at the
+  current context, input only (a prompt makes one or more requests); the
+  model menu shows the same per-request estimate for each model. No estimate
+  appears without prices or reported context.
 - **Budget**: Tools → Usage sets a Thread's budget, also while it runs: stop
   after N more AI credits (counted from when it is set), stop once the account
   quota reaches a percentage used (the highest of the provider's limited
@@ -982,6 +983,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   of the account. Autopilot between its turns is stopped at the limit, with
   no wrap-up. The agent reads it with `uam` `sense`. Connected instances
   advertise `thread-budget-v1`.
+  Under a credit budget the composer warns when Copilot's estimate of a
+  whole prompt on the current model (`GET
+  /api/sessions/{id}/budget/prediction`) is more than is left. At the limit
+  it disables Send for messages and edits, says why beside the composer
+  (and that the Thread is wrapping up while it is) and offers **Change
+  budget**, which opens Tools → Usage. The draft is kept, also when a send
+  races the limit and gets 409 `budget_reached`.
 - **Time split**: Tools → Usage shows it as the Model time and Local time
   tiles (each with its calls or runs and its share; the waiting on you in the
   section's line), and each tool's own local time folded under "Local time by

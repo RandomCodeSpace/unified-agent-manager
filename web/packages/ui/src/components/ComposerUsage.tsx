@@ -50,7 +50,7 @@ export function ContextReport({ session, model }: Readonly<{ session: SessionDet
       {context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% ({compactTokens(Math.round(context.limit * threshold))} tokens)</p>}
       {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: {compactTokens(context.prompt)} tokens</p>}
       {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
-      {cost !== null && context && <p className="text-caption">≈ {formatCredits(cost)} credits per turn at {compactTokens(context.used)} context tokens, input only. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
+      {cost !== null && context && <p className="text-caption">Estimate: ≈ {formatCredits(cost)} AI credits per model request at {compactTokens(context.used)} context tokens, input only. A prompt makes one or more requests. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
     </>
   );
 }

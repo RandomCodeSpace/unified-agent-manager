@@ -170,6 +170,7 @@ export function budgetTasks(dir: string): MockTask[] {
       state: 'completed',
       usage: { ai_units: 31.2 },
       budget: { credits: 25, spent: 25.6, reached: true },
+      capabilities: { ...CAPS, usage: true },
       handoff: {
         at: ago(3),
         reply_id: 'i5',
