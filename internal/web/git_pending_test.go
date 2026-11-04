@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -273,6 +274,15 @@ func TestChangesListSessionTrackedFilesAndOthers(t *testing.T) {
 		t.Fatalf("turn scope = %+v, %v", turn, err)
 	}
 
+	// Session tracking does not prove who wrote the file: no revert.
+	var refusal *Error
+	if err := m.RevertChange(t.Context(), sum.ID, "regions.json", ""); !errors.As(err, &refusal) || refusal.Status != http.StatusBadRequest {
+		t.Fatalf("revert of a session-tracked file = %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, "regions.json")); string(got) != "{}\n" {
+		t.Fatalf("regions.json = %q", got)
+	}
+
 	var page uamTestPage
 	uamReadJSON(t, prov.Last(), `{"op":"who_touched","args":{"path":"regions.json"}}`, &page)
 	if len(page.Rows) != 1 || page.Rows[0]["id"] != sum.ID || page.Rows[0]["basis"] != "session tracking" {
@@ -285,6 +295,41 @@ func TestChangesListSessionTrackedFilesAndOthers(t *testing.T) {
 
 	if refused := unsavedRefusal(t, m, sum.ID); refused == nil || *refused.Pending != (GitPending{Uncommitted: 2}) || !slices.Equal(refused.Refs, []string{"README.md", "regions.json"}) {
 		t.Fatalf("settle refusal = %+v", refused)
+	}
+}
+
+// A shell write the session diff lists is read as the turn ends and saved,
+// so after a restart the Settle guard still counts it, though nothing read
+// Changes while the conversation was open.
+func TestSessionPathsReadAtTurnEndSurviveRestart(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	writeRepoFile(t, repo, "shell.txt", "printf\n")
+	conv.SetDiff([]agentapi.FileDiff{{Path: "shell.txt", Status: "added", Patch: "--- /dev/null\n+++ b/shell.txt\n@@ -0,0 +1 @@\n+printf\n"}}, nil)
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the turn-end session read", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return slices.Equal(m.sessions[sum.ID].nativePaths, []string{"shell.txt"})
+	})
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prov = agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m = startManager(t, st, prov)
+	if refused := unsavedRefusal(t, m, sum.ID); refused == nil || !slices.Equal(refused.Refs, []string{"shell.txt"}) {
+		t.Fatalf("restarted refusal = %+v", refused)
+	}
+	if len(prov.Opens()) != 0 {
+		t.Fatal("the guard resumed a closed conversation after a restart")
 	}
 }
 

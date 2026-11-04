@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"maps"
 	"net/http"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 )
@@ -32,7 +30,7 @@ func (m *Manager) RevertChange(ctx context.Context, id, path, hunk string) error
 	since := t.session.changesSince()
 	edited := false
 	resolve := repoPaths(repo.top, t.workdir)
-	for _, p := range slices.Concat(slices.Collect(maps.Keys(t.session.edits)), t.session.nativePaths) {
+	for p := range t.session.edits {
 		if rel, ok := resolve(p); ok && rel == path {
 			edited = true
 			break

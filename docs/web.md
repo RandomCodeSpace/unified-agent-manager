@@ -2232,8 +2232,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `uncommitted`, and, in its own worktree, `unpushed`) and the first three
   of those files (`refs`), unless the request body is `{"force": true}`. A
   closed conversation is not reopened for it: the files of the last read
-  of Copilot's record, saved with the Thread, stand in, else only the
-  edit-tool files. For a Thread in its own worktree whose counts already
+  of Copilot's record (read again as each turn ends), saved with the
+  Thread, stand in, else only the edit-tool files. For a Thread in its own worktree whose counts already
   show unsaved work, the row's hover button and the menu item read
   "Settle…" and the confirmation opens at once without that request; for
   any other Thread the request goes first and a refusal opens the

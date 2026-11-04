@@ -347,6 +347,30 @@ func (m *Manager) threadPaths(ctx context.Context, s *webSession) []string {
 	return append(paths, m.sessionPaths(ctx, s)...)
 }
 
+// kickSessionPathsLocked reads s's native session diff once in the
+// background as a turn ends, so its session-tracked files (shell writes
+// included) are saved before the conversation closes or uam restarts. A
+// failed read is logged; the last read stands.
+func (m *Manager) kickSessionPathsLocked(s *webSession) {
+	if !s.nativeChanges || s.conv == nil || m.closed || s.removed {
+		return
+	}
+	conv, gen, revision := s.conv, s.gen, s.nativeDiffRevision
+	m.wg.Add(1)
+	go func() {
+		defer log.Recover("session paths", &m.mu)
+		defer m.wg.Done()
+		release, err := m.readSlot(m.ctx)
+		if err != nil {
+			return
+		}
+		defer release()
+		if _, err := m.readNativeDiff(m.ctx, s, conv, gen, revision); err != nil {
+			log.Warn("read session-tracked files at turn end failed", "session", s.id, "error", err)
+		}
+	}()
+}
+
 // sessionPaths lists the files s's native session diff lists, for a native
 // Task: read now while the conversation is open, else as last read. A
 // closed conversation is not resumed for it.

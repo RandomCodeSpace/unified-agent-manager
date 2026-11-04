@@ -248,8 +248,8 @@ Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
   before settling or archiving it.
 - The owner reviews your edits in Changes and in the file preview, which
   marks your changes on the file. A review comment reaches you as a message;
-  between turns the owner may also revert one change or a whole file, so
-  re-read a file before you edit it again.
+  between turns the owner may also revert one of your edit-tool changes or a
+  whole file you edited, so re-read a file before you edit it again.
 - `who_touched {path}` lists Threads in your Project that touched that path,
   relative to your directory or absolute: first by edit tool
   (`basis: "edit tool"`), then by session tracking (`basis: "session

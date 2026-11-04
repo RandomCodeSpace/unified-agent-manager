@@ -49,6 +49,9 @@ describe('changes', () => {
     expect(others.getByText('notes.txt')).toBeTruthy();
     expect(others.queryByRole('button')).toBeNull();
     expect(sheet.queryByRole('region', { name: 'notes.txt' })).toBeNull();
+    const menu = await openMenu(user, 'Actions for data/regions.json');
+    expect(menu.getByRole('menuitem', { name: /Revert file/ }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getByText('Recorded by session tracking; revert is only offered for edit-tool changes')).toBeTruthy();
   });
 
   test('a card names its file in ink after its muted folder, and the header count wraps rather than clips', async () => {

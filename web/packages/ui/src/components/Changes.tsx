@@ -361,8 +361,9 @@ export function ChangesSheet({
               comments={comments}
               onComment={editable ? addComment : undefined}
               onRemoveComment={removeComment}
-              onRevert={editable ? (hunk) => revert(f.path, hunk) : undefined}
-              onRevertFile={editable ? () => confirm.ask(f) : undefined}
+              // Session tracking does not prove who wrote a file, so only edit-tool changes revert.
+              onRevert={editable && !f.session_tracked ? (hunk) => revert(f.path, hunk) : undefined}
+              onRevertFile={editable && !f.session_tracked ? () => confirm.ask(f) : undefined}
               draftLine={turn?.line !== undefined && shown?.at === turn.at && shown.path === f.path ? turn.line : undefined}
             />
           ))}
@@ -521,6 +522,7 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
   const items: ActionItem[] = [
     { key: 'copy', label: 'Copy path', icon: <Copy />, onSelect: () => copy(f.path) },
     ...(onRevertFile ? [{ key: 'revert', label: 'Revert file…', icon: <Undo2 />, onSelect: onRevertFile }] : []),
+    ...(f.session_tracked ? [{ key: 'revert', label: 'Revert file…', icon: <Undo2 />, onSelect: () => {}, disabled: true, reason: 'Recorded by session tracking; revert is only offered for edit-tool changes' }] : []),
   ];
   const risk = riskOf(f.path);
   const { dir, name } = splitPath(f.path);
