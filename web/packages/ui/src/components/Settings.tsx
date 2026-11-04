@@ -892,7 +892,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
                     {p.usage && <span className="tabular-nums">{modelCostLine(m, false)}</span>}
                   </div>
                 </div>
-                {/* A model the catalog does not offer has nothing to show or hide: its switch is off-limits until it returns, the line above saying why. */}
+                {/* A model the catalog does not offer has nothing to show or hide: its switch is off-limits until it returns, the line above saying why. A stale hidden entry stays removable. */}
+                {!offered && !shown && <Button size="sm" variant="danger" disabled={saving} aria-label={`Remove ${m.name} from hidden models`} onClick={() => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: hidden.filter((id) => id !== m.id) } })}>Remove</Button>}
                 <Switch aria-label={`Show ${m.name}`} aria-describedby={offered ? undefined : `model-${p.key}-${m.id}-offer`} checked={shown} disabled={saving || !offered} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
               </div>;
             })}
