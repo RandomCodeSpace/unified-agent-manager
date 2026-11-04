@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, interruptedCall, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, interruptedCall, isFileDeclaration, rerunRequest, rerunText, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -428,7 +428,7 @@ test('a cancelled elicitation counts and marks as cancelled, not declined', () =
   assert.deepEqual(summarizeTurn([{ interaction: form('c', 'cancelled') }, { interaction: form('d', 'declined') }], { live: false }).parts.map((p) => p.text), ['1 question declined', '1 question cancelled']);
 });
 
-test('interruptedCall names the last turn\'s started call that never ended, and drafts its re-run', () => {
+test('interruptedCall names the last turn\'s started call that never ended', () => {
   const tool = (id, status, name, input, extra = {}) => ({ id, kind: 'tool', time: '', tool: { name, status, input }, ...extra });
   const items = [
     { id: 'u1', kind: 'user', time: '', text: 'old' },
@@ -438,15 +438,13 @@ test('interruptedCall names the last turn\'s started call that never ended, and 
     tool('t2', 'running', 'bash', '{"command":"sleep 60","description":"Wait"}'),
     tool('s1', 'running', 'bash', '{"command":"subagent work"}', { agent_id: 'a1' }),
   ];
-  assert.deepEqual(interruptedCall(items), { text: 'sleep 60', prompt: 'Re-run the interrupted command: `sleep 60`', waiting: false });
+  assert.deepEqual(interruptedCall(items), { id: 't2', name: 'bash', text: 'sleep 60', command: true, waiting: false });
   // Every call of the last turn ended: no card, and an earlier turn's open call does not count.
   assert.equal(interruptedCall(items.slice(0, 4)), null);
   assert.equal(interruptedCall([]), null);
-  // A command that does not fit inline code is fenced; a non-shell tool is named with its argument.
-  assert.equal(interruptedCall([tool('t3', 'running', 'bash', '{"command":"a\\nb"}')]).prompt, 'Re-run the interrupted command:\n\n```\na\nb\n```');
   // A call still waiting on permission never ran: it is marked waiting.
-  assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { text: 'edit x.go', prompt: 'Re-run the interrupted tool call: `edit x.go`', waiting: true });
-  assert.deepEqual(interruptedCall([tool('t5', 'pending', 'bash', '{"command":"echo y > b.txt"}')]), { text: 'echo y > b.txt', prompt: 'Re-run the interrupted command: `echo y > b.txt`', waiting: true });
+  assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { id: 't4', name: 'edit', text: 'edit x.go', command: false, waiting: true });
+  assert.equal(interruptedCall([tool('t5', 'pending', 'bash', '{"command":"echo y > b.txt"}')]).waiting, true);
 });
 
 test('interruptedCall names the command whose shell a cut read_bash polled', () => {
@@ -456,14 +454,37 @@ test('interruptedCall names the command whose shell a cut read_bash polled', () 
     { id: 'b1', kind: 'tool', time: '', tool: { name: 'bash', status: 'completed', input: '{"command":"sleep 60 && echo done","mode":"async","initial_wait":5}', output: '<command with shellId: 1 is still running after 5 seconds>' } },
     { id: 'r1', kind: 'tool', time: '', tool: { name: 'read_bash', status: 'running', input: '{"shellId":"1","delay":30}' } },
   ];
-  assert.deepEqual(interruptedCall(items), { text: 'sleep 60 && echo done', prompt: 'Re-run the interrupted command: `sleep 60 && echo done`', waiting: false });
+  assert.deepEqual(interruptedCall(items), { id: 'b1', name: 'bash', text: 'sleep 60 && echo done', command: true, waiting: false });
   // Compact rows (no input or output): the service's shell_id and the row argument do the same.
   const compact = [
     items[0],
     { id: 'b1', kind: 'tool', time: '', tool: { name: 'bash', status: 'completed', display_arg: 'sleep 60 && echo done', shell_id: '1' } },
     { id: 'r1', kind: 'tool', time: '', tool: { name: 'read_bash', status: 'running', display_arg: '1', shell_id: '1' } },
   ];
-  assert.equal(interruptedCall(compact).text, 'sleep 60 && echo done');
-  // No loaded call started that shell: the follow-up names itself, as before.
-  assert.deepEqual(interruptedCall([items[0], items[2]]), { text: 'read_bash 1', prompt: 'Re-run the interrupted tool call: `read_bash 1`', waiting: false });
+  assert.equal(interruptedCall(compact).id, 'b1');
+  // No loaded call started that shell: the follow-up names itself.
+  assert.deepEqual(interruptedCall([items[0], items[2]]), { id: 'r1', name: 'read_bash', text: 'read_bash 1', command: false, waiting: false });
+});
+
+test('the re-run request quotes only the whole recorded command, never a shortened one', async () => {
+  const long = `printf '%s\\n' ${'x'.repeat(400)} > out.txt && wc -c out.txt`;
+  const input = JSON.stringify({ command: long });
+  // The compact row holds a shortened argument (the summary limit is 300).
+  const row = { id: 'call_7', kind: 'tool', time: '', tool: { name: 'bash', status: 'running', display_arg: long.slice(0, 300) } };
+  const call = interruptedCall([{ id: 'u1', kind: 'user', time: '', text: 'go' }, row]);
+  assert.ok(call.text.length < long.length);
+  const body = { ...row, tool: { ...row.tool, input } };
+  const sent = await rerunRequest(call, async (id) => { assert.equal(id, 'call_7'); return body; });
+  assert.equal(sent, `Re-run the interrupted command: \`${long}\``);
+  // The body cannot be read, or is itself clipped: the call is named, no command quoted.
+  const fallback = 'Re-run the shell command that was interrupted by the restart (call call_7).';
+  assert.equal(await rerunRequest(call, async () => { throw new Error('offline'); }), fallback);
+  assert.equal(rerunText(call, { ...body, clipped: true }), fallback);
+  assert.ok(!(await rerunRequest(call, async () => { throw new Error('x'); })).includes('printf'));
+  // Multi-line and backtick commands are fenced longer than any backtick run inside.
+  const odd = { ...body, tool: { ...body.tool, input: JSON.stringify({ command: 'echo ```\nls' }) } };
+  assert.equal(rerunText(call, odd), 'Re-run the interrupted command:\n\n````\necho ```\nls\n````');
+  // A non-command tool call is named, never quoted from a summary.
+  const edit = { id: 'e1', name: 'edit', text: 'edit x.go', command: false, waiting: true };
+  assert.equal(rerunText(edit, null), 'Re-run the `edit` tool call that was interrupted by the restart (call e1).');
 });

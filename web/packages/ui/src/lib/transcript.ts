@@ -128,7 +128,19 @@ function shellOf(tool: ToolCall): string {
   return toolKind(tool.name) === 'command' ? /shellId: ([^\s>]+)/.exec(tool.output ?? '')?.[1] ?? '' : '';
 }
 
-/** A call as the interrupted card names it: a command tool's command whole (its row argument in a compact row), else name and argument. */
+/** A tool call a restart cut, as the interrupted card shows it: `text` is for display only and may be shortened. */
+export interface InterruptedCall {
+  /** The item (tool call) ID of the call to run again. */
+  id: string;
+  name: string;
+  text: string;
+  /** A command tool's call (for a cut shell follow-up, the command that started its shell). */
+  command: boolean;
+  /** Still waiting on permission: it never ran. */
+  waiting: boolean;
+}
+
+/** A call's display text: a command tool's command (its row argument in a compact row), else name and argument. */
 function callText(tool: ToolCall): { text: string; command: boolean } {
   const read = tool.input ? readableInput(tool.name, tool.input) : null;
   if (read?.kind === 'command') return { text: read.text.trim(), command: true };
@@ -138,12 +150,11 @@ function callText(tool: ToolCall): { text: string; command: boolean } {
 }
 
 /**
- * The last turn's main-agent tool call that never ended, as a restart left it: `text` names it
- * (a command whole), `prompt` is the re-run request, and `waiting` marks a call that was still
- * waiting on permission, so it never ran. A cut shell follow-up (read_bash, stop_bash, ...) names
- * the command that started its shell, when that call is loaded. Null when none.
+ * The last turn's main-agent tool call that never ended, as a restart left it. A cut shell
+ * follow-up (read_bash, stop_bash, ...) stands for the command that started its shell, when that
+ * call is loaded. Null when none.
  */
-export function interruptedCall(items: readonly Item[]): { text: string; prompt: string; waiting: boolean } | null {
+export function interruptedCall(items: readonly Item[]): InterruptedCall | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.agent_id) continue;
@@ -151,17 +162,36 @@ export function interruptedCall(items: readonly Item[]): { text: string; prompt:
     const tool = it.tool;
     if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending')) continue;
     const shell = toolKind(tool.name) === 'command' ? '' : shellOf(tool);
-    let starter: ToolCall | undefined;
+    let starter: Item | undefined;
     for (let j = i - 1; shell && j >= 0 && !starter; j--) {
-      const x = items[j].tool;
-      if (x && !items[j].agent_id && toolKind(x.name) === 'command' && shellOf(x) === shell) starter = x;
+      const x = items[j];
+      if (x.tool && !x.agent_id && toolKind(x.tool.name) === 'command' && shellOf(x.tool) === shell) starter = x;
     }
-    const { text, command } = callText(starter ?? tool);
-    // A multi-line command or one with a backtick does not fit inline code.
-    const quoted = /[`\n]/.test(text) ? `\n\n\`\`\`\n${text}\n\`\`\`` : ` \`${text}\``;
-    return { text, prompt: `Re-run the interrupted ${command ? 'command' : 'tool call'}:${quoted}`, waiting: tool.status === 'pending' };
+    const named = starter ?? it;
+    return { id: named.id, name: named.tool!.name, ...callText(named.tool!), waiting: tool.status === 'pending' };
   }
   return null;
+}
+
+/**
+ * The message that asks to run `call` again. It quotes a command only from the call's whole
+ * recorded input (`body`, the item route's copy): a shortened command could run something else.
+ * Without it, it names the call so the agent uses its own record.
+ */
+export function rerunText(call: InterruptedCall, body: Item | null): string {
+  const tool = body && body.id === call.id && !body.clipped ? body.tool : undefined;
+  const read = call.command && tool?.input ? readableInput(tool.name, tool.input) : null;
+  const text = read?.kind === 'command' ? read.text.trim() : '';
+  if (!text) return `Re-run the ${call.command ? 'shell command' : `\`${call.name}\` tool call`} that was interrupted by the restart (call ${call.id}).`;
+  // A multi-line command or one with a backtick does not fit inline code: a fence longer than its longest backtick run holds it.
+  if (!/[`\n]/.test(text)) return `Re-run the interrupted command: \`${text}\``;
+  const fence = '`'.repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  return `Re-run the interrupted command:\n\n${fence}\n${text}\n${fence}`;
+}
+
+/** rerunText with the body `load` reads; a failed read names the call instead. */
+export async function rerunRequest(call: InterruptedCall, load: (id: string) => Promise<Item>): Promise<string> {
+  return rerunText(call, await load(call.id).catch(() => null));
 }
 
 /** Reveal roughly 100 more items, keeping the first turn whole (including steers). */

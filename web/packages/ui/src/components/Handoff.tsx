@@ -53,45 +53,48 @@ export function HandoffCard({ session, items, onContinue }: Readonly<{
 
 /**
  * The end of a turn a uam restart cut during a tool call: the call is never replayed. A started
- * call's Run again only drafts a prompt to run it again. A call that was waiting on permission
+ * call's Run again only drafts a request to run it again. A call that was waiting on permission
  * never ran: Ask again sends the request at once, so the permission prompt comes back as usual.
+ * The caller builds the request when clicked (from the call's whole input, never the label here).
  */
 export function InterruptedCard({ lead, call, onRunAgain, onAskAgain, blocked = '' }: Readonly<{
   lead: string;
-  call: { text: string; prompt: string; waiting: boolean };
+  call: { text: string; waiting: boolean };
   /** Both absent where the Thread takes no message (read-only). */
-  onRunAgain?: (prompt: string) => void;
-  onAskAgain?: (prompt: string) => Promise<unknown>;
+  onRunAgain?: () => Promise<unknown>;
+  onAskAgain?: () => Promise<unknown>;
   /** Why a send is refused now (a reached budget); disables Ask again. */
   blocked?: string;
 }>) {
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState('');
-  async function askAgain() {
-    if (asking || blocked || !onAskAgain) return;
+  async function run(action: (() => Promise<unknown>) | undefined, keep: boolean) {
+    if (asking || !action) return;
     setAsking(true);
     setError('');
     try {
-      await onAskAgain(call.prompt);
+      await action();
+      // A sent request ends the card; a drafted one leaves it usable.
+      if (!keep) return;
     } catch (e) {
       setError(describeError(e));
-      setAsking(false);
     }
+    setAsking(false);
   }
   return (
     <section aria-label="Interrupted" className="flex min-w-0 flex-col gap-2 rounded-md bg-tint-well px-4 py-3 shadow-raised">
       <h3 className="text-eyebrow uppercase text-muted">Interrupted</h3>
       <p className="text-ui text-body">{lead} {call.waiting ? 'Not run: it was waiting for your permission.' : 'This call had started and did not finish:'}</p>
-      <code className="block rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink [overflow-wrap:anywhere] whitespace-pre-wrap">{call.text}</code>
+      <code className="block truncate rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink" title={call.text}>{call.text}</code>
       {call.waiting && onAskAgain && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button size="sm" variant="primary" disabled={asking || !!blocked} onClick={() => void askAgain()}>Ask again</Button>
+          <Button size="sm" variant="primary" disabled={asking || !!blocked} onClick={() => void run(blocked ? undefined : onAskAgain, false)}>Ask again</Button>
           <p className="min-w-48 flex-1 text-caption text-muted">{blocked || 'Sends a request to run it again; you are asked for permission as usual.'}</p>
         </div>
       )}
       {!call.waiting && onRunAgain && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button size="sm" variant="primary" onClick={() => onRunAgain(call.prompt)}>Run again</Button>
+          <Button size="sm" variant="primary" disabled={asking} onClick={() => void run(onRunAgain, true)}>Run again</Button>
           <p className="min-w-48 flex-1 text-caption text-muted">Puts a prompt to run it again in the composer; nothing runs until you send it.</p>
         </div>
       )}

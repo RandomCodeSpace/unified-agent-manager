@@ -3013,7 +3013,10 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   card says "Not run: it was waiting for your permission", and **Ask again**
   sends the request to run it again at once, so the permission prompt comes
   back after one click (never skipped). Neither button shows on a read-only
-  Thread, and Ask again is disabled while the budget is reached. A command
+  Thread, and Ask again is disabled while the budget is reached. Either
+  request quotes the command from the call's full record, never the card's
+  shortened label; when that record cannot be read, it names the call
+  instead so the agent uses its own record. A command
   the restart did not stop may still have run to its end.
 - **Retired UAM terminal sessions.** Saved terminal records and profiles stay
   on disk but have no controls in current UAM. Use the older binary to stop
