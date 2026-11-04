@@ -1,5 +1,5 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
-import { Archive, ChevronRight, CircleCheck, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleCheck, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Pause, RefreshCw, Settings as SettingsIcon, Search, ShieldQuestionMark, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { createContext, memo, startTransition, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, readOnly, taskName, type Project, type SearchResults, type SessionSummary } from '../api';
 import { useApi } from '../ApiContext';
@@ -361,7 +361,8 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
 }
 
 const STATUS_MARKS = {
-  Input: { icon: MessageCircleQuestion, tone: 'text-warning' },
+  'Needs answer': { icon: MessageCircleQuestion, tone: 'text-warning' },
+  'Needs permission': { icon: ShieldQuestionMark, tone: 'text-warning' },
   Starting: { icon: WorkingMark, tone: 'text-accent' },
   Working: { icon: WorkingMark, tone: 'text-accent' },
   Review: { icon: Eye, tone: 'text-badge-teal' },
@@ -418,7 +419,7 @@ function TipMachine({ label }: Readonly<{ label: string }>) {
 /**
  * `compact`: a Settled shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
- * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
+ * its tip holds the full detail (what a waiting row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
 /** Words shorter than this search names only: a prefix that short matches nearly every conversation. */

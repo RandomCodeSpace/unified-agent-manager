@@ -57,16 +57,16 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
   if (!actions || !task) return null;
   const chain = spawners(s, subagents);
   const name = threadName(session);
-  // A request of its own waiting for the owner is the Thread's needs-you state, in its word and tone.
-  const needsYou = task.interactions.some((i) => i.agent_id === s.id && awaitsUser(i));
-  const word = needsYou ? STATE_LABELS.awaiting_permission : STATUS_LABEL[s.status];
+  // A request of its own waiting for the owner is the Thread's waiting state, in its word and tone.
+  const ask = task.interactions.find((i) => i.agent_id === s.id && awaitsUser(i));
+  const word = ask ? STATE_LABELS[ask.kind === 'permission' ? 'awaiting_permission' : 'awaiting_answer'] : STATUS_LABEL[s.status];
   const levels: ActionItem[] = [
     { key: 'thread', label: name, icon: badge ? <ProjectBadge badge={badge} /> : undefined, onSelect: back },
     ...chain.map((a) => ({ key: a.id, label: agentName(a), icon: <Workflow />, onSelect: () => actions.show(a.id) })),
   ];
   return (
     <header className={BAR_ROW}>
-      <div role="group" aria-label={`State: ${word}`} className={barCard(needsYou ? STATE_TONE.awaiting_permission : TONE[s.status])}>
+      <div role="group" aria-label={`State: ${word}`} className={barCard(ask ? STATE_TONE.awaiting_permission : TONE[s.status])}>
         {/* A phone gives the drawer's toggle to ←: the Thread it returns to has it. */}
         {!phone && leading}
         <Tip label={`Back to ${name} · Esc`}>

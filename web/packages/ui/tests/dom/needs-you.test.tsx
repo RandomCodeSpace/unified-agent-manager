@@ -36,7 +36,7 @@ describe('the Task list', () => {
     expect(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
     const you = within(side.getByRole('list', { name: 'Unsettled threads' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
-    expect(await tipOf(user, you.getByRole('button', { name: /Input.*Tidy zsh startup/ }))).toContain('Wants your OK to run a shell command outside the project');
+    expect(await tipOf(user, you.getByRole('button', { name: /Needs permission.*Tidy zsh startup/ }))).toContain('Needs permission to run a shell command outside the project');
     expect(await tipOf(user, you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
     // The title and app badge still count only Tasks needing attention.
     await waitFor(() => expect(document.title).toBe('(9) UAM'));
@@ -87,7 +87,7 @@ describe('the Task list', () => {
       expect(first.querySelector('.truncate')?.classList.contains('sr-only')).toBe(false);
       expect(first.querySelector('time')).toBeNull();
       expect(second.querySelector('time')?.getAttribute('dateTime')).toBeTruthy();
-      expect(status.textContent!.replace(/^, /, '')).toMatch(/^(Input|Starting|Working|Compacting|Review|Finished|Error|Interrupted|Stopped|Closed|Idle)$/);
+      expect(status.textContent!.replace(/^, /, '')).toMatch(/^(Needs answer|Needs permission|Starting|Working|Compacting|Review|Finished|Error|Interrupted|Stopped|Closed|Idle)$/);
       expect(status.querySelector('svg[aria-hidden="true"], span[aria-hidden="true"]')).toBeTruthy();
       expect(el.querySelector('[class*="line-clamp"]')).toBeNull();
       expect(button.hasAttribute('title')).toBe(false);
@@ -103,10 +103,10 @@ describe('the Task list', () => {
     // A project without a branch omits it, without adding a placeholder or third line.
     const noBranch = row('t6').getByRole('button', { name: /Tidy zsh startup/ });
     expect(noBranch.querySelector('[title^="Project branch:"]')).toBeNull();
-    // Only Input appears on the row; its tip holds the complete request.
-    expect(row('t19').getByText('Input')).toBeTruthy();
+    // Only Needs answer appears on the row; its tip holds the complete request.
+    expect(row('t19').getByText('Needs answer')).toBeTruthy();
     expect(row('t19').queryByText(/Pick every platform/)).toBeNull();
-    expect(await tipOf(user, row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }))).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
+    expect(await tipOf(user, row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }))).toMatch(/Needs answer: Pick every platform the release should ship\. Each one is a CI job/);
   });
 
   test('a Thread in its own worktree shows its branch, not the Project folder’s', async () => {
@@ -144,7 +144,7 @@ describe('the Task list', () => {
     renderApp();
     const side = await sidebar();
     const ids = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]'))
-      .filter((el) => within(el as HTMLElement).queryByText('Input'))
+      .filter((el) => within(el as HTMLElement).queryByText(/^Needs (answer|permission)$/))
       .map((el) => el.getAttribute('data-task-row'));
     expect(ids.length).toBeGreaterThan(2);
     const press = (code: 'KeyJ' | 'KeyK', target: Element = document.body, key = code === 'KeyJ' ? 'j' : 'k') => fireEvent.keyDown(target, { code, key, altKey: true });
@@ -164,7 +164,7 @@ describe('the Task list', () => {
   test('Alt+J, Alt+K and Alt+N still work while a tooltip is open', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const first = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'))!.getAttribute('data-task-row');
+    const first = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText(/^Needs (answer|permission)$/))!.getAttribute('data-task-row');
     // Base UI opens a tip on hover or keyboard focus; it is no menu or dialog.
     await user.hover(side.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
@@ -179,7 +179,7 @@ describe('the Task list', () => {
   test('Alt+J pressed the moment the Needs you rows appear opens the first of them', async () => {
     renderApp();
     // Pressed from the commit that adds the rows, before React's passive effects run.
-    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled threads"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'));
+    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled threads"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText(/^Needs (answer|permission)$/));
     let first: string | null = null;
     const seen = new MutationObserver(() => {
       const row = first === null && firstRow();

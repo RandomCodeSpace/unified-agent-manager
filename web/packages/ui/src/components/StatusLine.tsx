@@ -1,7 +1,7 @@
 // The status strip (DESIGN.md Status line): one quiet line over the composer, in three sections.
 // Left, the todo list the agents keep as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do)
 // and "2 of 6", a button that opens the list as a reader of its own. Centre, the progress line,
-// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs you · allow …"), the one
+// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs permission · allow …"), the one
 // place that says so; with nothing live, "Now:" and the row the work is at (without a list, what
 // the agent says it is doing, `assistant.intent`), a model call being retried and automatic
 // compaction running beside the turn ("Compacting in background", words only); after a stop it
@@ -25,7 +25,7 @@ import { countSubagents } from '../lib/subagents';
 import { loadTodoGraph } from '../lib/todoGraph';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
-import { BreathingDot, Markdown, WorkingMark, clockTime } from './common';
+import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './common';
 import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
 import { LiveOutput } from './LiveOutput';
@@ -54,7 +54,7 @@ export type Line =
  * restart or close cut off), not the running one this page lost track of while it reconnects.
  */
 export function statusLine(session: SessionDetail, working: boolean, compacting: boolean, connected = true): Line | null {
-  // A turn waiting on you still runs: the live line says "Needs you" where the work was.
+  // A turn waiting on you still runs: the live line says "Needs answer" or "Needs permission" where the work was.
   if (working || (ATTENTION.includes(session.state) && session.turn_activity?.phase?.kind === 'waiting')) {
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting, live: liveLine(session, compacting) };
     const turn = session.turn_timings?.at(-1);
@@ -108,7 +108,8 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   if (phase?.kind === 'waiting') {
     const ask = session.interactions.filter((i) => i.state === 'pending' && !i.auto).sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0];
     const detail = ask?.kind === 'permission' && ask.detail ? `allow ${ask.detail.split('\n')[0]}` : phase.detail;
-    return { mark: 'you', phase: 'Needs you', detail, since: phase.since };
+    const permission = ask ? ask.kind === 'permission' : session.state === 'awaiting_permission';
+    return { mark: 'you', phase: STATE_LABELS[permission ? 'awaiting_permission' : 'awaiting_answer'], detail, since: phase.since };
   }
   const running = session.subagents.filter((s) => s.status === 'running').length;
   if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
@@ -748,7 +749,7 @@ function useOffScreen(el: HTMLElement | null): boolean {
 /**
  * The live line (DESIGN.md Status line, live line): [mark] phase · detail · elapsed (the elapsed hidden on a phone).
  * Its mark is the one animated element in the pane besides the sidebar's glyph: model work breathes, local work
- * turns, a wait past WAIT_STILL_MS is a still clock in muted words, "Needs you" is a still amber shield, subagents
+ * turns, a wait past WAIT_STILL_MS is a still clock in muted words, a wait on you is a still amber shield, subagents
  * a still glyph. Paused off screen; still under reduced motion.
  */
 function LiveSlot({ live }: Readonly<{ live: Live }>) {

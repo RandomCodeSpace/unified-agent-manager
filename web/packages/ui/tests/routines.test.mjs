@@ -32,9 +32,10 @@ test('a routine’s mode reads as the form offers it, and the form sends both fi
   assert.deepEqual(routineModeInput('safe'), { mode: 'safe', autopilot: false });
 });
 
-test('a running run whose task waits for the owner needs you', () => {
+test('a running run whose task waits for the owner says what it needs', () => {
   assert.equal(outcomeLabel({ outcome: 'running' }, 'working'), 'Running');
-  assert.equal(outcomeLabel({ outcome: 'running' }, 'awaiting_permission'), 'Needs you');
+  assert.equal(outcomeLabel({ outcome: 'running' }, 'awaiting_permission'), 'Needs permission');
+  assert.equal(outcomeLabel({ outcome: 'running' }, 'awaiting_answer'), 'Needs answer');
   assert.equal(outcomeTone({ outcome: 'running' }, 'awaiting_answer'), 'attention');
   assert.equal(outcomeLabel({ outcome: 'time_limit' }), 'Stopped at the time limit');
   assert.equal(outcomeTone({ outcome: 'failed' }), 'error');

@@ -44,7 +44,7 @@ describe('the live line at the strip', () => {
     expect(liveLine(reads, false)?.phase).toBe('Reading 3 files');
     expect(liveLine(task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view')] }), false)?.phase).toBe('Reading redraw_test.go');
     const you = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission', interactions: [{ id: 'p', kind: 'permission', title: 'Run shell command', detail: 'rm -rf build/', state: 'pending', time: ago(72) }] as SessionDetail['interactions'] });
-    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs you', detail: 'allow rm -rf build/', since: ago(72) });
+    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs permission', detail: 'allow rm -rf build/', since: ago(72) });
     const agents = task({ kind: 'model', since: ago(5), calls: 3, subagents: 3 }, { subagents: [{ id: 'a', status: 'running' }, { id: 'b', status: 'running' }, { id: 'c', status: 'running' }, { id: 'd', status: 'completed' }] as SessionDetail['subagents'] });
     expect(liveLine(agents, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents' });
     expect(liveLine(task({ kind: 'model', by: 'compaction', since: ago(18), calls: 1 }), false)).toEqual({ mark: 'dot', phase: 'Compacting the conversation', since: ago(18) });
@@ -71,9 +71,9 @@ describe('the live line at the strip', () => {
     expect(thinking.moves).toEqual(['breathe']);
     thinking.view.unmount();
     const you = strip(task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' }));
-    expect(you.shown).toBe('Needs you·approve bash·1m 12s');
+    expect(you.shown).toBe('Needs permission·approve bash·1m 12s');
     expect(you.moves).toEqual([]);
-    expect(screen.getByText('Needs you').closest('.text-attention')).not.toBeNull();
+    expect(screen.getByText('Needs permission').closest('.text-attention')).not.toBeNull();
     you.view.unmount();
   });
 
@@ -148,7 +148,7 @@ describe('the live line at the strip', () => {
     vi.setSystemTime(NOW);
     const session = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' });
     render(<StatusLine line={statusLine(session, false, false)} session={session} since={ago(540)} hidden={false} jump={false} onJump={() => {}} />);
-    expect(screen.getByText('Needs you, approve bash, 1 minute')).toBeTruthy();
+    expect(screen.getByText('Needs permission, approve bash, 1 minute')).toBeTruthy();
     expect(screen.getByText('1m 12s')).toBeTruthy();
   });
 
@@ -198,7 +198,7 @@ describe('the live line at the strip', () => {
   test.each([
     ['t1', /^Running go test \.\/internal\/vterm\/\.\.\. -run Redraw -count=1, /],
     ['t8', /^Waiting for the model, /],
-    ['t6', /^Needs you, allow chmod 0644/],
+    ['t6', /^Needs permission, allow chmod 0644/],
     ['t7', /^Compacting the conversation, /],
     ['t22', /^Waiting on 4 subagents, /],
   ])('mock Thread %s says its own phase on the strip', async (id, words) => {

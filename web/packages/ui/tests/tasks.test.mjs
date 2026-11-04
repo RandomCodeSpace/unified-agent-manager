@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { filteredProject, groupTasks, mostRecentProject, newsReader, showsFinish, shownState, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
 
 const p1 = { id: 'p1', name: 'one', dir: '/one', created_at: '2026-09-20T10:00:00Z' };
@@ -144,7 +145,7 @@ test('a compacting Task shows Working, compacting in its detail', async () => {
   // A request waiting for the user still wins.
   assert.equal(shownState({ state: 'awaiting_answer', subagents_running: 0, compacting: true }), 'awaiting_answer');
   assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'completed', compacting: true }), true).text, 'Working · compacting');
-  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'awaiting_permission', compacting: true })).text, 'Wants your OK to continue');
+  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'awaiting_permission', compacting: true })).text, 'Needs permission to continue');
 });
 
 test('the Tasks that need the user: a waiting request, or a failure not opened since', async () => {
@@ -181,21 +182,26 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   const now = Date.parse('2026-10-01T12:00:00Z');
   const at = (min) => new Date(now - min * 60000).toISOString();
   const status = (extra, unread = false) => taskStatus(s('t', 'p1', at(60), extra), unread, now).text;
-  assert.equal(status({ state: 'awaiting_answer', ask: { id: 'q', kind: 'question', title: 'Which option?' } }), 'Asks: Which option?');
-  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } }), 'Wants your OK to run a shell command');
-  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Confirm deploy' } }), 'Wants your OK to confirm deploy');
-  assert.equal(status({ state: 'awaiting_permission' }), 'Wants your OK to continue');
+  assert.equal(status({ state: 'awaiting_answer', ask: { id: 'q', kind: 'question', title: 'Which option?' } }), 'Needs answer: Which option?');
+  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } }), 'Needs permission to run a shell command');
+  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Confirm deploy' } }), 'Needs permission to confirm deploy');
+  assert.equal(status({ state: 'awaiting_permission' }), 'Needs permission to continue');
+  assert.equal(status({ state: 'awaiting_answer' }), 'Needs answer');
+  assert.equal(status({ state: 'awaiting_answer', ask: { id: 'r', kind: 'plan_review', title: 'Plan ready' } }), 'Needs answer: plan ready');
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(12) }), 'Working · quiet 12m');
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(1) }), 'Working');
   assert.equal(status({ state: 'working', updated_at: at(90) }), 'Working · quiet 1h');
   assert.equal(status({ state: 'completed' }, true), 'Finished, ready for your review');
   assert.equal(status({ state: 'completed' }), 'Finished');
-  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Fixed the test; tests pass');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Finished · Fixed the test; tests pass');
+  // "Answered" is how the turn ended, not a state: Home and the row tip read Finished.
+  assert.equal(status({ state: 'completed', outcome: 'Answered' }), 'Finished');
+  assert.equal(status({ state: 'interrupted' }), 'Interrupted');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
   // What the turn found is detail, never a state: failing tests and commands read in the outcome's words.
   assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Ready for review: Tests fail; 2 commands failed');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed' }, true), 'Ready for review: Fixed the test; tests pass; 1 command failed');
-  assert.equal(status({ state: 'completed', outcome: 'Explained why tests fail; tests pass' }), 'Explained why tests fail; tests pass');
+  assert.equal(status({ state: 'completed', outcome: 'Explained why tests fail; tests pass' }), 'Finished · Explained why tests fail; tests pass');
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Finished');
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Finished');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
@@ -216,9 +222,12 @@ test('a Task row says in plain words what it needs or how it stands', async () =
 test('compact Task labels retain request priority and distinguish working, review and finished states', async () => {
   const { taskStatus } = await import('../src/lib/tasks.ts');
   const label = (extra, unread = false) => taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', extra), unread).label;
-  for (const state of ['awaiting_answer', 'awaiting_permission']) assert.equal(label({ state, compacting: true }), 'Input');
-  assert.equal(label({ state: 'working', pending: 1 }), 'Input');
-  assert.equal(label({ state: 'working', ask: { kind: 'question', title: 'Which one?' } }), 'Input');
+  assert.equal(label({ state: 'awaiting_answer', compacting: true }), 'Needs answer');
+  assert.equal(label({ state: 'awaiting_permission', compacting: true }), 'Needs permission');
+  assert.equal(label({ state: 'working', pending: 1 }), 'Needs answer');
+  assert.equal(label({ state: 'working', ask: { kind: 'question', title: 'Which one?' } }), 'Needs answer');
+  assert.equal(label({ state: 'working', ask: { kind: 'plan_review', title: 'Plan ready' } }), 'Needs answer');
+  assert.equal(label({ state: 'working', ask: { kind: 'permission', title: 'Write file' } }), 'Needs permission');
   assert.equal(label({ state: 'completed', compacting: true }, true), 'Working');
   assert.equal(label({ state: 'completed', subagents_running: 1 }, true), 'Working');
   assert.equal(label({ state: 'working', event_at: '2020-01-01T00:00:00Z' }), 'Working');
@@ -235,7 +244,7 @@ test('a finished Task stays in the active list and reads Review or Finished, eve
   assert.deepEqual(groupTasks([old]).active.map((t) => t.id), ['t']);
   assert.equal('done' in groupTasks([old]), false);
   assert.deepEqual(taskStatus(old, true), { label: 'Review', text: 'Ready for review: Fixed it', tone: 'success' });
-  assert.deepEqual(taskStatus(old, false), { label: 'Finished', text: 'Fixed it', tone: 'muted' });
+  assert.deepEqual(taskStatus(old, false), { label: 'Finished', text: 'Finished · Fixed it', tone: 'muted' });
 });
 
 test('Alt+J and Alt+K cycle through the Needs you Tasks and wrap', async () => {
@@ -274,4 +283,14 @@ test('only a Thread in its own worktree has its folder\'s work stop Settle', asy
   assert.equal(putAwayWork(s('a', 'p1', '1', pending)), null);
   assert.deepEqual(putAwayWork(s('a', 'p1', '1', { ...pending, worktree: { path: '/wt', branch: 'uam/x' } })), pending.git_pending);
   assert.equal(putAwayWork(s('a', 'p1', '1', { worktree: { path: '/wt', branch: 'uam/x' } })), null);
+});
+
+test('"Input" is no Thread state label: waiting states read Needs answer or Needs permission', () => {
+  // "Needs you" is only the aggregate count, never one Thread's state.
+  for (const file of ['components/common.tsx', 'components/Sidebar.tsx', 'components/StatusLine.tsx', 'components/SubagentView.tsx', 'lib/tasks.ts', 'lib/routines.ts']) {
+    const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /'Input'/, file);
+    assert.doesNotMatch(src, /\bInput: \{/, file);
+    assert.doesNotMatch(src, /'Needs you'/, file);
+  }
 });

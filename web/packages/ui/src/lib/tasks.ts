@@ -91,7 +91,7 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').some((part) => /^tests fail$/i.test(part)) ? 'tests fail' : '';
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Review' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Needs answer' | 'Needs permission' | 'Starting' | 'Working' | 'Review' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /**
  * A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests fail") says
@@ -99,7 +99,8 @@ type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Review' | 'Finish
  */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
   if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
-  return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
+  // "Answered" is how the turn ended, not a state: the Thread is Finished.
+  return { label: 'Finished', text: s.outcome && s.outcome !== 'Answered' ? `Finished · ${s.outcome}` : 'Finished', tone: 'muted' };
 }
 
 /** The status of a Task that waits on you, or null when nothing does. */
@@ -107,12 +108,12 @@ function inputStatus(s: SessionSummary): TaskStatus | null {
   const ask = s.ask;
   if (ask?.kind === 'permission') {
     const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
-    return { label: 'Input', text: `Wants your OK to ${what}`, tone: 'attention' };
+    return { label: 'Needs permission', text: `Needs permission to ${what}`, tone: 'attention' };
   }
-  if (ask?.kind === 'question') return { label: 'Input', text: `Asks: ${ask.title}`, tone: 'attention' };
-  if (ask?.kind === 'plan_review') return { label: 'Input', text: 'Plan ready', tone: 'attention' };
-  if (s.state === 'awaiting_permission') return { label: 'Input', text: 'Wants your OK to continue', tone: 'attention' };
-  if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Input', text: 'Has a question for you', tone: 'attention' };
+  if (ask?.kind === 'question') return { label: 'Needs answer', text: `Needs answer: ${ask.title}`, tone: 'attention' };
+  if (ask?.kind === 'plan_review') return { label: 'Needs answer', text: 'Needs answer: plan ready', tone: 'attention' };
+  if (s.state === 'awaiting_permission') return { label: 'Needs permission', text: 'Needs permission to continue', tone: 'attention' };
+  if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Needs answer', text: 'Needs answer', tone: 'attention' };
   return null;
 }
 
@@ -142,7 +143,7 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     case 'failed':
       return { label: 'Error', text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':
-      return { label: 'Interrupted', text: 'Interrupted before it finished', tone: 'warning' };
+      return { label: 'Interrupted', text: 'Interrupted', tone: 'warning' };
     // It names what stopped it when it was not you (a routine's time limit, autopilot's credit limit).
     case 'cancelled':
       return { label: 'Stopped', text: stopWords(s).title, tone: 'muted' };
