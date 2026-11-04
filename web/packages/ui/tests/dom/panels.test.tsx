@@ -213,9 +213,11 @@ describe('subagents', () => {
   // A subagent opens in the Conversation pane: its transcript, under the header's bar.
   const view = async (name: string) => screen.findByRole('region', { name: `Transcript of ${name}` });
   const bar = () => screen.getByRole('group', { name: /^State: / });
+  // A row in the sheet opens its reader; the reader's "Open as conversation" shows it in the pane.
+  const asConversation = async (user: User) => user.click(await screen.findByRole('button', { name: 'Open as conversation' }));
 
-  // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that opens its detail in the same box.
-  test('the strip\'s subagent list groups subagents by their message; a pick opens it in the Conversation pane, and the list makes way', async () => {
+  // The strip's Subagents tab: subagents by the message that started their reply, filters, and a pick that opens its reader beside the list.
+  test('the strip\'s subagent list groups subagents by their message; a pick reads it beside the list, and Open as conversation shows it in the Conversation pane', async () => {
     const { user } = await openTask('t8');
     // The header has no Subagents button any more: the strip counts them.
     expect(document.querySelector('header')!.textContent).not.toContain('Subagents');
@@ -228,8 +230,15 @@ describe('subagents', () => {
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
     expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
     await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
+    // Its reader: beside the list, the sheet still open, its error whole; the conversation stays.
+    const peek = within(await screen.findByRole('dialog', { name: 'Run the accessibility linter' }));
+    expect(peek.getByText('axe-core is not installed in this project.')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: /^Transcript of / })).toBeNull();
+    await user.click(peek.getByRole('button', { name: 'Open as conversation' }));
     // The pane: its transcript in the Thread's place, the sheet gone, the bar red, the URL its own.
     const transcript = await view('Run the accessibility linter');
+    await waitFor(() => expect(document.activeElement).toBe(transcript));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(bar().getAttribute('aria-label')).toBe('State: Failed');
     expect(bar().className).toContain('before:bg-error');
@@ -242,6 +251,63 @@ describe('subagents', () => {
     // The strip keeps its subagents, as in the Thread; no switcher of its own.
     expect(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ })).toBeTruthy();
     expect(screen.queryByRole('group', { name: 'Subagents' })).toBeNull();
+  });
+  test('the sheet opens on its first row: the arrows move at once, a row\'s reader closes back to that row, and the sheet back to its button', async () => {
+    const { user } = await openTask('t8');
+    const button = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
+    const index = await openSubagentIndex(user);
+    const rows = index.getAllByRole('button', { name: /, (running|failed|completed|idle|stopped)/ });
+    await waitFor(() => expect(document.activeElement).toBe(rows[0]));
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(rows[1]);
+    await user.keyboard('{ArrowUp}');
+    expect(document.activeElement).toBe(rows[0]);
+    await user.keyboard('{ArrowUp}');
+    expect(document.activeElement).toBe(index.getByRole('searchbox', { name: 'Search subagents' }));
+    // Enter on a row: its reader, the row marked open; Esc closes the reader alone and focus goes back to the row.
+    rows[1].focus();
+    await user.keyboard('{Enter}');
+    const name = rows[1].getAttribute('aria-label')!.split(',')[0];
+    const peek = await screen.findByRole('dialog', { name });
+    expect(within(peek).getByRole('button', { name: 'Open as conversation' })).toBeTruthy();
+    expect(rows[1].getAttribute('aria-expanded')).toBe('true');
+    // A press inside the reader is not a press away from the sheet.
+    await user.click(within(peek).getByRole('heading', { name }));
+    expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(rows[1]));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+  test('a subagent waiting on the owner says what it needs', async () => {
+    const state = mockData.seed();
+    const t8 = state.tasks.find((t) => t.id === 't8')!;
+    const now = new Date().toISOString();
+    t8.interactions = [
+      ...t8.interactions,
+      { id: 'perm-a1', kind: 'permission', title: 'Run shell command', detail: 'npx html-validate templates/', state: 'pending', time: now, agent_id: 'a1', options: [{ id: 'once', label: 'Allow once' }] },
+      { id: 'ask-a2', kind: 'question', title: 'Which contrast level?', state: 'pending', time: now, agent_id: 'a2' },
+    ];
+    vi.spyOn(mockData, 'seed').mockReturnValue(state);
+    const { user } = await openTask('t8');
+    const index = await openSubagentIndex(user);
+    expect(index.getByRole('button', { name: 'Survey templates for missing alt text and labels, running: Needs permission: Run shell command' })).toBeTruthy();
+    expect(index.getByRole('button', { name: 'Check contrast of the theme tokens, running: Needs answer' })).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+  test('one subagent reads "1 subagent"', async () => {
+    const state = mockData.seed();
+    const t8 = state.tasks.find((t) => t.id === 't8')!;
+    t8.subagents = t8.subagents.filter((x) => x.id === 'a3');
+    vi.spyOn(mockData, 'seed').mockReturnValue(state);
+    const { user } = await openTask('t8');
+    const index = await openSubagentIndex(user);
+    expect(index.getByRole('searchbox', { name: 'Search subagents' }).getAttribute('placeholder')).toBe('Search 1 subagent');
+    vi.restoreAllMocks();
   });
   test('a row opens the subagent in the pane; the strip and the reply\'s chip open the same sheet, on the list and on the reply\'s list', async () => {
     const { user } = await openTask('t8');
@@ -368,6 +434,7 @@ describe('subagents', () => {
     expect(rows).toHaveLength(12);
     expect(rows[0].getAttribute('aria-label')).toMatch(/^Audit package internal\/store, running/);
     await user.click(list.getByRole('button', { name: /^Audit package internal\/web, completed/ }));
+    await asConversation(user);
     const transcript = within(await view('Audit package internal/web'));
     // Read as a conversation: what it was asked first, its work, and what went back to the Thread at the end, green.
     expect(bar().className).toContain('before:bg-success');
@@ -467,6 +534,7 @@ describe('subagents', () => {
       const { user } = await openTask('t15');
       const index = await openSubagentIndex(user);
       await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
+      await asConversation(user);
       const transcript = within(await view('Audit the remaining packages'));
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(transcript.queryByText('Details load as you scroll here…')).toBeNull();
@@ -482,6 +550,7 @@ describe('subagents', () => {
     // Their calls are not in the history held here: they wait under "Earlier in the conversation".
     const earlier = within(await index.findByRole('region', { name: 'Earlier in the conversation' }));
     await user.click(earlier.getByRole('button', { name: /^Audit package batch 2/ }));
+    await asConversation(user);
     expect(await view('Audit package batch 2')).toBeTruthy();
     await user.click(within(bar()).getByRole('button', { name: /^Back to / }));
     // Locating pages through the record first; under coverage instrumentation that outlasts the default wait.
@@ -513,6 +582,7 @@ describe('subagents', () => {
     const idle = await list.findByRole('button', { name: /^Audit package cmd\/tool9, idle/ });
     expect(list.getAllByRole('button', { name: /^Audit package / })).toHaveLength(1);
     await user.click(idle);
+    await asConversation(user);
     expect(within(await view('Audit package cmd/tool9')).queryByRole('textbox')).toBeNull();
     // The composer stays, read-only: no message, its settings locked, a way back to the Thread to write.
     expect(screen.getByText('Subagents take no messages.', { exact: false })).toBeTruthy();
@@ -536,6 +606,7 @@ describe('subagents', () => {
     await view('Run the accessibility linter');
     const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: /^Survey templates for missing alt text and labels/ }));
+    await asConversation(user);
     expect(await view('Survey templates for missing alt text and labels')).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
