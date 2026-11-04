@@ -3023,14 +3023,14 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   the conversation. The provider may have partly changed; UAM does not claim
   the selection succeeded or try to roll it back. The next explicit send
   must first restore the recorded settings successfully.
-- **Detached shells (Copilot).** While a shell Copilot started detached
-  is running, Copilot CLI 1.0.92 and 1.0.93 report it in a form the
-  Copilot SDK cannot read (still so in SDK 1.0.28), so the Thread's
-  background tasks cannot be read either. The chip says Status unavailable
-  and lists the shells reported before, or does not appear when none were;
-  nothing can be stopped from it. The shell shows within 15 seconds of
-  ending. Until
-  then, a subagent's follow-up and an autopilot turn waiting on an
+- **Detached shells (Copilot).** Copilot CLI reports a running detached
+  shell's process id as a decimal number (`3892667.0`), which the Copilot
+  SDK (still in 1.0.28) cannot read, so it rejects the whole task list. UAM
+  reads the list itself, one entry at a time, so detached shells are listed
+  and can be stopped like any other. An entry UAM still cannot read is left
+  out and the rest stay listed. Only when no entry can be read does the chip
+  say Status unavailable and keep the shells reported before. Until the list
+  reads again, a subagent's follow-up and an autopilot turn waiting on an
   attached shell may also stay running.
 - **Copilot session diffs.** A Thread's own files come from Copilot's
   session diff, which includes files written by shell commands, read while

@@ -1,0 +1,7 @@
+{"tasks":[
+{"type":"agent","id":"agent-1","description":"Explore","status":"running","agentType":"explore","startedAt":"2026-11-04T09:00:00Z"},
+{"type":"shell","id":"1","description":"Start detached sleep","status":"running","command":"sleep 120","attachmentMode":"detached","executionMode":"background","pid":3892667.0,"startedAt":"2026-11-04T09:02:47.362Z"},
+{"type":"shell","id":"2","description":"Bad start time","status":"running","command":"sleep 1","attachmentMode":"detached","startedAt":"yesterday"},
+{"type":"shell","id":"3","description":"Fractional pid","status":"running","command":"sleep 1","attachmentMode":"detached","pid":12.5,"startedAt":"2026-11-04T09:02:48Z"},
+{"type":"shell","id":"0","description":"Write x to a.txt","status":"running","command":"echo x > a.txt","attachmentMode":"attached","executionMode":"sync","canPromoteToBackground":false,"startedAt":"2026-11-04T09:02:45.311Z"}
+]}
