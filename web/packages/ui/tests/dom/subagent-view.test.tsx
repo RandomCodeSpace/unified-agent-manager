@@ -50,14 +50,14 @@ test('the strip keeps the subagents as in the Thread, without the Thread\'s todo
   expect(screen.getByRole('group', { name: 'State: Running' }).hasAttribute('title')).toBe(false);
 });
 
-test('a subagent waiting on the owner reads as the Thread does: Input, the needs-you fill', async () => {
+test('a subagent waiting on the owner reads as the Thread does: Needs permission, the waiting fill', async () => {
   const state = data.seed();
   const task = state.tasks.find((t) => t.id === 't8')!;
   task.interactions = [...task.interactions, { id: 'perm-a1', kind: 'permission', title: 'Run a shell command', detail: 'npx html-validate templates/', state: 'pending', time: new Date().toISOString(), agent_id: 'a1', options: [{ id: 'once', label: 'Allow once' }] }];
   vi.spyOn(data, 'seed').mockReturnValue(state);
   renderApp('#task=t8&agent=a1');
   await transcript('Survey templates for missing alt text and labels');
-  const bar = screen.getByRole('group', { name: 'State: Input' });
+  const bar = screen.getByRole('group', { name: 'State: Needs permission' });
   expect(bar.className).toContain('before:bg-warning');
   // Another one, with nothing waiting, keeps its own state.
   window.location.hash = '#task=t8&agent=a2';

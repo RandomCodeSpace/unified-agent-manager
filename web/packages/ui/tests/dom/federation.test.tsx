@@ -462,7 +462,7 @@ test('Alt+J and Alt+K walk the Tasks that need you across machines, in the listâ
   federated('', [record('b', 'Workstation B')]);
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
-  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText('Input')).map((el) => el.dataset.taskRow!);
+  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText(/^Needs (answer|permission)$/)).map((el) => el.dataset.taskRow!);
   expect(keys.length).toBeGreaterThan(2);
   // Both machines hold the same Tasks, so the list alternates: this instance's row, then Workstation B's.
   expect(keys[0]).not.toMatch(/^uam:/);

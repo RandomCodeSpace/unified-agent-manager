@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
 import { PHONE } from '../../src/components/ui/dialog';
 import { openTask } from './render';
+import { STATE_LABELS } from '../../src/components/common';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -11,7 +12,7 @@ const bar = () => screen.getByRole('group', { name: /^State: / });
 
 test.each([
   ['t8', 'Working', 'before:bg-accent'],
-  ['t2', 'Input', 'before:bg-warning'],
+  ['t2', 'Needs answer', 'before:bg-warning'],
   ['t5', 'Interrupted', 'before:bg-warning'],
   ['t4', 'Error', 'before:bg-error'],
   ['t-chart', 'Finished', 'before:bg-success'],
@@ -44,4 +45,19 @@ test('on a phone the state is also a glyph after the title', async () => {
   await openTask('t4');
   expect(within(bar()).getByText('Error', { selector: '.sr-only' })).toBeTruthy();
   expect(bar().querySelector('.lucide-x')).not.toBeNull();
+});
+
+test('one state vocabulary: a waiting Thread reads Needs answer or Needs permission, never Input or Needs you', () => {
+  expect(STATE_LABELS).toEqual({
+    idle: 'Idle',
+    starting: 'Starting',
+    working: 'Working',
+    awaiting_permission: 'Needs permission',
+    awaiting_answer: 'Needs answer',
+    completed: 'Finished',
+    cancelled: 'Stopped',
+    failed: 'Error',
+    interrupted: 'Interrupted',
+    closed: 'Idle',
+  });
 });

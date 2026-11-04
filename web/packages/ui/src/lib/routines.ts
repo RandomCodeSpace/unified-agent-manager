@@ -48,7 +48,7 @@ export type RoutineMode = 'autopilot' | 'yolo' | 'safe';
 export const ROUTINE_MODES: { value: RoutineMode; label: string; hint: string }[] = [
   { value: 'autopilot', label: 'Yolo with autopilot', hint: 'Allows every permission request and keeps working until the thread is done or the time limit stops it.' },
   { value: 'yolo', label: 'Yolo', hint: 'Allows every permission request for one turn: the run ends when the agent first stops.' },
-  { value: 'safe', label: 'Safe', hint: 'Each permission request waits for you, and the run shows as Needs you until you answer.' },
+  { value: 'safe', label: 'Safe', hint: 'Each permission request waits for you, and the run shows as Needs permission until you answer.' },
 ];
 
 /** The form's mode for a routine; Safe with autopilot, which only the API sets, reads as Safe. */
@@ -70,7 +70,8 @@ export function routineModeInput(mode: RoutineMode): Pick<RoutineInput, 'mode' |
 
 /** How a run ended, in a word or two; a running run whose Task waits for the owner needs you. */
 export function outcomeLabel(run: Pick<RoutineRun, 'outcome'>, taskState?: SessionState): string {
-  if (run.outcome === 'running' && (taskState === 'awaiting_permission' || taskState === 'awaiting_answer')) return 'Needs you';
+  if (run.outcome === 'running' && taskState === 'awaiting_permission') return 'Needs permission';
+  if (run.outcome === 'running' && taskState === 'awaiting_answer') return 'Needs answer';
   const labels: Record<RoutineOutcome, string> = {
     running: 'Running',
     finished: 'Finished',

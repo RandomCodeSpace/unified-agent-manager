@@ -1415,7 +1415,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   until the agent calls `task_complete` or the time limit stops it.
   **Yolo** allows every request for one turn: the run ends when the agent
   first stops. **Safe** makes each permission request wait for you, and
-  the Thread shows as Needs you. The form explains the chosen mode and, for
+  the Thread shows as Needs permission. The form explains the chosen mode and, for
   both Yolo modes, that the agent acts without asking while nobody is
   watching. A routine saved before this choice existed keeps its mode
   (Safe or Yolo, without autopilot), and each card shows its mode. The API
@@ -1443,8 +1443,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   at once under the same rules, paused or not, and leaves the next
   scheduled run where it was. History lists the newest 100 runs: when,
   what fired it (the schedule, Run now, or a firing missed while uam was
-  stopped), the Thread, and the outcome: Running (Needs you while its Thread
-  waits for you), Finished, Failed with the reason, Cancelled (stopped in
+  stopped), the Thread, and the outcome: Running (Needs permission or Needs answer
+  while its Thread waits for you), Finished, Failed with the reason, Cancelled (stopped in
   the Thread), Stopped at the time limit, or Skipped and why. Routines are
   kept in `sessions.json`; the next run survives a restart. Firings missed
   while the service was down run once when it starts, not once each, and
@@ -1519,7 +1519,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   arrived is kept and comes back once the question is settled.
 - **Native planning**: `/plan` in a Copilot Thread uses Copilot's own plan mode.
   When the plan is ready, **Plan ready** appears above the composer and the
-  Thread moves to Needs you. **Read plan** opens that reviewed snapshot, with
+  Thread moves to Needs answer. **Read plan** opens that reviewed snapshot, with
   revision numbers and **Show changes** after a revision. Pick an offered
   implementation action or **Leave planning**; the runtime's recommendation
   is staged, and Enter, **Approve plan**, or a second click sends it. Typing
@@ -1733,7 +1733,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   whether the main agent's last test run (a "Ran the tests" row in the
   evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
-  exited non-zero. A turn with no edits or commands reads "Answered". When
+  exited non-zero. A turn with no edits or commands reads "Answered" (the
+  Thread itself reads Finished; its detail drops that word). When
   Copilot accepts the turn's native completion, its summary opens the line,
   as in "Fixed the flaky redraw test; 3 files changed; tests pass".
   A new turn clears the line, and a turn that is stopped or fails gets none.
@@ -2373,9 +2374,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The service reads it once per repository along with the Projects'
   branches (when a turn ends, after Commit, Pull and Set up git, and when a
   page loads), and after Push; the summary carries it as
-  `git_pending {uncommitted, unpushed}`. The status is one of "Input", "Starting", "Working", "Review",
-  "Finished", "Error", "Interrupted", "Stopped", or "Idle".
-  Input and Interrupted are amber; Working/Starting blue; Compacting violet;
+  `git_pending {uncommitted, unpushed}`. The status is one of "Needs answer", "Needs permission", "Starting",
+  "Working", "Review", "Finished", "Error", "Interrupted", "Stopped", or "Idle";
+  the header and the strip's live line use the same words. "Needs you" is only
+  the count of Threads that want you.
+  Needs answer, Needs permission and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Finished green; Error red; inactive states gray.
   The second line shows the Thread title, its branch in muted text (a
   Thread in its own worktree shows the worktree's branch, not the Project
