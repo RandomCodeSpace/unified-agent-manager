@@ -130,7 +130,7 @@ func TestTaskScopePartialAndUnknownScope(t *testing.T) {
 // The record's edits, subagents' included, count once it is read.
 func TestNoteHistoryRecordsEdits(t *testing.T) {
 	s := newSession("id", "fake", "", "/w", "", time.Now())
-	m := &Manager{}
+	m := &Manager{store: openTestStore(t)}
 	m.closed = true // no recount in this unit test
 	at := time.Now()
 	sub := toolEdit("e2", "edit", "b.go", agentapi.ToolCompleted, at)
