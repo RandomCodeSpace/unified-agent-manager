@@ -5,7 +5,7 @@
 import { Excalidraw, MainMenu } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import '@excalidraw/excalidraw/index.css';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DrawnElement } from '../lib/drawings';
 import { NUNITO } from '../lib/drawings';
 
@@ -62,12 +62,23 @@ export default function ExcalidrawCanvas({ elements, files, theme, background, o
     if (!touched.current) return onRestored(live(), { ...f });
     timer.current = window.setTimeout(() => onChange(live(), { ...f }), 200);
   }, [onChange, onRestored]);
+  // Excalidraw's menu trigger is an icon button without a name, and MainMenu passes it no props.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const name = () => el.querySelector('.main-menu-trigger:not([aria-label])')?.setAttribute('aria-label', 'Drawing menu');
+    name();
+    const watch = new MutationObserver(name);
+    watch.observe(el, { childList: true, subtree: true });
+    return () => watch.disconnect();
+  }, []);
   const ready = useCallback((api: ExcalidrawImperativeAPI) => onApi(api, (next) => {
     touched.current = false;
     api.updateScene({ elements: structuredClone(next) as never });
   }), [onApi]);
   return (
-    <div className="h-full w-full" onPointerDownCapture={touch} onKeyDownCapture={touch} onDropCapture={touch} onPasteCapture={touch}>
+    <div ref={box} className="h-full w-full" onPointerDownCapture={touch} onKeyDownCapture={touch} onDropCapture={touch} onPasteCapture={touch}>
       {/* The editor is the reader's reason to open: the keys (R, A, Del) must work at once, so the canvas takes focus. */}
       {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
       <Excalidraw initialData={initial} theme={theme} autoFocus excalidrawAPI={ready} onChange={changed}>

@@ -1138,12 +1138,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   your session or call the service (ADR 0004); the first diagram of a page
   load fetches Mermaid (3.4 MB).
 - **Editable diagrams**: a flowchart or sequence diagram in a reply offers
-  Edit as drawing in its header while the Thread is writable. It becomes a
-  `.excalidraw` file under the Thread's `docs/` folder, drawn in the card in
-  place of the diagram, and opens in an editor off the card: Yours is the
+  Edit as drawing in its header while the Thread is writable. A confirmation
+  names the file; only Create drawing writes it, and Cancel writes nothing. It
+  becomes a `.excalidraw` file under the Thread's `docs/` folder, drawn in a
+  card under the diagram (which stays, with Open drawing in its header), and
+  opens in an editor off the card (Escape closes it): Yours is the
   Excalidraw canvas (every change saves on its own), Agent's is the version
   the agent last wrote or read, Changes shows both in one picture with the
-  list of what changed. Your changes reach the agent as a note with your next
+  list of what changed. Delete on the drawing's card removes the file after a
+  confirmation. Your changes reach the agent as a note with your next
   message (the composer shows a chip per changed drawing; the conversation shows
   the note as a one-line notice naming the drawing). The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →

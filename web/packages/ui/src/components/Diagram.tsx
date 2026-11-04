@@ -3,12 +3,14 @@ import { useApi } from '../ApiContext';
 import { describeError } from '../api';
 import { cn } from '../lib/cn';
 import { DiagramError, convertible, errorReason, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
+import { drawingPath } from '../lib/drawings';
 import { usePreview } from '../lib/previewContext';
 import { useScheme } from '../lib/theme';
 import { Lightbox } from './Attachments';
 import { CodeBlock, Note, Spinner } from './common';
 import { DrawingCard, DrawingsContext, fenceDrawing } from './Drawing';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
 
 type View = 'diagram' | 'code';
 
@@ -23,19 +25,23 @@ export interface Fence {
  * rendered in the sandboxed frame and shown only as a `data:` image, never as inline markup;
  * clicking it opens the lightbox. Until the fence has closed (`ready`), and whenever the source
  * does not parse, the code shows instead, the latter with a quiet note. A flowchart or sequence
- * diagram in a writable Thread offers "Edit as drawing"; a fence whose drawing exists is the
- * drawing's card instead.
+ * diagram in a writable Thread offers "Edit as drawing", which creates the file only once its
+ * confirmation is accepted; a fence whose drawing exists keeps its card and shows the drawing's under it.
  */
 export function DiagramCard({ source, ready, fence, children }: Readonly<{ source: string; ready: boolean; fence?: Fence; children: ReactNode }>) {
   const drawings = useContext(DrawingsContext);
   const [created, setCreated] = useState<string | null>(null);
-  const existing = fenceDrawing(drawings?.drawings, fence?.itemId, fence?.index ?? -1)?.path ?? created;
-  // The card this click made opens the editor at once; one found in the list only shows.
-  if (existing) return <DrawingCard path={existing} edit={existing === created} />;
-  return <MermaidCard source={source} ready={ready} fence={fence} onCreated={setCreated}>{children}</MermaidCard>;
+  const existing = fenceDrawing(drawings?.drawings, fence?.itemId, fence?.index ?? -1)?.path;
+  return (
+    <>
+      <MermaidCard source={source} ready={ready} fence={fence} drawing={existing} onCreated={setCreated}>{children}</MermaidCard>
+      {/* The card this confirmation made opens the editor at once; one found in the list only shows. */}
+      {existing && <DrawingCard path={existing} edit={existing === created} />}
+    </>
+  );
 }
 
-function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ source: string; ready: boolean; fence?: Fence; onCreated: (path: string) => void; children: ReactNode }>) {
+function MermaidCard({ source, ready, fence, drawing, onCreated, children }: Readonly<{ source: string; ready: boolean; fence?: Fence; drawing?: string; onCreated: (path: string) => void; children: ReactNode }>) {
   const api = useApi();
   const preview = usePreview();
   const drawings = useContext(DrawingsContext);
@@ -44,6 +50,7 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
   const [convert, setConvert] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const confirm = useConfirm<string>();
   // The SVG carries the scheme's colours, so a scheme change renders it again.
   const scheme = useScheme();
 
@@ -64,14 +71,17 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
   const pending = ready && !rendered && !error;
   const url = rendered ? svgDataUrl(rendered.svg) : '';
   const editable = !!drawings?.writable && !!fence && !!rendered && convertible(rendered.diagramType) && api.supports('drawings-v1');
+  const newPath = drawings && fence ? drawingPath(fence.itemId, fence.index, drawings.drawio ? 'drawio' : 'excalidraw') : '';
 
-  /** Converts the fence into a drawing (DrawingCards.tsx, loaded on this first click) and files it as the agent's v1. */
-  async function edit() {
+  /** Converts the fence into a drawing (DrawingCards.tsx, loaded on this confirmation) and files it as the agent's v1. */
+  async function create() {
+    confirm.close();
     if (!drawings || !fence) return;
     setConvert({ busy: true });
     try {
       const { convertFence } = await import('./DrawingCards');
       onCreated(await convertFence(drawings, source, fence));
+      setConvert({ busy: false });
     } catch (err) {
       setConvert({ busy: false, error: err instanceof DiagramError ? errorReason(err.message) : describeError(err) });
     }
@@ -112,8 +122,13 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
           <>
             {pending && <Spinner className="border-muted" />}
             <span className="flex-1" />
-            {editable && (
-              <Button size="sm" className="h-5 px-1.5 text-code-sm font-normal text-muted" loading={convert.busy} onClick={() => void edit()}>
+            {editable && drawing && (
+              <Button size="sm" className="h-5 px-1.5 text-code-sm font-normal text-muted" aria-haspopup="dialog" onClick={(e) => drawings?.open({ path: drawing, view: 'mine', anchor: e.currentTarget })}>
+                Open drawing
+              </Button>
+            )}
+            {editable && !drawing && (
+              <Button size="sm" className="h-5 px-1.5 text-code-sm font-normal text-muted" aria-haspopup="dialog" loading={convert.busy} onClick={() => confirm.ask(newPath)}>
                 Edit as drawing
               </Button>
             )}
@@ -130,6 +145,14 @@ function MermaidCard({ source, ready, fence, onCreated, children }: Readonly<{ s
       >
         {children}
       </CodeBlock>
+      <AlertDialog
+        {...confirm.props}
+        title="Create an editable drawing?"
+        description={<>Creates <span className="font-mono text-code-sm">{confirm.target}</span> in the Thread’s folder from this diagram. The diagram stays; delete the drawing from its card.</>}
+        confirmLabel="Create drawing"
+        danger={false}
+        onConfirm={() => void create()}
+      />
       {!preview && shown && rendered && <Lightbox open={open} onOpenChange={setOpen} onClosed={() => setShown(false)} title="Diagram" description="mermaid" src={url} alt="Diagram" size={{ width: rendered.width, height: rendered.height }} />}
     </>
   );

@@ -273,6 +273,11 @@ export function drawingsMock() {
           if (diffOf(e).changes.length === 0) e.agent_version = e.version;
           return reply(200, saved(path, e));
         }
+        if (method === 'DELETE') {
+          if (!mine[path]) return fail(404, 'no such drawing');
+          delete mine[path];
+          return reply(204);
+        }
       }
       return null;
     },

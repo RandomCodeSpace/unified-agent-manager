@@ -2,6 +2,7 @@
 // fence whose drawing exists with unsent changes (d4, mock/drawings.ts). Excalidraw needs a canvas
 // happy-dom has not, so the package is a stand-in here; the real editor runs in scripts/check-drawings.mjs.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { api, ApiError } from '../../src/api';
 import { mermaidFences } from '../../src/lib/diagram';
@@ -24,12 +25,13 @@ const updateScene = vi.fn();
 beforeEach(() => updateScene.mockClear());
 
 vi.mock('@excalidraw/excalidraw', () => ({
-  Excalidraw: ({ excalidrawAPI, onChange }: { excalidrawAPI?: (api: unknown) => void; onChange?: Emit }) => {
+  Excalidraw: ({ excalidrawAPI, onChange, children }: { excalidrawAPI?: (api: unknown) => void; onChange?: Emit; children?: ReactNode }) => {
     emit = onChange ?? null;
-    excalidrawAPI?.({ scrollToContent: () => {}, updateScene });
-    return <div className="excalidraw-container" tabIndex={-1} data-testid="excalidraw" />;
+    excalidrawAPI?.({ scrollToContent: () => {}, updateScene, getAppState: () => ({}) });
+    return <div className="excalidraw-container" tabIndex={-1} data-testid="excalidraw">{children}</div>;
   },
-  MainMenu: Object.assign(() => null, { DefaultItems: new Proxy({}, { get: () => () => null }), Separator: () => null }),
+  // The real trigger: an icon button with no name of its own.
+  MainMenu: Object.assign(() => <button type="button" className="main-menu-trigger" />, { DefaultItems: new Proxy({}, { get: () => () => null }), Separator: () => null }),
   exportToCanvas: async () => ({ toDataURL: () => 'data:image/png;base64,AAAA', width: 400, height: 200 }),
   convertToExcalidrawElements: (skeletons: Record<string, unknown>[]) => skeletons.map((s) => ({ ...s, label: undefined })),
 }));
@@ -138,31 +140,66 @@ test('a reply’s mermaid fences are found by index, with a closing fence of equ
   expect(mermaidFences(text)).toEqual(['flowchart LR\n  A --> B', 'sequenceDiagram\n  A->>B: hi', 'gantt']);
 });
 
-test('a flowchart offers Edit as drawing, a gantt does not, and converting swaps the card for the drawing', async () => {
+test('a flowchart offers Edit as drawing, a gantt does not; cancelling writes nothing, Create drawing writes once and keeps the diagram', async () => {
   const { user } = await openTask('t-chart');
   const buttons = await screen.findAllByRole('button', { name: 'Edit as drawing' });
-  // d2's flowchart only: d3's gantt cannot convert and d4 already is a drawing.
+  // d2's flowchart only: d3's gantt cannot convert and d4 already has a drawing, which its diagram links to.
   expect(buttons).toHaveLength(1);
-  expect(log().getAllByText('mermaid')).toHaveLength(2);
+  expect(await screen.findByRole('button', { name: 'Open drawing' })).toBeTruthy();
+  expect(log().getAllByText('mermaid')).toHaveLength(3);
   const put = vi.spyOn(api, 'putDrawing');
   try {
+    // Opening the confirmation and cancelling it writes nothing.
     await user.click(buttons[0]);
+    const ask = within(await screen.findByRole('alertdialog'));
+    expect(ask.getByText('docs/diagram-d2-0.excalidraw')).toBeTruthy();
+    await user.click(ask.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await sleep(100);
+    expect(put).not.toHaveBeenCalled();
+    // Create drawing writes the file once, as the agent's v1.
+    await user.click(screen.getByRole('button', { name: 'Edit as drawing' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Create drawing' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.excalidraw', expect.objectContaining({ origin: 'convert', item_id: 'd2', fence_index: 0, format: 'excalidraw' })));
-    await waitFor(() => expect(document.querySelector('[data-drawing$="diagram-d2-0.excalidraw"]')).toBeTruthy());
+    expect(put).toHaveBeenCalledTimes(1);
     expect(await (await cardOf('diagram-d2-0.excalidraw')).findByText('Agent’s v1')).toBeTruthy();
-    // The click that made the drawing also opens its editor; Done closes it and the conversation is reachable again.
+    // The confirmation that made the drawing also opens its editor; Escape closes it without a write.
     const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' }));
     // Full screen takes the whole viewport and comes back.
     await user.click(editor.getByRole('button', { name: 'Full screen' }));
     expect(editor.getByRole('button', { name: 'Exit full screen' }).getAttribute('aria-pressed')).toBe('true');
     await user.click(editor.getByRole('button', { name: 'Exit full screen' }));
     expect(editor.getByRole('button', { name: 'Full screen' }).getAttribute('aria-pressed')).toBe('false');
-    await user.click(editor.getByRole('button', { name: 'Done' }));
+    expect(await editor.findByRole('button', { name: 'Drawing menu' })).toBeTruthy();
+    await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' })).toBeNull());
+    expect(put).toHaveBeenCalledTimes(1);
+    // The diagram stays, now linking to its drawing.
     expect(screen.queryByRole('button', { name: 'Edit as drawing' })).toBeNull();
-    expect(log().getAllByText('mermaid')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Open drawing' })).toHaveLength(2);
+    expect(log().getAllByText('mermaid')).toHaveLength(3);
   } finally {
     put.mockRestore();
+  }
+});
+
+test('Delete on a drawing’s card confirms, deletes the file, and the diagram offers Edit as drawing again', async () => {
+  const { user } = await openTask('t-chart');
+  const del = vi.spyOn(api, 'deleteDrawing');
+  try {
+    const card = await cardOf('diagram-d4-0.excalidraw');
+    await user.click(await card.findByRole('button', { name: 'Delete' }));
+    const ask = within(await screen.findByRole('alertdialog'));
+    expect(ask.getByText('docs/diagram-d4-0.excalidraw')).toBeTruthy();
+    expect(del).not.toHaveBeenCalled();
+    await user.click(ask.getByRole('button', { name: 'Delete drawing' }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith('t-chart', 'docs/diagram-d4-0.excalidraw'));
+    expect(del).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(document.querySelector('[data-drawing$="diagram-d4-0.excalidraw"]')).toBeNull());
+    expect(await screen.findAllByRole('button', { name: 'Edit as drawing' })).toHaveLength(2);
+    expect(log().getAllByText('mermaid')).toHaveLength(3);
+  } finally {
+    del.mockRestore();
   }
 });
 
@@ -219,6 +256,7 @@ test('with draw.io enabled a converted fence opens the embed, and a frame the pa
   const put = vi.spyOn(api, 'putDrawing');
   try {
     await user.click((await screen.findAllByRole('button', { name: 'Edit as drawing' }))[0]);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Create drawing' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.drawio', expect.objectContaining({ origin: 'convert', format: 'drawio' })));
     const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.drawio' }));
     const frame = editor.getByTitle('draw.io editor') as HTMLIFrameElement;
