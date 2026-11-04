@@ -770,6 +770,9 @@ var knownStates = map[string]bool{
 
 const interruptedDetail = "the uam web service stopped while this turn was running"
 
+// restartedDetail ends a routine run whose turn a restart interrupted.
+const restartedDetail = "service restarted"
+
 // Start checks providers, loads their model catalogs and the web records,
 // assigns records from before Projects existed to a Project, and gives each
 // Project without a valid badge one. A provider whose check fails is listed

@@ -121,6 +121,28 @@ export function readableInput(name: string, input: string): { kind: 'command' | 
   return command ? { kind: 'command', text: command } : { kind: 'input', text: input };
 }
 
+/**
+ * The last turn's main-agent tool call that started and never ended, as a restart left it:
+ * `text` names it (a command whole), `prompt` is the message Run again drafts. Null when none.
+ */
+export function interruptedCall(items: readonly Item[]): { text: string; prompt: string } | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.agent_id) continue;
+    if (it.kind === 'user') return null;
+    const tool = it.tool;
+    if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending')) continue;
+    const read = tool.input ? readableInput(tool.name, tool.input) : null;
+    const label = toolLabel(tool);
+    const text = read?.kind === 'command' ? read.text.trim() : `${label.name} ${label.arg}`.trim();
+    const what = read?.kind === 'command' ? 'command' : 'tool call';
+    // A multi-line command or one with a backtick does not fit inline code.
+    const quoted = /[`\n]/.test(text) ? `\n\n\`\`\`\n${text}\n\`\`\`` : ` \`${text}\``;
+    return { text, prompt: `Re-run the interrupted ${what}:${quoted}` };
+  }
+  return null;
+}
+
 /** Reveal roughly 100 more items, keeping the first turn whole (including steers). */
 export function transcriptWindowStart(items: Item[], before = items.length): number {
   let start = Math.max(0, before - 100);

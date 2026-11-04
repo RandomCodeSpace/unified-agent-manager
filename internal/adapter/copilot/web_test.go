@@ -1835,8 +1835,12 @@ func TestWebReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := fc.resume[0]
-	if conv.ID() != "c-7" || cfg.WorkingDirectory != "/w" || cfg.ContinuePendingWork == nil || *cfg.ContinuePendingWork || cfg.Streaming == nil || !*cfg.Streaming || cfg.Model != "" {
+	if conv.ID() != "c-7" || cfg.WorkingDirectory != "/w" || cfg.Streaming == nil || !*cfg.Streaming || cfg.Model != "" {
 		t.Fatalf("resume config = %+v", cfg)
+	}
+	// Guard: true swallowed the next prompt after a restart (probe 2026-11-04).
+	if cfg.ContinuePendingWork == nil || *cfg.ContinuePendingWork {
+		t.Fatalf("ContinuePendingWork = %v, want explicit false", cfg.ContinuePendingWork)
 	}
 	if cfg.OnPermissionRequest == nil || cfg.OnUserInputRequest == nil || cfg.OnEvent == nil {
 		t.Fatal("resume lost its handlers")

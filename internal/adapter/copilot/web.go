@@ -1285,6 +1285,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
+			// Keep false in every mode, Yolo included: a 2026-11-04 probe
+			// (CLI 1.0.105) with true after a kill -9 did not bring back the
+			// pending permission, left the session busy and swallowed the
+			// next prompt until Cancel. With false, a new prompt works.
 			ContinuePendingWork:     copilot.Bool(false),
 			OnPermissionRequest:     deferPermission,
 			OnUserInputRequest:      c.askUser,

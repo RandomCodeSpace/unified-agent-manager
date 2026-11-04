@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, interruptedCall, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -426,4 +426,23 @@ test('a cancelled elicitation counts and marks as cancelled, not declined', () =
   assert.equal(questionOf(undefined, form('d', 'declined'), false).outcome, 'declined');
   assert.equal(approvalMark(form('c', 'cancelled')).word, 'cancelled');
   assert.deepEqual(summarizeTurn([{ interaction: form('c', 'cancelled') }, { interaction: form('d', 'declined') }], { live: false }).parts.map((p) => p.text), ['1 question declined', '1 question cancelled']);
+});
+
+test('interruptedCall names the last turn\'s started call that never ended, and drafts its re-run', () => {
+  const tool = (id, status, name, input, extra = {}) => ({ id, kind: 'tool', time: '', tool: { name, status, input }, ...extra });
+  const items = [
+    { id: 'u1', kind: 'user', time: '', text: 'old' },
+    tool('t0', 'running', 'bash', '{"command":"echo old"}'),
+    { id: 'u2', kind: 'user', time: '', text: 'run it' },
+    tool('t1', 'completed', 'bash', '{"command":"ls"}'),
+    tool('t2', 'running', 'bash', '{"command":"sleep 60","description":"Wait"}'),
+    tool('s1', 'running', 'bash', '{"command":"subagent work"}', { agent_id: 'a1' }),
+  ];
+  assert.deepEqual(interruptedCall(items), { text: 'sleep 60', prompt: 'Re-run the interrupted command: `sleep 60`' });
+  // Every call of the last turn ended: no card, and an earlier turn's open call does not count.
+  assert.equal(interruptedCall(items.slice(0, 4)), null);
+  assert.equal(interruptedCall([]), null);
+  // A command that does not fit inline code is fenced; a non-shell tool is named with its argument.
+  assert.equal(interruptedCall([tool('t3', 'running', 'bash', '{"command":"a\\nb"}')]).prompt, 'Re-run the interrupted command:\n\n```\na\nb\n```');
+  assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { text: 'edit x.go', prompt: 'Re-run the interrupted tool call: `edit x.go`' });
 });
