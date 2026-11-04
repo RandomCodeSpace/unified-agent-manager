@@ -23,8 +23,8 @@ func fakeSystemd(t *testing.T, state string) (calls func() string, home string) 
 echo "$(basename "$0") $*" >> "` + logPath + `"
 case "$*" in
   "--user is-system-running") echo "` + state + `" ;;
-  "--user is-enabled uam-web.service") echo enabled ;;
-  show-user*) echo no ;;
+  "--user is-enabled uam-web.service") echo "${FAKE_ENABLED:-enabled}" ;;
+  show-user*) echo "${FAKE_LINGER:-no}" ;;
   get-property*) echo "b true" ;;
 esac
 `
@@ -260,5 +260,51 @@ func TestWebServiceRemove(t *testing.T) {
 	}
 	if err := Run(context.Background(), []string{"web", "service"}); err == nil {
 		t.Fatal("uam web service without remove must fail")
+	}
+}
+
+// Status names each state of the unit, and unit quoting escapes systemd's
+// specifiers and expansion and refuses line breaks.
+func TestBootServiceStatusAndQuoting(t *testing.T) {
+	_, home := fakeSystemd(t, "running")
+	status := func() string { return strings.Join(bootServiceStatus(), "\n") }
+	if got := status(); !strings.Contains(got, "not installed") {
+		t.Fatalf("status = %q", got)
+	}
+	captureCLIStdout(t, func() { installBootService("/usr/bin/uam", webOptions{listen: "127.0.0.1:8260"}) })
+	t.Setenv("FAKE_LINGER", "yes")
+	if got := status(); !strings.Contains(got, "enabled; starts at boot") {
+		t.Fatalf("status = %q", got)
+	}
+	t.Setenv("FAKE_ENABLED", "disabled")
+	if got := status(); !strings.Contains(got, "installed but not enabled") {
+		t.Fatalf("status = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "systemd", "user", bootUnitName), []byte("[Service]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(); !strings.Contains(got, "was not written by uam") {
+		t.Fatalf("status = %q", got)
+	}
+
+	if got, err := unitQuote(`a "b" \ 50% $HOME`, true); err != nil || got != `"a \"b\" \\ 50%% $$HOME"` {
+		t.Fatalf("unitQuote = %q, %v", got, err)
+	}
+	if got, _ := unitQuote("$HOME", false); got != `"$HOME"` {
+		t.Fatalf("unitQuote env = %q", got)
+	}
+	if _, err := unitQuote("a\nExecStartPre=/bin/false", true); err == nil {
+		t.Fatal("a line break must be refused")
+	}
+
+	// A unit that cannot be read or written is reported, and nothing else runs.
+	if err := os.RemoveAll(filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := refreshBootService("/usr/bin/uam", webOptions{listen: "127.0.0.1:8260"}); err == nil {
+		t.Fatal("an unreadable unit path must be an error")
 	}
 }

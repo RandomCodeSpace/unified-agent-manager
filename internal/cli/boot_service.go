@@ -191,54 +191,56 @@ func unitQuote(s string, command bool) (string, error) {
 // service, after uam web service remove, or when a uam-web.service that uam
 // did not write is there. Failures are logged only: the service already runs.
 func installBootService(exe string, opts webOptions) {
+	if err := refreshBootService(exe, opts); err != nil {
+		log.Warn("boot service", "err", err)
+	}
+}
+
+func refreshBootService(exe string, opts webOptions) error {
 	if cgroup, err := os.ReadFile(selfCgroup); err == nil && strings.Contains(string(cgroup), "/"+bootUnitName) {
-		return
+		return nil
 	}
 	if _, err := os.Stat(bootRemovedPath()); err == nil || !systemdUser() {
-		return
+		return nil
 	}
 	path, err := bootUnitPath()
 	if err != nil {
-		log.Warn("boot service", "err", err)
-		return
+		return err
 	}
 	old, err := os.ReadFile(path) // #nosec G304 -- fixed name under the user's home.
 	if err == nil && !isBootUnit(old) {
-		return
+		return nil
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Warn("boot service", "err", err)
-		return
+		return err
 	}
 	unit, err := bootUnit(exe, opts)
 	if err != nil {
-		log.Warn("boot service", "err", err)
-		return
+		return err
 	}
 	if err := writeBootEnv(); err != nil {
-		log.Warn("boot service: key file", "err", err)
+		log.Warn("boot service key file", "err", err)
 	}
 	if string(old) != unit {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- systemd's standard user unit directory.
-			log.Warn("boot service", "err", err)
-			return
+			return err
 		}
 		if err := os.WriteFile(path, []byte(unit), 0o644); err != nil { // #nosec G306 -- a unit file holds no secret.
-			log.Warn("boot service", "err", err)
-			return
+			return err
 		}
 		if _, err := bootRun("systemctl", "--user", "daemon-reload"); err != nil {
-			log.Warn("boot service: systemctl --user daemon-reload", "err", err)
+			log.Warn("boot service daemon-reload", "err", err)
 		}
 		fmt.Printf("Boot service: %s starts uam web at boot; uam web service remove takes it out.\n", path)
 	}
 	if _, err := bootRun("systemctl", "--user", "enable", bootUnitName); err != nil {
-		log.Warn("boot service: systemctl --user enable", "err", err)
+		return fmt.Errorf("systemctl --user enable: %w", err)
 	}
 	// Without lingering the manager, and the unit with it, starts at login.
 	if _, err := bootRun("loginctl", "--no-ask-password", "enable-linger"); err != nil {
 		log.Info("boot service: loginctl enable-linger refused; it starts at login", "err", err)
 	}
+	return nil
 }
 
 // bootServiceStatus describes the boot service for uam web status.
