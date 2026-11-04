@@ -48,7 +48,7 @@ const RoutinesView = lazy(() => import('./components/Routines').then((m) => ({ d
 type Auth = 'checking' | 'in' | 'out';
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
 /** `owner`: another machine's Task (connected instances), confirmed here and run against that machine. */
-type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string; owner?: string } | null;
+type TaskDialog = { kind: 'delete' | 'close'; id: string; owner?: string } | null;
 const NO_BUSY: Readonly<Record<string, boolean>> = {};
 
 /** Below this the sidebar is a drawer (DESIGN.md breakpoints). */
@@ -1143,8 +1143,11 @@ export default function App() {
   const [unsavedOpen, setUnsavedOpen] = useState(false);
   const [forcing, setForcing] = useState(false);
   const [changesRequest, setChangesRequest] = useState<{ id: string; at: number } | null>(null);
+  // Counts openings: a confirm whose request reopened the popover with a refusal leaves it open.
+  const unsavedAsked = useRef(0);
   /** Opens the confirmation; `list` reads the folder's first changed files when no refusal named them. */
   const openUnsaved = useCallback((t: UnsavedTarget, list?: () => Promise<ChangesData>) => {
+    unsavedAsked.current += 1;
     setUnsaved(t);
     setUnsavedOpen(true);
     list?.().then((c) => {
@@ -1153,15 +1156,14 @@ export default function App() {
     }).catch(() => {});
   }, []);
   /**
-   * Settle or Archive Thread `id`. Unsaved work the summary knows will stop it (`known`, see `putAwayWork`) opens the
+   * Settle or Archive a Thread. Unsaved work the summary knows will stop it (`known`, see `putAwayWork`) opens the
    * confirmation at once, with no request; otherwise `request` runs, and a refusal over work the summary did not know
    * (a shared folder's Thread's own changes) opens it instead of failing.
    * The anchor is read now, as the control is activated: the row stays on screen while its hover Settle leaves it.
    */
-  const askUnsaved = useCallback(async <T,>(id: string, known: GitPending | null, request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, list: () => Promise<ChangesData>): Promise<T | void> => {
-    let anchor = rowAnchor();
-    // A control inside a closing confirmation (today's Archive dialog) is gone by then: the Thread's row stands for it.
-    if (anchor?.closest('[data-popup]')) anchor = document.querySelector(`nav [data-task-row="${CSS.escape(id)}"]`);
+  const askUnsaved = useCallback(async <T,>(known: GitPending | null, request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, list: () => Promise<ChangesData>): Promise<T | void> => {
+    // Read now; a refusal while the plain Archive asks keeps that popover and its anchor.
+    const anchor = rowAnchor();
     if (known) return openUnsaved(target({ pending: known, paths: [], anchor }), list);
     try {
       return await request();
@@ -1171,7 +1173,7 @@ export default function App() {
       openUnsaved(target({ ...refused, anchor }));
     }
   }, [openUnsaved]);
-  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(id, putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
+  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
     kind,
     ...refused,
     force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the thread`),
@@ -1210,11 +1212,11 @@ export default function App() {
         select(id);
         return s;
       }, 'unarchive the thread').catch(() => {}) : undefined,
-      // Known unsaved work goes straight to its confirmation; otherwise today's dialog, which may still meet a refusal.
+      // Known unsaved work goes straight to its confirmation; otherwise the plain one, which a refusal fills in place.
       archive: (id) => {
         const s = latestSessions.current.find((x) => x.id === id);
         if (s && putAwayWork(s)) void putAway(id, 'archive').catch(() => {});
-        else openTaskDialog({ kind: 'archive', id });
+        else openUnsaved({ kind: 'archive', anchor: rowAnchor(), pending: null, paths: [], force: () => putAway(id, 'archive') });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
@@ -1233,7 +1235,7 @@ export default function App() {
         latestStartTask.current(projectId);
       },
     }),
-    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway, openUnsaved],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1255,7 +1257,6 @@ export default function App() {
   }, []);
   /** Another machine's Settle or Archive: the same confirmation, its forced request run against that machine. */
   const remoteAway = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => askUnsaved(
-    id,
     putAwayWork(m.state.sessions.find((s) => s.id === id)),
     () => m.client.stage(id, kind),
     (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the thread`) }),
@@ -1293,7 +1294,10 @@ export default function App() {
       archive: (id) => {
         const s = machine()?.state.sessions.find((x) => x.id === id);
         if (s && putAwayWork(s)) run(id, (m) => remoteAway(m, id, 'archive'), 'archive the thread');
-        else openTaskDialog({ kind: 'archive', id, owner });
+        else openUnsaved({ kind: 'archive', anchor: rowAnchor(), pending: null, paths: [], force: async () => {
+          const m = machine();
+          if (m) await runRemote(m, id, () => remoteAway(m, id, 'archive'), 'archive the thread');
+        } });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner }),
@@ -1301,7 +1305,7 @@ export default function App() {
       runAgain: (id) => run(id, async (m) => { open((await m.client.rerun(id, { request_id: newRequestId() })).id); }, 'run the thread again'),
       exportMarkdown: (id) => run(id, async (m) => { const f = await m.client.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread'),
     }];
-  })), [remoteKey, renaming, remoteBusy, runRemote, go, openTaskDialog, remoteAway]);
+  })), [remoteKey, renaming, remoteBusy, runRemote, go, openTaskDialog, remoteAway, openUnsaved]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1412,8 +1416,7 @@ export default function App() {
     if (dialogMachine) {
       const c = dialogMachine.client;
       try {
-        if (kind === 'archive') await runRemote(dialogMachine, id, () => remoteAway(dialogMachine, id, 'archive'), 'archive the thread');
-        else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
+        if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
         else {
           await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the thread');
           forgetArchive(c.cacheKey(id));
@@ -1425,8 +1428,7 @@ export default function App() {
       return;
     }
     try {
-      if (kind === 'archive') await putAway(id, 'archive');
-      else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
+      if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the thread');
         sweptMembership.current = null;
@@ -1575,7 +1577,7 @@ export default function App() {
                 <div className={cn('h-full w-rail transition-opacity duration-240 ease-app', !sidebarOpen && 'opacity-0')} inert={!sidebarOpen} aria-hidden={!sidebarOpen}>{sidebar}</div>
                 {!sidebarOpen && (
                   <div className="absolute inset-y-0 left-0 animate-fade-in">
-                    <SidebarRail projects={state.projects} actions={actions} connection={connection} count={needsYouTasks} />
+                    <SidebarRail projects={state.projects} actions={actions} connection={connection} count={needsYouTasks} live={{ sessions: state.sessions, hasNews }} />
                   </div>
                 )}
               </aside>
@@ -1697,22 +1699,11 @@ export default function App() {
             )}
 
             <AlertDialog
-              open={taskDialogOpen && taskDialog?.kind === 'archive'}
-              onOpenChange={(o) => !o && setTaskDialogOpen(false)}
-              onClosed={() => setTaskDialog(null)}
-              title="Archive this thread?"
-              description="The thread moves to Settings → Archived with its full conversation. Unarchive returns it to Finished."
-              confirmLabel="Archive thread"
-              danger={false}
-              busy={dialogBusy}
-              onConfirm={() => void confirmTaskDialog()}
-            />
-            <AlertDialog
               open={taskDialogOpen && taskDialog?.kind === 'delete'}
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title={`Delete ${dialogTaskName}?`}
-              description="This removes the thread record from UAM. The provider conversation on the host is untouched."
+              description="This removes the thread from UAM and cannot be undone; the provider conversation on the host is untouched."
               confirmLabel="Delete thread"
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
@@ -1736,8 +1727,12 @@ export default function App() {
               busy={forcing}
               onConfirm={() => {
                 if (!unsaved) return;
+                const asked = unsavedAsked.current;
                 setForcing(true);
-                void unsaved.force().catch(() => {}).finally(() => { setForcing(false); setUnsavedOpen(false); });
+                void unsaved.force().catch(() => {}).finally(() => {
+                  setForcing(false);
+                  if (unsavedAsked.current === asked) setUnsavedOpen(false);
+                });
               }}
             />
             <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />

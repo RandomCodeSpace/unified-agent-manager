@@ -3,22 +3,25 @@ import type { GitPending } from '../api';
 import { Button } from './ui/button';
 import { AlertDialog } from './ui/dialog';
 
-/** A Settle or Archive the service refused over unsaved git work (`unsaved_work`): the Thread's own changes, or all its own worktree's work. */
+/**
+ * A Settle or Archive the service refused over unsaved git work (`unsaved_work`): the Thread's own changes, or all its own worktree's work.
+ * An Archive not refused yet has no `pending`: the same popover asks plainly, and a refusal fills it in place.
+ */
 export interface UnsavedTarget {
   kind: 'settle' | 'archive';
   /** Where the confirmation hangs: the sidebar row or the control that asked, read as it was activated (`rowAnchor`). */
   anchor: Element | null;
-  pending: GitPending;
+  pending: GitPending | null;
   /** The first changed files, as the service named them. */
   paths: string[];
-  /** Puts the Thread away anyway (`force`). */
+  /** Puts the Thread away anyway (`force`); without `pending`, the plain request, whose refusal fills this target in. */
   force: () => Promise<unknown>;
   /** Opens the Thread's Changes; absent for another machine's Thread. */
   openChanges?: () => void;
 }
 
 const VERB = { settle: 'Settle', archive: 'Archive' } as const;
-const WHERE = { settle: 'Settling moves this Thread out of Active', archive: 'Archiving moves this Thread to Settings → Archived' } as const;
+const WHERE = { settle: 'Settling moves this Thread out of Active (Reopen brings it back)', archive: 'Archiving moves this Thread to Settings → Archived (Unarchive brings it back)' } as const;
 
 /**
  * The compact anchored confirmation (settle mock C): the counts as pills with their glyphs and
@@ -35,26 +38,28 @@ export function SettleGuard({ target, open, onOpenChange, onClosed, busy, onConf
 }>) {
   if (!target) return null;
   const { kind, pending: p, paths, openChanges, anchor } = target;
-  const more = p.uncommitted - paths.length;
+  const more = (p?.uncommitted ?? 0) - paths.length;
+  // One popover: an Archive refused while it asks plainly fills this one in place, never a second.
   return (
     <AlertDialog
       open={open}
       onOpenChange={onOpenChange}
       onClosed={onClosed}
       anchor={anchor}
-      title={`${VERB[kind]} with unsaved work?`}
-      description={`${WHERE[kind]}; this work is not saved anywhere else.`}
-      confirmLabel={`${VERB[kind]} anyway`}
+      title={p ? `${VERB[kind]} with unsaved work?` : 'Archive this thread?'}
+      description={p ? `${WHERE[kind]}; this work is not saved anywhere else.` : 'The thread moves to Settings → Archived with its full conversation, and Unarchive returns it to Finished.'}
+      confirmLabel={p ? `${VERB[kind]} anyway` : 'Archive thread'}
+      danger={!!p}
       busy={busy}
       onConfirm={onConfirm}
-      aside={openChanges && p.uncommitted > 0 && (
+      aside={openChanges && p && p.uncommitted > 0 && (
         <Button size="sm" variant="ghost" className="mr-auto -ml-1.5 text-muted" onClick={openChanges}>
           <FileDiff />
           Open Changes
         </Button>
       )}
     >
-      <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {p && <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
         {p.uncommitted > 0 && (
           <span className="inline-flex h-5 items-center gap-1 rounded-xs bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
             <FilePen aria-hidden="true" className="size-3" />
@@ -67,7 +72,7 @@ export function SettleGuard({ target, open, onOpenChange, onClosed, busy, onConf
             {p.unpushed} not pushed
           </span>
         )}
-      </span>
+      </span>}
       {paths.length > 0 && (
         <ul aria-label="Not committed" className="mt-1 flex flex-col">
           {paths.map((path) => {

@@ -2249,12 +2249,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   show unsaved work, the row's hover button and the menu item read
   "Settle…" and the confirmation opens at once without that request; for
   any other Thread the request goes first and a refusal opens the
-  confirmation (after Archive's own dialog). Either way it hangs
+  confirmation. Archive asks first ("Archive this thread?"), and a refusal
+  fills that same popover in place, so it never asks in a second one. Either way it hangs
   under the sidebar row or the control that asked, read as it was
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes), Cancel and
-  **Settle anyway** or **Archive anyway**. A clean Thread settles at once,
-  and a clean Archive asks as before.
+  **Settle anyway** or **Archive anyway**. A clean Thread settles at once.
+  Each confirmation says how to undo it: Reopen for Settle, Unarchive for
+  Archive; Delete says it cannot be undone.
 
   A Thread with no activity for 7 days settles itself. The check runs every
   hour and skips any Thread that Settle would refuse, that has an unanswered

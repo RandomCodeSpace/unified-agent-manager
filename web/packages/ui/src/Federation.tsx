@@ -120,7 +120,6 @@ export default function Federation() {
   const [homeVersion, setHomeVersion] = useState<string>();
   const [homeLoadedVersion, setHomeLoadedVersion] = useState<string>();
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
-  const homeId = registry?.instance_id ?? '';
   const connections = registry?.connections.length ? registry.connections : EMPTY_CONNECTIONS;
   /**
    * Reads the registry (or shows `known`, a record just saved) and makes its enabled connections the machines, each keeping its state while its record is unchanged.
@@ -365,10 +364,10 @@ export default function Federation() {
       { id: HOME, label: homeSource.label },
       ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
     ] : undefined;
-    const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
+    const settings = <><ConnectedInstancesSettings connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
     return { initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
       ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: machineStates?.[activeID]?.state, authenticated, carry }) };
-  }, [connections, machineStates, refresh, carry, homeId, openAccount, terminalOpen, active, registryError, route.path, onRoute, onAuth, onEvent, otherAttention, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, machines, go, filter, onFilter, intent, request, consumeIntent, activeID, authenticated]);
+  }, [connections, machineStates, refresh, carry, openAccount, terminalOpen, active, registryError, route.path, onRoute, onAuth, onEvent, otherAttention, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, machines, go, filter, onFilter, intent, request, consumeIntent, activeID, authenticated]);
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :

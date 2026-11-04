@@ -30,7 +30,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(stage).not.toHaveBeenCalled();
     expectAnchoredTo(dialog, 't15');
     const guard = within(dialog);
-    expect(guard.getByText(/Settling moves this Thread out of Active; this work is not saved anywhere else/)).toBeTruthy();
+    expect(guard.getByText('Settling moves this Thread out of Active (Reopen brings it back); this work is not saved anywhere else.')).toBeTruthy();
     expect(guard.getByText('2 not committed')).toBeTruthy();
     expect(guard.getByText('3 not pushed')).toBeTruthy();
     await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
@@ -106,21 +106,33 @@ describe('settling or archiving with unsaved git work', () => {
     expect(await sheet.findByText(/by this thread/)).toBeTruthy();
   });
 
-  test('a clean-looking Archive refused over new work replaces today\'s dialog with the confirmation beside the Thread\'s row', async () => {
+  test('a clean-looking Archive refused over new work asks in the same popover, anchored to the control that asked', async () => {
     const { user } = renderApp('#task=t10');
     await screen.findByRole('region', { name: 'Conversation' });
     const real = api.stage.bind(api);
     vi.spyOn(api, 'stage').mockImplementationOnce(async () => {
       throw new ApiError(409, 'This Thread\'s folder has unsaved git work.', { code: 'unsaved_work', git_pending: { uncommitted: 0, unpushed: 2 }, refs: [] });
     }).mockImplementation(real);
-    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
-    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
-    await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this thread?' })).getByRole('button', { name: 'Archive thread' }));
-    const dialog = await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' });
-    // The asking button was inside the closing dialog: the Thread's row stands for it.
-    expectAnchoredTo(dialog, 't10');
+    const trigger = await screen.findByRole('button', { name: 'Thread actions' });
+    await user.click(trigger);
+    const archive = within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' });
+    // Floating UI measures the element a popover hangs from.
+    const measured = vi.spyOn(trigger, 'getBoundingClientRect');
+    await user.click(archive);
+    const dialog = await screen.findByRole('alertdialog', { name: 'Archive this thread?' });
+    expect(dialog.hasAttribute('data-side')).toBe(true);
+    expect(within(dialog).getByText(/Unarchive returns it to Finished/)).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: 'Archive thread' }));
+    // The refusal fills the open popover in place: one popover, never a second one elsewhere.
+    expect(await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' })).toBe(dialog);
+    expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
     expect(within(dialog).getByText('2 not pushed')).toBeTruthy();
+    expect(within(dialog).getByText(/Unarchive brings it back/)).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: 'Open Changes' })).toBeNull();
+    expect(measured).toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Archive anyway' }));
+    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
   test('any other refusal is the notice line, not the confirmation', async () => {

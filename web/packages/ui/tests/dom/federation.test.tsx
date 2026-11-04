@@ -193,6 +193,23 @@ test('core-only peers render their task and name unavailable optional features i
   expect(within(await screen.findByRole('region', { name: 'Skills' })).getByText(/does not offer agents, skills, hooks and instructions/)).toBeTruthy();
 });
 
+test('the collapsed rail opens the instance picker by Tab, and the picker names instances, never their IDs', async () => {
+  localStorage.setItem('uam.sidebar', 'false');
+  const { user } = federated('', [{ ...record('b', 'Workstation B'), instance_id: '9b8c7d6e-5f4a-4b3c-8d2e-1f0a9b8c7d6e' }]);
+  const rail = within(await screen.findByRole('navigation', { name: 'Sidebar' }));
+  const button = await rail.findByRole('button', { name: /^Instance:/ });
+  rail.getByRole('button', { name: /^Show sidebar/ }).focus();
+  await user.tab();
+  expect(document.activeElement).toBe(button);
+  await user.keyboard('{Enter}');
+  const picker = await screen.findByRole('dialog', { name: 'Instances' });
+  expect(within(picker).getByRole('button', { name: /^Workstation B/ })).toBeTruthy();
+  expect(within(picker).getByRole('button', { name: /^Main Server/ })).toBeTruthy();
+  const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const names = [...picker.querySelectorAll('[aria-label]')].map((el) => el.getAttribute('aria-label')).join(' ');
+  expect(`${picker.textContent} ${names}`).not.toMatch(uuid);
+});
+
 /** The instance switcher in the Settings header (the sidebar has its own). */
 async function settingsSwitcher() {
   const header = (await screen.findByRole('heading', { name: /^Settings/, level: 1 })).closest('header')!;

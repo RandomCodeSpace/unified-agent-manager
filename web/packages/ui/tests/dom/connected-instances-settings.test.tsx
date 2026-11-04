@@ -11,7 +11,7 @@ const connection: ConnectedInstance = {
 
 function setup(overrides: Partial<ConnectedInstancesSettingsProps> = {}) {
   const props = {
-    homeInstanceID: 'instance-a', connections: [connection],
+    connections: [connection],
     onAdd: vi.fn(async () => {}), onUpdate: vi.fn(async () => {}), onRemove: vi.fn(async () => {}), onRefresh: vi.fn(async () => {}),
     ...overrides,
   };
@@ -21,6 +21,13 @@ function setup(overrides: Partial<ConnectedInstancesSettingsProps> = {}) {
 }
 
 describe('Connected instances settings', () => {
+  test('names each instance and never shows its raw ID', () => {
+    const id = '9b8c7d6e-5f4a-4b3c-8d2e-1f0a9b8c7d6e';
+    setup({ connections: [{ ...connection, instance_id: id }] });
+    expect(screen.getByRole('heading', { name: 'Work server' })).toBeTruthy();
+    expect(document.body.textContent).not.toContain(id);
+  });
+
   test('adds any number of instances, keeps the key in a password field and clears it after a refused pairing', async () => {
     const onAdd = vi.fn(async () => { throw new Error('The target refused pairing'); });
     const { user } = setup({ onAdd });
