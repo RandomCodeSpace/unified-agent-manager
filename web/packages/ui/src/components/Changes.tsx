@@ -343,7 +343,7 @@ export function ChangesSheet({
         )}
         {!data && !error && <Skeleton label="Loading the changes…" rows={3} className="gap-2" rowClassName="h-6 w-full" />}
         {data && !data.supported && <Note>{data.reason || 'Not available for this thread.'}</Note>}
-        {data?.supported && files.length === 0 && <Note>No changes from this thread: it has not edited a file that still differs from how it was when the thread started.</Note>}
+        {data?.supported && files.length === 0 && <Note>No changes attributed to this thread: no file its edit tools touched or its session tracking listed still differs from how it was when the thread started.</Note>}
         {groups.map(g => (
         <div key={g.key} className="flex flex-col gap-3">
           {g.key !== 'all' && <GroupHead group={g.key} files={g.files} commits={g.key === 'committed' ? data?.commits : undefined} />}
@@ -368,6 +368,7 @@ export function ChangesSheet({
           ))}
         </div>
         ))}
+        {data?.supported && !!data.others?.length && <OtherFiles files={data.others} />}
       </div>
       </div>
       {editable && (comments.length > 0 || sendNote) && (
@@ -383,6 +384,25 @@ export function ChangesSheet({
         onConfirm={revertFile}
       />
     </SidePanel>
+  );
+}
+
+/** The folder's other changed files: read-only, attributed to no Thread. */
+function OtherFiles({ files }: Readonly<{ files: ChangeFile[] }>) {
+  return (
+    <section aria-label="Also changed in this folder" className="mt-4 flex flex-col gap-1">
+      <span className="text-meta text-muted">Also changed in this folder <span className="tabular-nums text-faint">{files.length}</span></span>
+      <Note className="pb-1">Not attributed to this thread: neither its edit tools nor its session tracking list these files.</Note>
+      <ul className="flex flex-col">
+        {files.map((f) => (
+          <li key={f.path} className="flex min-h-7 items-center gap-2 px-1 text-ui">
+            <FileIcon path={f.path} />
+            <span className="min-w-0 flex-1 truncate text-muted" title={f.path}>{f.path}</span>
+            <span className="shrink-0 text-caption tabular-nums text-muted">{changeCounts(f)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -521,6 +541,11 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
         {f.committed && (
           <Tip label={f.committed === 'committed' ? 'All of this change is in commits.' : 'Part of this change is in commits; the rest is not committed yet.'}>
             <span className="inline-flex shrink-0 items-center gap-1 text-meta text-muted"><GitCommitHorizontal aria-hidden="true" className="size-3" />{f.committed === 'committed' ? 'Committed' : 'Partly committed'}</span>
+          </Tip>
+        )}
+        {f.session_tracked && (
+          <Tip label="The provider's session tracking lists this file, so this thread's session saw it change (a shell command, say). No edit tool touched it.">
+            <span className="shrink-0 text-meta text-muted">Session tracking</span>
           </Tip>
         )}
         {f.binary || f.counts_unknown ? <span className="shrink-0 text-caption text-muted">{f.binary ? 'binary' : '—'}</span> : (

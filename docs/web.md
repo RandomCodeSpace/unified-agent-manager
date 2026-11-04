@@ -1257,10 +1257,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   has `settled_by` `"auto"` or `"reviewed"` when the Thread settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
-  positive. `who_touched` uses edit-tool records, includes settled and
-  archived Threads, and marks results partial when history has not been read.
-  Shell writes are not attributed. `changes` lists the Thread's edited files
-  still changed against HEAD. Settled or archived Threads cannot call the
+  positive. `who_touched` lists, first, the Threads whose edit-tool records
+  name the path (`basis` `"edit tool"`, `last_edit`), then those whose
+  session tracking (the provider's record of the conversation's changed
+  files, shell writes included, as last read) lists it (`basis`
+  `"session tracking"`, `listed_at`). Neither proves who wrote a file. It
+  includes settled and archived Threads, and marks results partial when
+  history has not been read. `changes` lists the Thread's files in the
+  Changes panel's task scope: its edit-tool files and its session-tracked
+  files, those marked `session_tracked`, compared with how they were when
+  the Thread started. Settled or archived Threads cannot call the
   tool. Calls fold into the turn's activity like other tool calls.
 - **Threads started by an agent**: the agent can call `uam_create_task` to
   start a new Thread. It gives the Project's ID or exact name, or a `path`,
@@ -2306,7 +2312,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   View changes opens on that turn instead. There is one list, with no
   scopes to choose: the files this Thread's agent or its subagents edited
   with an edit tool (create, write, edit or a patch; one that failed is
-  left out), compared with how they were when the Thread started, its
+  left out) and, for a Copilot Thread, the files its session tracking lists
+  (Copilot's record of the conversation's changes, shell writes included;
+  read again while the conversation is open and when a turn ends, else as
+  last read), compared with how they were when the Thread started, its
   commits included. When some of those files are committed, **All**, **Not
   committed** and **Committed** narrow the list, and the committed group
   names the Thread's commits. The Thread's total (the summary's `diff`,
@@ -2314,8 +2323,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   after the last of a burst of edits, so it is filled in without opening
   Changes. A file this Thread edited shows everything that differs,
   including changes something else made to it; a file changed back drops
-  out. Files written by
-  shell commands are not attributed to the Thread. Until a Thread's history
+  out. A file only the session tracking lists is labelled **Session
+  tracking**: the conversation saw it change (a shell command, say), which
+  does not prove the Thread alone wrote it, so it offers no Revert. Without
+  session tracking, files written by shell commands are not attributed to
+  the Thread. Below the Thread's files, **Also changed in this folder**
+  lists, read-only, the folder's other uncommitted changes, which no Thread
+  is known to have made; they never count toward Settle in a folder Threads
+  share. Until a Thread's history
   has been read, edits from before it may be missing, and the panel says
   so. Each file shows its status and `+added −removed` lines; where its
   path does not fit, the folders above the file's own folder shorten first,

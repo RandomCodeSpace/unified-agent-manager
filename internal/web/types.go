@@ -693,6 +693,10 @@ type ChangedFile struct {
 	// file's change since the Thread started, "partly" when the working copy
 	// has more, and empty when none of it is committed (task and turn scopes).
 	Committed string `json:"committed,omitempty"`
+	// SessionTracked marks a task-scope file only the provider's session
+	// tracking lists (a shell write, say), not one the Thread's edit tools
+	// touched. It says the session saw the file change, not who changed it.
+	SessionTracked bool `json:"session_tracked,omitempty"`
 }
 
 // ChangeCommit is one commit since the session base that touched the
@@ -727,6 +731,10 @@ type Changes struct {
 	Prefix string `json:"prefix,omitempty"`
 	// Counts is set on the task, turn and workspace scopes.
 	Counts *ScopeCounts `json:"counts,omitempty"`
+	// Others are, on the task scope, the other changed files in the Thread's
+	// folder: attributed to no Thread, shown read-only, and never part of the
+	// Settle guard.
+	Others []ChangedFile `json:"others,omitempty"`
 }
 
 // Error is a failure with the HTTP status the server reports for it.

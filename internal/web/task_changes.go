@@ -29,14 +29,16 @@ import (
 // record and kept when the transcript is trimmed or evicted. Its latest turn
 // starts at the latest ordinary prompt to the main agent (startsTurn), so
 // steers join the running turn. The turn's edits are those touched at or
-// after that prompt's time. Each scope
+// after that prompt's time. The task scope also holds the files a native
+// Task's session tracking lists (sessionPaths), its shell writes included,
+// marked SessionTracked unless an edit tool touched them too. Each scope
 // lists the files of the working-tree listing (compared with HEAD) among
-// those edits: a file someone else also changed shows those changes too, and
-// one changed back or committed drops out. Files written by commands (a
-// shell, a script) are not edit tools and are not attributed.
+// those files: a file someone else also changed shows those changes too, and
+// one changed back or committed drops out. The task scope's Others are the
+// folder's remaining changed files, attributed to no one.
 
 const (
-	taskLabel    = "Files this thread's agent edited, compared with how they were when the thread started, its commits included. Changes made to them by anything else show too."
+	taskLabel    = "Files this thread's edit tools touched or its session tracking listed, compared with how they were when the thread started, its commits included. Changes made to them by anything else show too."
 	turnLabel    = "Files the agent edited in its latest turn, compared with how they were when the thread started."
 	partialEdits = "edits from before this thread's history was read may be missing"
 )
@@ -117,7 +119,7 @@ func (m *Manager) kickDiffLocked(s *webSession) {
 	if m.closed || s.removed {
 		return
 	}
-	if len(s.edits) == 0 && s.diff == nil {
+	if len(s.edits) == 0 && len(s.nativePaths) == 0 && s.diff == nil {
 		return
 	}
 	if s.diffRunning {
@@ -145,9 +147,9 @@ func (m *Manager) recountDiff(s *webSession) {
 		}
 		m.mu.Lock()
 		s.diffDirty = false
-		workdir, edits, start, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.changesSince()
+		workdir, edits, tracked, start, since := s.workdir, maps.Clone(s.edits), slices.Clone(s.nativePaths), s.turnStart, s.changesSince()
 		m.mu.Unlock()
-		l, err := listTaskChanges(m.ctx, workdir, edits, start, since)
+		l, err := listTaskChanges(m.ctx, workdir, edits, tracked, start, since)
 		m.mu.Lock()
 		if err == nil {
 			m.setDiffLocked(s, l.stat())
@@ -172,30 +174,44 @@ func (m *Manager) setDiffLocked(s *webSession, d *DiffStat) {
 	m.changedLocked(s, before)
 }
 
-// taskListing is the working-tree listing with the task and turn subsets.
+// taskListing is the working-tree listing with the task and turn subsets,
+// and the folder's other changed files.
 type taskListing struct {
 	all        Changes
 	repo       *gitRepo
 	base       string // the session base; "" when the subsets compare with HEAD
+	prefix     string // the Thread's folder in the repository, "sub/"; "" at the top
 	task, turn []ChangedFile
+	others     []ChangedFile
 }
 
 // listTaskChanges lists the working tree's changes with the task and turn
-// subsets. With since set, the subsets compare the edited files with the
-// session base (sessionBase) instead of HEAD, so files the Thread committed
-// stay listed, marked Committed; without it they compare with HEAD alone.
-func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.Time, turnStart, since time.Time) (taskListing, error) {
+// subsets: the task subset holds edits and tracked (session-tracked paths),
+// the turn subset the edits at or after turnStart. With since set, the
+// subsets compare those files with the session base (sessionBase) instead of
+// HEAD, so files the Thread committed stay listed, marked Committed; without
+// it they compare with HEAD alone. Others are the listing's files in the
+// Thread's folder outside the task subset.
+func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.Time, tracked []string, turnStart, since time.Time) (taskListing, error) {
 	all, repo, err := workspaceListing(ctx, workdir)
-	l := taskListing{all: all, repo: repo, task: []ChangedFile{}, turn: []ChangedFile{}}
+	l := taskListing{all: all, repo: repo, task: []ChangedFile{}, turn: []ChangedFile{}, others: []ChangedFile{}}
 	if err != nil || repo == nil {
 		return l, err
 	}
+	if rel, err := filepath.Rel(realPath(repo.top), realPath(workdir)); err == nil && rel != "." && filepath.IsLocal(rel) {
+		l.prefix = filepath.ToSlash(rel) + "/"
+	}
 	resolve := repoPaths(repo.top, workdir)
-	inTask, inTurn := map[string]bool{}, map[string]bool{}
+	inTask, inTurn, edited := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for p, at := range edits {
 		if rel, ok := resolve(p); ok {
-			inTask[rel] = true
+			inTask[rel], edited[rel] = true, true
 			inTurn[rel] = inTurn[rel] || !at.Before(turnStart)
+		}
+	}
+	for _, p := range tracked {
+		if rel, ok := resolve(p); ok {
+			inTask[rel] = true
 		}
 	}
 	files := all.Files
@@ -203,11 +219,17 @@ func listTaskChanges(ctx context.Context, workdir string, edits map[string]time.
 		files = repo.withCommitted(ctx, l.base, files, slices.Sorted(maps.Keys(inTask)))
 	}
 	for _, f := range files {
-		if inTask[f.Path] {
-			l.task = append(l.task, f)
-		}
 		if inTurn[f.Path] {
 			l.turn = append(l.turn, f)
+		}
+		if inTask[f.Path] {
+			f.SessionTracked = !edited[f.Path]
+			l.task = append(l.task, f)
+		}
+	}
+	for _, f := range all.Files {
+		if !inTask[f.Path] && strings.HasPrefix(f.Path, l.prefix) {
+			l.others = append(l.others, f)
 		}
 	}
 	return l, nil
@@ -352,10 +374,19 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 	if err != nil {
 		return Changes{}, err
 	}
+	// Only the task scope lists session-tracked files: it reads them now; the
+	// others take the last read, for the Task's total.
+	var tracked []string
+	if scope == ScopeTask {
+		tracked = m.sessionPaths(ctx, s)
+	}
 	m.mu.Lock()
 	workdir, edits, start, known, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.editsKnown, s.changesSince()
+	if scope != ScopeTask {
+		tracked = slices.Clone(s.nativePaths)
+	}
 	m.mu.Unlock()
-	l, err := listTaskChanges(ctx, workdir, edits, start, since)
+	l, err := listTaskChanges(ctx, workdir, edits, tracked, start, since)
 	out := l.all
 	if err != nil {
 		return out, err
@@ -374,9 +405,9 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 	m.mu.Unlock()
 	out.Counts = &ScopeCounts{Task: len(l.task), Turn: len(l.turn), Workspace: len(l.all.Files)}
 	if scope != ScopeWorkspace {
-		out.Files = l.task
+		out.Files, out.Others = l.task, l.others
 		if scope == ScopeTurn {
-			out.Files = l.turn
+			out.Files, out.Others = l.turn, nil
 		}
 		if !known {
 			out.Reason = joinReasons(out.Reason, partialEdits)
@@ -389,9 +420,7 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		}
 		out.Commits = l.repo.commitsSince(ctx, l.base, committed)
 	}
-	if rel, err := filepath.Rel(realPath(l.repo.top), realPath(workdir)); err == nil && rel != "." && filepath.IsLocal(rel) {
-		out.Prefix = filepath.ToSlash(rel) + "/"
-	}
+	out.Prefix = l.prefix
 	digestFiles(l.repo.top, out.Files)
 	return out, nil
 }
@@ -405,6 +434,13 @@ func (m *Manager) taskFileDiff(ctx context.Context, id, scope, path string) (age
 	}
 	m.mu.Lock()
 	workdir, edits, start, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.changesSince()
+	if scope == ScopeTask {
+		for _, p := range s.nativePaths {
+			if _, ok := edits[p]; !ok {
+				edits[p] = time.Time{}
+			}
+		}
+	}
 	m.mu.Unlock()
 	repo, reason, err := openRepo(ctx, workdir)
 	if err != nil {

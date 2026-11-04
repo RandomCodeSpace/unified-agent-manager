@@ -1610,6 +1610,8 @@ export interface ChangeFile {
   digest?: string;
   /** On the task and turn scopes: all of the file's change since the Thread started is in commits, or only part of it; absent when none is. */
   committed?: 'committed' | 'partly';
+  /** On the task scope: only the provider's session tracking lists this file (a shell write, say), no edit tool touched it. */
+  session_tracked?: boolean;
 }
 
 export interface Changes {
@@ -1624,6 +1626,8 @@ export interface Changes {
   commits?: { hash: string; subject: string; files: number }[];
   /** File counts of the task, turn and workspace scopes; set on those scopes. */
   counts?: { task: number; turn: number; workspace: number };
+  /** On the task scope: the other changed files in the Thread's folder, attributed to no Thread. */
+  others?: ChangeFile[];
 }
 
 /** Threads whose conversation holds the search words, best first (GET /api/search): the Copilot CLI's own index. */

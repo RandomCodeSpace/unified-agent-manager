@@ -227,6 +227,67 @@ func TestSettleGuardReadsTheNativeSessionDiff(t *testing.T) {
 	}
 }
 
+// The Wide diff case: Changes lists an edit-tool edit and a shell write the
+// session tracking lists, the shell one marked; another change in the folder
+// shows only among the others; who_touched names the session file; and the
+// Settle guard still counts only the Thread's own files.
+func TestChangesListSessionTrackedFilesAndOthers(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, repo, "README.md", "edited\n")
+	setSession(m, sum.ID, func(s *webSession) { s.edits = map[string]time.Time{"README.md": time.Now()}; s.editsKnown = true })
+	writeRepoFile(t, repo, "regions.json", "{}\n") // sed -i, say
+	writeRepoFile(t, repo, "other.txt", "not mine\n")
+	prov.Last().SetDiff([]agentapi.FileDiff{
+		{Path: "README.md", Status: "modified", Patch: "@@ -1 +1 @@\n-x\n+edited\n"},
+		{Path: "regions.json", Status: "added", Patch: "--- /dev/null\n+++ b/regions.json\n@@ -0,0 +1 @@\n+{}\n"},
+	}, nil)
+
+	out, err := m.Changes(t.Context(), sum.ID, ScopeTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := map[string]bool{}
+	for _, f := range out.Files {
+		tracked[f.Path] = f.SessionTracked
+	}
+	if len(out.Files) != 2 || tracked["README.md"] || !tracked["regions.json"] || out.Counts.Task != 2 {
+		t.Fatalf("task files = %+v", out.Files)
+	}
+	others := map[string]bool{}
+	for _, f := range out.Others {
+		others[f.Path] = true
+	}
+	if !others["other.txt"] || !others["tracked.txt"] || others["README.md"] || others["regions.json"] {
+		t.Fatalf("others = %+v", out.Others)
+	}
+	if _, err := m.FileChange(t.Context(), sum.ID, ScopeTask, "regions.json"); err != nil {
+		t.Fatalf("session-tracked file diff: %v", err)
+	}
+	if turn, err := m.Changes(t.Context(), sum.ID, ScopeTurn); err != nil || turn.Others != nil {
+		t.Fatalf("turn scope = %+v, %v", turn, err)
+	}
+
+	var page uamTestPage
+	uamReadJSON(t, prov.Last(), `{"op":"who_touched","args":{"path":"regions.json"}}`, &page)
+	if len(page.Rows) != 1 || page.Rows[0]["id"] != sum.ID || page.Rows[0]["basis"] != "session tracking" {
+		t.Fatalf("who_touched = %+v", page)
+	}
+	uamReadJSON(t, prov.Last(), `{"op":"who_touched","args":{"path":"other.txt"}}`, &page)
+	if len(page.Rows) != 0 {
+		t.Fatalf("who_touched other = %+v", page)
+	}
+
+	if refused := unsavedRefusal(t, m, sum.ID); refused == nil || *refused.Pending != (GitPending{Uncommitted: 2}) || !slices.Equal(refused.Refs, []string{"README.md", "regions.json"}) {
+		t.Fatalf("settle refusal = %+v", refused)
+	}
+}
+
 // A Thread in its own worktree owns all the work there: any changed tracked
 // file and any commit on no remote stops Settle, and the quiet-Task sweep.
 func TestSettleGuardInOwnWorktreeCountsTheWholeWorktree(t *testing.T) {

@@ -29,6 +29,28 @@ describe('changes', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('changes-link'));
   });
 
+  test('a shell write the session tracking lists is labelled, and other changes in the folder sit apart, read-only', async () => {
+    const changes = vi.spyOn(api, 'changes').mockResolvedValue({
+      scope: 'task', label: '', supported: true, counts: { task: 2, turn: 1, workspace: 3 },
+      files: [
+        { path: 'src/app.ts', status: 'modified', additions: 1, deletions: 0 },
+        { path: 'data/regions.json', status: 'modified', additions: 2, deletions: 2, session_tracked: true },
+      ],
+      others: [{ path: 'notes.txt', status: 'untracked', additions: 3, deletions: 0 }],
+    });
+    onTestFinished(() => changes.mockRestore());
+    const { user } = await openTask('t1');
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    expect(await sheet.findByText(/^2 files by this thread/)).toBeTruthy();
+    expect(within(sheet.getByRole('region', { name: 'data/regions.json' })).getByText('Session tracking')).toBeTruthy();
+    expect(within(sheet.getByRole('region', { name: 'src/app.ts' })).queryByText('Session tracking')).toBeNull();
+    const others = within(sheet.getByRole('region', { name: 'Also changed in this folder' }));
+    expect(others.getByText('notes.txt')).toBeTruthy();
+    expect(others.queryByRole('button')).toBeNull();
+    expect(sheet.queryByRole('region', { name: 'notes.txt' })).toBeNull();
+  });
+
   test('a card names its file in ink after its muted folder, and the header count wraps rather than clips', async () => {
     const { user } = await openTask('t1');
     await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
