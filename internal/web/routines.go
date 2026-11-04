@@ -375,12 +375,17 @@ func (m *Manager) runOutcome(r *store.WebRoutine, run *activeRun, now time.Time)
 		}
 		return RunCancelled, "stopped in the thread", false
 	case StateInterrupted:
-		// Only a restart interrupts a turn. The run is not re-run: its Thread
-		// fails, which sends the failure notice an unattended run needs.
+		// The run is not re-run: its Thread fails, which sends the failure
+		// notice an unattended run needs. Only uam's stop or startup recovery
+		// sets interruptedDetail; anything else is reported as interrupted.
+		reason := "interrupted"
+		if s.detail == interruptedDetail {
+			reason = restartedDetail
+		}
 		before := m.summaryLocked(s)
-		s.setBase(StateFailed, restartedDetail)
+		s.setBase(StateFailed, reason)
 		m.changedLocked(s, before)
-		return RunFailed, restartedDetail, false
+		return RunFailed, reason, false
 	case StateFailed:
 		return RunFailed, cmp.Or(s.detail, "the turn failed"), false
 	case StateIdle:

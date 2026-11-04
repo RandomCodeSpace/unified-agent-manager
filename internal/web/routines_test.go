@@ -525,6 +525,30 @@ func TestRunOutcomeNamesTheThread(t *testing.T) {
 	}
 }
 
+// An interruption that was not a uam restart is reported as such, still
+// failing the run's Thread with the failure notice.
+func TestRoutineRunInterruptedWithoutRestart(t *testing.T) {
+	m, _, _, project := newRoutineManager(t)
+	r := mustRoutine(t, m, project, hourly("Cut"))
+	run := runNow(t, m, project, r.ID)
+	m.mu.Lock()
+	m.sessions[run.TaskID].setBase(StateInterrupted, "the provider exited")
+	m.mu.Unlock()
+	m.checkRoutines()
+	if got := routine(t, m, project, r.ID).Runs[0]; got.Outcome != RunFailed || got.Reason != "interrupted" {
+		t.Fatalf("run = %+v", got)
+	}
+	if s := mustSummary(t, m, run.TaskID); s.State != StateFailed || s.StateDetail != "interrupted" {
+		t.Fatalf("thread = %s %q", s.State, s.StateDetail)
+	}
+	m.mu.Lock()
+	notices := slices.Clone(m.noticeJournal.records)
+	m.mu.Unlock()
+	if !slices.ContainsFunc(notices, func(n sourceNotice) bool { return n.SessionID == run.TaskID && n.Kind == noticeFailed }) {
+		t.Fatalf("notices = %+v, want a failure notice", notices)
+	}
+}
+
 // A spawned or rerun Thread's export names the Thread it came from.
 func TestExportNamesTheOriginThread(t *testing.T) {
 	body := string(renderExport(exportTask{spawnedBy: "parent", rerunOf: "earlier"}, "", time.Now()))
