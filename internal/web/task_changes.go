@@ -435,6 +435,9 @@ func (m *Manager) taskFileDiff(ctx context.Context, id, scope, path string) (age
 	m.mu.Lock()
 	workdir, edits, start, since := s.workdir, maps.Clone(s.edits), s.turnStart, s.changesSince()
 	if scope == ScopeTask {
+		if edits == nil { // maps.Clone of a Thread with no edit-tool edits
+			edits = map[string]time.Time{}
+		}
 		for _, p := range s.nativePaths {
 			if _, ok := edits[p]; !ok {
 				edits[p] = time.Time{}

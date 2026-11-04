@@ -392,7 +392,7 @@ export function ChangesSheet({
 function OtherFiles({ files }: Readonly<{ files: ChangeFile[] }>) {
   return (
     <section aria-label="Also changed in this folder" className="mt-4 flex flex-col gap-1">
-      <span className="text-meta text-muted">Also changed in this folder <span className="tabular-nums text-faint">{files.length}</span></span>
+      <span className="text-meta text-muted">Also changed in this folder <span className="tabular-nums text-muted">{files.length}</span></span>
       <Note className="pb-1">Not attributed to this thread: neither its edit tools nor its session tracking list these files.</Note>
       <ul className="flex flex-col">
         {files.map((f) => (

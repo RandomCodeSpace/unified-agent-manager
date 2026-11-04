@@ -391,3 +391,26 @@ func TestAutoSettleSparesUnsavedWork(t *testing.T) {
 		t.Fatalf("clean quiet Thread = %+v", got)
 	}
 }
+
+// A Thread whose only files are session-tracked (a shell write, no edit
+// tool) still reads one file's diff, and the Manager stays usable.
+func TestSessionTrackedFileDiffWithoutEdits(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, repo, "w2-shell.txt", "w2\n")
+	prov.Last().SetDiff([]agentapi.FileDiff{{Path: "w2-shell.txt", Status: "added", Patch: "--- /dev/null\n+++ b/w2-shell.txt\n@@ -0,0 +1 @@\n+w2\n"}}, nil)
+	if _, err := m.Changes(t.Context(), sum.ID, ScopeTask); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.FileChange(t.Context(), sum.ID, ScopeTask, "w2-shell.txt"); err != nil {
+		t.Fatalf("session-tracked file diff: %v", err)
+	}
+	if _, err := m.Changes(t.Context(), sum.ID, ScopeTask); err != nil {
+		t.Fatalf("after the file diff: %v", err)
+	}
+}
