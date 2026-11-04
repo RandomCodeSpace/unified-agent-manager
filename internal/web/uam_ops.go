@@ -180,6 +180,12 @@ func (m *Manager) uamTargetLocked(caller *webSession, id string) (*webSession, e
 }
 
 func (m *Manager) uamSnapshot(ctx context.Context, id string, in uamRequest) (string, error) {
+	// sense reports the composer's budget estimate; it asks the provider, so read it before the lock.
+	var estimate float64
+	var estimated bool
+	if in.Op == "sense" && uamDecode(in.Args, &struct{}{}) == nil {
+		estimate, estimated, _ = m.BudgetPrediction(ctx, id)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	caller, err := m.uamCallerLocked(ctx, id)
@@ -202,7 +208,11 @@ func (m *Manager) uamSnapshot(ctx context.Context, id string, in uamRequest) (st
 				}
 			}
 		}
-		return uamJSON(map[string]any{"id": id, "project": v.ProjectID, "mode": v.Mode, "mode_unknown": v.ModeUnknown, "model": v.Model, "context": v.Context, "usage": v.Usage, "budget": v.Budget, "queued": v.Queued, "pending": v.Pending, "siblings": siblings, "siblings_working": working})
+		out := map[string]any{"id": id, "project": v.ProjectID, "mode": v.Mode, "mode_unknown": v.ModeUnknown, "model": v.Model, "context": v.Context, "usage": v.Usage, "budget": v.Budget, "queued": v.Queued, "pending": v.Pending, "siblings": siblings, "siblings_working": working}
+		if estimated {
+			out["budget_estimate"] = map[string]any{"prompt_credits": estimate, "unit": "AI credits"}
+		}
+		return uamJSON(out)
 	case "projects":
 		return m.uamProjectsLocked(caller, in.Args)
 	case "tasks":

@@ -34,11 +34,13 @@ var errBudgetReached = &Error{Status: http.StatusConflict, Code: "budget_reached
 // BudgetView is SessionSummary.Budget. Spent is the AI units the Thread's
 // conversation reported since the budget was set; QuotaUsed is the highest
 // share, in percent, used of the provider's limited account quotas, omitted
-// while none is known. WrappingUp is set while the Thread, at its limit,
-// writes its handoff.
+// while none is known. Left is the AI credits the budget has left, set only
+// with a credit budget; the composer and `uam` `sense` both read it.
+// WrappingUp is set while the Thread, at its limit, writes its handoff.
 type BudgetView struct {
 	Credits      float64  `json:"credits,omitempty"`
 	Spent        float64  `json:"spent"`
+	Left         *float64 `json:"left,omitempty"`
 	QuotaPercent float64  `json:"quota_percent,omitempty"`
 	QuotaUsed    *float64 `json:"quota_used,omitempty"`
 	Reached      bool     `json:"reached,omitempty"`
@@ -90,6 +92,10 @@ func (m *Manager) budgetViewLocked(s *webSession) *BudgetView {
 		return nil
 	}
 	v := &BudgetView{Credits: s.budget.Credits, Spent: s.budgetSpent(), QuotaPercent: s.budget.QuotaPercent, Reached: s.budget.Reached, WrappingUp: s.budget.WrapUp}
+	if v.Credits > 0 {
+		left := math.Max(0, v.Credits-v.Spent)
+		v.Left = &left
+	}
 	if used, ok := m.quotaUsedLocked(s.provider); ok {
 		v.QuotaUsed = &used
 	}
