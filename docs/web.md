@@ -1233,7 +1233,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   path, which is also part of the accessible link name. Click a tag to open
   one preview beside the conversation, or in a dialog on a narrow screen.
   Images and diagrams open larger. Text files show at most the first 64 KiB
-  with line numbers and highlighting, as Go to file does, with the cited
+  with line numbers and highlighting, with the cited
   line marked, and a notice when more content is available. PDFs, audio and
   video play in place with the browser's own viewer. The preview reloads in
   place when a tool in the Thread edits the open file; **Reload** reads it
@@ -2362,31 +2362,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
-- **Go to file**: Alt+P, or the Files button left of the branch under the
-  composer, opens Go to file over the dimmed page (a bottom sheet on a
-  phone). Its head names the branch and the folder it shows (the Thread's
-  working folder; a click on the path copies it). With nothing typed it lists
-  the folder's uncommitted files under Changed, each with its status letter
-  and word (Modified, Added, Untracked, ...), then one folder to browse: a
-  folder opens on Enter or a click, Backspace in the empty box goes up a
-  folder, and each folder counts the changed files inside it. Typing matches
-  paths by their letters in order (`dctr` finds `cmd/doctor.go`): a file name
-  starting with the text first, then one containing it, then a path
-  containing it, then the letters spread through the file name, then through
-  the path. Git decides what is listed, so `.gitignore` applies; symbolic
-  links and special files are left out, and a directory outside a Git working
-  tree shows why instead. The highlighted file previews beside the list: code
-  with line numbers that scrolls sideways instead of wrapping (at most its
-  first 64 KiB), Markdown rendered (with a Source switch), images inline. Up
-  and Down move, Enter opens the file in the side panel, Alt+Enter puts
-  `@path` in the message, and Esc closes. The open file takes the whole side
-  panel, with a File | Diff switch when it has uncommitted changes, Mention,
-  and a "…" menu: Mention in the message, Open in Changes, Copy path, Open in
-  a new tab, Download. A link in a rendered Markdown file opens its target in
-  the same panel; opening the same file again in the same Thread brings back
-  its File or Diff view and its scroll. Only one of Changes, the file,
-  Subagents and a file preview is open at a time. On a wide window, a click
-  on the conversation's empty background closes whichever of them is open;
+- **Side panels**: only one of Changes, GitLab, pinned charts, a command's
+  output and a file preview is open at a time. On a wide window, a click
+  on the conversation's empty background closes whichever of them is open (GitLab stays);
   the composer, everything under it, the conversation's buttons, links,
   fields and options, and a click that selects text leave it open. When the header runs short of
   room (side panels open beside the sidebar), the Thread's title keeps its

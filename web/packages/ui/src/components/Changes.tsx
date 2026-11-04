@@ -529,7 +529,7 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
   const fileComments = useMemo(() => comments.filter((c) => c.path === f.path), [comments, f.path]);
   return (
     <section data-change-file={f.path} aria-label={f.path} className="rounded-md bg-raised shadow-raised">
-      <div className={cn('sticky top-0 z-10 flex min-h-10 items-center gap-2 rounded-t-md bg-raised py-1 pr-1.5 pl-1', folded && 'rounded-b-md')}>
+      <div className={cn('sticky top-0 z-10 flex min-h-10 flex-wrap items-center gap-2 rounded-t-md bg-raised py-1 pr-1.5 pl-1', folded && 'rounded-b-md')}>
         <Button size="icon-sm" aria-expanded={!folded} aria-label={`${folded ? 'Show' : 'Hide'} the diff of ${f.path}`} className="text-faint" onClick={() => onFold(!folded)}>
           <ChevronDown className={cn('transition-transform duration-100', folded && '-rotate-90')} />
         </Button>

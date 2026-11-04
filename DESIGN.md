@@ -959,21 +959,16 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 4. Check contrast for every new text/surface pair before merging.
 5. Screenshot at 420×900 and 1440×900 for any change to layout tokens; keep `securitypolicyviolation` at zero.
 
-The Changes panel shows the workspace scope as "All uncommitted project changes
-vs HEAD." The line wraps rather than truncates; it does not claim Thread-only
-ownership. Provider session-scope labels also wrap. File-row status columns fit
-their text, including "untracked", before the truncated filename; touch menu
-controls reserve 44px without covering the change counts. The diff's code always
-wraps, breaking anywhere, so no line scrolls sideways (see Scrolling). The diff keeps
-160px while the commit form is open, and the open form keeps at least
-min(18rem, 45%) of the column: the evidence and the file list above give way
-(each down to one row) and scroll. The form is the one scroll area below the diff,
-and **Commit n files** / **Commit and push** sit under it, always in view, with
-the reason they are off ("Write or generate a message to commit.") beneath them.
-Push and Pull that the repository rules out (no remote, nothing to push, no
-upstream) stay hoverable with the reason in their tooltip. A turn's **View
-changes** opens on that turn: **Last turn** for the latest one, otherwise the
-default scope with the first file that turn edited shown.
+The Changes panel lists only the Thread's own files. Its summary ("3 files by
+this thread · +17 −1 · 1 committed · 0 of 3 viewed") wraps between its parts
+rather than truncating. When some files are wholly committed, they sit below the
+rest under their commits, and an All | Not committed | Committed switch narrows
+the list to one group. A file card's head truncates the path first; on a narrow
+column its trailing controls (Open file, "…", Viewed) wrap to a second row rather
+than leave the card. On a touch screen the icon buttons' hit areas grow to 44px.
+The diff's code always wraps, breaking anywhere, so no line scrolls sideways (see
+Scrolling). A turn's **View changes** opens Changes scrolled to the first file
+that turn edited.
 
 
 ### Account allowance in Usage
