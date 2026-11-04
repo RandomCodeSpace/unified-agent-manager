@@ -2147,7 +2147,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `uncommitted`, and, in its own worktree, `unpushed`) and the first three
   of those files (`refs`), unless the request body is `{"force": true}`. A
   closed conversation is not reopened for it: the files of the last read
-  of Copilot's record since the service started stand in, else only the
+  of Copilot's record, saved with the Thread, stand in, else only the
   edit-tool files. For a Thread in its own worktree whose counts already
   show unsaved work, the row's hover button and the menu item read
   "Settle…" and the confirmation opens at once without that request; for
@@ -3031,10 +3031,12 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   attached shell may also stay running.
 - **Copilot session diffs.** A Thread's own files come from Copilot's
   session diff, which includes files written by shell commands, read while
-  the conversation is open, plus its edit tool calls. After a uam restart a
-  closed Thread knows only its edit tool calls until its conversation opens
-  again, so a file it wrote through a shell command does not stop Settle or
-  Archive meanwhile.
+  the conversation is open, plus its edit tool calls. uam saves each read
+  with the Thread, so a closed Thread, also after a uam restart, uses the
+  last read without resuming its conversation. The diff is read when the
+  Changes view shows it or when Settle or Archive checks the Thread, so a
+  file written through a shell command after the last read does not stop
+  Settle or Archive until the conversation opens again.
 - **Opening a web conversation elsewhere at the same time.** Do not
   continue a web session's conversation in Copilot's own terminal UI while
   the web interface has it open.

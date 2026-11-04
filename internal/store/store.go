@@ -574,8 +574,19 @@ type WebState struct {
 	// Context is the conversation's last context usage report, kept so a
 	// reopened Thread shows it until the next one; nil before the first.
 	Context *WebContext `json:"context,omitempty"`
+	// NativePaths is the latest read of the conversation's native session
+	// diff, kept so a closed Thread's Settle guard and file links still know
+	// the files only that diff lists after a restart; nil before the first.
+	NativePaths *WebNativePaths `json:"native_paths,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebNativePaths is a native session diff read: the files it listed, with a
+// renamed file's old path too, and when a read first listed them.
+type WebNativePaths struct {
+	Paths []string  `json:"paths"`
+	At    time.Time `json:"at"`
 }
 
 // Budget limits what a Thread may spend: Credits more AI units from the
@@ -674,6 +685,7 @@ var knownWebStateFields = map[string]struct{}{
 	"memory_notes":        {},
 	"place":               {},
 	"context":             {},
+	"native_paths":        {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.

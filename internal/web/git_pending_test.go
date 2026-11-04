@@ -178,11 +178,12 @@ func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
 
 // A native Thread's own files include those only its native session diff
 // lists, such as one a shell command wrote; after the conversation closes
-// the last read stands, without resuming it.
+// the last read stands, without resuming it, and survives a restart.
 func TestSettleGuardReadsTheNativeSessionDiff(t *testing.T) {
 	repo := sharedFolderWithOthersWork(t)
 	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
-	m := startManager(t, openTestStore(t), prov)
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
 	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, repo)})
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +206,19 @@ func TestSettleGuardReadsTheNativeSessionDiff(t *testing.T) {
 	}
 	if len(prov.Opens()) != opens {
 		t.Fatal("the guard resumed a closed conversation")
+	}
+	// The last read survives a restart; another file's dirt stays the others'.
+	writeRepoFile(t, repo, "other.txt", "not mine\n")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prov = agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m = startManager(t, st, prov)
+	if refused := unsavedRefusal(t, m, sum.ID); refused == nil || *refused.Pending != (GitPending{Uncommitted: 1}) || !slices.Equal(refused.Refs, []string{"shell.txt"}) {
+		t.Fatalf("restarted closed Thread refusal = %+v", refused)
+	}
+	if len(prov.Opens()) != 0 {
+		t.Fatal("the guard resumed a closed conversation after a restart")
 	}
 	gitIn(t, repo, "add", "shell.txt")
 	gitIn(t, repo, "commit", "-q", "-m", "feat: shell")
