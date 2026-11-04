@@ -8,7 +8,7 @@
 // Vite's dev page injects an inline module (React refresh) and <style> elements, which the
 // production page never has: the script allows that one inline script by its hash and inline
 // styles, and keeps every other directive as internal/web/server.go sends it.
-/* global window -- inside page.evaluate callbacks, which run in the browser */
+/* global window, document -- inside page.evaluate callbacks, which run in the browser */
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { chromium } from '/home/dev/.local/lib/uam-scripts/node_modules/playwright/index.mjs';
@@ -54,15 +54,47 @@ try {
   await shot('1-card-pair');
   check(await pair.getByText('Yours v2 · 4 changes').count() === 1, 'the fixture card shows the Yours pill with 4 changes');
 
-  // Convert d2's flowchart, then edit the new drawing through the real UI.
+  // Edit as drawing asks first: Escape on the confirmation writes nothing.
+  const cards = () => page.locator('[data-drawing]').count();
+  const before = await cards();
   await page.getByRole('button', { name: 'Edit as drawing' }).click();
+  const ask = page.getByRole('alertdialog');
+  await ask.waitFor();
+  check(await ask.getByText('docs/diagram-d2-0.excalidraw').count() === 1, 'the confirmation names the file');
+  await shot('2a-confirm');
+  await page.keyboard.press('Escape');
+  await ask.waitFor({ state: 'hidden' });
+  await page.waitForTimeout(500);
+  check(await cards() === before && await page.getByRole('button', { name: 'Edit as drawing' }).count() === 1, 'cancelling the confirmation creates no drawing');
+  // Create drawing converts d2's flowchart and opens the editor; Escape on the canvas closes it.
+  await page.getByRole('button', { name: 'Edit as drawing' }).click();
+  await ask.getByRole('button', { name: 'Create drawing' }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' });
+  await editor.waitFor({ timeout: 30_000 });
+  await page.waitForFunction(() => !!window.__uamExcalidraw);
+  await page.waitForTimeout(800);
+  check(await editor.getByRole('button', { name: 'Drawing menu' }).count() === 1, 'the Excalidraw menu trigger is named Drawing menu');
+  const unnamed = await page.evaluate(() => [...document.querySelectorAll('.excalidraw button, .excalidraw input, .excalidraw [role="button"], .excalidraw [role="radio"]')]
+    .filter((el) => el.getClientRects().length && !el.getAttribute('aria-label') && !el.getAttribute('title') && !el.getAttribute('aria-labelledby') && !el.textContent.trim() && !el.closest('label')?.getAttribute('title') && !el.closest('label')?.textContent.trim())
+    .map((el) => el.outerHTML.slice(0, 120)));
+  check(unnamed.length === 0, `every visible Excalidraw control has a name${unnamed.length ? `: ${unnamed.join(' | ')}` : ''}`);
+  // Escape with Excalidraw's menu open closes the menu only; the next one closes the editor.
+  await editor.getByRole('button', { name: 'Drawing menu' }).click();
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  check(await editor.isVisible(), 'Escape with the Excalidraw menu open keeps the editor');
+  await page.locator('.excalidraw-container').focus();
+  await page.keyboard.press('Escape');
+  await editor.waitFor({ state: 'hidden', timeout: 5_000 });
+  check(true, 'Escape on the canvas closes the editor');
   const card = page.locator('[data-drawing$="diagram-d2-0.excalidraw"]');
   await card.locator('img').waitFor({ timeout: 30_000 });
   await card.scrollIntoViewIfNeeded();
   await shot('2-card-converted');
   check(await card.getByText('Agent’s v1').count() === 1, 'the converted card is the agent’s v1');
+  check(await page.getByRole('button', { name: 'Open drawing' }).count() === 2, 'both diagrams stay, linking to their drawings');
   await card.getByRole('button', { name: 'Edit', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Edit diagram-d2-0.excalidraw' });
   await editor.waitFor();
   await page.waitForFunction(() => !!window.__uamExcalidraw);
   await page.waitForTimeout(800);
@@ -112,6 +144,21 @@ try {
   await editor.waitFor({ state: 'hidden' });
   await page.waitForTimeout(600);
   check(await card.getByText(/^Agent’s v\d+$/).count() === 1 && await card.getByText(/^Yours v/).count() === 0, 'after Revert the card is the agent’s version alone');
+
+  // Delete, once confirmed, removes the drawing and its card; the diagram offers Edit as drawing again.
+  await card.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete drawing' }).click();
+  await card.waitFor({ state: 'detached', timeout: 10_000 });
+  check(await page.getByRole('button', { name: 'Edit as drawing' }).count() === 1, 'Delete removes the drawing and the diagram offers Edit as drawing again');
+
+  // The diagram's lightbox: its heading inside the surface.
+  await page.getByRole('button', { name: 'Open diagram' }).first().click();
+  const box = page.getByRole('dialog', { name: 'Diagram' });
+  await box.waitFor();
+  await page.waitForTimeout(400);
+  await shot('7c-lightbox');
+  await page.keyboard.press('Escape');
+  await box.waitFor({ state: 'hidden' });
 
   // Dark scheme: the pictures draw again on the raised token.
   await page.evaluate(() => localStorage.setItem('uam.theme', 'dark'));

@@ -270,6 +270,18 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
     </PanelFoot>
   );
 
+  /**
+   * Whether Escape closes the editor. Escape the canvas still needs is Excalidraw's: a text field
+   * (its text editor, removed on Escape, so a detached target was its too), an open menu, dialog or
+   * popup, or a shape being drawn. A save that failed or met the agent's write keeps the editor
+   * open, so those changes stay in sight.
+   */
+  const escapeCloses = (t: EventTarget | null) => {
+    const s = canvasApi.current?.getAppState();
+    const canvasNeedsIt = !!s && !!(s.openMenu || s.openPopup || s.openDialog || s.contextMenu || s.editingTextElement || s.newElement || s.multiElement || s.editingLinearElement);
+    return t instanceof Element && t.isConnected && !t.closest('textarea, input, [contenteditable="true"]') && !canvasNeedsIt && save.state !== 'failed' && save.state !== 'conflict';
+  };
+
   const label = `Edit ${name}`;
   const back = () => target.anchor;
   if (target.phone || !target.anchor.isConnected) {
@@ -292,10 +304,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
     <BaseDialog.Root
       open={target.open}
       onOpenChange={(o, details) => {
-        // Escape inside the canvas ends a text edit or a selection; only a second one, outside it, closes
-        // the editor. Excalidraw removes its text editor on Escape, so a detached target was its too.
-        const t = details.event.target as Element | null;
-        if (!o && details.reason === 'escape-key' && (!t?.isConnected || t.closest('.excalidraw'))) return details.cancel();
+        if (!o && details.reason === 'escape-key' && !escapeCloses(details.event.target)) return details.cancel();
         if (!o) onClose();
       }}
       onOpenChangeComplete={(o) => !o && onClosed()}
@@ -311,6 +320,10 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             initialFocus={heading}
             finalFocus={back}
             className={cn('flex w-full', full ? 'h-full rounded-none' : 'h-[calc(var(--app-height,100dvh)-32px)] max-w-[1440px]', readerPopupClass)}
+            // Excalidraw stops the Escape it handles from reaching the dialog, so the canvas's is read on the way in.
+            onKeyDownCapture={(e) => {
+              if (e.key === 'Escape' && (e.target as Element).closest('.excalidraw') && escapeCloses(e.target)) onClose();
+            }}
           >
             {head(toggleFull, false)}
             {body}

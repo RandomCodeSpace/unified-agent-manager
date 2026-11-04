@@ -38,6 +38,8 @@ export interface DrawingsApi {
   load: (path: string) => Promise<DrawingDoc>;
   /** Creates a drawing from a fence (`origin: 'convert'`). */
   create: (path: string, body: DrawingPut) => Promise<void>;
+  /** Deletes a drawing uam created: its file and its entry. */
+  remove: (path: string) => Promise<void>;
   save: (path: string, content: string, baseVersion: number) => Promise<DrawingSaved>;
   open: (target: OpenDrawing) => void;
 }
@@ -106,6 +108,14 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
     create: async (path, body) => {
       const saved = await api.putDrawing(sessionId, path, body);
       setDocs((d) => ({ ...d, [path]: { doc: { path, format: body.format, content: body.content, baseline: null, item_id: body.item_id, fence_index: body.fence_index, ...saved } } }));
+      // The fence's card finds its drawing in the list at once; the server's list replaces this one.
+      setListed({ from: session.drawings, list: [...drawings, { path, format: body.format, version: saved.version, agent_version: saved.agent_version, item_id: body.item_id, fence_index: body.fence_index, changes_count: 0 }] });
+      relist();
+    },
+    remove: async (path) => {
+      await api.deleteDrawing(sessionId, path);
+      setListed({ from: session.drawings, list: drawings.filter((x) => x.path !== path) });
+      setDocs(({ [path]: _, ...rest }) => rest);
       relist();
     },
     save: async (path, content, baseVersion) => {
@@ -121,7 +131,7 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
       return saved;
     },
     open: (target) => setOpened({ ...target, open: true, phone: window.matchMedia(PHONE).matches }),
-  }), [api, sessionId, writable, title, drawings, drawio, docs, load, relist]);
+  }), [api, sessionId, session.drawings, writable, title, drawings, drawio, docs, load, relist]);
 
   // The agent read a drawing, or the note went with a prompt: the list says so before the doc does.
   useEffect(() => {

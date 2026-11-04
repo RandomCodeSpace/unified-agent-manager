@@ -14,6 +14,7 @@ import { DrawingsContext, type DrawingsApi, type DrawingView } from './Drawing';
 import type { Fence } from './Diagram';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { AlertDialog, useConfirm } from './ui/dialog';
 
 /** Converts a fence in the frame, styles the skeletons in the page's look, and files the result as the agent's v1; the new drawing's path. */
 export async function convertFence(drawings: DrawingsApi, source: string, fence: Fence): Promise<string> {
@@ -85,7 +86,8 @@ export function useParsed(doc: DrawingDoc | undefined) {
 /**
  * The card in the conversation: the file name, the version pills, one picture or, with unsent
  * changes, the pair (Agent's and Yours side by side, stacked on a phone) with the first changes
- * under it. The picture opens the editor; Compare opens the Changes view.
+ * under it. The picture opens the editor; Compare opens the Changes view; Delete, once confirmed,
+ * removes the file and its entry.
  */
 export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: boolean }>) {
   const d = useContext(DrawingsContext);
@@ -97,6 +99,8 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
     editOpened.current = true;
     d.open({ path, view: 'mine', anchor: head });
   }, [edit, head, d, path]);
+  const remove = useConfirm<string>();
+  const [removing, setRemoving] = useState<{ busy: boolean; error?: string }>({ busy: false });
   const state = d?.doc(path);
   const doc = state?.doc;
   const load = d?.load;
@@ -131,8 +135,10 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
         <span className="flex-1" />
         {changed && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" onClick={() => open('changes')}>Compare</Button>}
         {editable && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" onClick={() => open('mine')}>Edit</Button>}
+        {editable && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" aria-haspopup="dialog" onClick={() => remove.ask(path)}>Delete</Button>}
       </div>
       {state?.error && <Note tone="error" role="alert" className="px-3 py-2">{state.error}</Note>}
+      {removing.error && <Note tone="error" role="alert" className="px-3 py-2">Could not delete the drawing: {removing.error}</Note>}
       {doc && !changed && figure(yours, 'Drawing', 'mine', 'Edit drawing')}
       {doc && changed && (
         <div className="grid grid-cols-2 max-sm:grid-cols-1">
@@ -154,6 +160,21 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
         </div>
       )}
       {!doc && !state?.error && <div className="flex min-h-24 items-center justify-center"><Spinner className="border-muted" /></div>}
+      <AlertDialog
+        {...remove.props}
+        title={`Delete ${fileName(path)}?`}
+        description={<>Deletes <span className="font-mono text-code-sm">{remove.target}</span> from the Thread’s folder, with your changes to it. The reply’s diagram stays.</>}
+        confirmLabel="Delete drawing"
+        busy={removing.busy}
+        onConfirm={() => {
+          setRemoving({ busy: true });
+          // On success the list drops the drawing and this card goes with it.
+          d.remove(path).then(remove.close, (err: unknown) => {
+            setRemoving({ busy: false, error: describeError(err) });
+            remove.close();
+          });
+        }}
+      />
     </div>
   );
 }
