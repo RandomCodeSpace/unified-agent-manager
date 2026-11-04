@@ -307,6 +307,10 @@ test('a line with counts of two kinds gets a count line, failures first; one kin
   const { container } = render(<Markdown text={'Ran the suite: 979 passed, 3 skipped, 1 failed.\n\nAll 12 passed.'} />);
   expect([...container.querySelectorAll('.md-counts')].map((p) => p.textContent)).toEqual(['1 failed · 3 skipped · 979 passed']);
   expect(container.querySelector('.md-counts .text-error')?.textContent).toBe('1 failed');
+  // Hard breaks alone do not turn it off; only `tally={false}` (a user message, a GitLab comment) does.
+  const broken = render(<Markdown text={'Ran the suite:\n3 passed, 1 failed.'} breaks />).container;
+  expect(broken.querySelector('.md-counts')?.textContent).toBe('1 failed · 3 passed');
+  expect(render(<Markdown text={'3 passed, 1 failed.'} breaks tally={false} />).container.querySelector('.md-counts')).toBeNull();
 });
 
 test('the mouse over inline code highlights every identical inline code span in the message', async () => {
