@@ -529,7 +529,7 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
   const fileComments = useMemo(() => comments.filter((c) => c.path === f.path), [comments, f.path]);
   return (
     <section data-change-file={f.path} aria-label={f.path} className="rounded-md bg-raised shadow-raised">
-      <div className={cn('sticky top-0 z-10 flex min-h-10 items-center gap-2 rounded-t-md bg-raised py-1 pr-1.5 pl-1', folded && 'rounded-b-md')}>
+      <div className={cn('sticky top-0 z-10 flex min-h-10 flex-wrap items-center gap-2 rounded-t-md bg-raised py-1 pr-1.5 pl-1', folded && 'rounded-b-md')}>
         <Button size="icon-sm" aria-expanded={!folded} aria-label={`${folded ? 'Show' : 'Hide'} the diff of ${f.path}`} className="text-faint" onClick={() => onFold(!folded)}>
           <ChevronDown className={cn('transition-transform duration-100', folded && '-rotate-90')} />
         </Button>
@@ -865,7 +865,7 @@ function renderHunk(h: DiffHunk, hi: number, notes?: LineNotes, from = 0, to = h
         <td colSpan={3}>
           {notes?.revert || notes?.open ? (
             <span className="sticky left-3 flex items-center gap-2 pr-3 font-sans">
-              <span className="min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
+              <span className="w-0 min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
               {first && <Button size="sm" variant="subtle" className="h-6 text-caption" onClick={() => notes.open?.({ side: first.side, line: first.line, code: first.code })}><MessageSquarePlus />Comment</Button>}
               {notes.revert && <Button size="sm" variant="subtle" className="h-6 text-caption" loading={notes.reverting === hi} disabled={notes.reverting != null} onClick={() => notes.revert?.(hi, hunkText(h))}><Undo2 />Revert</Button>}
             </span>
