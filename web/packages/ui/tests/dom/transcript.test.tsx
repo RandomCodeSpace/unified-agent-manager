@@ -776,7 +776,7 @@ describe('turn card', () => {
     expect(within(card).queryByRole('button', { name: 'Copy message' })).toBeNull();
     view.rerender(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
     const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
-    expect(within(headOf(view.getByText('Fixed both.'))).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter(Boolean)).toEqual(['Copy message']);
+    expect(within(headOf(view.getByText('Fixed both.'))).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter(Boolean)).toEqual(['940 tokens, 235 tok/s', 'Copy message']);
     expect(bar.querySelector('[data-outcome]')!.childElementCount).toBe(0);
   });
 
@@ -786,7 +786,7 @@ describe('turn card', () => {
     // Two one-second edits, less the second the turn waited.
     expect(head.textContent).toContain('Took 8s (model 4s · local 1s · waiting on you 1s)');
     // The counts are the toggle, at the head's end.
-    expect(within(head).getByRole('button', { name: /activity of this turn/ }).textContent).toBe('2 files changed activity of this turn');
+    expect(within(head).getByRole('button', { name: '2 files changed. Show the activity of this turn' }).textContent).toBe('2 files changed');
   });
 
   test("a running turn's head says it works, for how long, its tokens so far and its failures, never the running command", () => {
@@ -800,6 +800,26 @@ describe('turn card', () => {
     expect(head.textContent).not.toContain('go test');
     // One step mark: the running step's dots, at the foot.
     expect(view.container.querySelectorAll('[data-step-mark]')).toHaveLength(1);
+  });
+
+  test("a turn head's counts are a name with separators, its failure says what broke, and each received step shows at once while the turn runs", () => {
+    const thought: Item = { id: 'th', kind: 'reasoning', time: at(1), ended_at: at(2), text: 'Look at the tests first.' };
+    const ran: Item = { id: 'c1', kind: 'tool', time: at(2), ended_at: at(3), tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'ls' }) } };
+    const failed: Item = { id: 'x1', kind: 'tool', time: at(3), ended_at: at(4), tool: { name: 'bash', status: 'failed', input: JSON.stringify({ command: 'go test ./...' }), output: 'ok  pkg/a\n--- FAIL: TestRedraw (0.01s)\nexit status 1' } };
+    const running: Item = { id: 'r1', kind: 'tool', time: at(5), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'go vet ./...' }) } };
+    const timing = [{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' as const }];
+    const draw = (list: Item[]) => <Transcript sessionId="s" items={[items[0], ...list]} turnTimings={timing} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />;
+    const view = render(draw([thought, ran]));
+    const counts = () => view.getByRole('button', { name: /activity of this turn/ });
+    expect(counts().getAttribute('aria-label')).toBe('1 thought, 1 command. Show the activity of this turn');
+    // Each item the stream brings shows in the same render: the count grows, the running call stands at the foot.
+    view.rerender(draw([thought, ran, failed, running]));
+    expect(counts().getAttribute('aria-label')).toBe('1 thought, 1 command, 1 failed. Show the activity of this turn');
+    const head = view.container.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
+    const failure = within(head).getByText('1 failed: --- FAIL: TestRedraw (0.01s)');
+    expect(failure.className).toContain('text-error');
+    expect(failure.getAttribute('title')).toBe('--- FAIL: TestRedraw (0.01s)');
+    expect(view.getByText('go vet ./...', { exact: false })).toBeTruthy();
   });
 
   test("a turn's end folds once: its timing ending before the state flips brings no Working row under its Took, and the next start, the queue's included, keeps its own", async () => {

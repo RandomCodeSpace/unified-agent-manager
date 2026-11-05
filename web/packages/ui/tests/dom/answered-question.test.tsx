@@ -33,6 +33,17 @@ describe('a settled question', () => {
     expect(card().queryByText('8080')).toBeNull();
   });
 
+  test('a long question and answer keep the button name at most 80 characters, cut with an ellipsis; the whole text stays in the tooltips', () => {
+    const question = 'Capture the whole page with every section expanded, or only the viewport the game renders into?';
+    const long = 'Only the viewport, at 1280 by 800, so the game fills the frame and nothing else shows';
+    draw(ask(question, ['Whole page', 'Viewport only'], { output: `User responded: ${long}` }));
+    const name = toggle().getAttribute('aria-label')!;
+    expect(name.length).toBeLessThanOrEqual(80);
+    expect(name).toMatch(/^Question: Capture the whole page.*… You wrote: Only the viewport.*…$/);
+    expect(card().getByTitle(question)).toBeTruthy();
+    expect(card().getByTitle(long)).toBeTruthy();
+  });
+
   test('typed text reads "You wrote" with the text, whole in its tooltip', () => {
     const long = 'Only the viewport, at 1280 by 800, so the game fills the frame';
     draw(ask('Whole page or viewport?', ['Whole page', 'Viewport only'], { output: `User responded: ${long}` }));

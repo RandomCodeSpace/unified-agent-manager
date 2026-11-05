@@ -428,6 +428,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const pending = useRef<{ key: string; id: string } | null>(null);
   const refocus = useRef(false);
   const live = LIVE.includes(session.state);
+  // A stop the service took holds "Stopping…" until the turn ends: the provider may take seconds to wind down.
+  const [stopping, setStopping] = useState(false);
+  if (stopping && !live) setStopping(false);
   // A subagent takes no messages: everything the Thread's composer changes is locked while one is shown.
   const locked = readOnly(session) || !!subagent;
   const last = outcome && (!session.last_submission || outcome.time >= session.last_submission.time) ? outcome : session.last_submission;
@@ -1907,9 +1910,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
         {/* The /btw mode cue, drawn with the text that names it: Send's icon alone does not say it asks aside. */}
         {cmd?.name === ASIDE_COMMAND && asideOK && <Chip tone="accent" className="mr-1">Aside · not sent to the agent</Chip>}
+        {(busy === 'stop' || stopping) && <output className="mr-1 text-caption text-muted">Stopping…</output>}
         <Appear show={!subagent && (live || session.execution?.objective?.status === 'active')}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
+            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => { onSessionUpdate(await api.cancel(session.id)); setStopping(true); })}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
           </Tip>

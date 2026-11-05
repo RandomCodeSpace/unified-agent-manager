@@ -669,6 +669,8 @@ export interface SummaryPart {
   tone: 'muted' | 'error';
   /** The files-changed count, which the turn card's change chip states instead when it shows. */
   kind?: 'changed';
+  /** The failures: what the last failed call said broke (`firstErrorLine`), when its output is here. */
+  reason?: string;
 }
 
 export interface TurnSummary {
@@ -696,6 +698,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   const read = new Set<string>();
   const outcomes: AskedQuestion['outcome'][] = [];
   let waiting = false;
+  let reason = '';
   for (const entry of entries) {
     // A subagent's call is not counted here: the reply's subagent chip counts its subagents.
     if (!isWork(entry) || isSubagentCall(entry.item)) continue;
@@ -720,6 +723,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     }
     if (t?.status === 'failed') {
       failed++;
+      reason = firstErrorLine(t.output) || reason;
       continue;
     }
     if (t?.status !== 'completed') {
@@ -760,7 +764,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(asked('declined') && `${noun(asked('declined'), 'question')} declined`),
     quiet(asked('cancelled') && `${noun(asked('cancelled'), 'question')} cancelled`),
     quiet(decided && `${noun(decided, 'request')} decided`),
-    failed && { text: `${failed} failed`, tone: 'error' as const },
+    failed && { text: `${failed} failed`, tone: 'error' as const, ...(reason && { reason }) },
     quiet(noResult && `${noResult} without a result`),
     quiet(asked('none') && `${noun(asked('none'), 'question')} not answered`),
     quiet(images && noun(images, 'image')),

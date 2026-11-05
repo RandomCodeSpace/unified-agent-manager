@@ -1,5 +1,5 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, onTestFinished, test } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { api, newRequestId } from '../../src/api';
 import { install } from '../../src/mock/install';
@@ -84,6 +84,22 @@ describe('sending', () => {
     await user.click(screen.getByRole('button', { name: 'Resume' }));
     await waitFor(() => expect(screen.queryByText(/waiting$/)).toBeNull());
     expect(await log().findAllByText(/Then describe the new behaviour/)).not.toHaveLength(0);
+  });
+
+  test('Stop says "Stopping…" at once, while the service takes the stop and until the turn ends', async () => {
+    await openTask('t1');
+    let release = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const cancel = api.cancel.bind(api);
+    const spy = vi.spyOn(api, 'cancel').mockImplementation(async (id) => { await gate; return cancel(id); });
+    onTestFinished(() => spy.mockRestore());
+    fireEvent.click(screen.getByRole('button', { name: 'Stop turn' }));
+    // In the same task as the press, before the service answers.
+    expect(screen.getByText('Stopping…')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop turn' }).getAttribute('aria-busy')).toBe('true');
+    release();
+    expect(await log().findByText('Turn stopped.')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Stopping…')).toBeNull());
   });
 
   test('clearing the queue and cancelling one prompt are confirmed first', async () => {
