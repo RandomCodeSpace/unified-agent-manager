@@ -375,6 +375,10 @@ func (m *Manager) runOutcome(r *store.WebRoutine, run *activeRun, now time.Time)
 		}
 		return RunCancelled, "stopped in the thread", false
 	case StateInterrupted:
+		if m.closed {
+			// A stopping service records no notice: the next start fails the run.
+			return "", "", false
+		}
 		// The run is not re-run: its Thread fails, which sends the failure
 		// notice an unattended run needs. Only uam's stop or startup recovery
 		// sets interruptedDetail; anything else is reported as interrupted.
