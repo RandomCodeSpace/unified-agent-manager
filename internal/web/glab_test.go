@@ -181,3 +181,31 @@ func TestGlabRunnerBounds(t *testing.T) {
 		t.Fatalf("bound=%d err=%v", len(out), err)
 	}
 }
+
+// A branch whose latest pipeline failed: uam shows the failed status and
+// which job, in which stage, failed and why; the job that passed stays passed.
+func TestGlabFailedPipeline(t *testing.T) {
+	branch := "feat/failing"
+	pipeline := gitLabFixturePipeline(gitLabFixtureSHA, branch)
+	responses := gitLabClientResponses(branch)
+	responses["projects/42/pipelines/91/jobs?include_retried=false&per_page=100&page=1"] = gitLabFixtureResponse{body: gitLabFixtureJSON([]any{
+		map[string]any{"id": 1, "name": "compile", "stage": "build", "status": "success", "pipeline": pipeline},
+		map[string]any{"id": 2, "name": "unit", "stage": "test", "status": "failed", "failure_reason": "script_failure", "pipeline": pipeline},
+	})}
+	got, err := readGitLabPipeline(t.Context(), gitLabClientFake(t, responses), gitLabFixtureSHA, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pipeline == nil || got.Pipeline.ID != 91 || got.Pipeline.Status != "failed" {
+		t.Fatalf("pipeline = %+v", got.Pipeline)
+	}
+	var failed []GitLabJob
+	for _, job := range got.Jobs {
+		if job.Status == "failed" {
+			failed = append(failed, job)
+		}
+	}
+	if len(got.Jobs) != 2 || len(failed) != 1 || failed[0].Name != "unit" || failed[0].Stage != "test" || failed[0].FailureReason != "script_failure" {
+		t.Fatalf("jobs = %+v", got.Jobs)
+	}
+}
