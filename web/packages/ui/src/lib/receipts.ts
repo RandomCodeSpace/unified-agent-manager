@@ -244,7 +244,7 @@ function runOf(item: Item, command: string): Run {
 function recordOf(items: readonly Item[], subagents = false): Record {
   const record: Record = { changed: new Map(), viewed: new Map(), runs: [], subagents: [] };
   for (const item of items) {
-    if (item.kind !== 'tool' || !item.tool || !item.agent_id !== !subagents) continue;
+    if (item.kind !== 'tool' || !item.tool || Boolean(item.agent_id) !== subagents) continue;
     const { tool } = item;
     const name = tool.name.toLowerCase();
     const kind = toolKind(name);
