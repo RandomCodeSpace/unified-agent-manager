@@ -57,7 +57,7 @@ const gitLabRehypePlugins = [rehypeRaw, rehypeSanitize];
  */
 export function GitLabMarkdown({ text, className }: Readonly<{ text: string; className?: string }>) {
   const origin = useContext(GitLabItemsContext)?.origin;
-  return <Markdown text={gitLabMarkdown(text, origin)} breaks rehypePlugins={gitLabRehypePlugins} className={cn('min-w-0 break-words text-ui text-body', className)} />;
+  return <Markdown text={gitLabMarkdown(text, origin)} breaks tally={false} rehypePlugins={gitLabRehypePlugins} className={cn('min-w-0 break-words text-ui text-body', className)} />;
 }
 
 /**

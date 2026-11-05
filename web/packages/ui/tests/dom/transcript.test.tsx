@@ -137,6 +137,16 @@ describe('messages', () => {
     expect(view.queryByText(/claims? match/)).toBeNull();
   });
 
+  test('a test tally is drawn over the agent\'s counts, never over a user message', () => {
+    const items: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Last time: 3 passed, 1 failed' },
+      { id: 'a', kind: 'assistant', time: '2026-10-09T00:00:01Z', text: 'Ran the suite: 5 passed, 2 skipped.' },
+    ];
+    const view = render(<Transcript sessionId="s" items={items} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    expect([...view.container.querySelectorAll('.md-counts')].map((p) => p.textContent)).toEqual(['2 skipped · 5 passed']);
+    expect(view.getByText('Last time: 3 passed, 1 failed')).toBeTruthy();
+  });
+
   test('user and assistant messages render as Markdown with code, links and attachments', async () => {
     await openTask('t3');
     const view = log();

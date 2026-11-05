@@ -2033,8 +2033,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or close it. A visit to Settings or Routines is not leaving: the Thread
   comes back as you left it, without the line.
 - **Receipts**: under the last reply of an ended turn, its claims are
-  stamped against the main agent's tool calls in that turn. Fixed rules
-  in the browser do this; no model is used. Three kinds of claim count:
+  stamped against the main agent's tool calls in that turn, then the ones
+  it does not show against the tool calls of the subagents the turn
+  started (and those they started). Fixed rules in the browser do this; no
+  model is used. Three kinds of claim count:
   - A file path in a code span with an edit verb next to it ("updated
     `a.py`", "`a.py`: fixed …").
   - A command in a code span. It is a run claim when a run verb ("ran",
@@ -2054,8 +2056,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     ran, or the last test run failed.
   - **Not seen**: a command the reply only names (it may be suggesting
     it), or a piped test run with no output. When the turn started
-    subagents, claims missing from the main agent's work are only not
-    seen, since subagent work is not read here.
+    subagents, a claim missing from the main agent's work is judged
+    against their calls once their transcripts are read: a subagent's
+    edit, command or test run stamps it, and the stamp names that
+    subagent ("· by explore") and opens it. The main agent's own call
+    always decides a claim it shows, so a claim both show is stamped once.
+    A transcript that cannot be read, or shows nothing, leaves the claim
+    not seen.
   - **Reading the test output**: the last test run's output has not been
     loaded and the service gave no pass/fail counts. The page fetches the
     whole output first, so the verdict never depends on what was loaded.

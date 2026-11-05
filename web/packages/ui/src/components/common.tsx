@@ -1241,7 +1241,8 @@ const mdComponents: Components = {
  * is parsed again per delta; it keeps those boundaries after completion to retain DOM state.
  * `breaks` keeps single newlines as line breaks, for text the owner typed; provider text stays CommonMark.
  */
-export function Markdown({ text, streaming = false, breaks = false, rehypePlugins, className }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; rehypePlugins?: Options['rehypePlugins']; className?: string }>) {
+/** `tally`: false for text a person wrote (a user message, a GitLab comment), whose counts get no test tally. */
+export function Markdown({ text, streaming = false, breaks = false, tally = true, rehypePlugins, className }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; tally?: boolean; rehypePlugins?: Options['rehypePlugins']; className?: string }>) {
   const [hasStreamed, setHasStreamed] = useState(streaming);
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
@@ -1252,7 +1253,7 @@ export function Markdown({ text, streaming = false, breaks = false, rehypePlugin
     <OutlineContext.Provider value={outline}>
       <div ref={fileDemand} className={cn('md', className)} onPointerOver={echoOver} onPointerLeave={echoLeave}>
         {blocks.map((block, i) => (
-          <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} rehypePlugins={rehypePlugins} />
+          <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} tally={tally} rehypePlugins={rehypePlugins} />
         ))}
       </div>
     </OutlineContext.Provider>
@@ -1289,16 +1290,16 @@ export function PlainText({ text, className }: Readonly<{ text: string; classNam
   return <p ref={fileDemand} className={cn('break-words whitespace-pre-wrap', className)}>{parts}</p>;
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, first, breaks, rehypePlugins }: { text: string; streaming: boolean; first: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, first, breaks, tally, rehypePlugins }: { text: string; streaming: boolean; first: boolean; breaks: boolean; tally: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
   const origin = useContext(GitLabItemsContext)?.origin;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
-    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first }]];
+    const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first, tally }]];
     return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
-  }, [breaks, origin, streaming, first]);
+  }, [breaks, origin, streaming, first, tally]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>
