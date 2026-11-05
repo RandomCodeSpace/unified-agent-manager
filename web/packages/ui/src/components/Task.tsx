@@ -422,7 +422,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const compactWindow = session.representation === 'compact-v1';
   const liveItems = session.recent_items ?? session.items;
   // A restart cut the turn while a tool call ran: its card offers Run again, which only drafts a prompt.
-  const cutCall = session.state === 'interrupted' ? interruptedCall(liveItems) : null;
+  const cutCall = session.state === 'interrupted' ? interruptedCall(liveItems, session.interrupted_at) : null;
   const [seed, setSeed] = useState<{ text: string } | null>(null);
   const loadCall = (itemId: string) => api.itemBody(session.id, itemId, '').then((body) => body.item);
   // A prompt begun since its end starts the next turn: the queue's next is sent with the state never seen turning.

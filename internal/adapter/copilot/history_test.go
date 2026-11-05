@@ -478,6 +478,42 @@ func TestReadHistoryKeepsShellExitCodes(t *testing.T) {
 	}
 }
 
+// uam stopping closes the client mid-prompt: the CLI then records an unasked
+// denial and a failed completion. The call stays failed but is marked unasked;
+// a denial by rules is not.
+func TestReadHistoryMarksAnUnaskedPermissionDenial(t *testing.T) {
+	cut, ruled := "call-cut", "call-ruled"
+	fc := &fakeClient{journal: []copilot.SessionEvent{
+		ev("u1", &rpc.UserMessageData{Content: "run them"}),
+		ev("s1", &rpc.ToolExecutionStartData{ToolCallID: ruled, ToolName: "bash", Arguments: map[string]any{"command": "rm x"}}),
+		ev("p1", &rpc.PermissionRequestedData{RequestID: "r1", PermissionRequest: &rpc.PermissionRequestShell{ToolCallID: &ruled, FullCommandText: "rm x"}}),
+		ev("c1", &rpc.PermissionCompletedData{RequestID: "r1", ToolCallID: &ruled, Result: &rpc.PermissionDeniedByRules{}}),
+		ev("e1", &rpc.ToolExecutionCompleteData{ToolCallID: ruled, Error: &rpc.ToolExecutionCompleteError{Message: "denied"}}),
+		ev("s2", &rpc.ToolExecutionStartData{ToolCallID: cut, ToolName: "bash", Arguments: map[string]any{"command": "echo y > b.txt"}}),
+		ev("p2", &rpc.PermissionRequestedData{RequestID: "r2", PermissionRequest: &rpc.PermissionRequestShell{ToolCallID: &cut, FullCommandText: "echo y > b.txt"}}),
+		ev("c2", &rpc.PermissionCompletedData{RequestID: "r2", ToolCallID: &cut, Result: &rpc.PermissionDeniedNoApprovalRuleAndCouldNotRequestFromUser{}}),
+		ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: cut, Error: &rpc.ToolExecutionCompleteError{Message: "denied"}}),
+	}}
+	p := readerProvider(fc)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	h, err := p.ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "stopped"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]agentapi.ToolCall{}
+	for _, it := range h.Items {
+		if it.Tool != nil {
+			got[it.ID] = *it.Tool
+		}
+	}
+	if c := got[cut]; c.Status != agentapi.ToolFailed || !c.Unasked {
+		t.Fatalf("unasked call = %+v", c)
+	}
+	if c := got[ruled]; c.Status != agentapi.ToolFailed || c.Unasked {
+		t.Fatalf("ruled call = %+v", c)
+	}
+}
+
 // A call whose permission was never answered (the CLI ended while it waited)
 // reads pending: it never ran. One answered then cut while it ran reads running.
 func TestReadHistoryMarksACallWaitingOnPermissionPending(t *testing.T) {

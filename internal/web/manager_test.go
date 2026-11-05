@@ -691,6 +691,48 @@ func TestShutdownInterruptsClosesAndShutsDownProviders(t *testing.T) {
 	}
 }
 
+// uam's stop records when it interrupted the turn, durably, before the
+// conversations close. The unasked denial the CLI then reports is the stop's
+// doing: it feeds no permission fuse. The same denial in a running turn does.
+func TestShutdownMarksTheStopAndItsDenialsFeedNoFuse(t *testing.T) {
+	st := openTestStore(t)
+	prov := agenttest.NewProvider("fake", allCaps)
+	m := startManager(t, st, prov)
+	sum, conv := createSession(t, m, prov)
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	const unasked = "denied-no-approval-rule-and-could-not-request-from-user"
+	denied := agentapi.ToolUse{Tool: "bash", PermissionKind: "shell", Args: map[string]any{"command": "echo y > b.txt"}}
+	failed := conv.Request().Hooks.Failed
+	fuse := func() int {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if e := m.sessions[sum.ID].fuses[fuseKey{kind: "permission", key: "shell"}]; e != nil {
+			return e.count
+		}
+		return 0
+	}
+	failed(t.Context(), denied, unasked)
+	if fuse() != 1 {
+		t.Fatalf("a running turn's unasked denial counts: fuse = %d", fuse())
+	}
+	before := time.Now()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failed(t.Context(), denied, unasked) // the CLI, once its client closed
+	if fuse() != 1 {
+		t.Fatalf("the stop's denial counted: fuse = %d", fuse())
+	}
+	m2 := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	got := mustSummary(t, m2, sum.ID)
+	if got.State != StateInterrupted || got.InterruptedAt.Before(before) || got.InterruptedAt.After(time.Now()) {
+		t.Fatalf("after restart: state %q interrupted_at %v", got.State, got.InterruptedAt)
+	}
+}
+
 func TestReopenUsesExactConversationAndHistory(t *testing.T) {
 	st := openTestStore(t)
 	id, gone := mustUUID(t), mustUUID(t)

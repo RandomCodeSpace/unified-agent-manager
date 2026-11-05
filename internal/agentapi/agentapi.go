@@ -1326,6 +1326,10 @@ type ToolCall struct {
 	// Tail is the newest output lines of a running shell call, oldest first,
 	// at most 10, each at most 512 bytes; nil once the call ends.
 	Tail []OutputLine `json:"tail,omitempty"`
+	// Unasked marks a recorded call whose permission the provider denied
+	// because nobody could be asked (no client attached). It stays failed; a
+	// client may read it as never run only when uam's stop cut that turn.
+	Unasked bool `json:"unasked,omitempty"`
 }
 
 // FileEdit is a native committed mutation, including edits from a failed call.

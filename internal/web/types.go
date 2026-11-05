@@ -294,6 +294,9 @@ type SessionSummary struct {
 	ConversationID string    `json:"conversation_id"`
 	State          string    `json:"state"`
 	StateDetail    string    `json:"state_detail"`
+	// InterruptedAt is when uam's own stop interrupted the turn, while the
+	// Thread stays interrupted; absent otherwise, also after a crash.
+	InterruptedAt  time.Time `json:"interrupted_at,omitzero"`
 	Open           bool      `json:"open"`
 	Pending        int       `json:"pending"`
 	CreatedAt      time.Time `json:"created_at"`

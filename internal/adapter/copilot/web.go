@@ -4657,6 +4657,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		if d.ToolCallID == nil || !t.permissionWait(*d.ToolCallID, agentapi.ToolPending, agentapi.ToolRunning, &it) {
 			return it, false
 		}
+		if d.Result != nil && d.Result.Kind() == rpc.PermissionResultKindDeniedNoApprovalRuleAndCouldNotRequestFromUser {
+			// What a client closing mid-prompt (uam stopping) records; the completion keeps it.
+			t.tools[*d.ToolCallID].Unasked, it.Tool.Unasked = true, true
+		}
 	case *rpc.ToolExecutionProgressData:
 		if t.isHidden(d.ToolCallID) || !t.toolProgress(d, &it) {
 			return it, false

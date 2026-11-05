@@ -449,6 +449,9 @@ type webSession struct {
 	// unseenEnd is set when the Task failed or was interrupted while no page
 	// had it open, until one opens it (notify.go). It survives a restart.
 	unseenEnd bool
+	// interruptedAt is when uam's own stop interrupted the turn, while the
+	// state it set stands; zero otherwise. It survives a restart.
+	interruptedAt time.Time
 
 	subagents []*agentapi.Subagent
 	subIdx    map[string]*agentapi.Subagent
@@ -677,6 +680,7 @@ func newSession(id, provider, name, workdir, convID string, created time.Time) *
 func (s *webSession) setBase(state, detail string) {
 	s.base = state
 	s.detail = detail
+	s.interruptedAt = time.Time{}
 	s.turnSeq++
 }
 
@@ -1027,7 +1031,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.fork = web.Fork
 		s.place = loadedPlace(web.Place)
 		s.rewind = loadedRewind(web.Rewind)
-		s.unseenEnd = web.UnseenEnd
+		s.unseenEnd, s.interruptedAt = web.UnseenEnd, web.InterruptedAt
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		if web.Context != nil && web.Context.Limit > 0 && web.Context.Used >= 0 {
 			usage := agentapi.Context(*web.Context)
@@ -1311,7 +1315,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, OutputStyle: s.style, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, RealWorkdir: s.realWorkdir, ConversationID: s.convID,
-		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
+		Execution: s.execution, State: s.state(), StateDetail: s.detail, InterruptedAt: s.interruptedAt, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, SettledBy: s.settledBy, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactingBackground: s.compactingBackground && s.conv != nil, CompactThreshold: s.openCompactAt(),
@@ -2532,7 +2536,7 @@ func (m *Manager) flush() (err error) {
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
 				MemoryNotes: slices.Clone(s.memoryNotes), NativePaths: nativePathsRecord(s),
 			},
@@ -5405,6 +5409,8 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 		before := m.summaryLocked(s)
 		if st := s.state(); busy(st) && st != StateStarting {
 			s.setBase(StateInterrupted, interruptedDetail)
+			// Before the conversations close: what the CLI records after it is this stop's doing.
+			s.interruptedAt = m.now()
 		}
 		if s.conv != nil {
 			convs = append(convs, s.conv)

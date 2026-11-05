@@ -155,13 +155,17 @@ function callText(tool: ToolCall): { text: string; command: boolean } {
  * follow-up (read_bash, stop_bash, ...) stands for the command that started its shell, when that
  * call is loaded. Null when none.
  */
-export function interruptedCall(items: readonly Item[]): InterruptedCall | null {
+export function interruptedCall(items: readonly Item[], stoppedAt?: string): InterruptedCall | null {
+  const stop = stoppedAt ? Date.parse(stoppedAt) : NaN;
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.agent_id) continue;
     if (it.kind === 'user') return null;
     const tool = it.tool;
-    if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending')) continue;
+    // uam's stop closed the client mid-prompt, so the CLI denied it unasked: it never ran. Only when it ended after that
+    // stop began; any other unasked denial was a real one.
+    const unasked = tool?.status === 'failed' && !!tool.unasked && !!it.ended_at && Date.parse(it.ended_at) >= stop;
+    if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending' && !unasked)) continue;
     const shell = toolKind(tool.name) === 'command' ? '' : shellOf(tool);
     let starter: Item | undefined;
     for (let j = i - 1; shell && j >= 0 && !starter; j--) {
@@ -169,7 +173,7 @@ export function interruptedCall(items: readonly Item[]): InterruptedCall | null 
       if (x.tool && !x.agent_id && toolKind(x.tool.name) === 'command' && shellOf(x.tool) === shell) starter = x;
     }
     const named = starter ?? it;
-    return { id: named.id, name: named.tool!.name, ...callText(named.tool!), waiting: tool.status === 'pending' };
+    return { id: named.id, name: named.tool!.name, ...callText(named.tool!), waiting: tool.status === 'pending' || unasked };
   }
   return null;
 }

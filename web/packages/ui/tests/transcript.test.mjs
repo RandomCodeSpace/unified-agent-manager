@@ -445,6 +445,15 @@ test('interruptedCall names the last turn\'s started call that never ended', () 
   // A call still waiting on permission never ran: it is marked waiting.
   assert.deepEqual(interruptedCall([tool('t4', 'pending', 'edit', '{"path":"x.go"}')]), { id: 't4', name: 'edit', text: 'edit x.go', command: false, waiting: true });
   assert.equal(interruptedCall([tool('t5', 'pending', 'bash', '{"command":"echo y > b.txt"}')]).waiting, true);
+  // uam's stop closed the client mid-prompt, so the CLI denied it unasked after the stop began: it never ran.
+  const stop = '2026-11-05T10:00:00.000Z';
+  const unasked = (ended) => ({ id: 't6', kind: 'tool', time: '', ended_at: ended, tool: { name: 'bash', status: 'failed', input: '{"command":"echo y > b.txt"}', unasked: true } });
+  const cut = [items[2], unasked('2026-11-05T10:00:00.250Z'), { id: 'a1', kind: 'assistant', time: '', text: 'Stopped.' }];
+  assert.deepEqual(interruptedCall(cut, stop), { id: 't6', name: 'bash', text: 'echo y > b.txt', command: true, waiting: true });
+  // The same denial before the stop, or with no stop marker (a crash), was a real one: it stays a failure.
+  assert.equal(interruptedCall([items[2], unasked('2026-11-05T09:59:59.000Z')], stop), null);
+  assert.equal(interruptedCall(cut), null);
+  assert.equal(interruptedCall([items[2], { ...unasked('2026-11-05T10:00:01Z'), tool: { ...unasked().tool, unasked: false } }], stop), null);
 });
 
 test('interruptedCall names the command whose shell a cut read_bash polled', () => {
