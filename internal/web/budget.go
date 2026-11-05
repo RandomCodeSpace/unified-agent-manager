@@ -182,7 +182,7 @@ func (m *Manager) budgetToolLocked(s *webSession) (deny, note string) {
 		return wrapDeny, ""
 	}
 	if b.Reached {
-		return "uam budget: this Thread reached the spending limit its owner set. Stop working, and report what is done and what is left.", ""
+		return budgetDenyLead + " Stop working, and report what is done and what is left.", ""
 	}
 	if s.budgetWarned {
 		return "", ""
@@ -297,9 +297,19 @@ const (
 	maxHandoffRepos   = 10
 
 	handoffShape = "Write it in Markdown with these sections: ## Done, ## In progress (what is half-done and the state it is in), ## Next steps, ## How to resume (files and commands). uam adds the open todos, the commits, the uncommitted files and the AI credits spent."
-	wrapDeny     = "uam budget: this Thread reached the spending limit its owner set. Do not start new work and do not call tools. Reply now with a handoff for whoever continues this work. " + handoffShape
+	wrapDeny     = budgetDenyLead + " Do not start new work and do not call tools. Reply now with a handoff for whoever continues this work. " + handoffShape
 	wrapPrompt   = "uam: this Thread reached the spending limit its owner set. Stop here: do not call tools or start new work. Reply with a handoff for whoever continues this work. " + handoffShape
 )
+
+// budgetDenyLead opens every tool call the budget denies; the CLI records
+// the denial as the call's error ("Denied by preToolUse hook: ...").
+const budgetDenyLead = "uam budget: this Thread reached the spending limit its owner set."
+
+// budgetStopped reports a call the budget denied: it never ran, so it did
+// not fail.
+func budgetStopped(tc *agentapi.ToolCall) bool {
+	return tc.Status == agentapi.ToolFailed && strings.HasPrefix(strings.TrimPrefix(tc.Output, "Denied by preToolUse hook: "), budgetDenyLead)
+}
 
 // budgetWrap is a Thread's wrap-up. since is the main agent's last reply
 // when it began and turnStart its turn's start; before holds the tool calls

@@ -85,7 +85,8 @@ func (s *webSession) noteActivity(it agentapi.Item) {
 			break
 		}
 		name := strings.ToLower(tc.Name)
-		a.status, a.question, a.shell = tc.Status, name == "ask_user", commandTools[name]
+		// A command the budget denied never ran: it is neither run nor failed.
+		a.status, a.question, a.shell = tc.Status, name == "ask_user", commandTools[name] && !budgetStopped(tc)
 		if !a.shell {
 			break
 		}

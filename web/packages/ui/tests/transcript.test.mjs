@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, interruptedCall, isFileDeclaration, rerunRequest, rerunText, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { BUDGET_STOPPED, DECLINED_OUTPUT, approvalMark, callProduct, firstLine, interruptedCall, isFileDeclaration, rerunRequest, rerunText, linkInteractions, mainArgument, mergeByTime, stepResult, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -496,4 +496,12 @@ test('the re-run request quotes only the whole recorded command, never a shorten
   // A non-command tool call is named, never quoted from a summary.
   const edit = { id: 'e1', name: 'edit', text: 'edit x.go', command: false, waiting: true };
   assert.equal(rerunText(edit, null), 'Re-run the `edit` tool call that was interrupted by the restart (call e1).');
+});
+
+test('a call the budget denied reads as stopped by the budget, not as a failure', () => {
+  const denied = { id: 'c2', kind: 'tool', time: '2026-11-05T15:36:34Z', ended_at: '2026-11-05T15:36:34Z', tool: { name: 'bash', status: 'failed', display_arg: 'echo w2', budget_stopped: true } };
+  assert.deepEqual(stepResult(denied.tool), { kind: 'budget' });
+  assert.deepEqual(summarizeTurn([{ item: denied }], { live: false }).parts.map((p) => [p.text, p.tone]), [[`1 ${BUDGET_STOPPED}`, 'muted']]);
+  const failed = { ...denied, id: 'c3', tool: { ...denied.tool, budget_stopped: undefined } };
+  assert.deepEqual(stepResult(failed.tool), { kind: 'failed' });
 });

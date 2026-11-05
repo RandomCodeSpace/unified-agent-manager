@@ -63,6 +63,7 @@ self.addEventListener('push', (event) => {
         tag,
         renotify: !repeated,
         icon: '/icon-192.png',
+        ...(typeof notice.body === 'string' && notice.body ? { body: notice.body } : {}),
         data: { ...target, ...(typeof notice.key === 'string' ? { key: notice.key } : {}) },
       });
       // Open pages wait a moment for the push before showing a notice themselves: it came.

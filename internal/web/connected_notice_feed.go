@@ -17,6 +17,7 @@ type sourceNotice struct {
 	SessionID  string    `json:"session_id,omitempty"`
 	Kind       string    `json:"kind,omitempty"`
 	Title      string    `json:"title,omitempty"`
+	Body       string    `json:"body,omitempty"`
 	EmittedAt  time.Time `json:"emitted_at"`
 	Gap        bool      `json:"gap,omitempty"`
 }
@@ -42,8 +43,8 @@ func (m *Manager) recordAttentionLocked() {
 	}
 }
 
-func (m *Manager) recordNoticeLocked(task, kind, title string) {
-	m.appendNoticeLocked(sourceNotice{SessionID: task, Kind: kind, Title: title})
+func (m *Manager) recordNoticeLocked(task, kind, title, body string) {
+	m.appendNoticeLocked(sourceNotice{SessionID: task, Kind: kind, Title: title, Body: body})
 }
 
 func (m *Manager) appendNoticeLocked(event sourceNotice) {

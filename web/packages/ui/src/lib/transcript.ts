@@ -698,7 +698,7 @@ export interface TurnSummary {
  * them. A subagent's `task` call is never counted, failed or not: the reply's subagent chip is.
  */
 export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSummary {
-  let count = 0, thoughts = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
+  let count = 0, thoughts = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0, budgetStopped = 0;
   const changed = new Set<string>();
   const read = new Set<string>();
   const outcomes: AskedQuestion['outcome'][] = [];
@@ -724,6 +724,10 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     const asked = askedOn(item, ctx.approvals, ctx.live);
     if (asked && asked.outcome !== 'pending') {
       outcomes.push(asked.outcome);
+      continue;
+    }
+    if (t?.budget_stopped) {
+      budgetStopped++;
       continue;
     }
     if (t?.status === 'failed') {
@@ -771,6 +775,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(decided && `${noun(decided, 'request')} decided`),
     failed && { text: `${failed} failed`, tone: 'error' as const, ...(reason && { reason }) },
     quiet(noResult && `${noResult} without a result`),
+    quiet(budgetStopped && `${budgetStopped} ${BUDGET_STOPPED}`),
     quiet(asked('none') && `${noun(asked('none'), 'question')} not answered`),
     quiet(images && noun(images, 'image')),
   ].filter(Boolean) as SummaryPart[];
@@ -793,12 +798,16 @@ export function localToolMs(entries: readonly Entry[], pausedMs = 0): number {
   return Math.max(0, spanMs(spans) - pausedMs);
 }
 
+/** A call the Thread's budget denied: it never ran. */
+export const BUDGET_STOPPED = 'stopped by budget';
+
 /** What a finished step produced, as its row's result: test counts, line counts of its edits, its exit code, or that it failed. */
 export type StepResult =
   | { kind: 'tests'; passed: number; failed: number }
   | { kind: 'diff'; additions: number; deletions: number }
   | { kind: 'exit'; code: number }
-  | { kind: 'failed' };
+  | { kind: 'failed' }
+  | { kind: 'budget' };
 
 /** A step's result from what the call recorded, never inferred from its output text; null when it recorded nothing to show. */
 export function stepResult(tool: ToolCall | undefined): StepResult | null {
@@ -806,6 +815,7 @@ export function stepResult(tool: ToolCall | undefined): StepResult | null {
   if (tool.tests && tool.tests.passed + tool.tests.failed > 0) return { kind: 'tests', passed: tool.tests.passed, failed: tool.tests.failed };
   const known = tool.status === 'completed' ? (tool.file_edits ?? []).filter((edit) => edit.diff_status === 'available') : [];
   if (known.length) return { kind: 'diff', additions: known.reduce((n, e) => n + (e.additions ?? 0), 0), deletions: known.reduce((n, e) => n + (e.deletions ?? 0), 0) };
+  if (tool.budget_stopped) return { kind: 'budget' };
   if (tool.status === 'failed') return tool.exit_code ? { kind: 'exit', code: tool.exit_code } : { kind: 'failed' };
   return tool.exit_code === 0 ? { kind: 'exit', code: 0 } : null;
 }
@@ -983,9 +993,10 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   else if (r?.kind === 'diff') result.push({ text: lineCountsText(r.additions, r.deletions), tone: 'muted' });
   else if (r?.kind === 'exit') result.push({ text: r.code === 0 ? 'ok' : `exit ${r.code}`, tone: r.code === 0 ? 'muted' : 'error' });
   else if (r?.kind === 'failed') result.push({ text: 'failed', tone: 'error' });
+  else if (r?.kind === 'budget') result.push({ text: BUDGET_STOPPED, tone: 'muted' });
   // A completed call that exited non-zero failed all the same (stepResult leaves its code out).
   if (t?.status === 'completed' && t.exit_code && r?.kind !== 'tests') result.push({ text: `exit ${t.exit_code}`, tone: 'error' });
-  const failed = t?.status === 'failed' || !!t?.exit_code || result.some((x) => x.tone === 'error');
+  const failed = (t?.status === 'failed' && !t.budget_stopped) || !!t?.exit_code || result.some((x) => x.tone === 'error');
   const why = failed ? firstErrorLine(t?.output) : '';
   if (why) result.push({ text: why, tone: 'error' });
   const asked = n === ASK_TOOL ? questionOf(t, undefined, live)?.outcome : undefined;

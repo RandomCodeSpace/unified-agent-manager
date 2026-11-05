@@ -56,6 +56,7 @@ type noticeEvent struct {
 	SessionID string `json:"session_id"`
 	Kind      string `json:"kind"`
 	Title     string `json:"title"`
+	Body      string `json:"body,omitempty"`
 	// Key names the notice in every page and in its push (noticeKey).
 	Key string `json:"key"`
 }
@@ -70,6 +71,7 @@ func noticeKey(id, kind string, seq uint64) string {
 // question title only, never transcript text or a credential.
 type pushPayload struct {
 	Title string `json:"title"`
+	Body  string `json:"body,omitempty"`
 	Task  string `json:"task"`
 	Kind  string `json:"kind"`
 	// Key names this notice as pages know it (noticeKey), so a page that
@@ -124,11 +126,16 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	if kind == "" || kind == noticeKind(before) || m.closed {
 		return
 	}
-	title := noticeTitle(s, kind, after.Ask)
+	if kind == noticeFinished && before.State == StateStarting {
+		// Opening a finished Thread's conversation again (a page viewing it
+		// after a restart) ends no turn.
+		return
+	}
+	title, body := noticeText(s, kind, after.Ask)
 	m.broadcastLocked("notify", "", func(seq uint64) any {
-		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title, Key: noticeKey(s.id, kind, seq)}
+		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title, Body: body, Key: noticeKey(s.id, kind, seq)}
 	})
-	m.recordNoticeLocked(s.id, kind, title)
+	m.recordNoticeLocked(s.id, kind, title, body)
 	m.count("notices_" + kind)
 	// The owner is looking at the Task: no push. A service worker shows
 	// every push it gets (browsers penalise or replace silent ones), so the
@@ -137,16 +144,17 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 		return
 	}
 	// broadcastLocked took the next seq whether or not a page listens.
-	payload := pushPayload{Title: title, Task: s.id, Kind: kind, Key: noticeKey(s.id, kind, m.seq), Badge: m.needsYouLocked()}
+	payload := pushPayload{Title: title, Body: body, Task: s.id, Kind: kind, Key: noticeKey(s.id, kind, m.seq), Badge: m.needsYouLocked()}
 	if m.connectedNotices != nil {
 		payload.Badge, payload.BadgePartial = m.connectedNotices.badge(payload.Badge)
 	}
-	m.count("notices_pushed")
 	m.wg.Add(1)
 	go func() {
 		defer log.Recover("push notification", &m.mu)
 		defer m.wg.Done()
-		m.push.send(m.ctx, payload)
+		if m.push.send(m.ctx, payload) {
+			m.count("notices_pushed")
+		}
 	}()
 }
 
@@ -243,25 +251,21 @@ func (m *Manager) needsYouLocked() int {
 	return n
 }
 
-// noticeTitle is the notice's one line: "<Task> needs you: <request>",
-// "<Task> failed" or "<Task> finished". The request is the summary's Ask,
-// as the Task list shows it.
-func noticeTitle(s *webSession, kind string, ask *Ask) string {
-	name := clipNotice(cmp.Or(s.name, s.title, "New thread"))
-	switch kind {
-	case noticeFailed:
-		return name + " failed"
-	case noticeFinished:
-		return name + " finished"
+// noticeText is the notice's title, "<Thread>: <state label>" in the words
+// the Thread list uses, and its body: the question or request, the
+// summary's Ask, for a Thread that needs the owner.
+func noticeText(s *webSession, kind string, ask *Ask) (title, body string) {
+	label := map[string]string{
+		noticeQuestion:   "Needs answer",
+		noticePermission: "Needs permission",
+		noticeFailed:     "Error",
+		noticeFinished:   "Finished",
+	}[kind]
+	title = clipNotice(cmp.Or(s.name, s.title, "New thread")) + ": " + label
+	if ask != nil && (kind == noticeQuestion || kind == noticePermission) {
+		body = clipNotice(ask.Title)
 	}
-	var asked string
-	if ask != nil {
-		asked = clipNotice(ask.Title)
-	}
-	if asked == "" {
-		return name + " needs you"
-	}
-	return name + " needs you: " + asked
+	return title, body
 }
 
 // clipNotice folds whitespace and keeps at most maxNoticeText characters.
@@ -397,8 +401,9 @@ func (p *pushStore) unsubscribe(endpoint string) error {
 
 // send pushes payload to every subscription, one at a time, and forgets
 // the ones the push service says are gone (404, 410). Failures are logged
-// without the endpoint, which is a capability URL.
-func (p *pushStore) send(ctx context.Context, payload pushPayload) {
+// without the endpoint, which is a capability URL. It reports whether a
+// push service accepted the notice for at least one subscription.
+func (p *pushStore) send(ctx context.Context, payload pushPayload) (sent bool) {
 	p.mu.Lock()
 	if err := p.loadLocked(); err != nil {
 		p.mu.Unlock()
@@ -453,6 +458,8 @@ func (p *pushStore) send(ctx context.Context, payload pushPayload) {
 			gone = append(gone, sub.Endpoint)
 		case resp.StatusCode < 200 || resp.StatusCode > 299:
 			log.Warn("web push refused", "status", resp.StatusCode, "service", pushService(sub.Endpoint))
+		default:
+			sent = true
 		}
 	}
 	for _, endpoint := range gone {
@@ -460,6 +467,7 @@ func (p *pushStore) send(ctx context.Context, payload pushPayload) {
 			log.Warn("forget an expired web push subscription failed", "error", err)
 		}
 	}
+	return sent
 }
 
 // pushService is an endpoint's host, safe to log.

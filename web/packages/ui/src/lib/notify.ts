@@ -25,6 +25,8 @@ export interface Notice {
   session_id: string;
   kind: 'question' | 'permission' | 'failed' | 'finished';
   title: string;
+  /** The question or request a Thread that needs you shows. */
+  body?: string;
   /** The notice's name in every tab and in its push, made by the service. */
   key: string;
   home_id?: string;
@@ -332,7 +334,7 @@ export async function handleNotice(n: Notice): Promise<void> {
   if (!onScreen()) await new Promise((r) => setTimeout(r, mode === 'push' ? PUSH_GRACE_MS : 300));
   if (!loadNotifyMode() || !current() || !(await claim(n.key, target.home_id)) || onScreen()) return;
   const tag = target.instance_id ? `uam-task:${target.instance_id}:${n.session_id}` : `uam-task-${n.session_id}`;
-  const options: NotificationOptions & { renotify?: boolean } = { tag, renotify: true, icon: '/icon-192.png', data: { ...target, key: n.key } };
+  const options: NotificationOptions & { renotify?: boolean } = { tag, renotify: true, icon: '/icon-192.png', ...(n.body ? { body: n.body } : {}), data: { ...target, key: n.key } };
   try {
     const reg = await navigator.serviceWorker?.getRegistration('/');
     if (reg) return await reg.showNotification(n.title, options);
