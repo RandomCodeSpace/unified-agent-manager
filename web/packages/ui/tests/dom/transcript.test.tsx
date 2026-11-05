@@ -980,10 +980,11 @@ describe('history', () => {
     expect(await log().findByText('Turn 126: check pkg126 for unused exports.')).toBeTruthy();
   });
 
-  test('a subagent picked from the strip\'s list opens in the pane; its Thread crumb finds where in its reply, paging the history in', async () => {
+  test('a subagent picked from the strip\'s list opens in the pane as a conversation; its Thread crumb finds where in its reply, paging the history in', async () => {
     const { user } = await openTask('t15');
     const index = await openSubagentIndex(user);
     await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
+    await user.click(await screen.findByRole('button', { name: 'Open as conversation' }));
     expect(await screen.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
     await user.click(within(screen.getByRole('navigation', { name: 'Trail' })).getAllByRole('button')[0]);
     await waitFor(() => expect(screen.queryByRole('region', { name: /^Transcript of / })).toBeNull());
