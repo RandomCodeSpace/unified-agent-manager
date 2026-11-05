@@ -365,7 +365,8 @@ export const Composer = memo(ComposerView, sameComposerProps);
 function useBudgetWarning(session: SessionDetail): string {
   const api = useApi();
   const b = session.budget;
-  const open = !!session.id && !!b?.credits && !b.reached && !b.wrapping_up;
+  // left is the service's figure (budget.go); a peer that predates it gets no warning.
+  const open = !!session.id && !!b?.credits && b.left !== undefined && !b.reached && !b.wrapping_up;
   const key = `${session.id}\u0000${session.model ?? ''}`;
   const [predicted, setPredicted] = useState<{ key: string; credits: number } | null>(null);
   useEffect(() => {
@@ -378,7 +379,7 @@ function useBudgetWarning(session: SessionDetail): string {
     return () => controller.abort();
   }, [api, session.id, key, open]);
   if (!open || predicted?.key !== key) return '';
-  const left = Math.max(0, (b?.credits ?? 0) - (b?.spent ?? 0));
+  const left = b?.left ?? 0;
   return predicted.credits > left ? `Estimate: a whole prompt on this model often uses about ${formatCredits(predicted.credits)} AI credits; the budget has ${formatCredits(left)} left.` : '';
 }
 

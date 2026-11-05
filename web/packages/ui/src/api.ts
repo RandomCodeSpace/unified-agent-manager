@@ -954,7 +954,7 @@ export interface SessionSummary {
    * and the account quota used up to `quota_percent` (`quota_used` now, while known). Once `reached`, a running turn
    * wraps up (`wrapping_up`: tools denied, the agent writes a handoff), and uam refuses sends until the budget changes.
    */
-  budget?: { credits?: number; spent: number; quota_percent?: number; quota_used?: number; reached?: boolean; wrapping_up?: boolean };
+  budget?: { credits?: number; spent: number; left?: number; quota_percent?: number; quota_used?: number; reached?: boolean; wrapping_up?: boolean };
   /** What the Thread left at its budget: `reply_id` is the agent's handoff reply (`no_reply` says why there is none), `facts` uam's Markdown. Gone once the Thread works again. */
   handoff?: Handoff;
   mode?: PermissionMode;

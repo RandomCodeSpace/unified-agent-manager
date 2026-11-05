@@ -991,7 +991,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   quotas), or both. `PATCH /api/sessions/{id}` with `{"budget":
   {"credits", "quota_percent"}}` sets it, zeros remove it; setting it again
   counts AI credits afresh. The summary's `budget` carries `credits`, `spent`,
-  `quota_percent`, `quota_used`, `reached` and `wrapping_up`, and is saved
+  `left` (AI credits left, with a credit budget), `quota_percent`,
+  `quota_used`, `reached` and `wrapping_up`, and is saved
   with the Thread. Near the limit (80% of the credits, or 5 points short of
   the quota limit) the agent's next tool call carries a note to wrap up.
   At the limit a running turn is not cut off; it **wraps up** (`wrapping_up`,
@@ -1040,7 +1041,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   AI credits arrive after each model call, so a turn can pass the limit by
   one call; the quota is read at most once a minute and counts every client
   of the account. Autopilot between its turns is stopped at the limit, with
-  no wrap-up. The agent reads it with `uam` `sense`. Connected instances
+  no wrap-up. The agent reads it with `uam` `sense`, which also carries
+  the composer's estimate below as `budget_estimate` (`prompt_credits`,
+  `unit` "AI credits") while a credit budget is open. Connected instances
   advertise `thread-budget-v1`.
   Under a credit budget the composer warns when Copilot's estimate of a
   whole prompt on the current model (`GET

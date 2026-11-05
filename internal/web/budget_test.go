@@ -673,3 +673,47 @@ func TestBudgetPredictionOnlyForAnOpenCreditBudget(t *testing.T) {
 		t.Fatalf("unknown Thread = %v", err)
 	}
 }
+
+// TestSenseSharesTheComposerBudgetEstimate: `uam` `sense` reports the numbers
+// the composer's warning reads (budget.left and BudgetPrediction), for the
+// fixture of the UI test (handoff.test.tsx): 10 credits, 8.5 spent, 4 predicted.
+func TestSenseSharesTheComposerBudgetEstimate(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	sum, conv := budgetThread(t, m, prov, gitRepoFixture(t))
+	pc := &predictingConversation{Conversation: conv, credits: 4}
+	m.mu.Lock()
+	m.sessions[sum.ID].conv = pc
+	m.mu.Unlock()
+	if _, err := m.SetBudget(sum.ID, 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	reportUnits(conv, 5+8.5)
+	type senseBudget struct {
+		Budget         BudgetView
+		BudgetEstimate *struct {
+			PromptCredits float64 `json:"prompt_credits"`
+			Unit          string
+		} `json:"budget_estimate"`
+	}
+	var sense senseBudget
+	uamReadJSON(t, conv, `{"op":"sense"}`, &sense)
+	ui := mustSummary(t, m, sum.ID)
+	predicted, ok, err := m.BudgetPrediction(t.Context(), sum.ID)
+	if err != nil || !ok || ui.Budget == nil || ui.Budget.Left == nil {
+		t.Fatalf("composer inputs: %v %v %+v", ok, err, ui.Budget)
+	}
+	if sense.Budget.Left == nil || *sense.Budget.Left != 1.5 || *sense.Budget.Left != *ui.Budget.Left || sense.Budget.Reached {
+		t.Fatalf("sense budget = %+v, composer reads %+v", sense.Budget, ui.Budget)
+	}
+	if e := sense.BudgetEstimate; e == nil || e.PromptCredits != 4 || e.PromptCredits != predicted || e.Unit != "AI credits" {
+		t.Fatalf("sense estimate = %+v, composer reads %v", e, predicted)
+	}
+
+	// At the budget: reached, nothing left, and no estimate (the composer shows none either).
+	reportUnits(conv, 5+10.5)
+	sense = senseBudget{}
+	uamReadJSON(t, conv, `{"op":"sense"}`, &sense)
+	if !sense.Budget.Reached || sense.Budget.Left == nil || *sense.Budget.Left != 0 || sense.BudgetEstimate != nil {
+		t.Fatalf("reached sense = %+v estimate %+v", sense.Budget, sense.BudgetEstimate)
+	}
+}
