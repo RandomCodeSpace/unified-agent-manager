@@ -221,8 +221,8 @@ describe('settings', () => {
     }
   });
 
-  test.each(['stale', 'failed'] as const)('configured custom models remain visible with a %s catalog and missing credentials', async (state) => {
-    const { models } = await customModelSettings((context) => {
+  test.each(['stale', 'failed'] as const)('configured custom models remain listed, their switch disabled, with a %s catalog and missing credentials', async (state) => {
+    const { user, context, models } = await customModelSettings((context) => {
       context.settings.custom_models![0].key_present = false;
       context.settings.hidden_models = { copilot: ['ollama/deepseek-v4.1-flash'] };
       if (state === 'failed') {
@@ -240,7 +240,17 @@ describe('settings', () => {
     expect(models.getAllByRole('switch', { name: /Show .*deepseek/i })).toHaveLength(1);
     const visibility = custom.getByRole('switch', { name: 'Show DeepSeek V4.1 Flash' });
     expect(visibility.getAttribute('aria-checked')).toBe('false');
-    expect(visibility.getAttribute('aria-disabled')).not.toBe('true');
+    // Not offered: no live toggle, and the line beside it says why.
+    expect(visibility.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(visibility.getAttribute('aria-describedby')!)?.textContent).toBe('ollama/deepseek-v4.1-flash · not offered now');
+    // The stale hidden entry stays removable.
+    const save = vi.spyOn(api, 'updateWebSettings').mockResolvedValue(context.settings);
+    try {
+      await user.click(custom.getByRole('button', { name: 'Remove DeepSeek V4.1 Flash from hidden models' }));
+      await waitFor(() => expect(save).toHaveBeenCalledWith({ hidden_models: { copilot: [] } }));
+    } finally {
+      save.mockRestore();
+    }
     if (state === 'failed') expect(models.getByRole('alert').textContent).toContain('Catalog unavailable');
   });
 

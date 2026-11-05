@@ -12,4 +12,5 @@ test('while its chunk loads, the dock is the terminal header saying Connecting�
   expect(dock.getByText('Terminal')).toBeTruthy();
   expect(dock.getByText('/home/user/projects/unified-agent-manager')).toBeTruthy();
   expect(dock.getByRole('status').textContent).toBe('Connecting…');
+  expect(dock.getByText('Starting a shell…')).toBeTruthy();
 });

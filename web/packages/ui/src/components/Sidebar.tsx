@@ -5,6 +5,7 @@ import { describeError, readOnly, taskName, type Project, type SearchResults, ty
 import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
+import { MOTION_NOTICE, motionNoticeDue } from '../lib/motion';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
@@ -167,7 +168,7 @@ function FooterButton({ label, icon, pressed, onClick, side, notice }: Readonly<
 function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
   const meta = useApp().meta;
   const cliUpdate = meta?.providers.some((p) => p.cli_update);
-  const notice = [restartNotice(meta?.service), cliUpdate && 'Copilot CLI update available', diskLowText(meta?.disk)].filter(Boolean).join('; ');
+  const notice = [restartNotice(meta?.service), cliUpdate && 'Copilot CLI update available', diskLowText(meta?.disk), motionNoticeDue() && MOTION_NOTICE].filter(Boolean).join('; ');
   return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={notice || undefined} />;
 }
 

@@ -99,15 +99,21 @@ export default function TerminalPanel({ project, thread, ref, onClose }: Readonl
           if (ending.target) finish(ending.target);
         }}
       />
+      {/* The body always says what it holds: a failure fills it rather than sitting over an empty screen. */}
       {status === 'failed' && (
-        <p role="alert" className="mx-3 mb-2 flex animate-fade-in flex-wrap items-center gap-2 text-caption text-error">
-          <span className="min-w-0 flex-1">Could not open a terminal.</span>
+        <div role="alert" className="flex min-h-0 flex-1 animate-fade-in flex-col items-center justify-center gap-2 px-3 pb-2 text-center text-caption text-error">
+          Could not open a terminal.
           <Button size="sm" variant="secondary" onClick={restart}>Retry</Button>
-        </p>
+        </div>
       )}
-      {status === 'webgl'
-        ? <p role="alert" className="mx-3 animate-fade-in text-caption text-error">The terminal needs WebGL, which this browser has turned off.</p>
-        : <Screen key={shell} projectId={project.id} taskId={thread?.id} onStatus={setStatus} onNotice={notify} />}
+      {status === 'webgl' && <p role="alert" className="flex min-h-0 flex-1 animate-fade-in items-center justify-center px-3 pb-2 text-center text-caption text-error">The terminal needs WebGL, which this browser has turned off.</p>}
+      {status !== 'failed' && status !== 'webgl' && (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <Screen key={shell} projectId={project.id} taskId={thread?.id} onStatus={setStatus} onNotice={notify} />
+          {/* The header's status says it to a screen reader; this keeps the empty screen from reading as broken. */}
+          {status === 'connecting' && <p aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center text-caption text-muted">Starting a shell…</p>}
+        </div>
+      )}
     </>
   );
 }
