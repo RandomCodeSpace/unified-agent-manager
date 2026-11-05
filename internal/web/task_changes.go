@@ -100,8 +100,8 @@ func (m *Manager) noteHistoryLocked(s *webSession, h agentapi.History, whole boo
 		changed = s.noteEdits(it) || changed
 	}
 	// The record does not hold the drawing files uam wrote; its index does.
-	for _, d := range m.drawingSummaries(s.id) {
-		changed = s.noteEdits(drawingEdit(s, d.Path, time.Time{})) || changed
+	for _, p := range m.drawingEditPaths(s.id) {
+		changed = s.noteEdits(drawingEdit(s, p, time.Time{})) || changed
 	}
 	if whole && !h.Truncated {
 		s.editsKnown = true
