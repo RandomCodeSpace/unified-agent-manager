@@ -375,17 +375,7 @@ func (m *Manager) runOutcome(r *store.WebRoutine, run *activeRun, now time.Time)
 		}
 		return RunCancelled, "stopped in the thread", false
 	case StateInterrupted:
-		// The run is not re-run: its Thread fails, which sends the failure
-		// notice an unattended run needs. Only uam's stop or startup recovery
-		// sets interruptedDetail; anything else is reported as interrupted.
-		reason := "interrupted"
-		if s.detail == interruptedDetail {
-			reason = restartedDetail
-		}
-		before := m.summaryLocked(s)
-		s.setBase(StateFailed, reason)
-		m.changedLocked(s, before)
-		return RunFailed, reason, false
+		return m.failInterruptedLocked(s)
 	case StateFailed:
 		return RunFailed, cmp.Or(s.detail, "the turn failed"), false
 	case StateIdle:
@@ -615,6 +605,25 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 	return m.validateSelectionLocked(r.Provider, r.Model, "", "default")
 }
 
+// failInterruptedLocked ends a run whose turn was interrupted. The run is not
+// re-run: its Thread fails, which sends the failure notice an unattended run
+// needs. Only uam's stop or startup recovery sets interruptedDetail; anything
+// else is reported as interrupted. A stopping service records no notice, so
+// it leaves the run to the next start.
+func (m *Manager) failInterruptedLocked(s *webSession) (outcome, reason string, cancel bool) {
+	if m.closed {
+		return "", "", false
+	}
+	reason = "interrupted"
+	if s.detail == interruptedDetail {
+		reason = restartedDetail
+	}
+	before := m.summaryLocked(s)
+	s.setBase(StateFailed, reason)
+	m.changedLocked(s, before)
+	return RunFailed, reason, false
+}
+
 // CreateRoutine adds a routine to a Project. Without a model it takes the one
 // New task starts with; it is enabled, with the default limits unless the
 // input says otherwise. Nobody watches a run, so it is Yolo with autopilot
@@ -651,24 +660,30 @@ func (m *Manager) CreateRoutine(projectID string, in RoutineInput) (Routine, err
 	if r.Enabled {
 		r.NextRun = nextRun(r.Schedule, time.Time{}, now)
 	}
-	if err := m.store.Update(func(cfg *store.Config) error {
-		if _, ok := cfg.WebProjects[projectID]; !ok {
+	if err := m.saveNewRoutine(r); err != nil {
+		return Routine{}, err
+	}
+	rs.list[id] = &r
+	log.Info("routine created", "routine", id, "project", projectID)
+	return routineView(&r), nil
+}
+
+// saveNewRoutine stores r under its Project, which must still exist.
+func (m *Manager) saveNewRoutine(r store.WebRoutine) error {
+	err := m.store.Update(func(cfg *store.Config) error {
+		if _, ok := cfg.WebProjects[r.ProjectID]; !ok {
 			return errProjectNotFound
 		}
 		if cfg.WebRoutines == nil {
 			cfg.WebRoutines = map[string]store.WebRoutine{}
 		}
-		cfg.WebRoutines[id] = r
+		cfg.WebRoutines[r.ID] = r
 		return nil
-	}); err != nil {
-		if errors.Is(err, errProjectNotFound) {
-			return Routine{}, err
-		}
-		return Routine{}, fmt.Errorf("save routine: %w", err)
+	})
+	if err != nil && !errors.Is(err, errProjectNotFound) {
+		return fmt.Errorf("save routine: %w", err)
 	}
-	rs.list[id] = &r
-	log.Info("routine created", "routine", id, "project", projectID)
-	return routineView(&r), nil
+	return err
 }
 
 // UpdateRoutine edits a routine. Pausing clears its next run; resuming it,
