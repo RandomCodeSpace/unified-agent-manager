@@ -557,6 +557,9 @@ type WebState struct {
 	// UnseenEnd marks a Task that failed or was interrupted while no page
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
+	// InterruptedAt is when uam's own stop interrupted the Thread's turn,
+	// while it stays interrupted; zero otherwise, also after a crash.
+	InterruptedAt time.Time `json:"interrupted_at,omitzero"`
 	// StopReason says why the last turn was cancelled (owner, time_limit,
 	// credit_limit, budget, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
@@ -679,6 +682,7 @@ var knownWebStateFields = map[string]struct{}{
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},
+	"interrupted_at":      {},
 	"stop_reason":         {},
 	"budget":              {},
 	"handoff":             {},

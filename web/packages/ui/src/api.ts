@@ -995,6 +995,8 @@ export interface SessionSummary {
   queued?: number;
   state: SessionState;
   state_detail?: string;
+  /** When uam's own stop interrupted the turn, while the Thread stays interrupted; absent otherwise, also after a crash. */
+  interrupted_at?: string;
   open: boolean;
   pending: number | boolean;
   /** The request the Task waits on, for the Task list's status line and notices; absent when nothing waits, and from older servers. */
@@ -1084,6 +1086,8 @@ export interface ToolCall {
   tests?: { passed: number; failed: number };
   /** A running shell call's newest output lines, oldest first, at most 10; absent once it ends. */
   tail?: OutputLine[];
+  /** Recorded: its permission was denied because nobody could be asked; it stays failed. */
+  unasked?: boolean;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }
