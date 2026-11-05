@@ -290,17 +290,17 @@ type SessionSummary struct {
 	Workdir  string `json:"workdir"`
 	// RealWorkdir is Workdir with symbolic links resolved, when that differs,
 	// so a path an agent writes through either spelling names the same file.
-	RealWorkdir    string    `json:"real_workdir,omitempty"`
-	ConversationID string    `json:"conversation_id"`
-	State          string    `json:"state"`
-	StateDetail    string    `json:"state_detail"`
+	RealWorkdir    string `json:"real_workdir,omitempty"`
+	ConversationID string `json:"conversation_id"`
+	State          string `json:"state"`
+	StateDetail    string `json:"state_detail"`
 	// InterruptedAt is when uam's own stop interrupted the turn, while the
 	// Thread stays interrupted; absent otherwise, also after a crash.
-	InterruptedAt  time.Time `json:"interrupted_at,omitzero"`
-	Open           bool      `json:"open"`
-	Pending        int       `json:"pending"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	InterruptedAt time.Time `json:"interrupted_at,omitzero"`
+	Open          bool      `json:"open"`
+	Pending       int       `json:"pending"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 	// Capabilities come from the provider so the browser can hide controls
 	// the provider does not really support.
 	Capabilities agentapi.Capabilities `json:"capabilities"`
