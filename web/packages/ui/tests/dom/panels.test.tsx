@@ -111,6 +111,22 @@ describe('changes', () => {
     }
   });
 
+  test('a hunk bar names the one line skipped before it, or the lines it covers when none are', async () => {
+    const real = api.changeFile.bind(api);
+    const patch = '--- a/templates/post.html\n+++ b/templates/post.html\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n@@ -4,2 +4,2 @@\n-d\n+e\n f';
+    const read = vi.spyOn(api, 'changeFile').mockImplementation((id, scope, path, signal) =>
+      path === 'templates/post.html' ? Promise.resolve({ path, additions: 2, deletions: 2, patch }) : real(id, scope, path, signal));
+    try {
+      const { user } = await openTask('t8');
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      const card = within(await within(await screen.findByRole('dialog', { name: 'Changes' })).findByRole('region', { name: 'templates/post.html' }));
+      expect(await card.findByText('Lines 1–2')).toBeTruthy();
+      expect(card.getByText('1 unchanged line')).toBeTruthy();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   test('a turn\'s Changed chip opens the same sheet on that turn\'s file, and focus comes back to it', async () => {
     const { user } = await openTask('t1');
     const latest = screen.getAllByRole('button', { name: /^Changed \d+ files?$/ }).at(-1)!;
