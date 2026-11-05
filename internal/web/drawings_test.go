@@ -548,7 +548,7 @@ func TestDrawingDeleteRemovesOnlyItsOwnDrawings(t *testing.T) {
 	if data, _ := os.ReadFile(outside); string(data) != sceneA(t) {
 		t.Fatal("the file outside the thread changed")
 	}
-	// A drawing whose file is already gone just loses its entry.
+	// A drawing whose file is already gone just has its entry marked deleted.
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
@@ -598,6 +598,82 @@ func TestDrawingWritesAreTheThreadsEdits(t *testing.T) {
 	}
 	if refused := unsavedRefusal(t, g.m, g.id); refused != nil {
 		t.Fatalf("refused after the drawing was deleted: %+v", refused)
+	}
+}
+
+// A deleted drawing stays the Thread's edit after a restart: a drawing
+// never committed leaves nothing to list or guard, a committed one's
+// deletion is in the Thread's Changes and guards Settle, and converting the
+// path again brings the drawing back.
+func TestDrawingDeletionSurvivesARestart(t *testing.T) {
+	repo := sharedFolderWithOthersWork(t)
+	g := newGitTask(t, repo)
+	s, err := g.m.lookup(g.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restart := func() {
+		g.m.drawings.mu.Lock()
+		delete(g.m.drawings.by, g.id)
+		g.m.drawings.mu.Unlock()
+		g.m.mu.Lock()
+		s.edits = nil
+		g.m.noteHistoryLocked(s, agentapi.History{}, true)
+		g.m.mu.Unlock()
+	}
+	convert := func(p string) {
+		if w, _ := putDrawing(g.ts, g.id, p, map[string]any{"content": sceneA(t), "format": "excalidraw", "origin": "convert"}); w.Code != http.StatusOK {
+			t.Fatalf("convert %s = %d %s", p, w.Code, w.Body)
+		}
+	}
+	del := func(p string) {
+		if code := g.ts.do(http.MethodDelete, "/api/sessions/"+g.id+"/drawings/"+p, "", withCookie(g.ts)).Code; code != http.StatusNoContent {
+			t.Fatalf("delete %s = %d", p, code)
+		}
+	}
+	listed := func(p string) bool {
+		changes, err := g.m.gitChanges(t.Context(), g.id, ScopeTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slices.ContainsFunc(changes.Files, func(f ChangedFile) bool { return f.Path == p })
+	}
+
+	convert("docs/scratch.excalidraw")
+	del("docs/scratch.excalidraw")
+	restart()
+	if listed("docs/scratch.excalidraw") {
+		t.Fatal("a drawing never committed is in Changes after its delete")
+	}
+	if refused := unsavedRefusal(t, g.m, g.id); refused != nil {
+		t.Fatalf("refused for a drawing never committed: %+v", refused)
+	}
+
+	convert("docs/flow.excalidraw")
+	gitIn(t, repo, "add", "docs/flow.excalidraw")
+	gitIn(t, repo, "commit", "-q", "-m", "add the drawing")
+	del("docs/flow.excalidraw")
+	restart()
+	if !listed("docs/flow.excalidraw") {
+		t.Fatal("the deletion left the Thread's Changes after a restart")
+	}
+	if refused := unsavedRefusal(t, g.m, g.id); refused == nil || !slices.Contains(refused.Refs, "docs/flow.excalidraw") {
+		t.Fatalf("settle refusal = %+v", refused)
+	}
+	if list, _ := g.m.Drawings(g.id); len(list) != 0 {
+		t.Fatalf("deleted drawings listed = %+v", list)
+	}
+
+	convert("docs/flow.excalidraw")
+	restart()
+	if list, _ := g.m.Drawings(g.id); len(list) != 1 || list[0].Path != "docs/flow.excalidraw" || list[0].Version != 1 {
+		t.Fatalf("drawings after converting again = %+v", list)
+	}
+	g.m.drawings.mu.Lock()
+	e := g.m.drawingsLocked(g.id).Drawings["docs/flow.excalidraw"]
+	g.m.drawings.mu.Unlock()
+	if e == nil || e.Deleted {
+		t.Fatalf("entry after converting again = %+v", e)
 	}
 }
 

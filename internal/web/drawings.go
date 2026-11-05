@@ -108,11 +108,22 @@ type drawingEntry struct {
 	FenceIndex   int    `json:"fence_index"`
 	ChangesCount int    `json:"changes_count"`
 	Baseline     string `json:"baseline"`
+	// Deleted marks a drawing uam removed: listings skip it, but it stays the
+	// Thread's edit so the deletion is still its own after a restart.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // drawingIndex is one Thread's drawings by path, as stored.
 type drawingIndex struct {
 	Drawings map[string]*drawingEntry `json:"drawings"`
+}
+
+// live is the drawing at rel, nil when there is none or it was deleted.
+func (idx *drawingIndex) live(rel string) *drawingEntry {
+	if e := idx.Drawings[rel]; e != nil && !e.Deleted {
+		return e
+	}
+	return nil
 }
 
 // drawingStore is the loaded indexes by Thread. mu orders every read and
@@ -247,9 +258,19 @@ func (m *Manager) drawingSummaries(taskID string) []DrawingSummary {
 	idx := m.drawingsLocked(taskID)
 	out := make([]DrawingSummary, 0, len(idx.Drawings))
 	for _, p := range slices.Sorted(maps.Keys(idx.Drawings)) {
-		out = append(out, idx.Drawings[p].summary(p))
+		if e := idx.Drawings[p]; !e.Deleted {
+			out = append(out, e.summary(p))
+		}
 	}
 	return out
+}
+
+// drawingEditPaths is every drawing file uam wrote or removed for the Task,
+// deleted ones included.
+func (m *Manager) drawingEditPaths(taskID string) []string {
+	m.drawings.mu.Lock()
+	defer m.drawings.mu.Unlock()
+	return slices.Sorted(maps.Keys(m.drawingsLocked(taskID).Drawings))
 }
 
 // Drawings lists the drawings of the Task id.
@@ -282,7 +303,7 @@ func (m *Manager) Drawing(id, p string) (DrawingView, error) {
 	}
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
-	e := m.drawingsLocked(id).Drawings[rel]
+	e := m.drawingsLocked(id).live(rel)
 	if e == nil {
 		return DrawingView{}, newError(http.StatusNotFound, "drawing not found")
 	}
@@ -369,10 +390,10 @@ func drawingEdit(s *webSession, rel string, at time.Time) agentapi.Item {
 	return agentapi.Item{Kind: agentapi.ItemTool, Time: at, Tool: &agentapi.ToolCall{Name: "create", Status: agentapi.ToolCompleted, Input: string(input)}}
 }
 
-// DeleteDrawing removes the drawing p of the Task id: its file and its
-// entry. Only a drawing in the Task's index, which only a convert adds, can
-// be deleted; a symbolic link or anything but a regular file is refused,
-// and a file already gone just drops the entry.
+// DeleteDrawing removes the drawing p of the Task id: its file goes and its
+// entry is kept as deleted. Only a drawing in the Task's index, which only
+// a convert adds, can be deleted; a symbolic link or anything but a
+// regular file is refused, and a file already gone just marks the entry.
 func (m *Manager) DeleteDrawing(id, p string) error {
 	dir, err := m.sessionDir(id)
 	if err != nil {
@@ -394,7 +415,8 @@ func (m *Manager) removeDrawing(id, dir, rel string) error {
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
 	idx := m.drawingsLocked(id)
-	if idx.Drawings[rel] == nil {
+	e := idx.live(rel)
+	if e == nil {
 		return newError(http.StatusNotFound, "drawing not found")
 	}
 	root, err := os.OpenRoot(dir)
@@ -415,7 +437,7 @@ func (m *Manager) removeDrawing(id, dir, rel string) error {
 			return newError(http.StatusInternalServerError, "uam could not remove %s", rel)
 		}
 	}
-	delete(idx.Drawings, rel)
+	e.Deleted = true
 	if err := m.saveDrawingsLocked(id, idx); err != nil {
 		log.Warn("write the drawings index failed", "session", id, "error", err)
 		return newError(http.StatusInternalServerError, "uam could not record the drawing")
@@ -429,7 +451,7 @@ func (m *Manager) writeDrawing(id, dir, rel, format string, req DrawingSave, cur
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
 	idx := m.drawingsLocked(id)
-	e := idx.Drawings[rel]
+	e := idx.live(rel)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return DrawingSaveResult{}, err
@@ -500,7 +522,7 @@ func (m *Manager) takeDrawingNotes(taskID, dir string) string {
 	changed := false
 	for _, p := range slices.Sorted(maps.Keys(idx.Drawings)) {
 		e := idx.Drawings[p]
-		if e.Version <= e.AgentVersion {
+		if e.Deleted || e.Version <= e.AgentVersion {
 			continue
 		}
 		if root == nil {
@@ -589,7 +611,7 @@ func (m *Manager) readDiagram(taskID string, call agentapi.HostToolCall) (string
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
 	idx := m.drawingsLocked(taskID)
-	e := idx.Drawings[rel]
+	e := idx.live(rel)
 	if e == nil {
 		return "", fmt.Errorf("there is no drawing at %s; call without path to list them", rel)
 	}

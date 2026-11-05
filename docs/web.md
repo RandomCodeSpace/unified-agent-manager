@@ -1434,11 +1434,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   renamed, restyled or moved by more than 8 px; edges added, removed,
   rebound or relabelled). A save also sends the Thread's session event, so
   other browsers refresh. `DELETE /api/sessions/{id}/drawings/{path}`
-  removes a drawing (204): its file and its record. It deletes only a
+  removes a drawing (204): its file goes and its record is kept, marked
+  deleted, so listings skip it but the deletion stays the Thread's edit
+  after a restart; converting the path again replaces it. It deletes only a
   drawing of that Thread's record, which only a convert adds, so a file uam
   did not create is 404; a path outside `docs/` is refused as for a save,
   and a symbolic link in the drawing's place is refused (409) and left as it
-  is. A file already gone just loses its record. Every convert, save and
+  is. A file already gone just has its record marked deleted. Every convert, save and
   delete counts as an edit of the Thread, as an agent's edit tool would: the
   file shows in the Thread's Changes and stops Settle and Archive while it
   is not committed, also after a restart once the Thread's record is read
