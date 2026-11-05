@@ -10,7 +10,7 @@ import { cn } from '../lib/cn';
 
 /** On a phone the composer's pickers span the viewport (less the 8px collision gutters): a menu wider than the room beside its trigger would otherwise be shoved sideways and hang off it. */
 const PHONE_PICKER = 'max-sm:w-[calc(100vw-16px)] max-sm:max-w-none';
-import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
+import { formatCount, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
@@ -472,7 +472,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const contextSize = selection.context_size;
   const sizes = selectedModel?.context_sizes ?? [];
   const selectedSize = sizes.find((s) => s.id === contextSize);
-  const contextLabel = selectedSize?.tokens ? compactTokens(selectedSize.tokens) : sizeLabel(contextSize);
+  const contextLabel = selectedSize?.tokens ? formatCount(selectedSize.tokens) : sizeLabel(contextSize);
   const noEffort = effortReason(selectedModel);
   const noContext = contextReason(selectedModel, !!session.capabilities.context_size);
   // Neither can change (the Auto model): the picker shows one word and says why, instead of "Default · Default".
@@ -1357,7 +1357,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <Menu.Label>Context size</Menu.Label>
         {noContext ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{noContext}</p> : <Menu.RadioGroup value={contextSize} onValueChange={(v) => void settings({ context_size: v as string })}>
           {!sizes.some((s) => s.id === 'default') && <Menu.RadioItem value="default">Default</Menu.RadioItem>}
-          {sizes.map((s) => <Menu.RadioItem key={s.id} value={s.id} description={s.id === 'long_context' ? 'May cost more' : undefined}>{sizeLabel(s.id)} · {compactTokens(s.tokens)}</Menu.RadioItem>)}
+          {sizes.map((s) => <Menu.RadioItem key={s.id} value={s.id} description={s.id === 'long_context' ? 'May cost more' : undefined}>{sizeLabel(s.id)} · {formatCount(s.tokens)}</Menu.RadioItem>)}
         </Menu.RadioGroup>}
       </Menu.Group>
     </>

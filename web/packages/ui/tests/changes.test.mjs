@@ -39,11 +39,12 @@ async function components(api, environment = {}) {
   };
   const exports = {};
   const client = { cacheKey: id => id, ...api };
-  const names = ['ChevronDown', 'Copy', 'Ellipsis', 'Eye', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'Undo2', 'X', 'FileIcon', 'InstanceName', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'Menu', 'Tip', 'AlertDialog'];
+  const names = ['ChevronDown', 'Copy', 'Ellipsis', 'Eye', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'Undo2', 'X', 'FileIcon', 'InstanceName', 'LineCounts', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'Menu', 'Tip', 'AlertDialog'];
   const lens = await import('../src/lib/lens.ts');
   const review = await import('../src/lib/review.ts');
+  const { lineCountsText } = await import('../src/lib/cost.ts');
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
-    exports, ...hooks, api: client, useApi: () => client, AbortController, ...review, ...lens, CSS: { escape: String }, requestAnimationFrame: () => 0,
+    exports, ...hooks, lineCountsText, api: client, useApi: () => client, AbortController, ...review, ...lens, CSS: { escape: String }, requestAnimationFrame: () => 0,
     useConfirm: () => { const [state, set] = hooks.useState({ target: null, open: false }); return { target: state.target, ask: (t) => set({ target: t, open: true }), close: () => set({ target: state.target, open: false }), props: { open: state.open } }; },
     useCopied: () => [false, () => {}], LIVE: ['starting', 'working'], readOnly: () => false, newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
     jsxNode: (type, props, ...children) => ({ type, key: props?.key, props: { ...props, children } }),

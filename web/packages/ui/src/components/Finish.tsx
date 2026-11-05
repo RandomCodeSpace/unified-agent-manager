@@ -8,6 +8,7 @@ import type { CommandOutput } from './CommandOutput';
 import { useBodyRead } from './Details';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { LineCounts } from './common';
 
 /**
  * "Since you left": one line under the Task header when the Task changed while the owner was
@@ -178,7 +179,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
                     <>
                       <FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
                       <span className="min-w-0 flex-1 truncate font-mono text-code-sm text-ink">{f.path}</span>
-                      {f.additions !== undefined && <span className="shrink-0 font-mono text-meta"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions ?? 0}</span></span>}
+                      {f.additions !== undefined && <span className="shrink-0 font-mono text-meta"><LineCounts additions={f.additions} deletions={f.deletions ?? 0} /></span>}
                     </>
                   );
                   return (

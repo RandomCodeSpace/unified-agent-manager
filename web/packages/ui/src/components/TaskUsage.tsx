@@ -4,7 +4,7 @@ import { useApi } from '../ApiContext';
 import { describeError, readOnly, type SessionDetail, type TaskUsageMetrics, type UsageMetricAgent, type UsageMetricModel } from '../api';
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
-import { Note } from './common';
+import { LineCounts, Note, Num } from './common';
 import { plural, shares, time, ToolTimes, useTimeSplit } from './TimeSplit';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -13,20 +13,17 @@ import { PanelSection } from './ui/panel';
 import { HelpTip } from './ui/tooltip';
 
 const number = new Intl.NumberFormat('en-US');
-/** 1.18M, 41.9K, else the plain number. */
-const compactNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 3 });
 const requestCost = new Intl.NumberFormat('en-US', { maximumSignificantDigits: 15 });
 /** The budget's own figures as typed: a limit of 12.4 is not "12". */
 const budgetNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
-const count = (n: number | undefined) => n === undefined ? 'Not reported' : number.format(n);
-const compact = (n: number | undefined) => n === undefined ? 'Not reported' : compactNumber.format(n);
-const units = (n: number | undefined) => n === undefined ? 'Not reported' : formatCredits(n);
+const count = (n: number | undefined) => n === undefined ? 'Not reported' : <Num value={n} />;
+const units = (n: number | undefined) => n === undefined ? 'Not reported' : <Num value={n} format={formatCredits} />;
 const duration = (n: number) => `${number.format(n)} ms`;
 /** The models' sum, or undefined while none reports the figure. */
 const total = (models: readonly UsageMetricModel[], key: 'input' | 'output' | 'cache_read' | 'reasoning') => models.some((m) => m[key] !== undefined) ? models.reduce((n, m) => n + (m[key] ?? 0), 0) : undefined;
 const premium = <span className="inline-flex items-center gap-0.5">Premium<HelpTip label="Premium request cost">A multiplier, not USD.</HelpTip></span>;
 
-export function Counts({ rows }: Readonly<{ rows: readonly (readonly [ReactNode, string])[] }>) {
+export function Counts({ rows }: Readonly<{ rows: readonly (readonly [ReactNode, ReactNode])[] }>) {
   return <dl className="space-y-1 tabular-nums">{rows.map(([label, value], i) => <div key={i} className="flex items-start justify-between gap-4"><dt className="text-muted">{label}</dt><dd className="shrink-0 text-body">{value}</dd></div>)}</dl>;
 }
 
@@ -50,7 +47,7 @@ function Fold({ label, meta, children }: Readonly<{ label: string; meta: ReactNo
   </details>;
 }
 
-export function Tile({ label, value, sub, muted }: Readonly<{ label: string; value: string; sub?: ReactNode; muted?: boolean }>) {
+export function Tile({ label, value, sub, muted }: Readonly<{ label: string; value: ReactNode; sub?: ReactNode; muted?: boolean }>) {
   return <div className="rounded-md bg-tint-well px-3 py-1.5">
     <p className="text-caption text-muted">{label}</p>
     <p className={cn('text-title tabular-nums', muted ? 'text-muted' : 'text-ink')}>{value}</p>
@@ -163,8 +160,8 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   const { supported, split, error: splitError } = useTimeSplit(session);
   const refresh = () => { setSnapshot(null); setError(''); setAttempt((n) => n + 1); };
   const loading = native && !snapshot && !error;
-  const metric = (value: (s: TaskUsageMetrics) => string, sub?: (s: TaskUsageMetrics) => ReactNode) => snapshot ? { value: value(snapshot), sub: sub?.(snapshot) } : { value: loading ? '…' : 'Not available', muted: true };
-  const part = (n: number | undefined, words: string) => n === undefined ? undefined : `${compactNumber.format(n)} ${words}`;
+  const metric = (value: (s: TaskUsageMetrics) => ReactNode, sub?: (s: TaskUsageMetrics) => ReactNode) => snapshot ? { value: value(snapshot), sub: sub?.(snapshot) } : { value: loading ? '…' : 'Not available', muted: true };
+  const part = (n: number | undefined, words: string) => n === undefined ? undefined : <><Num value={n} /> {words}</>;
   const pct = split && shares(split);
   const timed = (ms: number | null, sub: string) => !supported || splitError ? { value: 'Not available', muted: true } : !split ? { value: '…', muted: true } : ms === null ? { value: 'Not recorded', muted: true, sub } : { value: time(ms), sub };
   const tokenTypes = snapshot ? [...snapshot.token_details.map((row) => [row.type, count(row.tokens)] as const), ...snapshot.models.flatMap((m) => m.token_details.map((row) => [`${m.model} · ${row.type}`, count(row.tokens)] as const))] : [];
@@ -172,12 +169,12 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
     {session.id && !inactive && api.supports('thread-budget-v1') && <Budget session={session} />}
     <PanelSection label="This Thread" meta={split && split.waiting_ms > 0 ? `${time(split.waiting_ms)} waiting on you (${plural(split.waits, 'request')}), not counted` : undefined} action={<Button size="sm" variant="subtle" onClick={refresh} disabled={!snapshot && !error}>Refresh</Button>}>
       <div className="grid grid-cols-3 gap-2 max-sm:grid-cols-2">
-        <Tile label="AI credits" value={session.usage ? formatCredits(session.usage.ai_units) : 'Not reported yet'} muted={!session.usage} sub={snapshot && plural(snapshot.user_requests, 'request')} />
+        <Tile label="AI credits" value={session.usage ? units(session.usage.ai_units) : 'Not reported yet'} muted={!session.usage} sub={snapshot && plural(snapshot.user_requests, 'request')} />
         <Tile label="Model time" {...timed(split?.model_ms ?? null, `${plural(split?.model_calls ?? 0, 'call')}${pct ? ` · ${pct.model}%` : ''}`)} />
         <Tile label="Local time" {...timed(split?.local_ms ?? 0, `${plural(split?.local_runs ?? 0, 'run')}${pct ? ` · ${pct.local}%` : ''}`)} />
-        <Tile label="Tokens in" {...metric((s) => compact(total(s.models, 'input')), (s) => part(total(s.models, 'cache_read'), 'from cache'))} />
-        <Tile label="Tokens out" {...metric((s) => compact(total(s.models, 'output')), (s) => part(total(s.models, 'reasoning'), 'reasoning'))} />
-        <Tile label="Code" {...metric((s) => plural(s.code_changes.files, 'file'), (s) => <><span className="text-success">+{number.format(s.code_changes.added)}</span> <span className="text-error">−{number.format(s.code_changes.removed)}</span></>)} />
+        <Tile label="Tokens in" {...metric((s) => count(total(s.models, 'input')), (s) => part(total(s.models, 'cache_read'), 'from cache'))} />
+        <Tile label="Tokens out" {...metric((s) => count(total(s.models, 'output')), (s) => part(total(s.models, 'reasoning'), 'reasoning'))} />
+        <Tile label="Code" {...metric((s) => plural(s.code_changes.files, 'file'), (s) => <LineCounts additions={s.code_changes.added} deletions={s.code_changes.removed} />)} />
       </div>
       {session.capabilities.usage_metrics && (!session.id ? <p className="text-caption text-muted">Native usage metrics are reported once the Thread starts.</p>
         : !session.open || inactive ? <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread.</p>
@@ -189,7 +186,7 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
     </PanelSection>
     {(snapshot || split) && <div className="flex flex-col">
       {snapshot && <Fold label="By model" meta={plural(snapshot.models.length, 'model')}>
-        {snapshot.models.length ? <Table head={['Model', 'Requests', premium, 'AI credits', 'In', 'Out']} rows={snapshot.models.map((m) => [m.model, count(m.requests), requestCost.format(m.premium_request_cost), units(m.ai_units), compact(m.input), compact(m.output)])} /> : <p className="text-caption text-muted">No model metrics reported.</p>}
+        {snapshot.models.length ? <Table head={['Model', 'Requests', premium, 'AI credits', 'In', 'Out']} rows={snapshot.models.map((m) => [m.model, count(m.requests), requestCost.format(m.premium_request_cost), units(m.ai_units), count(m.input), count(m.output)])} /> : <p className="text-caption text-muted">No model metrics reported.</p>}
         {snapshot.models.map((m) => m.cache_expires_at && <p key={m.model} className="mt-1 text-caption text-muted">{m.model}: last reported prompt cache expiry {new Date(m.cache_expires_at).toLocaleString()}</p>)}
       </Fold>}
       {snapshot && <Fold label="By agent" meta={plural(snapshot.agents.length, 'agent')}>

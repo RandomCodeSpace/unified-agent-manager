@@ -5,7 +5,7 @@ import { describeError, taskName, type UtilityCall, type UtilityLog } from '../a
 import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, modelText, outcomeLabel, purposeLabel, resumeText, sizeText, tokenText } from '../lib/utility';
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
-import { Note, Skeleton } from './common';
+import { Note, Num, Skeleton } from './common';
 import { Row } from './TaskDefaults';
 import { TaskList } from './taskActions';
 import { Button } from './ui/button';
@@ -148,8 +148,8 @@ export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLi
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-title text-ink tabular-nums">
-            {today.calls.toLocaleString('en-US')}
-            {!today.unlimited && ` of ${today.limit.toLocaleString('en-US')}`}
+            <Num value={today.calls} />
+            {!today.unlimited && <> of <Num value={today.limit} /></>}
           </span>
           <span className="text-caption text-muted">{today.unlimited ? 'calls today · no daily limit' : 'calls today'}</span>
         </div>

@@ -7,7 +7,8 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { hunkText } from '../lib/lens';
 import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
-import { Highlighted, InstanceName, Note, Skeleton } from './common';
+import { Highlighted, InstanceName, LineCounts, Note, Skeleton } from './common';
+import { lineCountsText } from '../lib/cost';
 import { FileIcon } from './FileIcon';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -297,7 +298,7 @@ export function ChangesSheet({
         <InstanceName />
         {data?.supported && (
           <span className="line-clamp-2 min-w-0 text-caption leading-tight tabular-nums text-muted">
-            <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'} by this thread{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}</span>
+            <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'} by this thread{countsKnown && (adds > 0 || dels > 0) && <> · <LineCounts additions={adds} deletions={dels} /></>}</span>
             {committedCount > 0 && <> · <span className="whitespace-nowrap">{committedCount} committed</span></>}
             {files.length > 0 && <> · <span className="whitespace-nowrap">{viewedCount} of {files.length} viewed</span></>}
           </span>
@@ -408,7 +409,7 @@ function OtherFiles({ files }: Readonly<{ files: ChangeFile[] }>) {
 }
 
 const fileLines = (f: ChangeFile) => (f.binary || f.counts_unknown ? 1 : f.additions + f.deletions);
-const changeCounts = (f: ChangeFile) => (f.binary ? 'binary' : f.counts_unknown ? 'counts unknown' : `+${f.additions} −${f.deletions}`);
+const changeCounts = (f: ChangeFile) => (f.binary ? 'binary' : f.counts_unknown ? 'counts unknown' : lineCountsText(f.additions, f.deletions));
 
 /**
  * The Change Map: one bar per listed file down the panel's edge, its height following the file's changed lines
@@ -470,7 +471,7 @@ function GroupHead({ group, files, commits }: Readonly<{ group: 'open' | 'commit
         <span className="text-muted tabular-nums">
           {files.length} {files.length === 1 ? 'file' : 'files'}
           {commits?.length ? ` · ${commits.length} ${commits.length === 1 ? 'commit' : 'commits'}` : ''}
-          {known && <> · <span className="text-success">+{adds}</span> <span className="text-error">−{dels}</span></>}
+          {known && <> · <LineCounts additions={adds} deletions={dels} /></>}
         </span>
       </h3>
       {commits && commits.length > 0 && (
@@ -551,7 +552,7 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
           </Tip>
         )}
         {f.binary || f.counts_unknown ? <span className="shrink-0 text-caption text-muted">{f.binary ? 'binary' : '—'}</span> : (
-          <span className="shrink-0 text-caption tabular-nums"><span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span></span>
+          <span className="shrink-0 text-caption tabular-nums"><LineCounts additions={f.additions} deletions={f.deletions} /></span>
         )}
         {onOpenFile && (
           <Tip label="Open file">

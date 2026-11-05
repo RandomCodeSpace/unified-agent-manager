@@ -143,7 +143,7 @@ test('a list of file paths is file rows; "(+a −d)" becomes counts and leaves t
   const { container } = render(<Markdown text={'- `internal/web/turn_activity.go` (+4 −6)\n- `web/src/lib/todos.ts` (+18 -3): newest first\n- `DESIGN.md`'} />);
   const rows = [...container.querySelectorAll('ul.md-files > li')];
   expect(rows).toHaveLength(3);
-  expect(rows.map((li) => li.querySelector('.md-file-counts')?.textContent ?? '')).toEqual(['+4−6', '+18−3', '']);
+  expect(rows.map((li) => li.querySelector('.md-file-counts')?.textContent ?? '')).toEqual(['+4 −6', '+18 −3', '']);
   expect(rows[1].textContent).toContain('todos.ts: newest first');
   expect(rows[0].textContent).not.toContain('(+4');
   const { container: other } = render(<Markdown text={'- `npm ci` first\n- `src/a.ts`'} />);

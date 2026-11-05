@@ -4,6 +4,7 @@ import { modelCatalog, provider, type TaskDefaults } from '../api';
 import { effortLabel, modelChoices } from '../lib/models';
 import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
+import { formatCount } from '../lib/cost';
 import { Select } from './ui/select';
 import { HelpTip } from './ui/tooltip';
 
@@ -177,7 +178,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           aria-describedby={noContext ? `${prefix}-context-size-hint` : undefined}
           items={[
             ...(sizes.some((s) => s.id === 'default') ? [] : [{ value: 'default', label: 'Default' }]),
-            ...sizes.map((s) => ({ value: s.id, label: `${sizeLabel(s.id)} · ${s.tokens.toLocaleString()}` })),
+            ...sizes.map((s) => ({ value: s.id, label: `${sizeLabel(s.id)} · ${formatCount(s.tokens)}` })),
           ]}
           // As for effort: a size the new model lacks resets to null, which is the default size.
           onValueChange={(context_size) => onChange({ ...value, context_size: context_size ?? 'default' })}

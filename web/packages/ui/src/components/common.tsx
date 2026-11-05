@@ -6,6 +6,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
+import { COMPACT_FROM, formatCount, fullNumber } from '../lib/cost';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
@@ -258,6 +259,17 @@ export function TaskTitle({ session, className }: Readonly<{ session: SessionSum
 /** Visually hidden separator so adjacent labels do not run together in accessible names. */
 export function Sep() {
   return <span className="sr-only">, </span>;
+}
+
+/** A token, credit or other count in the one format (`formatCount`, or `format`); once compacted, its exact value is the title. */
+export function Num({ value, format = formatCount }: Readonly<{ value: number; format?: (n: number) => string }>) {
+  const text = format(value);
+  return Math.abs(value) >= COMPACT_FROM ? <span title={fullNumber(value)}>{text}</span> : <>{text}</>;
+}
+
+/** "+12 −3": a change's line counts, coloured, in the one format. */
+export function LineCounts({ additions, deletions }: Readonly<{ additions: number; deletions: number }>) {
+  return <><span className="text-success">+<Num value={additions} /></span> <span className="text-error">−<Num value={deletions} /></span></>;
 }
 
 export function relTime(iso: string, now = Date.now()): string {
@@ -998,8 +1010,7 @@ function FileItem({ node, className, children }: Readonly<{ node: HastNode; clas
       <span className="min-w-0 flex-1">{children}</span>
       {add != null && (
         <span className="md-file-counts">
-          <span className="text-success">+{add}</span>
-          <span className="text-error">−{del}</span>
+          <LineCounts additions={add} deletions={del} />
           <span aria-hidden="true" className="md-file-bar"><i style={{ width: `${add + del ? (add / (add + del)) * 100 : 0}%` }} /></span>
         </span>
       )}

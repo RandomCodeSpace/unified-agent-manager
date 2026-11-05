@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type SessionStats } from '../api';
 import { useCopied } from '../lib/clipboard';
+import { formatCount } from '../lib/cost';
 import { Note, Skeleton } from './common';
 import { Button } from './ui/button';
 import { Segmented } from './ui/segmented';
@@ -18,7 +19,7 @@ type Stat = SessionStats['stats'][number];
 const num = (c: Counts, key: string) => Number(c.get(key)) || 0;
 /** A group's `<name>` entries in the server's order, which is biggest first for ranked groups. */
 const entries = (c: Counts, group: string) => [...c].filter(([k]) => k.startsWith(group + '.')).map(([k, v]) => [k.slice(group.length + 1), Number(v) || 0] as const);
-const fmt = (v: number, digits = 0) => v.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+const fmt = (v: number, digits = 0) => digits ? v.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits }) : formatCount(Math.round(v));
 const pct = (part: number, whole: number, digits = 1) => (whole ? `${fmt((part * 100) / whole, digits)}%` : '–');
 const lines = (stats: SessionStats) =>
   [...stats.stats, ...(stats.recent ?? []).filter((s) => !s.key.startsWith('scan.')).map((s) => ({ key: `7d.${s.key}`, value: s.value }))].map((s) => `${s.key}=${s.value}\n`).join('');

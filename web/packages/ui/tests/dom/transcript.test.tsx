@@ -185,7 +185,7 @@ describe('messages', () => {
     const head = headOf(log().getByText('Done.', { exact: false }));
     expect(within(head).getByRole('time')).toBeTruthy();
     // 1,860 tokens out over 41.2 s of generation (mock t3), the model's own time first in the split.
-    expect(head.textContent).toContain('1.9K tokens · 45 tok/s');
+    expect(head.textContent).toContain('1,860 tokens · 45 tok/s');
     expect(head.textContent).toContain('(model 41s');
     expect(head.querySelector('[title*="48,210 tokens in"]')).toBeTruthy();
     // The user's bubble carries the time alone.
@@ -225,7 +225,7 @@ describe('messages', () => {
     view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
     expect(footOf(view.getByText('Patching.'))).toBeNull();
     expect(outcomeOf(view.getByText('Patching.'))).toBeTruthy();
-    expect(head('Patching.')).toContain('1.2K tokens · 242 tok/s');
+    expect(head('Patching.')).toContain('1,210 tokens · 242 tok/s');
   });
 
   test("an ended turn's foot keeps its identity while the next reply streams, so that reply's row is not drawn again", () => {
@@ -795,7 +795,7 @@ describe('turn card', () => {
     const view = render(<Transcript sessionId="s" items={[items[0], failed, running]} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working', output_tokens: 4100, generation_ms: 79000 }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
     const head = view.container.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
     expect(head.textContent).toMatch(/^Working/);
-    expect(head.textContent).toContain('4.1K tokens · 52 tok/s');
+    expect(head.textContent).toContain('4,100 tokens · 52 tok/s');
     expect(within(head).getByText('1 failed').className).toContain('text-error');
     expect(head.textContent).not.toContain('go test');
     // One step mark: the running step's dots, at the foot.

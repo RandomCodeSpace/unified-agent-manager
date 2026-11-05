@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { LIVE, describeError, newRequestId, type ContextAttribution, type ContextBreakdown, type ContextHeaviest, type SessionDetail } from '../api';
+import { formatCount } from '../lib/cost';
+import { Num } from './common';
 import { contextLabel } from './ComposerUsage';
 import { Button } from './ui/button';
 import { PanelSection } from './ui/panel';
 
-const number = new Intl.NumberFormat('en-US');
-const tokens = (n: number) => `${number.format(n)} tokens`;
+const tokens = (n: number) => <><Num value={n} /> tokens</>;
 
 function Counts({ rows }: Readonly<{ rows: readonly (readonly [string, number])[] }>) {
   return <dl className="space-y-1 tabular-nums">{rows.map(([label, count]) => <div key={label} className="flex items-start justify-between gap-4"><dt className="text-muted">{label}</dt><dd className="shrink-0 text-body">{tokens(count)}</dd></div>)}</dl>;
@@ -74,7 +75,7 @@ function CompactNow({ session, total, onDone }: Readonly<{ session: SessionDetai
       if (sub.status === 'accepted') {
         const after = await api.contextBreakdown(session.id).catch(() => undefined);
         const now = (after?.info ?? after?.attribution)?.total_tokens;
-        setNote(now === undefined ? 'Compacted.' : `Compacted: ${number.format(total)} → ${tokens(now)} in context.`);
+        setNote(now === undefined ? 'Compacted.' : `Compacted: ${formatCount(total)} → ${formatCount(now)} tokens in context.`);
         onDone();
       } else setNote(sub.error || 'The compaction outcome is unknown.');
     } catch (err: unknown) {
@@ -128,7 +129,7 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
   return <>
     <PanelSection label="Context">
       <div className="space-y-1 tabular-nums">
-        <p className="text-ui text-ink">{shown ? (shown.limit > 0 ? `${number.format(shown.total_tokens)} of ${tokens(shown.limit)}` : `${tokens(shown.total_tokens)}; capacity not reported`) : contextLabel(session)}</p>
+        <p className="text-ui text-ink">{shown ? (shown.limit > 0 ? <><Num value={shown.total_tokens} /> of {tokens(shown.limit)}</> : <>{tokens(shown.total_tokens)}; capacity not reported</>) : contextLabel(session)}</p>
         {status && <p role="status" className="text-caption text-muted">{status}</p>}
         {shown && shown.model && <p className="text-caption text-muted">Counted for {shown.model}{attribution?.model_source === 'autoResolved' ? ' (Auto resolved)' : ''}</p>}
         {children}
@@ -142,7 +143,7 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
           ['Effective prompt budget', shown.prompt_token_limit], ['Compaction starts at', shown.compaction_threshold], ['Output and compaction buffer', shown.buffer_tokens],
           ...(attribution ? [['Free space', attribution.categories.free_space] as const] : []),
         ]} />
-        {attribution && <p className="mt-2 text-caption text-muted">{number.format(attribution.compactions)} compactions reported.</p>}
+        {attribution && <p className="mt-2 text-caption text-muted"><Num value={attribution.compactions} /> compactions reported.</p>}
       </PanelSection>
       <PanelSection label="Sources">
         {attribution ? <Sources attribution={attribution} /> : sources ? <p role="status" className="text-caption text-muted">Loading context sources…</p> : <Button size="sm" variant="subtle" onClick={() => setSources(true)}>Show sources</Button>}

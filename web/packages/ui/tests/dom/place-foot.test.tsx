@@ -67,6 +67,22 @@ describe('a draft Thread', () => {
     expect(menu.getByText('Remote')).toBeTruthy();
   });
 
+  test('every composer chip has an accessible name and a visible name or tooltip; Tab reaches the branch chip and shows its tooltip', async () => {
+    const { user } = await draft(/notes-site/);
+    const form = composer().closest('form')!;
+    const chips = [...within(form).getAllByRole('button'), screen.getByRole('button', { name: /^Branch / })];
+    // Every chip is named for assistive tech; one without visible words shows a tooltip.
+    expect([...within(form).getAllByRole('button', { name: /\S/ }), screen.getByRole('button', { name: /^Branch \S/ })]).toHaveLength(chips.length);
+    for (const chip of chips.filter((c) => !c.textContent?.trim())) {
+      await user.hover(chip);
+      await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBeTruthy());
+      await user.unhover(chip);
+    }
+    const branch = screen.getByRole('button', { name: /^Branch / });
+    while (document.activeElement !== branch) await user.tab();
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toMatch(/^Branch: /));
+  });
+
   test('uncommitted files turn off only the existing branches; New branch is sent with the first message', async () => {
     guard({ uncommitted: 4 });
     const create = vi.spyOn(api, 'createSession');

@@ -1,7 +1,7 @@
 // Background AI (Settings): the words and numbers behind the Utility log. Pure, so the unit tests run in node.
 
 import type { UtilityCall, UtilityDay } from '../api';
-import { compactTokens, formatCredits } from './cost.ts';
+import { formatCount, formatCredits } from './cost.ts';
 
 const PURPOSES: Record<string, string> = {
   title: 'Thread title',
@@ -45,7 +45,7 @@ export function modelText(call: Pick<UtilityCall, 'model' | 'session_model'>): s
   return call.session_model ? `${call.model} (the thread's model)` : call.model;
 }
 
-const count = (n: number) => n.toLocaleString('en-US');
+const count = formatCount;
 
 /** "1,240 → 38 characters". */
 export function sizeText(c: Pick<UtilityCall, 'prompt_chars' | 'reply_chars'>): string {
@@ -54,7 +54,7 @@ export function sizeText(c: Pick<UtilityCall, 'prompt_chars' | 'reply_chars'>): 
 
 /** "1.2K in, 12 out tokens", with "≈" when the provider reported none and they are estimates. */
 export function tokenText(c: Pick<UtilityCall, 'input_tokens' | 'output_tokens' | 'estimated'>): string {
-  return `${c.estimated ? '≈' : ''}${compactTokens(c.input_tokens)} in, ${compactTokens(c.output_tokens)} out tokens`;
+  return `${c.estimated ? '≈' : ''}${formatCount(c.input_tokens)} in, ${formatCount(c.output_tokens)} out tokens`;
 }
 
 /** "850 ms", "1.2 s", "75 s". */

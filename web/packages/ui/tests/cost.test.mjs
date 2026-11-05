@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { estimateTurnCost, modelCostLine, priceTier, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota, planName, quotaLabel } from '../src/lib/cost.ts';
+import { estimateTurnCost, formatCount, formatCredits, fullNumber, lineCountsText, modelCostLine, priceTier, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota, planName, quotaLabel } from '../src/lib/cost.ts';
 
 // Pace counts working days in the browser's time zone; the expectations below are in UTC unless a test picks a zone.
 process.env.TZ = 'UTC';
@@ -140,7 +140,7 @@ test('quota pace handles empty, unlimited, stale, expired and unknown billing pe
 test('the model cost line names its unit and what its discount applies to', () => {
   assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }), 'High cost · 10 in, 50 out credits per 1M tokens');
   assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }, false), 'High cost · 10 in / 50 out');
-  assert.equal(modelCostLine({ prices: { input: 1, output: 2, batch_size: 1000 } }, false), '1 in / 2 out per 1K');
+  assert.equal(modelCostLine({ prices: { input: 1, output: 2, batch_size: 1000 } }, false), '1 in / 2 out per 1,000');
   assert.equal(modelCostLine({ discount_percent: 10 }), '10% off usage');
   assert.equal(modelCostLine({}), '');
 });
@@ -183,4 +183,22 @@ test('a quota billed by tokens reads as AI credits, and the plan tier reads as i
   assert.equal(planName('pro_plus'), 'Pro+');
   assert.equal(planName('team_plan'), 'team plan');
   assert.equal(planName(undefined), '');
+});
+
+test('formatCount: full below 10K, compact from 10K; fullNumber is the exact value for the title', () => {
+  assert.equal(formatCount(0), '0');
+  assert.equal(formatCount(9_999), '9,999');
+  assert.equal(formatCount(10_000), '10K');
+  assert.equal(formatCount(12_345), '12.3K');
+  assert.equal(formatCount(1_200_000), '1.2M');
+  assert.equal(fullNumber(12_345), '12,345');
+  assert.equal(fullNumber(1_200_000), '1,200,000');
+});
+
+test('credits and line counts share the one format', () => {
+  assert.equal(formatCredits(9_999), '9,999');
+  assert.equal(formatCredits(22_148), '22.1K');
+  assert.equal(formatCredits(0.5), '0.50');
+  assert.equal(lineCountsText(2, 0), '+2 −0');
+  assert.equal(lineCountsText(12_000, 1_234), '+12K −1,234');
 });

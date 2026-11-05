@@ -3,6 +3,7 @@
 // sits on which tool row, and what a question asked and got. No DOM, so the unit tests
 // run in node.
 
+import { lineCountsText } from './cost.ts';
 import { isChartCall } from './chart.ts';
 import type { Interaction, InteractionState, Item, Subagent, ToolCall, TurnTiming } from '../api';
 
@@ -975,7 +976,7 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   const result: StepWords['result'] = [];
   const r = stepResult(t);
   if (r?.kind === 'tests') result.push(r.failed ? { text: `${r.passed} passed · ${r.failed} failed`, tone: 'error' } : { text: `ok · ${r.passed} passed`, tone: 'muted' });
-  else if (r?.kind === 'diff') result.push({ text: `+${r.additions} −${r.deletions}`, tone: 'muted' });
+  else if (r?.kind === 'diff') result.push({ text: lineCountsText(r.additions, r.deletions), tone: 'muted' });
   else if (r?.kind === 'exit') result.push({ text: r.code === 0 ? 'ok' : `exit ${r.code}`, tone: r.code === 0 ? 'muted' : 'error' });
   else if (r?.kind === 'failed') result.push({ text: 'failed', tone: 'error' });
   // A completed call that exited non-zero failed all the same (stepResult leaves its code out).

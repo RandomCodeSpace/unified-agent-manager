@@ -117,15 +117,26 @@ export function accountQuota(quotas: readonly Quota[] | undefined): Quota | null
   return quotas?.find((q) => !q.unlimited) ?? quotas?.[0] ?? null;
 }
 
-/** 31K, 200K, 1.2M. */
-export function compactTokens(n: number): string {
-  return n.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+/** Counts from here up read compact (12.3K); below it in full (9,999). */
+export const COMPACT_FROM = 10_000;
+const fullFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+const compactFormat = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+
+/** The one format for tokens, credits and counts: 9,999, then 10K, 12.3K, 1.2M. `Num` adds the exact value as its title. */
+export function formatCount(n: number): string {
+  return Math.abs(n) >= COMPACT_FROM ? compactFormat.format(n) : fullFormat.format(n);
 }
+
+/** The exact value a compact count stands for: 12,345. */
+export const fullNumber = (n: number) => fullFormat.format(n);
+
+/** "+12 −3": a change's line counts, in the one format. */
+export const lineCountsText = (additions: number, deletions: number) => `+${formatCount(additions)} −${formatCount(deletions)}`;
 
 /** "31K of 200K tokens · 15%": the ring's value, as its popover, tooltip and accessible name carry it. */
 export function contextText(context: Pick<ContextUsage, 'used' | 'limit'>): string {
   const pct = context.limit > 0 ? Math.round((context.used / context.limit) * 100) : 0;
-  return `${compactTokens(context.used)} of ${compactTokens(context.limit)} tokens · ${pct}%`;
+  return `${formatCount(context.used)} of ${formatCount(context.limit)} tokens · ${pct}%`;
 }
 
 const BATCH = 1_000_000;
@@ -154,13 +165,13 @@ export function estimateTurnCost(model: Pick<Model, 'prices'> | undefined, conte
   return ((context.used - cached) * input + cached * cacheRead) / (prices.batch_size || BATCH);
 }
 
-/** AI Credits for reading: two decimals under 1, one under 10, whole numbers past that, and "<0.01" for a trace. */
+/** AI Credits for reading: two decimals under 1, one under 10, whole numbers past that (compact from 10K, as `formatCount`), and "<0.01" for a trace. */
 export function formatCredits(n: number): string {
   if (n === 0) return '0';
   if (n < 0.005) return '<0.01';
   if (n < 1) return n.toFixed(2);
   if (n < 10) return n.toFixed(1);
-  return Math.round(n).toLocaleString('en-US');
+  return formatCount(Math.round(n));
 }
 
 export const COST_TIER_LABEL: Record<CostTier, string> = { low: 'Low cost', medium: 'Medium cost', high: 'High cost', very_high: 'Very high cost' };
@@ -177,14 +188,14 @@ export function modelCostLine(model: Pick<Model, 'cost_tier' | 'discount_percent
   if (p && (p.input !== undefined || p.output !== undefined)) {
     const batch = p.batch_size || BATCH;
     const io = [p.input !== undefined ? `${p.input} in` : '', p.output !== undefined ? `${p.output} out` : ''].filter(Boolean).join(unit ? ', ' : ' / ');
-    if (unit) parts.push(`${io} credits per ${compactTokens(batch)} tokens`);
-    else parts.push(batch === BATCH ? io : `${io} per ${compactTokens(batch)}`);
+    if (unit) parts.push(`${io} credits per ${formatCount(batch)} tokens`);
+    else parts.push(batch === BATCH ? io : `${io} per ${formatCount(batch)}`);
   }
   return parts.join(' · ');
 }
 
 /** The unit of `modelCostLine` without its own. */
-export const MODEL_PRICE_UNIT = `credits per ${compactTokens(BATCH)} tokens`;
+export const MODEL_PRICE_UNIT = `credits per ${formatCount(BATCH)} tokens`;
 
 /** "AI credits" when the provider bills the quota by tokens, "premium requests" for Copilot's premium_interactions; other types read as words. */
 export function quotaLabel(quota: Pick<Quota, 'type' | 'unit'>): string {

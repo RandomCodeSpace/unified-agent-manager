@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, errorCode, type RewindMode, type RewindPreview, type RewindReceipt, type RewindResult, type SessionSummary } from '../api';
-import { Note } from './common';
+import { LineCounts, Note, Num } from './common';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { Segmented } from './ui/segmented';
@@ -57,9 +57,9 @@ function inside(path: string, workdir: string) {
 
 /** What the rewind does to one file: the inverse of the discarded turns' changes. */
 function effect(kind: string, additions = 0, deletions = 0) {
-  if (kind === 'deleted') return <><span className="text-success">+{deletions}</span> restored</>;
-  if (kind === 'created') return <><span className="text-error">−{additions}</span> removed</>;
-  return <><span className="text-success">+{deletions}</span> <span className="text-error">−{additions}</span></>;
+  if (kind === 'deleted') return <><span className="text-success">+<Num value={deletions} /></span> restored</>;
+  if (kind === 'created') return <><span className="text-error">−<Num value={additions} /></span> removed</>;
+  return <LineCounts additions={deletions} deletions={additions} />;
 }
 
 /** The anchored rewind preview and confirmation. Opening or cancelling changes nothing. */

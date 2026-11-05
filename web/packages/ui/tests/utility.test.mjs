@@ -24,7 +24,7 @@ test("a title made with the Task's own model says so", () => {
 });
 
 test('estimated tokens are marked, durations and day totals are short', () => {
-  assert.equal(tokenText({ input_tokens: 1200, output_tokens: 12, estimated: true }), '≈1.2K in, 12 out tokens');
+  assert.equal(tokenText({ input_tokens: 1200, output_tokens: 12, estimated: true }), '≈1,200 in, 12 out tokens');
   assert.equal(tokenText({ input_tokens: 90, output_tokens: 5 }), '90 in, 5 out tokens');
   assert.equal(durationText(850), '850 ms');
   assert.equal(durationText(1234), '1.2 s');
