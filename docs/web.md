@@ -1535,7 +1535,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   runs. Its address is the Thread's with `&agent=<id>` (`#task=<id>&agent=<id>`),
   so a reload or a shared link opens it; Back, Esc or ← return to the Thread.
   The strip's subagents button lists the subagents
-  grouped by the message that started their reply, with filters by state. The
+  grouped by the message that started their reply, with filters by state. It
+  opens with focus on the first row, and the arrow keys move between rows. A
+  row there opens a reader beside the list with the subagent's state, time,
+  tokens and its whole result or error; where the window is too narrow for it
+  to sit beside the list, it replaces the list inside the sheet, with a Back
+  button. **Open as conversation** shows it in the conversation pane. Esc (or
+  Back) closes the reader and returns to the row. A
+  running subagent waiting on you reads "Needs permission: <tool>" or "Needs
+  answer" instead of its current step. The
   list holds the newest 200 subagents; when Copilot's record has older ones,
   the count reads "200+" and the list ends with "Show older subagents", which
   loads the next 100 from the record. Nothing older is read until you click.

@@ -1,10 +1,10 @@
 import { useApi } from '../ApiContext';
 import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
-import { isSubagentCall, subagentSummary, duration, windowInteractions } from '../lib/transcript';
+import { awaitsUser, isSubagentCall, subagentSummary, duration, toolLabel, windowInteractions } from '../lib/transcript';
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
-import { Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Minus, Square, Workflow, X } from 'lucide-react';
+import { createContext, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { describeError, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -21,7 +21,8 @@ import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
-import { PanelFoot, PanelSection } from './ui/panel';
+import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 import { Key } from './InlinePicker';
 
@@ -371,11 +372,19 @@ export function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
   }
 }
 
-/** What a subagent is doing or reported (`subagentSummary`): its row's caption. */
-function rowSummary(d: Summaries, s: Subagent): string {
+/**
+ * What a subagent is doing or reported (`subagentSummary`): its row's caption. A running one whose
+ * request waits on the owner says so in the Thread's state words: "Needs permission: sql", "Needs answer".
+ */
+function rowSummary(d: Summaries, s: Subagent, interactions: readonly Interaction[]): string {
   const steps = d.agents[s.id]?.items ?? (d.agentSteps[s.id] ? [d.agentSteps[s.id]] : undefined);
+  const ask = s.status === 'running' ? interactions.find((i) => i.agent_id === s.id && awaitsUser(i)) : undefined;
+  const call = ask && steps?.find((item) => item.id === ask.tool_call_id)?.tool;
+  if (ask?.kind === 'permission') return `Needs permission: ${call ? toolLabel(call).name : ask.title}`;
+  if (ask) return 'Needs answer';
   return subagentSummary(s, steps, d.calls.get(s.parent_tool_call_id ?? '')?.tool);
 }
+const needsYou = (caption: string) => caption.startsWith('Needs ');
 
 /** The time now, every second while `on`. */
 function useNow(on: boolean): number {
@@ -445,13 +454,14 @@ const UNDER_NAME = 'pl-[calc(var(--spacing)*(8+var(--depth)*4.5))]';
  * glyph, identity dot (while its reply has at most five), name, caption (what it is doing now, the
  * first line of its result, or its error, in `error`), duration and tokens; on a phone the caption
  * takes a second line. One spawned by another is indented under it. A press opens it in the
- * Conversation pane. With `anchor` it carries its `task` call's id, so `locate` lands on it.
+ * Conversation pane, or with `onOpen` (the sheet's list) its reader, `open` while it shows. With
+ * `anchor` it carries its `task` call's id, so `locate` lands on it.
  * Memoised: it renders again only when what it shows changes.
  */
-export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth = 0, anchor = false }: { subagent: Subagent; tone?: IdentityTone; depth?: number; anchor?: boolean }) {
+export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth = 0, anchor = false, onOpen, open = false }: { subagent: Subagent; tone?: IdentityTone; depth?: number; anchor?: boolean; onOpen?: (s: Subagent, row: HTMLElement) => void; open?: boolean }) {
   const actions = useActions();
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
-  const caption = useScope((d) => rowSummary(d.summaries, s)) ?? '';
+  const caption = useScope((d) => rowSummary(d.summaries, s, d.task.interactions)) ?? '';
   if (!actions) return null;
   const name = s.name || 'Subagent';
   const text = caption || (s.status === 'cancelled' ? 'Stopped' : '');
@@ -464,8 +474,10 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         data-subagent-toggle=""
         data-index-row=""
         aria-label={`${name}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
-        className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]"
-        onClick={() => actions.show(s.id)}
+        aria-haspopup={onOpen ? 'dialog' : undefined}
+        aria-expanded={onOpen ? open : undefined}
+        className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-tint-selected')}
+        onClick={(e) => (onOpen ? onOpen(s, e.currentTarget) : actions.show(s.id))}
       >
         {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
         <span className="flex size-4 shrink-0 items-center justify-center">
@@ -474,7 +486,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
         <span className={cn('min-w-0 truncate', tone && BADGE_TEXT[tone], text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
         {text && (
-          <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', s.status === 'failed' ? 'text-error' : 'text-muted')} title={text}>
+          <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', s.status === 'failed' ? 'text-error' : needsYou(text) ? 'text-warning' : 'text-muted')} title={onOpen ? undefined : text}>
             {text}
           </span>
         )}
@@ -578,7 +590,9 @@ export function useSubagentIndex() {
  * subagents grouped by the message that started their reply, newest first, each with its clock and
  * Jump; older messages show three rows, then "N more · Show all"; then the ones not placed and the
  * older ones from the record. Opened from a reply's chip it shows that reply's group alone, until
- * "From <time> ×" lifts the filter. A row opens the subagent in the Conversation pane, closing the sheet.
+ * "From <time> ×" lifts the filter. It opens with focus on the first row. A row opens the subagent's
+ * reader beside the sheet, or in the list's place where there is no room beside it (SubagentReader); its
+ * "Open as conversation" shows it in the Conversation pane.
  */
 export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo | null; error?: string; phone: boolean }>) {
   const actions = useActions();
@@ -590,17 +604,34 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const messages = useScope((d) => d.messages);
   const summaries = useScope((d) => d.summaries);
   const tones = useScope((d) => d.replies.tones);
+  const interactions = useScope((d) => d.task.interactions);
+  const confirming = useScope((d) => d.confirming);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<IndexFilter>('all');
   const [reply, setReply] = useState(to?.reply ?? null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const list = useRef<HTMLDivElement>(null);
+  // The row whose reader is open (`row` takes the focus back) and the sheet it opens beside, null when
+  // the room left of the sheet is too narrow (or on a phone): then it reads in the list's place. Kept through its exit, then dropped.
+  const [peek, setPeek] = useState<{ id: string; row: HTMLElement; sheet: HTMLElement | null; open: boolean } | null>(null);
+  const openPeek = useCallback((s: Subagent, row: HTMLElement) => {
+    const sheet = phone ? null : row.closest<HTMLElement>('[data-popup]');
+    setPeek({ id: s.id, row, sheet: sheet && sheet.getBoundingClientRect().left >= READER_ROOM ? sheet : null, open: true });
+  }, [phone]);
   const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
-  if (!taskId || !subagents || !summaries || !tones || !actions) return null;
+  if (!taskId || !subagents || !summaries || !tones || !actions || !interactions) return null;
+  const peeked = peek && subagents.find((s) => s.id === peek.id);
+  const inline = !!(peek && peeked && !peek.sheet);
+  // Back from the reader in the list's place: the list returns and its row takes the focus.
+  const back = () => {
+    const row = peek?.row;
+    flushSync(() => setPeek(null));
+    row?.focus();
+  };
   const pool = reply === null ? groups : groups.filter((g) => g.key === reply);
   const all = pool.flatMap((g) => g.subagents);
   // The chips and the groups count what the search finds.
-  const found = new Set(query ? all.filter((s) => matches(s, rowSummary(summaries, s), query)) : all);
+  const found = new Set(query ? all.filter((s) => matches(s, rowSummary(summaries, s, interactions), query)) : all);
   const c = countSubagents([...found]);
   const counts: Record<IndexFilter, number> = { all: c.total, running: c.running, failed: c.failed, done: c.done, stopped: c.stopped };
   const shown = pool
@@ -630,13 +661,13 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   };
   return (
     <>
-      <div className="flex min-h-0 flex-1 animate-fade-in flex-col gap-1.5 px-3 pt-0.5">
+      <div hidden={inline} className="flex min-h-0 flex-1 animate-fade-in flex-col gap-1.5 px-3 pt-0.5">
         {error && (
           <Note tone="warn" role="alert">
             {error}
           </Note>
         )}
-        <Input ref={input} size="md" type="search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onArrow} aria-label="Search subagents" placeholder={`Search ${all.length} subagents`} />
+        <Input ref={input} size="md" type="search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onArrow} aria-label="Search subagents" placeholder={`Search ${subagentNoun(all.length)}`} />
         <div role="group" aria-label="Show subagents by status" className="flex flex-wrap items-center gap-1">
           {FILTERS.filter((f) => f.key === 'all' || f.key === filter || counts[f.key]).map((f) => (
             <button key={f.key} type="button" aria-pressed={filter === f.key} className={cn(CHIP, filter === f.key ? 'bg-tint-selected text-ink' : counts[f.key] ? f.tone : 'text-muted')} onClick={() => setFilter(f.key)}>
@@ -677,7 +708,7 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                 <ul className="flex flex-col">
                   {g.rows.slice(0, g.cap).map(({ subagent: s, depth }) => (
                     <li key={s.id}>
-                      <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} />
+                      <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} onOpen={openPeek} open={peek?.open === true && peek.id === s.id} />
                     </li>
                   ))}
                   {g.cap < g.rows.length && (
@@ -697,7 +728,8 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
           {before && reply === null && <OlderSubagents key={`${taskId}:${before}`} sessionId={taskId} before={before} />}
         </div>
       </div>
-      {!phone && (
+      {peek && peeked && <SubagentReader subagent={peeked} row={peek.row} sheet={peek.sheet} open={peek.open} onClose={() => !confirming && setPeek((p) => p && { ...p, open: false })} onClosed={() => setPeek(null)} onBack={back} />}
+      {!phone && !inline && (
         <PanelFoot>
           <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
           <span className="flex items-center gap-1.5"><Key>↑</Key><Key>↓</Key>move</span>
@@ -705,6 +737,104 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
         </PanelFoot>
       )}
     </>
+  );
+}
+
+const NO_CALL: Item = { id: '', kind: 'tool', time: '' };
+/** The room a reader needs left of the sheet: its 440px, its 10px offset and the 12px collision padding. */
+const READER_ROOM = 440 + 22;
+
+/**
+ * A subagent's quick read (DESIGN.md subagent sheet): its state, type, time and tokens, then what it
+ * is doing or waits on, its result or its error, whole. "Open as conversation" shows its transcript
+ * in the Conversation pane; Stop while it runs. With `sheet` it is an anchored reader left of the
+ * sheet, level with its row, over the sheet's own dim; Esc, the close button or a press outside close
+ * it. Without, it takes the list's place in the sheet behind a Back control (`onBack`), which Esc also
+ * presses. Either way the focus goes to its heading and back to the row.
+ */
+function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBack }: Readonly<{ subagent: Subagent; row: HTMLElement; sheet: HTMLElement | null; open: boolean; onClose: () => void; onClosed: () => void; onBack: () => void }>) {
+  const actions = useActions();
+  const task = useScope((d) => d.task);
+  const caption = useScope((d) => rowSummary(d.summaries, s, d.task.interactions)) ?? '';
+  const call = useScope((d) => d.summaries.calls.get(s.parent_tool_call_id ?? ''));
+  const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
+  const heading = useRef<HTMLHeadingElement>(null);
+  const id = useId();
+  // Opening the conversation hands the focus to its transcript, not back to the row.
+  const leaving = useRef(false);
+  const finished = s.status === 'completed' || s.status === 'idle';
+  // A background launch's call only acknowledges the launch, so its body is not read.
+  const reads = open && finished && !s.background && !!call;
+  const { item, body, attach, retry } = useItemBody(call ?? NO_CALL, reads);
+  useLayoutEffect(() => {
+    if (!sheet) heading.current?.focus();
+  }, [sheet]);
+  if (!actions || !task) return null;
+  const name = s.name || 'Subagent';
+  const result = (reads && item?.tool?.output) || s.result_summary || (finished ? caption : '');
+  let outcome: ReactNode;
+  if (s.status === 'failed') outcome = <p className="text-ui text-error">{s.error || 'Failed.'}</p>;
+  else if (s.status === 'cancelled') outcome = <Note>Stopped before it finished.</Note>;
+  else if (s.status === 'running') outcome = <p className={cn('text-ui', needsYou(caption) ? 'text-warning' : 'text-body')}>{caption || 'Working…'}</p>;
+  else if (result) outcome = <div className="text-ui text-body"><Markdown text={result} /></div>;
+  else outcome = <Note>No result recorded.</Note>;
+  const facts = [needsYou(caption) ? caption.split(':')[0] : STATUS_LABEL[s.status], s.type, s.tokens ? `${compactTokens(s.tokens)} tokens` : ''].filter(Boolean).join(' · ');
+  const content = (close: ReactNode, lead?: ReactNode) => (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <PanelHead className={cn('gap-1 pt-2 pr-3 pb-2', lead ? 'pl-2' : 'pl-4')}>
+            <div className="flex min-h-7 min-w-0 items-center gap-2">
+              {lead}
+              <span className="flex size-4 shrink-0 items-center justify-center"><SubagentMark status={s.status} /></span>
+              <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">{name}</h2>
+              {close}
+            </div>
+            <p className={cn('flex items-center gap-1 text-caption tabular-nums text-muted', lead ? 'pl-[3.75rem]' : 'pl-6')}>
+              {facts}
+              {s.started_at && <><span aria-hidden="true">·</span><Took subagent={s} className="text-caption" /></>}
+            </p>
+          </PanelHead>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 [overflow-wrap:anywhere]">
+            {outcome}
+            {reads && body && <div ref={attach}><BodyNotice body={body} retry={retry} /></div>}
+          </div>
+          <div className="flex shrink-0 items-center gap-2 px-4 pb-3">
+            <Button size="sm" variant="secondary" onClick={() => { leaving.current = true; actions.show(s.id); }}>Open as conversation</Button>
+            <span className="flex-1" />
+            <StopSubagent session={task} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
+          </div>
+        </div>
+  );
+  if (!sheet) {
+    const backButton = (
+      <Button size="icon-sm" aria-label="Back to the list" className="shrink-0 text-muted" onClick={onBack}>
+        <ArrowLeft />
+      </Button>
+    );
+    return (
+      // In the sheet, Esc goes back to the list rather than closing the sheet.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc presses Back from anywhere inside.
+      <section aria-label={name} className="flex min-h-0 flex-1 animate-fade-in flex-col" onKeyDown={(e) => {
+        if (e.key !== 'Escape') return;
+        e.stopPropagation();
+        e.preventDefault();
+        onBack();
+      }}>
+        {content(null, backButton)}
+      </section>
+    );
+  }
+  // Level with the row, flush with the sheet's left edge: never over the list.
+  const anchor = {
+    getBoundingClientRect: () => {
+      const edge = sheet.getBoundingClientRect();
+      const at = row.getBoundingClientRect();
+      return DOMRect.fromRect({ x: edge.left, y: at.top, width: edge.width, height: at.height });
+    },
+  };
+  return (
+    <AnchoredReader id={id} open={open} sheet={false} anchor={anchor} side="left" label={name} className="w-[440px]" backdrop={false} initialFocus={heading} finalFocus={() => (leaving.current || !row.isConnected ? false : row)} onClose={onClose} onClosed={onClosed}>
+      {(close) => content(close)}
+    </AnchoredReader>
   );
 }
 

@@ -480,7 +480,7 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
 }>) {
   const heading = useRef<HTMLHeadingElement>(null);
   const finalFocus = () => (back?.isConnected ? back : false);
-  const initialFocus = () => document.getElementById(id)?.querySelector<HTMLElement>('[data-sheet-focus]') ?? heading.current;
+  const initialFocus = () => document.getElementById(id)?.querySelector<HTMLElement>('[data-index-row]') ?? heading.current;
   const content = (closeButton: ReactNode) => (
     <div className="flex min-h-0 flex-1 flex-col">
       <PanelHead className="pt-2 pr-2 pb-1.5 pl-2.5">
