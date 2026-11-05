@@ -1189,7 +1189,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   SQL, HTML/XML, CSS, Markdown, Dockerfile, Makefile, INI/TOML, diff).
   Diagrams render in the browser inside a sandboxed frame that cannot read
   your session or call the service (ADR 0004); the first diagram of a page
-  load fetches Mermaid (3.4 MB).
+  load fetches Mermaid (3.4 MB). A diagram renders once scrolling has paused
+  for 150 ms, so a fast scroll through history does not stutter.
 - **Editable diagrams**: a flowchart or sequence diagram in a reply offers
   Edit as drawing in its header while the Thread is writable. A confirmation
   names the file; only Create drawing writes it, and Cancel writes nothing. It

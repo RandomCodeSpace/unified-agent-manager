@@ -37,6 +37,12 @@ projects and tasks in every state, that plays scripted replies. It is loaded
 only under `vite dev` and only with `?mock`; the production bundle does not
 contain it. `#task=<id>` in the URL opens a task directly.
 
+`?mock&perf=2000` adds Thread `t-perf` with that many items (prompts, tool
+calls, diffs, subagents, todos, mermaid). `scripts/perf.mjs` measures Thread
+switch, scroll, typing during a stream and long tasks on it against a
+production React build that includes the mock (`VITE_UAM_MOCK=1`); its header
+has the commands.
+
 ## Connected instances
 
 In the home instance's Settings, add another UAM with its HTTPS URL and access

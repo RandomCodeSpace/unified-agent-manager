@@ -11,8 +11,9 @@ function render() {
 }
 
 // Development only: `?mock` swaps fetch and EventSource for an in-browser fake of the
-// service. Vite drops this branch, and the module, from the production bundle.
-if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('mock')) {
+// service. Vite drops this branch, and the module, from the production bundle unless it is
+// built with VITE_UAM_MOCK=1 to measure the production React build (scripts/perf.mjs).
+if ((import.meta.env.DEV || import.meta.env.VITE_UAM_MOCK === '1') && new URLSearchParams(window.location.search).has('mock')) {
   const m = await import('../packages/ui/src/mock/install');
   m.install();
 }

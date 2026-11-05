@@ -100,7 +100,7 @@ test('a stalled render times out, reports the stall and lets the next one throug
 });
 
 test('a failed frame load and a stalled renderer reject their whole batch and allow a fresh frame', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const frames = [];
   const messages = [];
   const page = new EventTarget();
@@ -110,10 +110,11 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
     setAttribute() {}
     remove() { this.removed = true; }
   }
+  let scrolled = () => {};
   const globals = { window: globalThis.window, document: globalThis.document, getComputedStyle: globalThis.getComputedStyle };
   Object.assign(globalThis, {
     window: page,
-    document: { documentElement: { dataset: {} }, createElement: () => new Frame(), body: { append: (frame) => frames.push(frame) } },
+    document: { documentElement: { dataset: {} }, createElement: () => new Frame(), body: { append: (frame) => frames.push(frame) }, addEventListener: (type, listener) => { if (type === 'scroll') scrolled = listener; } },
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
   });
   t.after(() => Object.assign(globalThis, globals));
@@ -130,7 +131,7 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   const queued = renderDiagram('queued behind stall');
   const stallChecks = [assert.rejects(stalled, transient), assert.rejects(queued, transient)];
   frames[1].dispatchEvent(new Event('load'));
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.equal(messages.length, 1);
   t.mock.timers.tick(10_000);
   await Promise.all(stallChecks);
@@ -139,7 +140,7 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
 
   const retry = renderDiagram('queued behind stall');
   frames[2].dispatchEvent(new Event('load'));
-  await Promise.resolve();
+  await new Promise(setImmediate);
   const { frame, request } = messages.at(-1);
   const reply = { id: request.id, svg: '<svg/>', width: 100, height: 50 };
   let settled = false;
@@ -157,6 +158,19 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   page.dispatchEvent(Object.assign(new Event('message'), { source: frame.contentWindow, origin: 'null', data: reply }));
   assert.deepEqual(await retry, { svg: '<svg/>', width: 100, height: 50 });
   assert.equal(renderDiagram('queued behind stall'), retry, 'successful results stay cached');
+
+  // Mermaid runs on the page's main thread: a diagram waits until scrolling has paused for 150 ms.
+  const posted = messages.length;
+  scrolled();
+  void renderDiagram('rendered after the scroll pauses');
+  await new Promise(setImmediate);
+  t.mock.timers.tick(149);
+  await new Promise(setImmediate);
+  assert.equal(messages.length, posted, 'no render while the page scrolls');
+  t.mock.timers.tick(1);
+  await new Promise(setImmediate);
+  assert.equal(messages.length, posted + 1);
+  assert.equal(messages.at(-1).request.source, 'rendered after the scroll pauses');
 });
 
 test('a parse error names its reason, not only the line, in at most 200 characters', () => {

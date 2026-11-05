@@ -16,7 +16,7 @@ import { serviceMock } from './service';
 import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
-import { budgetTasks, seed, type MockState, type MockTask } from './data';
+import { budgetTasks, perfTask, seed, type MockState, type MockTask } from './data';
 import { seedAsides } from './asides';
 import { seedUtility, utilityLog } from './utility';
 import { cleanPath } from '../lib/folders';
@@ -147,6 +147,9 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
     for (let i = 1; i <= 40; i++) st.changes.p1.push({ path: `web/src/generated/module-${i}.ts`, status: 'M', additions: i, deletions: 1, patch: '' });
   }
   if (new URLSearchParams(window.location.search).has('budget')) st.tasks.push(...budgetTasks(st.projects.find((p) => p.id === 'p1')!.dir));
+  // `?mock&perf=2000` adds Thread t-perf with that many items; a prompt there streams for about a minute (scripts/perf.mjs).
+  const perf = Number(new URLSearchParams(window.location.search).get('perf')) || 0;
+  if (perf > 0) st.tasks.push(perfTask(st.projects.find((p) => p.id === 'p1')!.dir, perf));
   // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
   st.settings.utility_daily_limit = 40;
   const utility = seedUtility(40);
@@ -472,7 +475,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         }
         return () => sources.delete(src);
       }
-      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, model_calls: modelCalls(), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      // A Thread's stream is compact, as the service sends it: the representation, epoch and detail stream flag let the page keep recent Threads.
+      const emitSnapshot = () => src.emit('snapshot', { seq, ...(src.session ? { representation: 'compact-v1', epoch, detail_stream: true } : {}), projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, model_calls: modelCalls(), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) later(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {
@@ -1467,6 +1471,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
           broadcast('submission', { session_id: t.id, submission: sub }, t.id);
           void reply(
             t,
+            t.id === 't-perf' ? Array.from({ length: 26 }, (_, n) => `${n % 5 ? '' : `### Part ${n / 5 + 1}\n\n`}Step ${n + 1}: the \`pkg${n}\` exports are checked against every caller in the workspace, the unused ones are removed, the callers that re-export them are updated, and the package tests run again so nothing else moves while the rest of the audit continues.\n\n- \`pkg${n}/src/index.ts\` keeps \`pick\` and \`omit\`\n- the build and the tests pass`).join('\n\n') :
             `Looked into that. Here is what I found about "${text.slice(0, 40)}":\n\n- the change is small and covered by the existing tests\n- nothing else references \`replayModes\`\n\n\`\`\`go\nfunc (v *VTerm) replayFocusEvents(w io.Writer) error {\n\tif !v.focusEvents {\n\t\treturn nil\n\t}\n\t_, err := w.Write([]byte("\\x1b[?1004h"))\n\treturn err\n}\n\`\`\``,
           );
           return json(202, sub);
