@@ -743,6 +743,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Ask aside (`/btw`)**: type `/btw` and a question (it is the first entry
   in the `/` list) to ask the open conversation something on the side. The
   Thread's current model answers from the conversation so far, without tools.
+  While the text starts with `/btw`, an "Aside · not sent to the agent" tag
+  shows beside Send.
   The agent never sees it: nothing goes into the transcript, no turn starts,
   and the Thread's activity time and unread mark stay as they were. The answer
   opens in a reader over the composer that lists every aside of the Thread,
@@ -1568,13 +1570,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   sidebar says it needs input; the row stays where it is (see Sidebar).
   When the agent gave a reason for a command, file write or read, or URL
   fetch, the permission card shows it in grey under the request, cut at
-  about 300 characters. Open the Thread to answer. Nothing is approved
+  about 300 characters. A file write shows the proposed change as a diff,
+  the same view as Changes, with the file's path once above it. Open the
+  Thread to answer. Nothing is approved
   automatically unless you turned on yolo for that Thread, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
   card goes away: the decision shows on the tool call it was for, and a
   request UAM could not tie to a call shows as one grey line where it
-  happened. After you click "Allow once" twice for the same kind of request
+  happened. "Allow for this session" appears only when Copilot offers it for
+  that request. For a shell command Copilot decides per command, and with
+  Copilot CLI 1.0.105 it almost never offers it, so most shell requests show
+  only "Allow once" and "Deny"; UAM does not add a session approval Copilot
+  did not offer. After you click "Allow once" twice for the same kind of request
   (the same command, for example), the next one in that Thread offers "Allow
   for this session" as its main button; "Allow once" stays next to it, and
   automatic approvals do not count. A question with one question is not a

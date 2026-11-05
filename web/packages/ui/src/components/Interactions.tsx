@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
-import { useId, useState, type SubmitEvent , type ReactNode } from 'react';
+import { lazy, Suspense, useId, useState, type SubmitEvent , type ReactNode } from 'react';
 import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { fieldHint } from '../lib/answer';
@@ -10,6 +10,15 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
+
+const InlinePatch = lazy(() => import('./Changes').then((m) => ({ default: m.InlinePatch })));
+
+/** A write request's detail is the path, a blank line and the CLI's git patch: those two parts, or null for any other detail. */
+function writePatch(detail?: string): { path: string; patch: string } | null {
+  const cut = detail?.indexOf('\n\n') ?? -1;
+  if (!detail || cut < 0 || !detail.startsWith('diff --git ', cut + 2)) return null;
+  return { path: detail.slice(0, cut), patch: detail.slice(cut + 2) };
+}
 
 /**
  * A decided request that no tool row claims: one quiet row of the tool rows' kind, in its
@@ -71,6 +80,8 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
   const elicitation = interaction.elicitation;
   // A link is shown for the user to open; only an https one, as the service sends it.
   const link = elicitation?.mode === 'url' && elicitation.url?.startsWith('https://') ? elicitation.url : undefined;
+  // A write shows its change as the Changes diff: the path once, as its caption, and no git headers.
+  const write = permission ? writePatch(interaction.detail) : null;
 
   async function respond(answer: Answer, action: string) {
     setBusy(action);
@@ -105,7 +116,17 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
       <h3 id={titleId} className="text-title text-ink">
         {interaction.title}
       </h3>
-      {interaction.detail && (
+      {write ? (
+        <div role="region" aria-label="Proposed change" className="mt-2 overflow-x-auto rounded-sm bg-sunken">
+          {/^@@ /m.test(write.patch) ? (
+            <Suspense fallback={<p role="status" className="p-2 text-caption text-muted">Loading the diff viewer…</p>}>
+              <InlinePatch path={write.path} text={write.patch} />
+            </Suspense>
+          ) : (
+            <p className="px-3 py-2 text-caption text-muted"><span className="font-mono text-ink">{write.path}</span>: no text change to show.</p>
+          )}
+        </div>
+      ) : interaction.detail && (
         <pre translate="no" className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">
           {interaction.detail}
         </pre>
@@ -161,12 +182,15 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
  * (a radio's click fires either way), and `hint` sits at the chosen row's end to say what it does.
  */
 function ChoiceRow({ name, choice, multiple, on, again = false, hint, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; onToggle: () => void }>) {
+  const hintId = useId();
+  const shown = on && !!hint;
   const change = !multiple && again ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
   return (
     <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} className="size-3.5 accent-accent" {...change} />
+      {/* The name stays the choice; the hint is its description, so a screen reader announces it too. */}
+      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} aria-label={choice} aria-describedby={shown ? hintId : undefined} className="size-3.5 accent-accent" {...change} />
       <span className="min-w-0 flex-1">{choice}</span>
-      {on && hint && <span aria-hidden="true" className="shrink-0 text-caption text-muted animate-fade-in">{hint}</span>}
+      {shown && <span id={hintId} className="shrink-0 text-caption text-muted animate-fade-in">{hint}</span>}
     </label>
   );
 }
