@@ -2249,8 +2249,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   show unsaved work, the row's hover button and the menu item read
   "Settle…" and the confirmation opens at once without that request; for
   any other Thread the request goes first and a refusal opens the
-  confirmation. Archive asks first ("Archive this thread?"), and a refusal
-  fills that same popover in place, so it never asks in a second one. Either way it hangs
+  confirmation. Archive asks once: `GET /api/sessions/{id}/archive` is its
+  dry run, answering with the same 409 `unsaved_work` an unforced Archive
+  would meet now, or 204, and moving nothing; the popover opens as "Archive
+  this thread?" or "Archive with unsaved work?" with the files. A refusal
+  that still comes (work made since the dry run) fills that same popover in
+  place, so it never asks in a second one. Either way it hangs
   under the sidebar row or the control that asked, read as it was
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes), Cancel and

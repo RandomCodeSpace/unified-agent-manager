@@ -106,6 +106,23 @@ describe('settling or archiving with unsaved git work', () => {
     expect(await sheet.findByText(/by this thread/)).toBeTruthy();
   });
 
+  test('Archive in a shared folder: the dry run opens the unsaved popover directly with the Thread\'s files, and one click archives', async () => {
+    const { user } = renderApp('#task=t3');
+    await screen.findByRole('region', { name: 'Conversation' });
+    const check = vi.spyOn(api, 'archiveCheck');
+    const stage = vi.spyOn(api, 'stage');
+    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' });
+    expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+    expect(check.mock.calls).toEqual([['t3']]);
+    expect(stage).not.toHaveBeenCalled();
+    expect(within(within(dialog).getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]);
+    await user.click(within(dialog).getByRole('button', { name: 'Archive anyway' }));
+    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    expect(stage.mock.calls).toEqual([['t3', 'archive', { force: true }]]);
+  });
+
   test('a clean-looking Archive refused over new work asks in the same popover, anchored to the control that asked', async () => {
     const { user } = renderApp('#task=t10');
     await screen.findByRole('region', { name: 'Conversation' });

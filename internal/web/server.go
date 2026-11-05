@@ -299,6 +299,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handlePutAway((*Manager).Settle))
 	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handlePutAway((*Manager).Archive))
+	mux.HandleFunc("GET /api/sessions/{id}/archive", s.handleArchiveCheck)
 	mux.HandleFunc("POST /api/sessions/{id}/unarchive", s.handleStage((*Manager).Unarchive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
 	mux.HandleFunc("GET /api/sessions/{id}/plan-reviews/{rid}", s.handlePlanReview)
@@ -1388,6 +1389,17 @@ func (s *Server) handleStage(move func(*Manager, string) (SessionSummary, error)
 // refused with 409 unsaved_work, its counts and first changed files.
 func (s *Server) handlePutAway(move func(*Manager, string) (SessionSummary, error)) http.HandlerFunc {
 	return s.stageHandler(move, true)
+}
+
+// handleArchiveCheck is Archive's dry run: the 409 unsaved_work refusal an
+// unforced Archive would meet now, or 204. Nothing moves. It is a GET so an
+// older instance answers 405 instead of archiving.
+func (s *Server) handleArchiveCheck(w http.ResponseWriter, r *http.Request) {
+	if err := s.m.checkUnsaved(r.Context(), r.PathValue("id")); err != nil {
+		writeFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) stageHandler(move func(*Manager, string) (SessionSummary, error), guarded bool) http.HandlerFunc {

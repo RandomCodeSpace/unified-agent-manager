@@ -148,8 +148,16 @@ func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
 		t.Fatalf("folder git_pending = %+v", p)
 	}
 
+	// Archive's dry run answers with the refusal Archive would meet, and moves nothing.
+	if w := g.ts.do(http.MethodGet, "/api/sessions/"+other.ID+"/archive", "", withCookie(g.ts)); w.Code != http.StatusNoContent {
+		t.Fatalf("dry run beside others' work = %d %s", w.Code, w.Body)
+	}
+	dry := g.ts.do(http.MethodGet, "/api/sessions/"+g.id+"/archive", "", withCookie(g.ts))
 	for _, action := range []string{"settle", "archive"} {
 		w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/"+action, "", withCookie(g.ts))
+		if action == "archive" && (dry.Code != w.Code || dry.Body.String() != w.Body.String()) {
+			t.Fatalf("dry run = %d %s, archive = %d %s", dry.Code, dry.Body, w.Code, w.Body)
+		}
 		var refused struct {
 			Error   string     `json:"error"`
 			Code    string     `json:"code"`
