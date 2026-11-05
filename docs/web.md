@@ -66,7 +66,55 @@ directly, see [Listen beyond loopback](#listen-beyond-loopback).
 | `uam web` | Start the service, or show how to reach the running one |
 | `uam web status [--json]` | Show whether it is running, its PID, address, and version (not the token) |
 | `uam web stop` | Stop the service and the provider processes it started; waits up to 30 seconds for it to exit |
+| `uam web service remove` | Disable and delete the boot service, and keep `uam web` from installing it again |
 | `uam web token set` | Replace the access token with one read from stdin (see [Sign in](#sign-in)) |
+
+### Boot service
+
+Where a systemd user manager runs, `uam web` also makes the service start at
+boot, without root and never with sudo. After it starts the service it writes
+`~/.config/systemd/user/uam-web.service`, runs `systemctl --user
+daemon-reload` and `systemctl --user enable uam-web.service`, and asks
+`loginctl enable-linger` to keep your user manager running without a login.
+Enabling does not start a second service: the unit runs at the next boot.
+Where logind refuses lingering without a password, the unit starts at login
+instead, and stops at the last logout.
+
+The unit runs `<uam binary> __web` with the flags of that start
+(`--listen`, `--public-origin`, `--log-headers`). Its environment is only
+`HOME`, `PATH` and those of `UAM_CONFIG_DIR`, `UAM_SESSION_DIR`,
+`UAM_CACHE_DIR`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` that are set, as in a
+start from a clean shell. The unit holds no secret: the access token stays
+in its file. The keys of custom models that read their key from a
+`UAM_BYOM_*` variable come from `boot-service.env` beside the access token
+file, which the unit loads with `EnvironmentFile=-` (a missing file is no
+error). Each `uam web` start rewrites that file, owner-only (0600) and
+atomically, with exactly those variables as that start has them; unset ones
+are left out, and with none the file is removed. A start from inside the
+unit's own service keeps the file as it is. Each start also rewrites the
+unit when the binary path, the flags or its environment changed.
+
+The unit restarts a service that fails, 10 seconds later, and gives up after
+five starts within two minutes. When a service started by hand already runs,
+the unit's service finds the single-instance lock taken, so it gives up
+that way; a service stopped with `uam web stop` is not restarted.
+`uam web` while the unit's service runs shows that service, and `uam web
+stop` stops either one. uam never changes a `uam-web.service` it did not
+write. Without a systemd user manager (WSL, containers, macOS) nothing is
+installed and `uam web` starts as before.
+
+`uam web status` shows the boot service: unavailable on this host (no
+systemd user session), not installed, enabled and starting at boot, or
+starting at login because lingering is off. It names (never shows) any
+`UAM_BYOM_*` variable a custom model reads its key from that was unset when
+`uam web` last wrote the key file. It warns when logind's
+`KillUserProcesses=yes` ends a `uam web` started from a login shell at
+logout. `uam web service remove` disables and deletes the unit, deletes
+the key file, and creates
+`boot-service-removed` beside the access token file; `uam web` does not
+install the unit while that file exists. It leaves lingering on, since other
+user services may need it (`loginctl disable-linger` turns it off), and a
+running service keeps running.
 
 ## Connect from Windows
 
@@ -2913,7 +2961,9 @@ in the same process: the PID, the flags (`--listen`, `--public-origin`,
 browsers stay signed in. An open page reconnects and reloads onto the new
 version (or offers Reload while it holds a draft or a popup). If the new
 binary cannot be started, the service logs why and exits; run `uam web`
-again. `GET /api/service` returns `{"running": "v0.15.4", "installed":
+again. A service the [boot service](#boot-service) started restarts the
+same way, inside its unit; the unit keeps the binary path of the last
+`uam web` start. `GET /api/service` returns `{"running": "v0.15.4", "installed":
 "v0.15.5", "restart": "available"}` (`restart` is `none`, `available`,
 `pending` or `restarting`, with `error` when the binary cannot be read), and
 `POST /api/service/restart` asks for the restart; `/api/meta` carries the
@@ -3009,10 +3059,14 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   distributions). Check the effective setting, including drop-ins, with
   `systemd-analyze cat-config systemd/logind.conf | grep KillUserProcesses`;
   a commented line means the distribution default applies. UAM does not
-  change that policy.
+  change that policy; `uam web status` warns when it is on. The
+  [boot service](#boot-service) runs under your systemd user manager, not
+  the login session, so the policy does not end it.
 - **Reboot.** A reboot ends the service and every running turn. Records keep
   the exact conversation IDs, so conversations can be reopened afterwards, but
-  the interrupted turn is not continued. UAM does not install a boot service.
+  the interrupted turn is not continued. The [boot service](#boot-service)
+  starts the service again at boot, or at login without lingering; without a
+  systemd user manager nothing starts it until you run `uam web`.
 - **Restart mid-turn.** A restart (or crash) never resumes or replays the turn
   it cut, Yolo included: Copilot conversations reopen without continuing
   pending work, so the next prompt runs normally. A shell command or tool

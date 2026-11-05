@@ -79,9 +79,9 @@ func ProcAlive(pid int) bool {
 // ProcStartTime returns a kernel process identity, or zero if unavailable.
 func ProcStartTime(pid int) int64 { return procStartTime(pid) }
 
-// pathEnv lists the environment variables uam reads directories from. A
+// PathEnv lists the environment variables uam reads directories from. A
 // relative value means "relative to where uam web was started".
-var pathEnv = []string{"UAM_SESSION_DIR", "UAM_CONFIG_DIR", "UAM_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
+var PathEnv = []string{"UAM_SESSION_DIR", "UAM_CONFIG_DIR", "UAM_CACHE_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
 
 // WorkDir is the directory the web daemon and its provider runtimes run in:
 // the user's home, which outlives any checkout the service was started
@@ -95,7 +95,7 @@ func WorkDir() string {
 	return "/"
 }
 
-// WorkEnv is this process's environment with the path variables in pathEnv
+// WorkEnv is this process's environment with the path variables in PathEnv
 // made absolute against the current directory, for a daemon started in
 // WorkDir: relative settings keep their meaning there, and the daemon's
 // children (the Copilot CLI) never inherit a directory that may later be
@@ -104,7 +104,7 @@ func WorkEnv() ([]string, error) {
 	env := os.Environ()
 	for i, kv := range env {
 		name, v, _ := strings.Cut(kv, "=")
-		if v == "" || filepath.IsAbs(v) || !slices.Contains(pathEnv, name) {
+		if v == "" || filepath.IsAbs(v) || !slices.Contains(PathEnv, name) {
 			continue
 		}
 		abs, err := filepath.Abs(v)

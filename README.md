@@ -48,6 +48,9 @@ include terminal features that have since been retired.
    create a Thread, choose a model, and send a message.
 
 The service keeps working after its launching terminal or browser closes.
+Where a systemd user manager runs, `uam web` also enables a systemd user
+unit, without root, that starts the service at boot; see the
+[web guide](docs/web.md#boot-service).
 For a remote host, use the printed SSH forwarding command or configure an
 authenticated deployment as described in the [web guide](docs/web.md).
 Authentication is required; there is no `--no-auth` mode.
@@ -60,6 +63,7 @@ Authentication is required; there is no `--no-auth` mode.
 | `uam web` | Start the web service or show the running service |
 | `uam web status [--json]` | Show service status |
 | `uam web stop` | Stop the service and its Copilot runtimes |
+| `uam web service remove` | Remove the boot service `uam web` installs |
 | `uam web token set` | Set the access token from stdin |
 | `uam version`, `uam --version`, `uam -v` | Print the version |
 
