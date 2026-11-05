@@ -207,6 +207,7 @@ func (m *Manager) readNativeDiff(ctx context.Context, s *webSession, conv agenta
 	if s.nativeChanges && !s.removed && s.conv == conv && s.gen == gen && s.nativeDiffRevision == revision && (s.nativePaths == nil || !slices.Equal(s.nativePaths, paths)) {
 		s.nativePaths, s.nativePathsAt = paths, m.now()
 		m.persistLocked(s)
+		m.kickDiffLocked(s)
 	}
 	m.mu.Unlock()
 	return files, nil

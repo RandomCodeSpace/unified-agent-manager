@@ -2941,6 +2941,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickTurnChangesLocked(s, *finalizedTiming)
 	}
 	if turn.State != agentapi.TurnWorking {
+		m.kickSessionPathsLocked(s)
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
 		m.kickWorktreeSizeLocked(s)
