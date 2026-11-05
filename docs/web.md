@@ -2870,11 +2870,13 @@ permission when you turn the switch on, and at no other time.
 
 A notification is sent once each time a Thread:
 
-- asks you a question: "<Thread name> needs you: <question>"
-- needs your permission: "<Thread name> needs you: <request>"
-- fails: "<Thread name> failed"
+- asks you a question: "<Thread name>: Needs answer", with the question as
+  its text
+- needs your permission: "<Thread name>: Needs permission", with the request
+  as its text
+- fails: "<Thread name>: Error"
 - finishes a turn, with no subagent or background shell still running:
-  "<Thread name> finished"
+  "<Thread name>: Finished"
 
 The Thread you are looking at on a visible page is never announced, on any of
 your devices: each tab tells the service which Thread it shows while it is

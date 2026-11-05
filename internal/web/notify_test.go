@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -44,6 +45,9 @@ func notices(t *testing.T, sub *Subscriber) []noticeEvent {
 				decodeField(t, f, "session_id", &n.SessionID)
 				decodeField(t, f, "kind", &n.Kind)
 				decodeField(t, f, "title", &n.Title)
+				if _, ok := f.data["body"]; ok {
+					decodeField(t, f, "body", &n.Body)
+				}
 				out = append(out, n)
 			}
 		case <-time.After(200 * time.Millisecond):
@@ -92,7 +96,7 @@ func TestNoticesFireOncePerTransition(t *testing.T) {
 	})
 	conv.EmitTitle("a new title") // no transition
 	got := notices(t, sub)
-	if len(got) != 1 || got[0] != (noticeEvent{SessionID: sum.ID, Kind: noticeQuestion, Title: "task needs you: Which colour should it be?"}) {
+	if len(got) != 1 || got[0] != (noticeEvent{SessionID: sum.ID, Kind: noticeQuestion, Title: "task: Needs answer", Body: "Which colour should it be?"}) {
 		t.Fatalf("after a question: %+v", got)
 	}
 	if _, err := m.Answer(sum.ID, "q1", agentapi.Answer{Answers: [][]string{{"red"}}}); err != nil {
@@ -101,12 +105,12 @@ func TestNoticesFireOncePerTransition(t *testing.T) {
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	conv.EmitTitle("another title")
 	got = notices(t, sub)
-	if len(got) != 1 || got[0] != (noticeEvent{SessionID: sum.ID, Kind: noticeFinished, Title: "task finished"}) {
+	if len(got) != 1 || got[0] != (noticeEvent{SessionID: sum.ID, Kind: noticeFinished, Title: "task: Finished"}) {
 		t.Fatalf("after finishing: %+v", got)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.EmitTurn(agentapi.TurnFailed, "boom")
-	if got = notices(t, sub); len(got) != 1 || got[0].Kind != noticeFailed || got[0].Title != "task failed" {
+	if got = notices(t, sub); len(got) != 1 || got[0].Kind != noticeFailed || got[0].Title != "task: Error" {
 		t.Fatalf("after failing: %+v", got)
 	}
 }
@@ -217,6 +221,35 @@ func TestNeedsYouCountSurvivesARestart(t *testing.T) {
 	defer m2.mu.Unlock()
 	if n := m2.needsYouLocked(); n != 3 {
 		t.Fatalf("needs you after a restart = %d, want 3 (crashed, stopped, failed)", n)
+	}
+}
+
+// Opening a finished Thread's conversation again after a restart (a page
+// viewing it) is no new end: no "finished" notice.
+func TestNoFinishedNoticeWhenARestartedThreadReopens(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	st := openTestStore(t)
+	m := NewManager(st, []agentapi.Provider{prov})
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sum, conv := createSession(t, m, prov)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m2 := startManager(t, st, prov)
+	sub, _, err := m2.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m2.Unsubscribe(sub)
+	if err := m2.View(context.Background(), sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := notices(t, sub); len(got) != 0 {
+		t.Fatalf("notices after reopening a finished Thread: %+v", got)
 	}
 }
 
@@ -369,7 +402,7 @@ func TestPushSendsEncryptedNoticeAndForgetsExpired(t *testing.T) {
 	if !strings.HasPrefix(key, sum.ID+":permission:") {
 		t.Fatalf("payload key = %q", key)
 	}
-	want := map[string]any{"title": "task needs you: Run a shell command", "task": sum.ID, "kind": noticePermission, "key": key, "badge": float64(1)}
+	want := map[string]any{"title": "task: Needs permission", "body": "Run a shell command", "task": sum.ID, "kind": noticePermission, "key": key, "badge": float64(1)}
 	if len(payload) != len(want) {
 		t.Fatalf("payload = %v, want %v", payload, want)
 	}
@@ -381,6 +414,37 @@ func TestPushSendsEncryptedNoticeAndForgetsExpired(t *testing.T) {
 	data, _ := os.ReadFile(m.push.path)
 	if strings.Contains(string(data), "/gone") || !strings.Contains(string(data), "/live") {
 		t.Fatalf("stored subscriptions: %s", data)
+	}
+	waitUntil(t, "the push to be counted", func() bool { return countOf(m, "notices_pushed") == 1 })
+}
+
+// notices_pushed counts notices a push service accepted, not attempts.
+func TestPushSendReportsWhetherAnyServiceAccepted(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	var status atomic.Int32
+	status.Store(http.StatusInternalServerError)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer srv.Close()
+	m.push.client = srv.Client()
+	if _, err := m.push.publicKey(); err != nil {
+		t.Fatal(err)
+	}
+	payload := pushPayload{Title: "t: Finished", Task: "task", Kind: noticeFinished, Key: "k"}
+	if m.push.send(t.Context(), payload) {
+		t.Fatal("sent with no subscriptions")
+	}
+	if err := m.push.subscribe(pushSubscription{Subscription: newPushReceiver(t).subscription(srv.URL + "/live")}); err != nil {
+		t.Fatal(err)
+	}
+	if m.push.send(t.Context(), payload) {
+		t.Fatal("sent when the push service refused")
+	}
+	status.Store(http.StatusCreated)
+	if !m.push.send(t.Context(), payload) {
+		t.Fatal("not sent when the push service accepted")
 	}
 }
 

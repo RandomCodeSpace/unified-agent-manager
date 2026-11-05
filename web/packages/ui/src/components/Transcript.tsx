@@ -10,7 +10,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { formatCount, lineCountsText } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { receipts, type Stamp } from '../lib/receipts';
@@ -1347,6 +1347,7 @@ function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
     const label = failed && result.passed > 0 ? <><span className="max-sm:hidden">{result.passed} passed · </span>{result.failed} failed</> : words;
     return <Blocks className="font-sans" items={[{ key: 'tests', tone: failed ? 'error' : 'success', Icon: failed ? X : Check, label, title: words }]} />;
   }
+  if (result.kind === 'budget') return <Blocks className="font-sans" items={[{ key: 'result', tone: 'none', Icon: Minus, label: BUDGET_STOPPED, title: BUDGET_STOPPED }]} />;
   const ok = result.kind === 'exit' && result.code === 0;
   const words = result.kind === 'exit' ? `exit ${result.code}` : 'failed';
   return <Blocks className="font-sans" items={[{ key: 'result', tone: ok ? 'success' : 'error', Icon: ok ? Check : X, label: words, title: words }]} />;
@@ -1372,7 +1373,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const status = t?.status ?? 'pending';
   // Display only: a tool still pending/running after the turn ended never reported a result.
   const ended = !live && isActive(status);
-  const tone = ended ? 'ended' : status;
+  const tone = ended || t?.budget_stopped ? 'ended' : status;
   const { name, arg } = toolLabel(t);
   const word = statusWord(status, ended);
   const images = item.images ?? [];

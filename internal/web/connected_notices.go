@@ -90,7 +90,7 @@ type connectedNotices struct {
 func newConnectedNotices(m *Manager, homeID, path string) *connectedNotices {
 	ctx, cancel := context.WithCancel(m.ctx)
 	h := &connectedNotices{m: m, homeID: homeID, path: path, ctx: ctx, cancel: cancel,
-		sources: make(map[string]*noticeSourceState), cursors: make(map[string]savedNoticeCursor), readers: make(map[*connectedNoticeReader]struct{}), send: m.push.send}
+		sources: make(map[string]*noticeSourceState), cursors: make(map[string]savedNoticeCursor), readers: make(map[*connectedNoticeReader]struct{}), send: func(ctx context.Context, p pushPayload) { m.push.send(ctx, p) }}
 	if path != "" {
 		file, err := os.Open(path) // #nosec G304 -- fixed application-owned cursor file, no credentials.
 		var data []byte
@@ -328,6 +328,7 @@ func (h *connectedNotices) accept(state *noticeSourceState, name string, event s
 	notice := connectedNotice{sourceNotice: event, ConnectionID: state.source.ID, Generation: state.source.Generation, HomeID: h.homeID,
 		Key: fmt.Sprintf("%s:%s:%d", event.InstanceID, event.Epoch, event.Seq)}
 	notice.Title = clipNotice(state.source.Label) + ": " + clipNotice(event.Title)
+	notice.Body = clipNotice(event.Body)
 	visible := false
 	for reader := range h.readers {
 		if reader.connection == state.source.ID && reader.task == event.SessionID {
@@ -352,7 +353,7 @@ func (h *connectedNotices) accept(state *noticeSourceState, name string, event s
 	h.publishLocked("notify", notice)
 	h.mu.Unlock()
 	if !visible {
-		payload := pushPayload{Title: notice.Title, Task: event.SessionID, Kind: event.Kind, Key: notice.Key,
+		payload := pushPayload{Title: notice.Title, Body: notice.Body, Task: event.SessionID, Kind: event.Kind, Key: notice.Key,
 			HomeID: h.homeID, InstanceID: event.InstanceID, ConnectionID: state.source.ID, Generation: state.source.Generation}
 		select {
 		case state.deliveries <- noticeDelivery{payload, event.EmittedAt}:

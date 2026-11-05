@@ -1088,6 +1088,8 @@ export interface ToolCall {
   tail?: OutputLine[];
   /** Recorded: its permission was denied because nobody could be asked; it stays failed. */
   unasked?: boolean;
+  /** The Thread's budget denied it: it never ran, so it did not fail. */
+  budget_stopped?: boolean;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }

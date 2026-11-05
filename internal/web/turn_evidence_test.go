@@ -494,3 +494,25 @@ func TestTurnEvidenceRoute(t *testing.T) {
 		t.Fatalf("unknown task: %d", w.Code)
 	}
 }
+
+// A command the budget denied never ran: it is not a failed command, so no
+// "Fix the failed command" suggestion, and the step reads as stopped by the budget.
+func TestBudgetDeniedCommandIsNotAFailure(t *testing.T) {
+	e := newEvidenceTurn()
+	input, _ := json.Marshal(map[string]string{"command": "echo w2"})
+	denied := agentapi.Item{ID: "c2", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolFailed, Input: string(input), Output: "Denied by preToolUse hook: " + wrapDeny}}
+	e.note(denied)
+	if f := e.facts(t); f.failed != 0 || f.commands != 0 {
+		t.Fatalf("facts after a budget denial: failed %d, commands %d", f.failed, f.commands)
+	}
+	if got := projectItem(denied); got.Tool == nil || !got.Tool.BudgetStopped {
+		t.Fatalf("projected tool = %+v, want budget_stopped", got.Tool)
+	}
+	e.note(agentapi.Item{ID: "c3", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolFailed, Input: string(input), Output: "boom"}})
+	if f := e.facts(t); f.failed != 1 {
+		t.Fatalf("a real failure counts: failed %d", f.failed)
+	}
+	if got := projectItem(e.s.items[len(e.s.items)-1]); got.Tool.BudgetStopped {
+		t.Fatal("a real failure projected as budget_stopped")
+	}
+}

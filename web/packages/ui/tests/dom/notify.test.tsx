@@ -30,7 +30,7 @@ async function notifySwitch() {
 }
 
 const notice = (over: Partial<Notice> = {}): Notice => {
-  const n = { seq: 1, session_id: 'task-b', kind: 'question' as const, title: 'Fix it needs you: Which colour?', ...over };
+  const n = { seq: 1, session_id: 'task-b', kind: 'question' as const, title: 'Fix it: Needs answer', body: 'Which colour?', ...over };
   return { key: `${n.session_id}:${n.kind}:${n.seq}`, ...n };
 };
 
@@ -98,7 +98,7 @@ describe('notifications', () => {
     await handleNotice(notice({ session_id: 'task-a', seq: 2 }));
     expect(shown).toHaveLength(0);
     await handleNotice(notice({ seq: 3 }));
-    expect(shown).toEqual([{ title: 'Fix it needs you: Which colour?', options: expect.objectContaining({ tag: 'uam-task-task-b', data: { task: 'task-b', key: 'task-b:question:3' } }) }]);
+    expect(shown).toEqual([{ title: 'Fix it: Needs answer', options: expect.objectContaining({ body: 'Which colour?', tag: 'uam-task-task-b', data: { task: 'task-b', key: 'task-b:question:3' } }) }]);
     // Another tab got the same event: it is already taken.
     await handleNotice(notice({ seq: 3 }));
     expect(shown).toHaveLength(1);
@@ -155,7 +155,7 @@ describe('notifications', () => {
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Routines of unified-agent-manager' }));
     await screen.findByRole('heading', { level: 1, name: 'Routines' });
     await handleNotice(notice({ session_id: 't3', seq: 8 }));
-    expect(shown.map((n) => n.title)).toEqual(['Fix it needs you: Which colour?']);
+    expect(shown.map((n) => n.title)).toEqual(['Fix it: Needs answer']);
   });
   test('each service hears what the tab shows once its stream is open, and again only when that changes for it', async () => {
     const posts: string[] = [];

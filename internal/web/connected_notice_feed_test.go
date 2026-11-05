@@ -9,7 +9,7 @@ func TestConnectedNoticeReplayAndGap(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	appendNotice := func() {
 		m.mu.Lock()
-		m.recordNoticeLocked("same-task", noticeFinished, "Task finished")
+		m.recordNoticeLocked("same-task", noticeFinished, "Task finished", "")
 		m.mu.Unlock()
 	}
 	appendNotice()
@@ -44,7 +44,7 @@ func TestConnectedNoticeReaderIsBounded(t *testing.T) {
 	reader, _, _ := m.subscribeNotices("")
 	m.mu.Lock()
 	for range subscriberQueue + 1 {
-		m.recordNoticeLocked("task", noticeQuestion, "Question")
+		m.recordNoticeLocked("task", noticeQuestion, "Question", "")
 	}
 	m.mu.Unlock()
 	select {
@@ -63,7 +63,7 @@ func TestConnectedNoticeExpiry(t *testing.T) {
 	now := time.Now()
 	m.mu.Lock()
 	m.now = func() time.Time { return now }
-	m.recordNoticeLocked("task", noticeQuestion, "Question")
+	m.recordNoticeLocked("task", noticeQuestion, "Question", "")
 	now = now.Add(pushTTL*time.Second + time.Second)
 	m.mu.Unlock()
 	reader, baseline, replay := m.subscribeNotices(noticeCursor(m.epoch, 0))
