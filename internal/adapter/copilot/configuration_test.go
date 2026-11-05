@@ -228,3 +228,31 @@ func TestConfigurationDiscoveryBounds(t *testing.T) {
 		t.Fatalf("instruction bounds = %d rows, %v", len(instructions.Definitions), err)
 	}
 }
+
+// Over the CLI's definition cap the built-in uam skill falls off the listed
+// descriptions, but each Task session still gets uam's skill directory, so
+// the skill loads by name, and taskSystem still tells the agent to load it.
+func TestUamSkillSurvivesTheDefinitionCap(t *testing.T) {
+	client := &configurationFakeClient{fakeClient: &fakeClient{}, skills: &rpc.ServerSkillList{}}
+	for i := range maxConfigurationDefinitions + 2 {
+		client.skills.Skills = append(client.skills.Skills, rpc.ServerSkill{Name: fmt.Sprint("skill-", i), Description: "x", Source: rpc.SkillSourcePlugin})
+	}
+	client.skills.Skills = append(client.skills.Skills, rpc.ServerSkill{Name: "uam", Description: "uam", Source: rpc.SkillSourceCustom})
+	provider := newWebProvider(func() (sdkClient, error) { return client, nil }, time.Hour)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	builtins := []string{"/state/skills"}
+	skills, err := provider.DiscoverSkills(context.Background(), nil, builtins)
+	if err != nil || len(skills.Definitions) != maxConfigurationDefinitions || !strings.Contains(strings.Join(skills.Warnings, " "), "128-definition limit") {
+		t.Fatalf("capped skills = %d rows, %v, %v", len(skills.Definitions), skills.Warnings, err)
+	}
+	if _, err := provider.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, SkillDirectories: builtins}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := client.create[0]
+	if !slices.Equal(cfg.SkillDirectories, builtins) {
+		t.Fatalf("skill directories over the cap = %v", cfg.SkillDirectories)
+	}
+	if cfg.SystemMessage == nil || !strings.Contains(cfg.SystemMessage.Content, "Load the uam skill before you show the owner") {
+		t.Fatalf("system message over the cap = %+v", cfg.SystemMessage)
+	}
+}

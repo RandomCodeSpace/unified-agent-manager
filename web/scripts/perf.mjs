@@ -82,12 +82,15 @@ const scroll = await page.evaluate(({ sel, step: px }) => new Promise((resolve) 
     if (el.scrollTop > 0) stillSince = 0;
     else stillSince ||= now;
     // At the top for 3 s with nothing older to load, or 120 s in all.
-    if ((stillSince && now - stillSince > 3000) || now - start > 120_000) resolve({ frames: frames.slice(1), seconds: (now - start) / 1000, top: el.querySelector('[role=log] p')?.textContent ?? '' });
+    const settled = stillSince && now - stillSince > 3000;
+    if (settled || now - start > 120_000) resolve({ frames: frames.slice(1), seconds: (now - start) / 1000, settled: Boolean(settled), top: el.querySelector('[role=log] p')?.textContent ?? '' });
     else requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 }), { sel: conversation, step: Number(process.env.SCROLL_STEP ?? 40) });
-report('Scroll frame (to the first item)', 'p95 ≤20 ms', scroll.frames, (v) => p95(v) <= 20);
+// Item 1 (mock perfTask p0) opens turn 1; a run that timed out or stopped short of it fails.
+const reachedFirst = scroll.settled && scroll.top.startsWith('Turn 1: ');
+report('Scroll frame (to the first item)', 'p95 ≤20 ms, reaches item 1', scroll.frames, (v) => reachedFirst && p95(v) <= 20);
 
 // A 60 s turn: reopen t-perf at its live end, send a prompt, type into the composer while the reply streams, and
 // watch long tasks.
@@ -125,4 +128,5 @@ console.table(rows);
 const cpus = os.cpus();
 console.log(`Hardware: ${cpus[0].model}, ${cpus.length} cores, ${(os.totalmem() / 2 ** 30).toFixed(0)} GiB, ${os.platform()} ${os.release()}; Chromium ${browser.version()} headless, viewport 1440×900`);
 if (errors.length) console.log('Page errors:', errors);
+if (errors.length || rows.some((r) => r.result === 'FAIL')) process.exitCode = 1;
 await browser.close();
