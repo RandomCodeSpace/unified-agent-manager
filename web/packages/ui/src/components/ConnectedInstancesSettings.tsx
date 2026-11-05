@@ -8,7 +8,6 @@ import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 
 export interface ConnectedInstancesSettingsProps {
-  homeInstanceID: string;
   connections: ConnectedInstance[];
   statuses?: Record<string, ConnectedStatus>;
   activeTerminalConnectionID?: string | null;
@@ -97,7 +96,7 @@ function ConnectionForm({ initial, busy, onSubmit, onCancel }: Readonly<{
 }
 
 /** Home-owned registry controls. Changing a connection never changes its remote task data. */
-export function ConnectedInstancesSettings({ homeInstanceID, connections, statuses = {}, activeTerminalConnectionID, onAdd, onUpdate, onRemove, onRefresh, onOpenAccount }: Readonly<ConnectedInstancesSettingsProps>) {
+export function ConnectedInstancesSettings({ connections, statuses = {}, activeTerminalConnectionID, onAdd, onUpdate, onRemove, onRefresh, onOpenAccount }: Readonly<ConnectedInstancesSettingsProps>) {
   const [editor, setEditor] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -144,7 +143,6 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
   return (
     <div className="flex flex-col gap-4">
       <Note>Each server keeps its own threads, settings and Copilot account.</Note>
-      {homeInstanceID && <Note>Main Server: <span className="break-all font-mono">{homeInstanceID}</span></Note>}
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={busy || adding} onClick={() => { setAdding(true); setEditor(null); setError(null); }}>Add instance</Button>
         <Button variant="secondary" disabled={busy} onClick={() => void run(onRefresh)}>Check again</Button>
@@ -161,7 +159,6 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
               <div className="min-w-0 flex-1">
                 <h3 className="break-words text-ui font-medium text-ink">{connection.label}</h3>
                 <Note><span className="break-all">{connection.base_url}</span></Note>
-                <Note><span className="break-all font-mono">{connection.instance_id}</span></Note>
                 {offers(connection) && <Note><span className="block truncate" title={offers(connection)}>{offers(connection)}</span></Note>}
               </div>
 

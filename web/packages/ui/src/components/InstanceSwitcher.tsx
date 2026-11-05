@@ -17,7 +17,7 @@ import { PanelFoot, PanelHead } from './ui/panel';
 
 /**
  * The instance switcher (DESIGN.md Connected instances): which instance the Task list shows and which one is on screen.
- * In the sidebar it opens from the header toolbar, with All instances first; in the Settings header it picks the
+ * In the sidebar it opens from the header toolbar or the collapsed rail, with All instances first; in the Settings header it picks the
  * instance whose Settings show. Its list is an anchored reader, a bottom sheet on a phone.
  */
 
@@ -158,8 +158,9 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
  * keeping Settings open when it is; Settings' picks the instance on screen, and the scope follows unless it is All.
  * `live`: the instance on screen's own Tasks, fresher than its streamed copy.
  * `onConnect`: shows Settings → Connected instances while this server is on screen; from a connection, its Settings open there.
+ * `side`: where the button's tip opens (the collapsed rail's open to the right).
  */
-export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect }: Readonly<{ place: 'sidebar' | 'settings'; live?: { sessions: SessionSummary[]; hasNews: Unread }; settingsOpen?: boolean; onConnect: () => void }>) {
+export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect, side }: Readonly<{ place: 'sidebar' | 'settings'; live?: { sessions: SessionSummary[]; hasNews: Unread }; settingsOpen?: boolean; onConnect: () => void; side?: 'top' | 'right' }>) {
   const federation = useFederation();
   const { meta } = useApp();
   const [view, setView] = useState({ open: false, phone: false });
@@ -174,6 +175,8 @@ export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect 
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyI' || e.defaultPrevented) return;
       if (document.querySelector('[data-popup]:not([data-popup="tooltip"])') || (e.target instanceof Element && e.target.closest('.xterm'))) return;
+      // The collapsed sidebar stays mounted but inert; the rail's switcher answers instead.
+      if (trigger.current?.closest('[inert]')) return;
       e.preventDefault();
       setView({ open: true, phone: window.matchMedia(PHONE).matches });
     };
@@ -230,7 +233,7 @@ export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect 
   const name = `Instance: ${label}${sidebar && (chosen ? chosen.needs : total) ? `, ${chosen ? chosen.needs : total} need you` : ''}`;
   const open = () => setView({ open: true, phone: window.matchMedia(PHONE).matches });
   const button = sidebar ? (
-    <Tip label={<>{label}<span className="block text-on-primary/70">{chosen ? STATUS[chosen.status][0] : summary}{(chosen ? chosen.needs : total) > 0 && ` · ${chosen ? chosen.needs : total} need you`}</span><span className="block text-on-primary/70">Alt+I</span></>} disabled={view.open}>
+    <Tip label={<>{label}<span className="block text-on-primary/70">{chosen ? STATUS[chosen.status][0] : summary}{(chosen ? chosen.needs : total) > 0 && ` · ${chosen ? chosen.needs : total} need you`}</span><span className="block text-on-primary/70">Alt+I</span></>} side={side} disabled={view.open}>
       <Button
         ref={trigger}
         size="icon"

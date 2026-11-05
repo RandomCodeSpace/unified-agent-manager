@@ -211,11 +211,11 @@ function VersionMeta({ version }: Readonly<{ version: string }>) {
 
 /**
  * The collapsed sidebar (wide layout): a narrow rail (`--spacing-rail-collapsed`) on the sidebar's floor. At the top the UAM
- * mark (shows the sidebar, with the Needs you count), then the Project filter, Routines, Add project and New task,
+ * mark (shows the sidebar, with the Needs you count), then the instance switcher (with connected instances), the Project filter, Routines, Add project and New task,
  * in the sidebar header's order; at the foot Settings and the connection. Each is the expanded
  * sidebar's own control, so it opens the same thing; tips open to the right.
  */
-export function SidebarRail({ projects, actions, connection, count }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number }>) {
+export function SidebarRail({ projects, actions, connection, count, live }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number; live: { sessions: SessionSummary[]; hasNews: Unread } }>) {
   const anyProject = useAnyProject(projects);
   return (
     <nav aria-label="Sidebar" className="flex h-full w-rail-collapsed flex-col items-center bg-rail pb-2 text-body">
@@ -223,6 +223,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
         <SidebarToggle id="sidebar-show" open={false} count={count} onToggle={actions.onToggleSidebar} side="right" />
       </div>
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
+        <InstanceSwitcher place="sidebar" live={live} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} side="right" />
         {anyProject && <FilterButton projects={projects} actions={actions} side="right" />}
         {projects.length > 0 && <RoutinesButton actions={actions} side="right" />}
         <AddProjectButton actions={actions} side="right" />
