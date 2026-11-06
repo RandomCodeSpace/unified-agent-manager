@@ -613,6 +613,8 @@ export interface Settings {
   compact_threshold?: number | null;
   /** Whether Tasks, open ones included, start the provider's built-in GitHub MCP server; absent while off, the default. */
   github_mcp?: boolean;
+  /** Whether Threads can message each other with `uam_send`; absent while off, the default. A Thread gets the tool when its conversation next opens. */
+  thread_messages?: boolean;
   /** Investigate failed pipelines for commits made through UAM, starting with the Utility model. Off by default. */
   gitlab_auto_investigate?: boolean;
   /** Agents' pull and merge request instructions, which the Utility model also writes GitLab merge request descriptions with; absent for `DEFAULT_MR_PROMPT`. PATCH `''` puts the default back. */
@@ -999,6 +1001,8 @@ export interface SessionSummary {
   interrupted_at?: string;
   open: boolean;
   pending: number | boolean;
+  /** Messages to or from this Thread that wait for the owner to allow them (`message_pairs`); absent when none. */
+  messages_held?: number;
   /** The request the Task waits on, for the Task list's status line and notices; absent when nothing waits, and from older servers. */
   ask?: Ask;
   /** When the provider last reported anything for the open conversation, to the minute; absent until it does. */
@@ -1393,6 +1397,49 @@ export interface QueuedPrompt {
   files?: string[];
   attachments?: Attachment[];
   settings?: PromptSettings;
+  /** Set for another Thread's message, or the reply to this Thread's. */
+  from?: TurnPeer;
+}
+
+/** The Thread whose message, or reply, a prompt carries: its name and Project as they were when sent. */
+export interface TurnPeer {
+  pair: string;
+  message: string;
+  from: string;
+  from_name?: string;
+  from_project?: string;
+  reply?: boolean;
+}
+
+export type PeerStatus = 'held' | 'queued' | 'working' | 'replying' | 'replied' | 'stopped' | 'failed' | 'interrupted' | 'cancelled' | 'declined' | 'undelivered';
+
+/** One message between the Threads of a pair (`uam_send`). */
+export interface PeerMessage {
+  id: string;
+  from: string;
+  to: string;
+  status: PeerStatus;
+  detail?: string;
+  at: string;
+  updated_at: string;
+}
+
+/**
+ * The owner's decision about messages between two Threads `a` and `b`: `pending` until the first is allowed or denied,
+ * `denied` until reset. `held` waits for the owner: the pair's first message (`first`), one past the allowance
+ * (`limit`), or one the owner must link the pair for (`link`). `used` of `limit` deliveries, a message and its reply each one.
+ */
+export interface MessagePair {
+  id: string;
+  a: string;
+  b: string;
+  state: 'pending' | 'allowed' | 'denied';
+  linked?: boolean;
+  used: number;
+  limit: number;
+  held?: { id: string; from: string; to: string; text: string; reason: 'first' | 'limit' | 'link'; at: string };
+  messages: PeerMessage[];
+  updated_at: string;
 }
 
 /** Structured parts of a prompt beside its text. */
@@ -1493,6 +1540,8 @@ export interface TurnTiming {
   paused_at?: string;
   paused_ms?: number;
   state: 'working' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+  /** Set when another Thread's message, or the reply to this Thread's, started the turn. */
+  peer?: TurnPeer;
   /** The turn's model calls (main agent and subagents) as reported: tokens in and out, and the calls' own duration. */
   input_tokens?: number;
   output_tokens?: number;
@@ -1747,6 +1796,8 @@ export interface SnapshotData extends Representation {
   usage?: AccountUsage;
   /** Absent from a service older than model call counts. */
   model_calls?: ModelCalls;
+  /** Absent from a service older than messages between Threads. */
+  message_pairs?: MessagePair[];
   /** Why saving the Threads failed, until a save succeeds; absent while saves succeed. */
   save_error?: string;
   sessions: SessionSummary[];
@@ -1763,6 +1814,7 @@ export type UpdateData =
   | { name: 'settings'; seq: number; settings: Settings }
   | { name: 'usage'; seq: number; usage: AccountUsage }
   | { name: 'model_calls'; seq: number; model_calls: ModelCalls }
+  | { name: 'message_pairs'; seq: number; message_pairs: MessagePair[] }
   | { name: 'save_status'; seq: number; save_error?: string }
   | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string; append?: boolean }
   | { name: 'tool_output'; seq: number; session_id: string; item_id: string; text: string; agent_id?: string }
@@ -1796,6 +1848,7 @@ export const UPDATE_EVENTS = [
   'settings',
   'usage',
   'model_calls',
+  'message_pairs',
   'save_status',
   'item',
   'delta',
@@ -2171,6 +2224,7 @@ const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boo
   ['usage-v1', (path) => path.startsWith('/api/usage')],
   ['branch-switch-v1', (path) => /^\/api\/sessions\/[^/]+\/git\/branch(?:[?]|$)/.test(path)],
   ['session-stats-v1', (path) => /^\/api\/session-stats(?:[?]|$)/.test(path)],
+  ['thread-messages-v1', (path) => path.startsWith('/api/message-pairs/')],
   ['worktrees-v1', (path) => /^\/api\/(?:worktrees|projects\/[^/]+\/branches)(?:[/?]|$)/.test(path)],
   ['drawings-v1', (path) => /^\/api\/sessions\/[^/]+\/drawings(?:[/?]|$)/.test(path) || path.startsWith('/api/settings/drawio/')],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
@@ -2460,6 +2514,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`, body),
     /** Archive's dry run: the 409 `unsaved_work` an unforced Archive would meet now (see `unsavedRefusal`), else nothing; nothing moves. */
     archiveCheck: (id: string) => call<void>('GET', `/api/sessions/${enc(id)}/archive`),
+    messagePair: (id: string, action: 'allow' | 'deny' | 'reset', link = false) => call<MessagePair | undefined>('POST', `/api/message-pairs/${enc(id)}/${action}`, action === 'allow' ? { link } : undefined),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
     cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),
@@ -2635,7 +2690,7 @@ export function pendingCount(s: SessionSummary): number {
 }
 
 export function needsYou(s: SessionSummary): boolean {
-  return ATTENTION.includes(s.state) || pendingCount(s) > 0;
+  return ATTENTION.includes(s.state) || pendingCount(s) > 0 || (s.messages_held ?? 0) > 0;
 }
 
 export function provider(meta: Meta | null, name: string): ProviderInfo | undefined {

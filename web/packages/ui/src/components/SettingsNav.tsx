@@ -14,7 +14,7 @@ export type SettingsScope = 'service' | 'browser' | 'copilot';
 export const SETTINGS_GROUPS = [
   { label: 'Threads', scope: 'service', pages: [
     { id: 'new-tasks', label: 'New threads', blurb: 'The model, effort, mode and compaction a new thread starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
-    { id: 'composer', label: 'Conversation', blurb: 'What Enter does while a thread runs, suggested replies, and the diagram editor.', keywords: 'composer enter send now after this turn queue steer suggest suggested replies keyboard drawing drawings diagram diagrams mermaid excalidraw draw.io drawio origin embed editor edit as drawing' },
+    { id: 'composer', label: 'Conversation', blurb: 'What Enter does while a thread runs, suggested replies, messages between threads, and the diagram editor.', keywords: 'composer enter send now after this turn queue steer suggest suggested replies message messages messaging uam_send threads each other peer link allow deny keyboard drawing drawings diagram diagrams mermaid excalidraw draw.io drawio origin embed editor edit as drawing' },
     { id: 'worktrees', label: 'Projects & worktrees', blurb: 'Where projects and worktrees go, and the disk worktrees use.', keywords: 'default project location folder folders directory home path worktree worktrees disk space free size branch remove clean settle' },
     { id: 'archived', label: 'Archived', blurb: 'Archived threads, read-only for good.', keywords: 'archive archived read-only delete export run again old threads' },
   ] },

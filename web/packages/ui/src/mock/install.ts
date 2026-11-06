@@ -859,7 +859,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'commit_prompt' && key !== 'output_style' && key !== 'output_styles' && key !== 'coauthor' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'thread_messages' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'commit_prompt' && key !== 'output_style' && key !== 'output_styles' && key !== 'coauthor' && key !== 'worktrees_dir' && key !== 'drawio') return fail(400, `unknown setting "${key}"`);
       if (body.drawio !== undefined) {
         const drawio = body.drawio as { origin?: unknown; enabled?: unknown } | null;
         if (!drawio || typeof drawio.origin !== 'string' || typeof drawio.enabled !== 'boolean') return fail(400, 'drawio must be {origin, enabled}');
@@ -911,6 +911,10 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         if (typeof body.terminal !== 'boolean') return fail(400, 'terminal must be true or false');
         st.settings = { ...st.settings, terminal: body.terminal };
         broadcast('settings', { settings: st.settings });
+      }
+      if (body.thread_messages !== undefined) {
+        if (typeof body.thread_messages !== 'boolean') return fail(400, 'thread_messages must be true or false');
+        st.settings = { ...st.settings, thread_messages: body.thread_messages };
       }
       if (body.github_mcp !== undefined) {
         if (typeof body.github_mcp !== 'boolean') return fail(400, 'github_mcp must be true or false');

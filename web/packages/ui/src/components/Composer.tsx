@@ -13,6 +13,7 @@ const PHONE_PICKER = 'max-sm:w-[calc(100vw-16px)] max-sm:max-w-none';
 import { formatCount, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { foldToFit } from '../lib/toolbarFold';
+import { peerText } from '../lib/transcript';
 import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
@@ -1652,8 +1653,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               <li key={q.request_id} className="flex items-start gap-2 text-ui text-body">
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  {q.text && <span className="truncate" title={q.text}>{q.text}</span>}
-                  {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {effortLabel(q.settings.effort)} effort · {sizeLabel(q.settings.context_size)} context</span>}
+                  {q.from && <span className="text-caption text-accent">{q.from.reply ? 'Reply from ' : 'From '}{q.from.from_name || 'another thread'}</span>}
+                  {q.text && <span className="truncate" title={q.text}>{q.from ? peerText(q.text) : q.text}</span>}
+                  {q.settings && !q.from && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {effortLabel(q.settings.effort)} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
                 <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel waiting message: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
