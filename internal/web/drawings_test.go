@@ -652,6 +652,11 @@ func TestDrawingDeletionSurvivesARestart(t *testing.T) {
 	convert("docs/flow.excalidraw")
 	gitIn(t, repo, "add", "docs/flow.excalidraw")
 	gitIn(t, repo, "commit", "-q", "-m", "add the drawing")
+	// Commit dates are whole seconds: start the Thread after the commit's
+	// second so the commit is in its session base, as one made before it.
+	g.m.mu.Lock()
+	s.createdAt = time.Now().Add(time.Second)
+	g.m.mu.Unlock()
 	del("docs/flow.excalidraw")
 	restart()
 	if !listed("docs/flow.excalidraw") {
