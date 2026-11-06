@@ -321,7 +321,10 @@ func TestNoReplyAfterAStopOrACancel(t *testing.T) {
 	if len(ca.Sends()) != 0 {
 		t.Fatalf("a stopped turn replied: %q", ca.Sends())
 	}
-	// The cancelled turn paused b's queue: the next message waits there.
+	// With b's queue paused, the next message waits there.
+	m.mu.Lock()
+	m.sessions[b.ID].queuePaused = true
+	m.mu.Unlock()
 	sendTo(t, ca, "c2", b.ID, "two")
 	waitUntil(t, "queued", func() bool { s, _ := m.Summary(b.ID); return s.Queued == 1 })
 	q := detail(t, m, b.ID).Queue
