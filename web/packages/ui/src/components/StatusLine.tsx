@@ -1,7 +1,7 @@
 // The status strip (DESIGN.md Status line): one quiet line over the composer, in three sections.
 // Left, the todo list the agents keep as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do)
 // and "2 of 6", a button that opens the list as a reader of its own. Centre, the progress line,
-// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs permission · allow …"), the one
+// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs permission · approve bash"; the command itself is in the card), the one
 // place that says so; with nothing live, "Now:" and the row the work is at (without a list, what
 // the agent says it is doing, `assistant.intent`), a model call being retried and automatic
 // compaction running beside the turn ("Compacting in background", words only); after a stop it
