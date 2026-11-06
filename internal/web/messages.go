@@ -279,10 +279,13 @@ func (m *Manager) replyEnvelopeLocked(from *webSession, msg, text string) string
 		peerName(from), from.id, m.peerProjectLocked(from), msg, quoteLines(text))
 }
 
+// lineBreaks are the line separators a reader may break a line at.
+var lineBreaks = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u2028", "\n", "\u2029", "\n", "\u0085", "\n")
+
 // quoteLines starts every line of an agent's text with "> ", so no line of
 // it can pass for uam's own lead line.
 func quoteLines(text string) string {
-	return "> " + strings.ReplaceAll(text, "\n", "\n> ")
+	return "> " + strings.ReplaceAll(lineBreaks.Replace(text), "\n", "\n> ")
 }
 
 // enqueuePeerLocked queues a peer prompt in s, behind the owner's, and

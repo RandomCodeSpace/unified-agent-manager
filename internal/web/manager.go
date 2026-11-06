@@ -4009,6 +4009,12 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	if s.sendFallbackLocked(in, uploads) {
 		fallback = s.title
 	}
+	if s.peerArm != nil {
+		// An uncertain send left it armed, and no turn started from it
+		// before this send: the provider did not take it.
+		m.peerEndLocked(s.peerArm, peerFailure(s.peerArm), "the provider did not start its turn")
+		s.peerArm = nil
+	}
 	if in.peer != nil {
 		// Before the send: the turn's events can come before it returns.
 		s.peerArm = in.peer
@@ -4043,7 +4049,10 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 	m.mu.Lock()
 	before = m.summaryLocked(s)
-	if in.peer != nil && s.peerArm == in.peer {
+	// An uncertain send keeps its arm and reservation: a turn that starts
+	// is the message's; the next send, the conversation's end or a restart
+	// ends it otherwise.
+	if in.peer != nil && s.peerArm == in.peer && !errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		s.peerArm = nil
 	}
 	if plan != nil && s.titleWait == plan {
@@ -4273,7 +4282,7 @@ func (m *Manager) drain(s *webSession) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s.queueSending = ""
-	if head.From != nil && err == nil && sub.Status != SubmissionAccepted {
+	if head.From != nil && err == nil && sub.Status != SubmissionAccepted && sub.Status != SubmissionUncertain {
 		m.peerEndLocked(head.From, peerFailure(head.From), sub.Error)
 	}
 	var blocked peerBlockedError
