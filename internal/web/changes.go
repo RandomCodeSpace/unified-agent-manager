@@ -147,8 +147,17 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 		out.Reason = fmt.Sprintf("%s does not record file changes per conversation; use the workspace view", firstNonEmpty(info.DisplayName, s.provider))
 		return nil, out, nil
 	}
-	if err := m.View(ctx, id); err != nil {
-		return nil, out, err
+	// Reading changes never opens a conversation: an open can fail a closed
+	// Thread and notify. It waits only for an open already under way.
+	m.mu.Lock()
+	opening := s.opening
+	m.mu.Unlock()
+	if opening != nil {
+		select {
+		case <-opening:
+		case <-time.After(viewWait):
+		case <-ctx.Done():
+		}
 	}
 	m.mu.Lock()
 	conv, gen, revision := s.conv, s.gen, s.nativeDiffRevision

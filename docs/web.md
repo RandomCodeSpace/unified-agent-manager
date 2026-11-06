@@ -2872,8 +2872,8 @@ A notification is sent once each time a Thread:
 
 - asks you a question: "<Thread name>: Needs answer", with the question as
   its text
-- needs your permission: "<Thread name>: Needs permission", with the request
-  as its text
+- needs your permission: "<Thread name>: Needs permission", with the
+  command, path or URL as its text (the request's title when it has none)
 - fails: "<Thread name>: Error"
 - finishes a turn, with no subagent or background shell still running:
   "<Thread name>: Finished"

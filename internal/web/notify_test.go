@@ -264,6 +264,27 @@ func TestClipNotice(t *testing.T) {
 	}
 }
 
+// A permission notice's body is the command, path or URL the request
+// carries, else the request's title.
+func TestPermissionNoticeBody(t *testing.T) {
+	s := &webSession{name: "Thread"}
+	for _, tc := range []struct{ title, detail, want string }{
+		{"Run shell command", "ls; sleep 40\n\nWarning: slow", "ls; sleep 40"},
+		{"Run shell command", "go test \\\n  ./internal/web", "go test \\ ./internal/web"},
+		{"Run shell command", strings.Repeat("x", 300), strings.Repeat("x", maxNoticeText-1) + "…"},
+		{"Write file", "/repo/main.go\n\n@@ -1 +1 @@", "/repo/main.go"},
+		{"Fetch URL", "https://example.com/a", "https://example.com/a"},
+		{"Run MCP tool github/search", `{"query":"x"}`, "Run MCP tool github/search"},
+		{"Permission request: unknown", "", "Permission request: unknown"},
+	} {
+		ask := askOf(agentapi.Interaction{Kind: agentapi.InteractionPermission, Title: tc.title, Detail: tc.detail})
+		title, body := noticeText(s, noticePermission, &ask)
+		if title != "Thread: Needs permission" || body != tc.want {
+			t.Errorf("%q: notice = %q / %q, want body %q", tc.detail, title, body, tc.want)
+		}
+	}
+}
+
 // pushReceiver is a browser's side of a subscription: its keys, and the
 // requests its push service received.
 type pushReceiver struct {
@@ -374,7 +395,7 @@ func TestPushSendsEncryptedNoticeAndForgetsExpired(t *testing.T) {
 	}
 	sum, conv := createSession(t, m, prov)
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	conv.EmitInteraction(agentapi.Interaction{ID: "p1", Kind: agentapi.InteractionPermission, Title: "Run a shell command", Detail: "rm -rf secret", State: agentapi.InteractionPending})
+	conv.EmitInteraction(agentapi.Interaction{ID: "p1", Kind: agentapi.InteractionPermission, Title: "Run a shell command", Detail: "rm -rf build", State: agentapi.InteractionPending})
 	waitUntil(t, "the expired subscription to be forgotten", func() bool {
 		m.push.mu.Lock()
 		defer m.push.mu.Unlock()
@@ -402,7 +423,7 @@ func TestPushSendsEncryptedNoticeAndForgetsExpired(t *testing.T) {
 	if !strings.HasPrefix(key, sum.ID+":permission:") {
 		t.Fatalf("payload key = %q", key)
 	}
-	want := map[string]any{"title": "task: Needs permission", "body": "Run a shell command", "task": sum.ID, "kind": noticePermission, "key": key, "badge": float64(1)}
+	want := map[string]any{"title": "task: Needs permission", "body": "rm -rf build", "task": sum.ID, "kind": noticePermission, "key": key, "badge": float64(1)}
 	if len(payload) != len(want) {
 		t.Fatalf("payload = %v, want %v", payload, want)
 	}

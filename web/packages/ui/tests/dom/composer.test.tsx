@@ -102,6 +102,13 @@ describe('sending', () => {
     await waitFor(() => expect(screen.queryByText('Stopping…')).toBeNull());
   });
 
+  test('Stop gives focus back to the text box when the turn ends and the button leaves', async () => {
+    const { user } = await openTask('t1');
+    await user.click(screen.getByRole('button', { name: 'Stop turn' }));
+    expect(await log().findByText('Turn stopped.')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(composer()));
+  });
+
   test('clearing the queue and cancelling one prompt are confirmed first', async () => {
     const { user } = await openTask('t1');
     await user.click(screen.getByRole('button', { name: /^Cancel waiting message: Then describe/ }));

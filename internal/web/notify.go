@@ -253,7 +253,8 @@ func (m *Manager) needsYouLocked() int {
 
 // noticeText is the notice's title, "<Thread>: <state label>" in the words
 // the Thread list uses, and its body: the question or request, the
-// summary's Ask, for a Thread that needs the owner.
+// summary's Ask, for a Thread that needs the owner. A permission's body is
+// its command, path or URL when the request carries one.
 func noticeText(s *webSession, kind string, ask *Ask) (title, body string) {
 	label := map[string]string{
 		noticeQuestion:   "Needs answer",
@@ -263,7 +264,7 @@ func noticeText(s *webSession, kind string, ask *Ask) (title, body string) {
 	}[kind]
 	title = clipNotice(cmp.Or(s.name, s.title, "New thread")) + ": " + label
 	if ask != nil && (kind == noticeQuestion || kind == noticePermission) {
-		body = clipNotice(ask.Title)
+		body = clipNotice(cmp.Or(ask.Detail, ask.Title))
 	}
 	return title, body
 }

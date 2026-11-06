@@ -855,6 +855,19 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (!active || active === document.body) textarea.current?.focus();
   }, [answeringId]);
 
+  // When Stop leaves with the turn it ended, focus nothing else took since goes back to the text box.
+  // Never on a touch screen, where the keyboard would rise over the conversation.
+  const stopShown = !subagent && (live || session.execution?.objective?.status === 'active');
+  const stopRefocus = useRef(false);
+  useEffect(() => {
+    if (!stopRefocus.current) return;
+    stopRefocus.current = false; // a new turn's Stop clears a mark the last one left
+    if (stopShown) return;
+    const active = document.activeElement;
+    if (window.matchMedia(COARSE).matches || (active && active !== document.body && !active.closest('[inert]'))) return;
+    textarea.current?.focus();
+  }, [stopShown]);
+
   // The draft follows the text, the picked files and the finished uploads once typing pauses;
   // leaving the Task writes it at once. An accepted send clears it (see `send`).
   const buffer = useMemo(() => ({ text, files, uploads }), [text, files, uploads]);
@@ -1911,9 +1924,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {/* The /btw mode cue, drawn with the text that names it: Send's icon alone does not say it asks aside. */}
         {cmd?.name === ASIDE_COMMAND && asideOK && <Chip tone="accent" className="mr-1">Aside · not sent to the agent</Chip>}
         {(busy === 'stop' || stopping) && <output className="mr-1 text-caption text-muted">Stopping…</output>}
-        <Appear show={!subagent && (live || session.execution?.objective?.status === 'active')}>
+        <Appear show={stopShown}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => { onSessionUpdate(await api.cancel(session.id)); setStopping(true); })}>
+            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => { onSessionUpdate(await api.cancel(session.id)); stopRefocus.current = true; setStopping(true); })}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
           </Tip>
