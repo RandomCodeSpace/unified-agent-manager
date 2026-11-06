@@ -98,7 +98,7 @@ type TaskStatus = { label: 'Needs answer' | 'Needs permission' | 'Starting' | 'W
  * what finished, in the detail only: what the turn found is no state.
  */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
-  if (unread) return { label: 'Finished', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
+  if (unread) return { label: 'Finished', text: s.outcome ? `Finished, unread · ${s.outcome}` : 'Finished, unread', tone: 'success' };
   // "Answered" is how the turn ended, not a state: the Thread is Finished.
   return { label: 'Finished', text: s.outcome && s.outcome !== 'Answered' ? `Finished · ${s.outcome}` : 'Finished', tone: 'muted' };
 }

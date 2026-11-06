@@ -2439,7 +2439,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   makes the ring static when the OS requests reduced motion.
 - **Sidebar**: all unsettled Threads across every Project share one flat list
   without group headings. Each row's status line says whether it needs
-  input, is ready for review, is running, or is idle. Threads are listed in
+  an answer or a permission, finished unread, is running, or is idle. Threads are listed in
   creation order, newest first, whatever their state. A collapsible
   "Settled" section sits at the foot of the sidebar, under the Thread list,
   which scrolls on its own; archived Threads are listed in Settings →

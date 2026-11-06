@@ -27,7 +27,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('the Task list', () => {
   test('keeps every unsettled Task in one flat list with its status', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
-    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which called an MCP server's tools;
+    // Finished and unread also holds t-chart, the chart demo (mock/charts.ts), and t21, which called an MCP server's tools;
     // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
     const { user } = renderApp();
@@ -37,7 +37,7 @@ describe('the Task list', () => {
     const you = within(side.getByRole('list', { name: 'Unsettled threads' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
     expect(await tipOf(user, you.getByRole('button', { name: /Needs permission.*Tidy zsh startup/ }))).toContain('Needs permission to run a shell command outside the project');
-    expect(await tipOf(user, you.getByRole('button', { name: /Finished.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
+    expect(await tipOf(user, you.getByRole('button', { name: /Finished.*Doctor: add terminal line/ }))).toContain('Finished, unread · Explained how a dumb terminal');
     // Unread, it reads Finished like any other finished Thread and keeps its own eye mark.
     expect(you.getByRole('button', { name: /Finished.*Doctor: add terminal line/ }).querySelector('.lucide-eye')).not.toBeNull();
     // The title and app badge still count only Tasks needing attention.
