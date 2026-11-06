@@ -73,6 +73,19 @@ function usePairAction(pair: MessagePair) {
   return { busy, error, act };
 }
 
+/** The held message's two Threads: each name with its Project, and a short ID when the names alone collide. */
+function usePairLabels(from: string, to: string) {
+  const { sessions, projects } = useContext(TaskList);
+  const name = useThreadName();
+  const project = (id: string) => {
+    const s = sessions.find((x) => x.id === id);
+    return projects.find((p) => p.id === s?.project_id)?.name ?? 'an unknown project';
+  };
+  const same = name(from) === name(to) && project(from) === project(to);
+  const label = (id: string) => (same ? `${name(id)} · ${id.slice(0, 8)}` : name(id));
+  return { label, project };
+}
+
 function ThreadButton({ id, name }: Readonly<{ id: string; name: string }>) {
   const actions = useTaskActions();
   return <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(id)}>{name}</button>;
@@ -80,14 +93,14 @@ function ThreadButton({ id, name }: Readonly<{ id: string; name: string }>) {
 
 function HeldMessage({ pair, self }: Readonly<{ pair: MessagePair; self: string }>) {
   const held = pair.held!;
-  const name = useThreadName();
+  const { label, project } = usePairLabels(held.from, held.to);
   const titleId = useId();
   const { busy, error, act } = usePairAction(pair);
   const confirm = useConfirm<true>();
   const { sessions } = useContext(TaskList);
   const link = !pair.linked && [held.from, held.to].some((id) => unattended(sessions.find((s) => s.id === id)));
-  const sender = held.from === self ? 'This thread' : name(held.from);
-  const receiver = held.to === self ? 'this thread' : name(held.to);
+  const sender = held.from === self ? 'This thread' : label(held.from);
+  const receiver = held.to === self ? 'this thread' : label(held.to);
   return (
     <section className="rounded-lg bg-raised px-4 py-3 shadow-float animate-rise" role="group" aria-labelledby={titleId}>
       <div className="mb-1.5 flex items-center gap-2">
@@ -97,7 +110,7 @@ function HeldMessage({ pair, self }: Readonly<{ pair: MessagePair; self: string 
         </Chip>
       </div>
       <h3 id={titleId} className="text-title text-ink">
-        {held.from === self ? sender : <ThreadButton id={held.from} name={sender} />} to {held.to === self ? receiver : <ThreadButton id={held.to} name={receiver} />}
+        {held.from === self ? sender : <ThreadButton id={held.from} name={sender} />} <span className="text-muted">({project(held.from)})</span> to {held.to === self ? receiver : <ThreadButton id={held.to} name={receiver} />} <span className="text-muted">({project(held.to)})</span>
       </h3>
       <p className="mt-1 text-caption text-muted">{REASONS[held.reason]}</p>
       <pre translate="no" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">{held.text}</pre>
@@ -115,7 +128,7 @@ function HeldMessage({ pair, self }: Readonly<{ pair: MessagePair; self: string 
         {...confirm.props}
         className="max-w-88"
         title="Link these threads?"
-        description="A linked pair keeps messaging while either thread runs unattended, so its messages can start actions nobody approves. Deny ends it at any time."
+        description={`${label(held.from)} (${project(held.from)}) and ${label(held.to)} (${project(held.to)}) keep messaging while either runs unattended, so their messages can start actions nobody approves. Deny ends it at any time.`}
         confirmLabel="Link and allow"
         busy={busy !== null}
         onConfirm={() => { confirm.close(); void act('allow', true); }}

@@ -1435,6 +1435,8 @@ export interface MessagePair {
   b: string;
   state: 'pending' | 'allowed' | 'denied';
   linked?: boolean;
+  /** Numbers the owner's allows; each message counts against the one it was sent under. */
+  allowance?: number;
   used: number;
   limit: number;
   held?: { id: string; from: string; to: string; text: string; reason: 'first' | 'limit' | 'link'; at: string };

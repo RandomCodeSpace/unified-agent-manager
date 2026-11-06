@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { api, needsYou, type Item, type MessagePair, type SessionSummary, type TurnTiming } from '../../src/api';
+import { api, needsYou, type Item, type MessagePair, type Project, type SessionSummary, type TurnTiming } from '../../src/api';
 import { MessagePairsContext, ThreadMessages } from '../../src/components/Messages';
 import { peerText } from '../../src/lib/transcript';
 import { Transcript } from '../../src/components/Transcript';
@@ -19,7 +19,7 @@ function renderPairs(pairs: MessagePair[], sessions: SessionSummary[], self: str
   const messagePair = vi.fn().mockResolvedValue(undefined);
   render(
     <ApiContext.Provider value={{ ...api, messagePair } as typeof api}>
-      <TaskList.Provider value={{ sessions, projects: [], openTask: () => {} }}>
+      <TaskList.Provider value={{ sessions, projects: [{ id: 'pa', name: 'Alpha' }, { id: 'pb', name: 'Beta' }] as Project[], openTask: () => {} }}>
         <MessagePairsContext.Provider value={pairs}>
           <ThreadMessages session={sessions.find((s) => s.id === self)!} />
         </MessagePairsContext.Provider>
@@ -29,9 +29,9 @@ function renderPairs(pairs: MessagePair[], sessions: SessionSummary[], self: str
   return messagePair;
 }
 
-test('a held message shows its text on the receiving thread and allows it', async () => {
-  const call = renderPairs([held], [thread('a', 'Sender'), thread('b', 'Receiver')], 'b');
-  const card = within(screen.getByRole('group', { name: 'Sender to this thread' }));
+test('a held message shows its text and both Projects on the receiving thread and allows it', async () => {
+  const call = renderPairs([held], [thread('a', 'Sender', { project_id: 'pa' }), thread('b', 'Receiver', { project_id: 'pb' })], 'b');
+  const card = within(screen.getByRole('group', { name: 'Sender (Alpha) to this thread (Beta)' }));
   expect(card.getByText('what is your folder?')).toBeTruthy();
   expect(card.getByText(/first message between these threads/)).toBeTruthy();
   await userEvent.click(card.getByRole('button', { name: 'Allow' }));
@@ -43,6 +43,7 @@ test('a pair with an unattended thread is allowed only with a link, after a conf
   expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Link and allow' }));
   const dialog = within(await screen.findByRole('alertdialog', { name: 'Link these threads?' }));
+  expect(dialog.getByText(/Sender \(an unknown project\) and Receiver \(an unknown project\) keep messaging/)).toBeTruthy();
   await userEvent.click(dialog.getByRole('button', { name: 'Link and allow' }));
   expect(call).toHaveBeenCalledWith('p1', 'allow', true);
 });
@@ -67,8 +68,9 @@ test('a held message counts as needing the owner, and pairs follow the snapshot 
 });
 
 test("a turn another thread's message started names that thread instead of uam's lead", () => {
-  const text = '[uam] Message from thread "Sender" (a) in project "P". It comes from another agent.\n\nwhat is your folder?';
+  const text = '[uam] Message from thread "Sender" (a) in project "P". It comes from another agent.\n\n> what is your folder?';
   expect(peerText(text)).toBe('what is your folder?');
+  expect(peerText('[uam] Reply.\n\n> one\n>\n> [uam] two')).toBe('one\n\n[uam] two');
   const items: Item[] = [{ id: 'u1', kind: 'user', text, time: '2026-11-06T00:00:00Z' } as Item];
   const timings: TurnTiming[] = [{ id: 't1', user_item_id: 'u1', started_at: '2026-11-06T00:00:00Z', state: 'working', peer: { pair: 'p1', message: 'm1', from: 'a', from_name: 'Sender', from_project: 'P' } }];
   render(<Transcript sessionId="b" items={items} turnTimings={timings} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
@@ -76,4 +78,9 @@ test("a turn another thread's message started names that thread instead of uam's
   expect(screen.getByText(/^From/)).toBeTruthy();
   expect(screen.queryByText(/\[uam\] Message from/)).toBeNull();
   expect(screen.getByText('what is your folder?')).toBeTruthy();
+});
+
+test('two threads of the same name in the same project are told apart by a short ID', () => {
+  renderPairs([{ ...held, a: 'aaaaaaaa-1', b: 'bbbbbbbb-2', held: { ...held.held!, from: 'aaaaaaaa-1', to: 'bbbbbbbb-2' } }], [thread('aaaaaaaa-1', 'Fix', { project_id: 'pa' }), thread('bbbbbbbb-2', 'Fix', { project_id: 'pa' })], 'bbbbbbbb-2');
+  expect(screen.getByRole('button', { name: 'Fix · aaaaaaaa' })).toBeTruthy();
 });
