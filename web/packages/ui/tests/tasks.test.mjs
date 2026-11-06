@@ -154,14 +154,15 @@ test('the Tasks that need the user: a waiting request, or a failure not opened s
   const list = [
     s('ask', 'p1', '1', { state: 'awaiting_answer' }),
     s('pending', 'p1', '2', { state: 'working', pending: 1 }),
+    s('held', 'p1', '7', { state: 'idle', messages_held: 1 }),
     s('failed*', 'p1', '3', { state: 'failed' }),
     s('failed-read', 'p1', '4', { state: 'failed' }),
     s('broke*', 'p1', '5', { state: 'interrupted' }),
     s('done*', 'p1', '6', { state: 'completed' }),
     s('work', 'p1', '9', { state: 'working' }),
   ];
-  assert.deepEqual(list.filter((t) => needsYouNow(t, unread)).map((t) => t.id), ['ask', 'pending', 'failed*', 'broke*']);
-  assert.equal(needsYouCount(list, unread), 4);
+  assert.deepEqual(list.filter((t) => needsYouNow(t, unread)).map((t) => t.id), ['ask', 'pending', 'held', 'failed*', 'broke*']);
+  assert.equal(needsYouCount(list, unread), 5);
   assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
 });
 
