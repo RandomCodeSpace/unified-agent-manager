@@ -535,7 +535,8 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
           <ChevronDown className={cn('transition-transform duration-100', folded && '-rotate-90')} />
         </Button>
         <FileIcon path={f.path} />
-        <span className="min-w-0 flex-1 truncate text-ui" title={f.path}>
+        {/* An 8rem basis: on a narrow sheet the labels wrap under the name before it truncates. */}
+        <span className="min-w-0 grow basis-32 truncate text-ui" title={f.path}>
           <span className="text-muted">{dir}</span><span className="font-medium text-ink">{name}</span>
           {f.old_path && <span className="ml-1.5 text-caption text-muted">from {f.old_path}</span>}
         </span>

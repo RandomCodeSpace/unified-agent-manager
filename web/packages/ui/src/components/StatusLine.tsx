@@ -107,9 +107,8 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   if (compacting || phase?.by === 'compaction') return { mark: 'dot', phase: 'Compacting the conversation', since: phase?.by === 'compaction' ? phase.since : undefined };
   if (phase?.kind === 'waiting') {
     const ask = session.interactions.filter((i) => i.state === 'pending' && !i.auto).sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0];
-    const detail = ask?.kind === 'permission' && ask.detail ? `allow ${ask.detail.split('\n')[0]}` : phase.detail;
     const permission = ask ? ask.kind === 'permission' : session.state === 'awaiting_permission';
-    return { mark: 'you', phase: STATE_LABELS[permission ? 'awaiting_permission' : 'awaiting_answer'], detail, since: phase.since };
+    return { mark: 'you', phase: STATE_LABELS[permission ? 'awaiting_permission' : 'awaiting_answer'], detail: phase.detail, since: phase.since };
   }
   const running = session.subagents.filter((s) => s.status === 'running').length;
   if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };

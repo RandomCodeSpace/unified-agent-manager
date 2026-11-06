@@ -219,7 +219,7 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
 });
 
-test('compact Task labels retain request priority and distinguish working, review and finished states', async () => {
+test('compact Task labels retain request priority and distinguish working and finished states', async () => {
   const { taskStatus } = await import('../src/lib/tasks.ts');
   const label = (extra, unread = false) => taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', extra), unread).label;
   assert.equal(label({ state: 'awaiting_answer', compacting: true }), 'Needs answer');
@@ -231,19 +231,19 @@ test('compact Task labels retain request priority and distinguish working, revie
   assert.equal(label({ state: 'completed', compacting: true }, true), 'Working');
   assert.equal(label({ state: 'completed', subagents_running: 1 }, true), 'Working');
   assert.equal(label({ state: 'working', event_at: '2020-01-01T00:00:00Z' }), 'Working');
-  assert.equal(label({ state: 'completed', outcome: 'A long outcome' }, true), 'Review');
+  assert.equal(label({ state: 'completed', outcome: 'A long outcome' }, true), 'Finished');
   assert.equal(label({ state: 'completed', outcome: 'A long outcome' }), 'Finished');
   for (const [state, expected] of Object.entries({ starting: 'Starting', failed: 'Error', interrupted: 'Interrupted', cancelled: 'Stopped', closed: 'Idle', idle: 'Idle' })) assert.equal(label({ state }), expected);
   assert.equal(label({ state: 'completed', stage: 'settled' }), 'Settled');
   assert.equal(label({ state: 'completed', stage: 'archived' }), 'Archived');
 });
 
-test('a finished Task stays in the active list and reads Review or Finished, even with an older service\'s done fields', async () => {
+test('a finished Task stays in the active list and reads Finished, even with an older service\'s done fields', async () => {
   const { taskStatus } = await import('../src/lib/tasks.ts');
   const old = s('t', 'p1', '2026-10-01T12:00:00Z', { done_at: '2026-10-01T12:05:00Z', done_line: 'Tests pass.', outcome: 'Fixed it' });
   assert.deepEqual(groupTasks([old]).active.map((t) => t.id), ['t']);
   assert.equal('done' in groupTasks([old]), false);
-  assert.deepEqual(taskStatus(old, true), { label: 'Review', text: 'Ready for review: Fixed it', tone: 'success' });
+  assert.deepEqual(taskStatus(old, true), { label: 'Finished', text: 'Ready for review: Fixed it', tone: 'success' });
   assert.deepEqual(taskStatus(old, false), { label: 'Finished', text: 'Finished · Fixed it', tone: 'muted' });
 });
 

@@ -37,7 +37,9 @@ describe('the Task list', () => {
     const you = within(side.getByRole('list', { name: 'Unsettled threads' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
     expect(await tipOf(user, you.getByRole('button', { name: /Needs permission.*Tidy zsh startup/ }))).toContain('Needs permission to run a shell command outside the project');
-    expect(await tipOf(user, you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
+    expect(await tipOf(user, you.getByRole('button', { name: /Finished.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
+    // Unread, it reads Finished like any other finished Thread and keeps its own eye mark.
+    expect(you.getByRole('button', { name: /Finished.*Doctor: add terminal line/ }).querySelector('.lucide-eye')).not.toBeNull();
     // The title and app badge still count only Tasks needing attention.
     await waitFor(() => expect(document.title).toBe('(9) UAM'));
   });

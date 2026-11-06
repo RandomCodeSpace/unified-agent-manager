@@ -368,7 +368,6 @@ const STATUS_MARKS = {
   'Needs permission': { icon: ShieldQuestionMark, tone: 'text-warning' },
   Starting: { icon: WorkingMark, tone: 'text-accent' },
   Working: { icon: WorkingMark, tone: 'text-accent' },
-  Review: { icon: Eye, tone: 'text-badge-teal' },
   Finished: { icon: CircleCheck, tone: 'text-success' },
   Error: { icon: TriangleAlert, tone: 'text-error' },
   Interrupted: { icon: Pause, tone: 'text-warning' },
@@ -377,11 +376,13 @@ const STATUS_MARKS = {
   Settled: { icon: CircleCheck, tone: 'text-muted' },
   Archived: { icon: Archive, tone: 'text-muted' },
 };
+/** An unread Finished row keeps its own mark: the label is Finished either way. */
+const UNREAD_FINISHED = { icon: Eye, tone: 'text-badge-teal' };
 
 /** Shared task presentation; owner-specific actions stay with each caller. */
 export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
-  const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
+  const { icon: StatusIcon, tone: statusTone } = unread && status.label === 'Finished' ? UNREAD_FINISHED : STATUS_MARKS[status.label];
   const changed = session.diff?.files ?? 0;
   const branch = taskBranch(session, project);
   return (

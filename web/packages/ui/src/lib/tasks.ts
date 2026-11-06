@@ -91,14 +91,14 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').some((part) => /^tests fail$/i.test(part)) ? 'tests fail' : '';
 }
 
-type TaskStatus = { label: 'Needs answer' | 'Needs permission' | 'Starting' | 'Working' | 'Review' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Needs answer' | 'Needs permission' | 'Starting' | 'Working' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /**
  * A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests fail") says
  * what finished, in the detail only: what the turn found is no state.
  */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
-  if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
+  if (unread) return { label: 'Finished', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
   // "Answered" is how the turn ended, not a state: the Thread is Finished.
   return { label: 'Finished', text: s.outcome && s.outcome !== 'Answered' ? `Finished · ${s.outcome}` : 'Finished', tone: 'muted' };
 }
