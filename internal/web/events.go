@@ -7,6 +7,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Subscriber bounds. A browser that cannot keep up is disconnected and
@@ -56,6 +57,9 @@ type snapshotEvent struct {
 	ModelCalls ModelCalls       `json:"model_calls"`
 	Sessions   []SessionSummary `json:"sessions"`
 	Session    *SessionDetail   `json:"session"`
+	// MessagePairs are the pairs of Threads that message each other
+	// (messages.go).
+	MessagePairs []store.WebMessagePair `json:"message_pairs"`
 	// SaveError is why saving the Threads failed, until a save succeeds.
 	SaveError string `json:"save_error,omitempty"`
 }
@@ -280,7 +284,7 @@ func (m *Manager) captureSubscription(sessionID string, toolDeltas, recentHistor
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked(), SaveError: m.saveError}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked(), MessagePairs: m.pairListLocked(), SaveError: m.saveError}
 	for i := range snapshot.Sessions {
 		snapshot.Sessions[i] = snapshotSummary(snapshot.Sessions[i])
 	}

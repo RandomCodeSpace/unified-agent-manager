@@ -22,8 +22,11 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 		if err != nil {
 			return nil
 		}
-		timing := TurnTiming{ID: id, UserItemID: s.pendingTimingUser, StartedAt: m.now(), State: StateWorking}
+		timing := TurnTiming{ID: id, UserItemID: s.pendingTimingUser, StartedAt: m.now(), State: StateWorking, Peer: s.peerArm}
 		s.pendingTimingUser = ""
+		if s.peerArm != nil {
+			m.peerStartedLocked(s)
+		}
 		if len(s.turnTimings) >= maxTurnTimings {
 			s.turnTimings = append([]TurnTiming(nil), s.turnTimings[len(s.turnTimings)-maxTurnTimings+1:]...)
 		}

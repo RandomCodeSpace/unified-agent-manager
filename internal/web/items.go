@@ -981,6 +981,7 @@ func (m *Manager) schedulesLocked(s *webSession, snapshot *agentapi.ScheduleSnap
 
 func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
 	m.forgetMCPStatusLocked(s)
+	m.peerGoneLocked(s)
 	m.forgetTurnTimingLocked(s)
 	m.forgetTodosLocked(s)
 	// No subagent or compaction outlives its conversation here.

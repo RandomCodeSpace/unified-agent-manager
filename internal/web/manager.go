@@ -245,6 +245,11 @@ type Manager struct {
 	// Guarded by mu.
 	spawns    map[string]string
 	spawnWait time.Duration
+	// pairs are the message pairs between Threads, keyed by pair ID, and
+	// pairsDirty is set when flush must write them (messages.go). Guarded
+	// by mu.
+	pairs      map[string]store.WebMessagePair
+	pairsDirty bool
 	// utility is the Utility log and today's count of Utility calls
 	// (utility.go). suggestPauseLogged is set once a paused suggestion
 	// call is logged: every look at a Thread asks again while the pause
@@ -555,6 +560,10 @@ type webSession struct {
 	// questions to the owner, waiting for its agent's next tool call or turn
 	// (create_task.go).
 	childNotes []childNote
+	// peerArm is the peer message a send is starting a turn with, and
+	// peerTurn the one the running turn answers, once the turn starts
+	// (messages.go).
+	peerArm, peerTurn *store.TurnPeer
 	// routineID is the routine whose run created this Task. It never
 	// changes, and such a Task does not get uam_create_task either.
 	routineID string
@@ -853,7 +862,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
-		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, ThreadMessages: cfg.WebSettings.ThreadMessages, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
 		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, OutputStyles: cfg.WebSettings.OutputStyles, OutputStyle: cfg.WebSettings.OutputStyle, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
 	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
 	m.setGitRules(m.settings)
@@ -880,6 +889,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.finishWrapLocked(s, "", "uam restarted during the wrap-up")
 		}
 	}
+	m.pairsDirty = m.loadPairsLocked(cfg.WebMessagePairs)
 	usage := m.usageProviderLocked()
 	cliNames := m.cliProvidersLocked()
 	m.mu.Unlock()
@@ -1325,6 +1335,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		ForkOf: forkOf, ForkUserItemID: forkUser, NotStarted: s.fork != nil && s.base == StateClosed && len(s.turnTimings) == 0, Rewind: s.rewindSummary(),
 		Branch:       s.branch,
 		TitlePending: s.titling || s.titleWait != nil,
+		MessagesHeld: m.heldMessagesLocked(s.id),
 	}
 	out.BranchLinkURL, out.BranchLinkBranch = m.branchLinkLocked(s)
 	if s.place != nil && s.place.Worktree != "" {
@@ -1794,6 +1805,7 @@ type SettingsPatch struct {
 	SuggestReplies        *bool
 	CompactionThreshold   **int
 	GitHubMCP             *bool
+	ThreadMessages        *bool
 	GitLabAutoInvestigate *bool
 	// GitLabMRPrompt sets the merge request description prompt; "" or the
 	// default itself puts the default back.
@@ -2046,6 +2058,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.GitHubMCP != nil {
 		next.GitHubMCP = *p.GitHubMCP
 	}
+	if p.ThreadMessages != nil {
+		next.ThreadMessages = *p.ThreadMessages
+	}
 	if p.DrawIO != nil {
 		next.DrawIO = DrawIOSettings{}
 		if p.DrawIO.Origin != "" || p.DrawIO.Enabled {
@@ -2090,7 +2105,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.CommitPrompt == current.CommitPrompt && next.OutputStyle == current.OutputStyle && slices.Equal(next.OutputStyles, current.OutputStyles) && next.CoAuthor == current.CoAuthor && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.ThreadMessages == current.ThreadMessages && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && next.CommitPrompt == current.CommitPrompt && next.OutputStyle == current.OutputStyle && slices.Equal(next.OutputStyles, current.OutputStyles) && next.CoAuthor == current.CoAuthor && next.DrawIO == current.DrawIO && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	var oldRoots []string
@@ -2105,6 +2120,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.WorktreeRoots = oldRoots
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
+		cfg.WebSettings.ThreadMessages = next.ThreadMessages
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
 		cfg.WebSettings.GitLabMRPrompt = next.GitLabMRPrompt
 		cfg.WebSettings.CommitPrompt = next.CommitPrompt
@@ -2382,6 +2398,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 		grants.revokeTask(s.id)
 	}
 	delete(m.dirty, s.id)
+	m.dropPairsLocked(s.id, true)
 	m.broadcastLocked("session_removed", "", func(seq uint64) any { return sessionRemovedEvent{Seq: seq, SessionID: s.id} })
 	return conv
 }
@@ -2543,8 +2560,21 @@ func (m *Manager) flush() (err error) {
 		})
 	}
 	m.dirty = map[string]struct{}{}
+	writePairs := m.pairsDirty
+	var pairs map[string]store.WebMessagePair
+	if writePairs {
+		pairs = make(map[string]store.WebMessagePair, len(m.pairs))
+		for id, p := range m.pairs {
+			p.Messages = slices.Clone(p.Messages)
+			pairs[id] = p
+		}
+		if len(pairs) == 0 {
+			pairs = nil
+		}
+		m.pairsDirty = false
+	}
 	m.mu.Unlock()
-	if len(patches) == 0 {
+	if len(patches) == 0 && !writePairs {
 		return nil
 	}
 	// Turn todo snapshots land before the counts that point at them.
@@ -2579,6 +2609,9 @@ func (m *Manager) flush() (err error) {
 			rec.Web = &web
 			cfg.Sessions[key] = rec
 		}
+		if writePairs {
+			cfg.WebMessagePairs = pairs
+		}
 		return nil
 	})
 	if err != nil {
@@ -2588,6 +2621,7 @@ func (m *Manager) flush() (err error) {
 		for _, p := range patches {
 			m.dirty[p.id] = struct{}{}
 		}
+		m.pairsDirty = m.pairsDirty || writePairs
 		m.mu.Unlock()
 		return err
 	}
@@ -2958,6 +2992,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		}
 		m.replyFallbackLocked(s)
 		m.wrapTurnEndLocked(s, turn.State)
+		m.peerTurnEndLocked(s, turn.State)
 	}
 }
 
@@ -3614,6 +3649,8 @@ type turnInput struct {
 	text, command      string
 	files, attachments []string
 	settings           *PromptSettings
+	// peer is the peer message the prompt delivers (messages.go).
+	peer *store.TurnPeer
 }
 
 // Submit sends one prompt in mode: ModeSend ("" too), ModeQueue or
@@ -3964,6 +4001,10 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	if s.sendFallbackLocked(in, uploads) {
 		fallback = s.title
 	}
+	if in.peer != nil {
+		// Before the send: the turn's events can come before it returns.
+		s.peerArm = in.peer
+	}
 	s.setBase(StateWorking, "")
 	mark := s.turnSeq
 	m.changedLocked(s, before)
@@ -3994,6 +4035,9 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 	m.mu.Lock()
 	before = m.summaryLocked(s)
+	if in.peer != nil && s.peerArm == in.peer {
+		s.peerArm = nil
+	}
 	if plan != nil && s.titleWait == plan {
 		s.titleWait = nil
 	}
@@ -4112,11 +4156,15 @@ func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string, pau
 	m.mu.Lock()
 	before := m.summaryLocked(s)
 	s.remember(sub)
-	last := sub
-	s.last = &last
-	m.broadcastLocked("submission", s.id, func(seq uint64) any {
-		return submissionEvent{Seq: seq, SessionID: s.id, Submission: sub}
-	})
+	// Another Thread's message is not the owner's: the composer never shows
+	// its outcome.
+	if !isPeerRequest(reqID) {
+		last := sub
+		s.last = &last
+		m.broadcastLocked("submission", s.id, func(seq uint64) any {
+			return submissionEvent{Seq: seq, SessionID: s.id, Submission: sub}
+		})
+	}
 	if pauseQueue && status != SubmissionAccepted {
 		m.pauseQueueLocked(s)
 	}
@@ -4196,10 +4244,34 @@ func (m *Manager) drain(s *webSession) {
 	for _, a := range head.Attachments {
 		in.attachments = append(in.attachments, a.ID)
 	}
-	_, err := m.send(s, in, head.RequestID)
+	if head.From != nil {
+		// Another Thread's message runs on this Thread's current settings.
+		in.settings, in.peer = nil, head.From
+		m.mu.Lock()
+		why := m.peerBlockedLocked(s, head.From)
+		if why != "" {
+			before := m.summaryLocked(s)
+			m.peerEndLocked(head.From, peerFailed, why)
+			s.queueSending = ""
+			m.changedLocked(s, before)
+			m.kickDrainLocked(s)
+		}
+		m.mu.Unlock()
+		if why != "" {
+			return
+		}
+	}
+	sub, err := m.send(s, in, head.RequestID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s.queueSending = ""
+	if head.From != nil && err == nil && sub.Status != SubmissionAccepted {
+		status := peerFailed
+		if head.From.Reply {
+			status = peerUndelivered
+		}
+		m.peerEndLocked(head.From, status, sub.Error)
+	}
 	if err != nil {
 		// Nothing was sent: a turn is running after all, the service is
 		// stopping, or another client holds the conversation. The prompt waits
@@ -4248,6 +4320,9 @@ func (m *Manager) CancelQueued(id, reqID string) error {
 		}
 	}
 	before := m.summaryLocked(s)
+	if from := s.queue[i].From; from != nil {
+		m.peerEndLocked(from, peerCancelled, "the owner removed it from the queue")
+	}
 	s.queue = slices.Delete(s.queue, i, i+1)
 	m.cancelledLocked(s, reqID)
 	if len(s.queue) == 0 {
@@ -4276,6 +4351,9 @@ func (m *Manager) ClearQueue(id string) error {
 	before := m.summaryLocked(s)
 	for _, q := range s.queue {
 		m.cancelledLocked(s, q.RequestID)
+		if q.From != nil {
+			m.peerEndLocked(q.From, peerCancelled, "the owner cleared the queue")
+		}
 	}
 	s.queue, s.queuePaused = nil, false
 	s.queueChanged = true
@@ -4786,6 +4864,8 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 	if to != StageActive {
 		m.releaseClosedHistoryLocked(s)
 		m.kickWorktreeRemoveLocked(s)
+		// Settling or archiving ends the owner's allowance; a denial stays.
+		m.dropPairsLocked(s.id, false)
 	}
 	if by != "" {
 		// updated_at stays the Task's last activity.
