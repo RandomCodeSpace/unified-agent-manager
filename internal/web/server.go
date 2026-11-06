@@ -328,6 +328,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.chartRoutes(mux)
 	s.drawingRoutes(mux)
+	s.messageRoutes(mux)
 	s.routineRoutes(mux)
 	s.assistRoutes(mux)
 	s.mcpRoutes(mux)
@@ -751,6 +752,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.GitHubMCP = new(bool)
 			if json.Unmarshal(raw, patch.GitHubMCP) != nil || string(raw) == "null" {
 				writeError(w, http.StatusBadRequest, "github_mcp must be true or false")
+				return
+			}
+		case "thread_messages":
+			patch.ThreadMessages = new(bool)
+			if json.Unmarshal(raw, patch.ThreadMessages) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "thread_messages must be true or false")
 				return
 			}
 		case "commit_prompt":

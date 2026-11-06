@@ -91,6 +91,9 @@ func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostT
 	if !spawned {
 		tools = append(tools, createTaskTool)
 	}
+	if m.settings.ThreadMessages {
+		tools = append(tools, sendTool)
+	}
 	return append(tools, chartTool, diagramReadTool, uamTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
 		case call.Name == uamToolName:
@@ -101,6 +104,8 @@ func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostT
 			return m.diagramReadCall(ctx, taskID, call)
 		case call.Name == createTaskToolName && !spawned:
 			return m.createTask(ctx, taskID, call)
+		case call.Name == sendToolName:
+			return m.sendCall(ctx, taskID, call)
 		}
 		return agentapi.HostToolResult{Text: fmt.Sprintf("there is no uam tool %q", call.Name), Failed: true}
 	}

@@ -88,6 +88,9 @@ type Config struct {
 	// WebGitLab records commits made by Tasks and the investigation reserved
 	// for each pipeline. Receipts remain after an investigation Task is deleted.
 	WebGitLab map[string]WebGitLabCommit `json:"web_gitlab,omitempty"`
+	// WebMessagePairs holds the owner's decisions about messages between
+	// Threads, keyed by pair ID (message_pairs.go).
+	WebMessagePairs map[string]WebMessagePair `json:"web_message_pairs,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -161,6 +164,7 @@ type configAlias struct {
 	WebAccountLinks map[string]AccountLink     `json:"web_account_links,omitempty"`
 	WebForks        map[string]WebFork         `json:"web_forks,omitempty"`
 	WebGitLab       map[string]WebGitLabCommit `json:"web_gitlab,omitempty"`
+	WebMessagePairs map[string]WebMessagePair  `json:"web_message_pairs,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -178,6 +182,7 @@ var knownConfigFields = map[string]struct{}{
 	"web_account_links":           {},
 	"web_forks":                   {},
 	"web_gitlab":                  {},
+	"web_message_pairs":           {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -216,6 +221,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		WebAccountLinks: c.WebAccountLinks,
 		WebForks:        c.WebForks,
 		WebGitLab:       c.WebGitLab,
+		WebMessagePairs: c.WebMessagePairs,
 	}, c.unknown, knownConfigFields)
 }
 
@@ -236,6 +242,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.WebAccountLinks = alias.WebAccountLinks
 	c.WebForks = alias.WebForks
 	c.WebGitLab = alias.WebGitLab
+	c.WebMessagePairs = alias.WebMessagePairs
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -425,6 +432,9 @@ type TurnTiming struct {
 	Todo TodoCounts `json:"todo,omitzero"`
 	// Native captured changes as this finalized owner turn left them.
 	Changes *TurnChangeCounts `json:"changes,omitempty"`
+	// Peer is set when another Thread's message, or the reply to this
+	// Thread's message, started the turn.
+	Peer *TurnPeer `json:"peer,omitempty"`
 }
 
 // TurnChangeCounts retains no file rows or patches. Rows are read on demand
@@ -872,6 +882,9 @@ type WebSettings struct {
 	// GitHubMCP lets Tasks start the provider's built-in GitHub MCP server.
 	// Off when absent.
 	GitHubMCP bool `json:"github_mcp,omitempty"`
+	// ThreadMessages lets Threads message each other (uam_send). Off when
+	// absent.
+	ThreadMessages bool `json:"thread_messages,omitempty"`
 	// GitLabAutoInvestigate starts an investigation when a Task's own
 	// GitLab pipeline fails. Off when absent.
 	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
@@ -1147,6 +1160,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"suggest_replies":         {},
 	"compact_threshold":       {},
 	"github_mcp":              {},
+	"thread_messages":         {},
 	"gitlab_auto_investigate": {},
 	"gitlab_mr_prompt":        {},
 	"commit_prompt":           {},
@@ -1399,6 +1413,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	dropInvalidRecords(&cfg)
 	dropInvalidProjects(&cfg)
 	dropInvalidRoutines(&cfg)
+	dropInvalidMessagePairs(&cfg)
 	cleanHiddenModels(&cfg.WebSettings)
 	cleanSubagentModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)

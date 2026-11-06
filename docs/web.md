@@ -1323,6 +1323,47 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   most 5 Threads, its subagents' calls included. Every Thread it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Thread can call the tool.
+- **Messages between Threads** (off by default; Settings → Conversation →
+  Threads can message each other): a Thread gets the `uam_send` tool
+  (`{id, message}`, a message up to 16 KiB with no control characters other
+  than newlines and tabs) when its conversation opens with the switch on; a
+  call while it is off is refused. The call returns at once. The message
+  waits in the other Thread's queue, behind the owner's prompts, and starts a
+  turn there with a `[uam] Message from thread ...` line naming the sender,
+  then the message with each line quoted after `> ` so it cannot pass for
+  that line; when that turn completes, its last main-agent reply goes back the same way
+  into the sender's queue (`[uam] Reply from thread ...`). A turn a reply
+  starts is not answered again. Both turns' user messages show who sent them.
+  The owner decides per pair of Threads: the first message of a pair is held
+  until the owner allows or denies it (on either Thread, which shows it as
+  needing the owner), and a pair where either Thread runs unattended (Yolo,
+  Assisted, autopilot, or an unknown mode) must be linked when allowed; a
+  Thread that turns unattended later gets nothing from an unlinked pair. Every
+  message and reply is checked again as its turn is about to start, under the
+  same lock as the owner's decisions: the switch must be on, the pair allowed,
+  both Threads active, and linked if either is unattended; a Deny, Reset,
+  mode change or switch-off that came first stops it (it fails with the
+  reason, nothing is sent), one after finds it sent. One allowance covers 6
+  deliveries, a message and its reply each counting one; the next message is
+  held for the owner to allow more. A message counts against the allowance
+  it was sent under: one an earlier allowance covered gives nothing back to
+  the next when it ends without a reply. The `uam` tool's `tasks` rows show
+  each pair's last message, its status and reason. Turning the switch on
+  reaches an open conversation only after it reopens. The receiving
+  Thread's spending limit, not the sender's, applies to the turn a message
+  starts; the pair's approval is the control on moving work between
+  Threads. Deny holds for the
+  pair until the owner resets it. Settling or archiving either Thread ends
+  the pair's allowance (a denial stays); deleting a Thread drops its pairs. A
+  message whose turn is stopped or fails, or that the owner removes from the
+  queue, gets no reply and no turn saying so; its status shows on the pair.
+  Messages and replies use the receiving Thread's current model settings and
+  never set its last submission. A restart keeps held messages and the
+  owner's decisions; a message that was queued or being answered is marked
+  interrupted and never sent again. uam keeps at most 32 pairs and the
+  newest 20 messages of each, and refuses a send when the other Thread is not
+  active, is at its spending limit, has a full queue, already runs or queues
+  3 of the sender's messages, or 32 messages wait across uam.
 - **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or
   `apply_patch` call that writes outside the Thread's folder (its worktree
   for a Thread in one), its Copilot session folder or the temporary
