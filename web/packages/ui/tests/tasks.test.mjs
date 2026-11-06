@@ -191,16 +191,16 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(12) }), 'Working · quiet 12m');
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(1) }), 'Working');
   assert.equal(status({ state: 'working', updated_at: at(90) }), 'Working · quiet 1h');
-  assert.equal(status({ state: 'completed' }, true), 'Finished, ready for your review');
+  assert.equal(status({ state: 'completed' }, true), 'Finished, unread');
   assert.equal(status({ state: 'completed' }), 'Finished');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Finished · Fixed the test; tests pass');
   // "Answered" is how the turn ended, not a state: Home and the row tip read Finished.
   assert.equal(status({ state: 'completed', outcome: 'Answered' }), 'Finished');
   assert.equal(status({ state: 'interrupted' }), 'Interrupted');
-  assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Finished, unread · Fixed the test');
   // What the turn found is detail, never a state: failing tests and commands read in the outcome's words.
-  assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Ready for review: Tests fail; 2 commands failed');
-  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed' }, true), 'Ready for review: Fixed the test; tests pass; 1 command failed');
+  assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Finished, unread · Tests fail; 2 commands failed');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed' }, true), 'Finished, unread · Fixed the test; tests pass; 1 command failed');
   assert.equal(status({ state: 'completed', outcome: 'Explained why tests fail; tests pass' }), 'Finished · Explained why tests fail; tests pass');
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Finished');
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Finished');
@@ -243,7 +243,7 @@ test('a finished Task stays in the active list and reads Finished, even with an 
   const old = s('t', 'p1', '2026-10-01T12:00:00Z', { done_at: '2026-10-01T12:05:00Z', done_line: 'Tests pass.', outcome: 'Fixed it' });
   assert.deepEqual(groupTasks([old]).active.map((t) => t.id), ['t']);
   assert.equal('done' in groupTasks([old]), false);
-  assert.deepEqual(taskStatus(old, true), { label: 'Finished', text: 'Ready for review: Fixed it', tone: 'success' });
+  assert.deepEqual(taskStatus(old, true), { label: 'Finished', text: 'Finished, unread · Fixed it', tone: 'success' });
   assert.deepEqual(taskStatus(old, false), { label: 'Finished', text: 'Finished · Fixed it', tone: 'muted' });
 });
 
