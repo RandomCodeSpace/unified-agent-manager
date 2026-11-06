@@ -180,7 +180,7 @@ func (m *Manager) sendMessage(taskID string, call agentapi.HostToolCall) (string
 	if err := m.peerRoomLocked(p, caller, target); err != nil {
 		return "", err
 	}
-	msg.Status = peerQueued
+	msg.Status, msg.Allowance = peerQueued, p.Allowance
 	p.Messages = appendPeerMessage(p.Messages, msg)
 	p.Used += 2
 	m.setPairLocked(p)
@@ -269,14 +269,20 @@ func (m *Manager) peerProjectLocked(s *webSession) string {
 }
 
 func (m *Manager) messageEnvelopeLocked(from *webSession, text string) string {
-	return fmt.Sprintf("[uam] Message from thread %q (%s) in project %q. It comes from another agent, not from the owner. "+
+	return fmt.Sprintf("[uam] Message from thread %q (%s) in project %q. It comes from another agent, not from the owner, and follows quoted, each line after \"> \". "+
 		"Answer it in this turn: uam sends your final reply to that thread, so do not use uam_send to reply.\n\n%s",
-		peerName(from), from.id, m.peerProjectLocked(from), text)
+		peerName(from), from.id, m.peerProjectLocked(from), quoteLines(text))
 }
 
 func (m *Manager) replyEnvelopeLocked(from *webSession, msg, text string) string {
-	return fmt.Sprintf("[uam] Reply from thread %q (%s) in project %q to your message %s. It comes from another agent, not from the owner.\n\n%s",
-		peerName(from), from.id, m.peerProjectLocked(from), msg, text)
+	return fmt.Sprintf("[uam] Reply from thread %q (%s) in project %q to your message %s. It comes from another agent, not from the owner, and follows quoted, each line after \"> \".\n\n%s",
+		peerName(from), from.id, m.peerProjectLocked(from), msg, quoteLines(text))
+}
+
+// quoteLines starts every line of an agent's text with "> ", so no line of
+// it can pass for uam's own lead line.
+func quoteLines(text string) string {
+	return "> " + strings.ReplaceAll(text, "\n", "\n> ")
 }
 
 // enqueuePeerLocked queues a peer prompt in s, behind the owner's, and
@@ -297,17 +303,62 @@ func (m *Manager) enqueuePeerLocked(s *webSession, from *store.TurnPeer, text st
 	return len(s.queue)
 }
 
-// peerBlockedLocked says why a peer prompt from the queue of s must not be
-// sent now, or "". The caller holds mu.
+// peerBlockedLocked says why the peer prompt from, in the queue of its
+// receiver s, must not be sent now, or "". The caller holds mu. Manager.send
+// checks it under mu as it arms the turn, the delivery's commit point: a
+// revocation that took mu first (Deny, Reset, the switch turned off, a
+// Thread of the pair turned unattended, settled or archived) stops the
+// message; one after it finds the message sent.
 func (m *Manager) peerBlockedLocked(s *webSession, from *store.TurnPeer) string {
-	p, ok := m.pairs[from.Pair]
+	return m.pairBlockedLocked(from.Pair, s, m.sessions[from.From])
+}
+
+// pairBlockedLocked says why the pair may not deliver between a and b now,
+// or "". The caller holds mu.
+func (m *Manager) pairBlockedLocked(pair string, a, b *webSession) string {
+	p, ok := m.pairs[pair]
 	switch {
+	case !m.settings.ThreadMessages:
+		return "the owner turned messages between threads off"
 	case !ok || p.State != store.PairAllowed:
 		return "the owner ended messages between these threads"
-	case !p.Linked && unattended(s):
-		return "the receiving thread runs unattended now, so the owner must link the pair"
+	case a == nil || b == nil || a.removed || b.removed || a.stage != StageActive || b.stage != StageActive:
+		return "a thread of the pair is no longer active"
+	case !p.Linked && (unattended(a) || unattended(b)):
+		return "a thread of the pair runs unattended now, so the owner must link the pair"
 	}
 	return ""
+}
+
+// peerBlockedError is the reason send refused a peer prompt at its commit
+// point; nothing was sent.
+type peerBlockedError string
+
+func (e peerBlockedError) Error() string { return string(e) }
+
+// peerFailure is the status of a peer prompt that was not delivered.
+func peerFailure(from *store.TurnPeer) string {
+	if from.Reply {
+		return peerUndelivered
+	}
+	return peerFailed
+}
+
+// refund is what x gives back to p's allowance as it ends: both deliveries
+// when it never reached its receiver, the reply when it did but none was
+// sent. A message an earlier allowance covered gives nothing to the current
+// one.
+func refund(p store.WebMessagePair, x store.WebPeerMessage) int {
+	if x.Allowance != p.Allowance {
+		return 0
+	}
+	switch x.Status {
+	case peerQueued:
+		return 2
+	case peerWorking, peerReplying:
+		return 1
+	}
+	return 0
 }
 
 // peerEndLocked records what became of a message: status, with detail. A
@@ -324,13 +375,7 @@ func (m *Manager) peerEndLocked(from *store.TurnPeer, status, detail string) {
 	}
 	p.Messages = slices.Clone(p.Messages)
 	x := &p.Messages[i]
-	switch x.Status {
-	case peerQueued:
-		p.Used -= 2
-	case peerWorking, peerReplying:
-		p.Used--
-	}
-	p.Used = max(0, p.Used)
+	p.Used = max(0, p.Used-refund(p, *x))
 	x.Status, x.Detail, x.UpdatedAt = status, detail, m.now()
 	m.setPairLocked(p)
 }
@@ -392,16 +437,8 @@ func (m *Manager) peerGoneLocked(s *webSession) {
 // message t started it. The caller holds mu.
 func (m *Manager) replyLocked(s *webSession, t *store.TurnPeer) {
 	sender := m.sessions[t.From]
-	p, ok := m.pairs[t.Pair]
-	why := ""
-	switch {
-	case !ok || p.State != store.PairAllowed:
-		why = "the owner ended messages between these threads"
-	case sender == nil || sender.removed || sender.stage != StageActive:
-		why = "the sending thread is no longer active"
-	case !p.Linked && unattended(sender):
-		why = "the sending thread runs unattended now, so the owner must link the pair"
-	case len(sender.queue) >= maxQueue:
+	why := m.pairBlockedLocked(t.Pair, sender, s)
+	if why == "" && len(sender.queue) >= maxQueue {
 		why = "the sending thread's queue is full"
 	}
 	if why != "" {
@@ -547,14 +584,10 @@ func (m *Manager) loadPairsLocked(stored map[string]store.WebMessagePair) bool {
 		p.Messages = slices.Clone(p.Messages)
 		for i := range p.Messages {
 			x := &p.Messages[i]
-			switch x.Status {
-			case peerQueued:
-				p.Used -= 2
-			case peerWorking, peerReplying:
-				p.Used--
-			default:
+			if x.Status != peerQueued && x.Status != peerWorking && x.Status != peerReplying {
 				continue
 			}
+			p.Used = max(0, p.Used-refund(p, *x))
 			x.Status, x.Detail, x.UpdatedAt = peerInterrupted, "uam restarted before it was answered", m.now()
 			changed = true
 		}
@@ -572,6 +605,16 @@ type uamPairRow struct {
 	Used   int    `json:"used"`
 	Limit  int    `json:"limit"`
 	Held   bool   `json:"held,omitempty"`
+	// Last is the pair's newest message and what became of it: no turn
+	// reports a message that got no reply, this does.
+	Last *uamLastMessage `json:"last,omitempty"`
+}
+
+type uamLastMessage struct {
+	ID     string `json:"id"`
+	From   string `json:"from"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // uamPairLocked is the pair of caller and s for the uam tool, nil while the
@@ -581,7 +624,12 @@ func (m *Manager) uamPairLocked(caller, s *webSession) *uamPairRow {
 		return nil
 	}
 	p, _ := m.pairOfLocked(caller.id, s.id)
-	return &uamPairRow{State: p.State, Linked: p.Linked, Used: p.Used, Limit: p.Limit, Held: p.Held != nil}
+	row := &uamPairRow{State: p.State, Linked: p.Linked, Used: p.Used, Limit: p.Limit, Held: p.Held != nil}
+	if n := len(p.Messages); n > 0 {
+		x := p.Messages[n-1]
+		row.Last = &uamLastMessage{ID: x.ID, From: x.From, Status: x.Status, Detail: x.Detail}
+	}
+	return row
 }
 
 // MessagePairAction is the owner's decision about a pair: allow (with
@@ -609,6 +657,9 @@ func (m *Manager) MessagePairAction(id, action string, link bool) (store.WebMess
 		m.setPairLocked(p)
 		return m.pairs[id], nil
 	case "allow":
+		if !m.settings.ThreadMessages {
+			return store.WebMessagePair{}, newError(http.StatusConflict, "messages between threads are off in Settings; turn them on to allow one")
+		}
 	default:
 		return store.WebMessagePair{}, newError(http.StatusBadRequest, "action must be allow, deny or reset")
 	}
@@ -623,7 +674,9 @@ func (m *Manager) MessagePairAction(id, action string, link bool) (store.WebMess
 	if !p.Linked && !link && (unattended(from) || unattended(to)) {
 		return store.WebMessagePair{}, newError(http.StatusConflict, "a thread of the pair runs unattended: allow it with link")
 	}
+	// A new allowance: messages of earlier ones finish on theirs.
 	p.State, p.Linked, p.Used, p.Limit = store.PairAllowed, p.Linked || link, 0, pairLimit
+	p.Allowance++
 	status, detail := peerQueued, ""
 	if err := m.peerRoomLocked(p, from, to); err != nil {
 		status, detail = peerUndelivered, err.Error()
@@ -635,6 +688,11 @@ func (m *Manager) MessagePairAction(id, action string, link bool) (store.WebMess
 	p.Held = nil
 	if status == peerQueued {
 		p.Used = 2
+		for i := range p.Messages {
+			if p.Messages[i].ID == held.ID {
+				p.Messages[i].Allowance = p.Allowance
+			}
+		}
 	}
 	m.setPairLocked(p)
 	if status == peerQueued {

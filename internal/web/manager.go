@@ -3990,6 +3990,14 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
 	}
+	if in.peer != nil {
+		// The delivery's commit point (peerBlockedLocked): the pair must
+		// still allow it after the open and the git wait.
+		if why := m.peerBlockedLocked(s, in.peer); why != "" {
+			m.mu.Unlock()
+			return Submission{}, peerBlockedError(why)
+		}
+	}
 	before := m.summaryLocked(s)
 	prevBase, prevDetail := s.base, s.detail
 	plan := m.titlePlanLocked(s, in, uploads)
@@ -4251,7 +4259,7 @@ func (m *Manager) drain(s *webSession) {
 		why := m.peerBlockedLocked(s, head.From)
 		if why != "" {
 			before := m.summaryLocked(s)
-			m.peerEndLocked(head.From, peerFailed, why)
+			m.peerEndLocked(head.From, peerFailure(head.From), why)
 			s.queueSending = ""
 			m.changedLocked(s, before)
 			m.kickDrainLocked(s)
@@ -4266,11 +4274,16 @@ func (m *Manager) drain(s *webSession) {
 	defer m.mu.Unlock()
 	s.queueSending = ""
 	if head.From != nil && err == nil && sub.Status != SubmissionAccepted {
-		status := peerFailed
-		if head.From.Reply {
-			status = peerUndelivered
-		}
-		m.peerEndLocked(head.From, status, sub.Error)
+		m.peerEndLocked(head.From, peerFailure(head.From), sub.Error)
+	}
+	var blocked peerBlockedError
+	if errors.As(err, &blocked) {
+		// Refused at its commit point: it is dropped, and the queue goes on.
+		before := m.summaryLocked(s)
+		m.peerEndLocked(head.From, peerFailure(head.From), string(blocked))
+		m.changedLocked(s, before)
+		m.kickDrainLocked(s)
+		return
 	}
 	if err != nil {
 		// Nothing was sent: a turn is running after all, the service is

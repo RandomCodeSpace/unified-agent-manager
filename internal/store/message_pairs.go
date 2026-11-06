@@ -22,16 +22,17 @@ const (
 )
 
 // WebMessagePair is the owner's decision about messages between two Threads
-// (uam_send): A and B are their IDs, sorted. Used counts deliveries since the
-// owner last allowed the pair, Limit how many that allows. Held is the
-// message waiting for the owner; Messages are the newest messages, oldest
-// first.
+// (uam_send): A and B are their IDs, sorted. Allowance numbers the owner's
+// allows; Used counts the deliveries the current one reserved, Limit how many
+// it covers. Held is the message waiting for the owner; Messages are the
+// newest messages, oldest first.
 type WebMessagePair struct {
 	ID        string           `json:"id"`
 	A         string           `json:"a"`
 	B         string           `json:"b"`
 	State     string           `json:"state"`
 	Linked    bool             `json:"linked,omitempty"`
+	Allowance int              `json:"allowance,omitempty"`
 	Used      int              `json:"used"`
 	Limit     int              `json:"limit"`
 	Held      *WebHeldMessage  `json:"held,omitempty"`
@@ -54,12 +55,14 @@ type WebHeldMessage struct {
 
 // WebPeerMessage is one message between the Threads of a pair and what
 // became of it (held, queued, working, replied, stopped, failed,
-// interrupted, cancelled, declined or undelivered).
+// interrupted, cancelled, declined or undelivered). Allowance is the
+// pair's allowance it reserved its deliveries from; 0 while held.
 type WebPeerMessage struct {
 	ID        string    `json:"id"`
 	From      string    `json:"from"`
 	To        string    `json:"to"`
 	CallID    string    `json:"call_id,omitempty"`
+	Allowance int       `json:"allowance,omitempty"`
 	Status    string    `json:"status"`
 	Detail    string    `json:"detail,omitempty"`
 	At        time.Time `json:"at"`

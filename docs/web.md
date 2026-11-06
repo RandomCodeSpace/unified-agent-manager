@@ -1329,17 +1329,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   than newlines and tabs) when its conversation opens with the switch on; a
   call while it is off is refused. The call returns at once. The message
   waits in the other Thread's queue, behind the owner's prompts, and starts a
-  turn there with a `[uam] Message from thread ...` line naming the sender;
-  when that turn completes, its last main-agent reply goes back the same way
+  turn there with a `[uam] Message from thread ...` line naming the sender,
+  then the message with each line quoted after `> ` so it cannot pass for
+  that line; when that turn completes, its last main-agent reply goes back the same way
   into the sender's queue (`[uam] Reply from thread ...`). A turn a reply
   starts is not answered again. Both turns' user messages show who sent them.
   The owner decides per pair of Threads: the first message of a pair is held
   until the owner allows or denies it (on either Thread, which shows it as
   needing the owner), and a pair where either Thread runs unattended (Yolo,
   Assisted, autopilot, or an unknown mode) must be linked when allowed; a
-  Thread that turns unattended later gets nothing from an unlinked pair. One
-  allowance covers 6 deliveries, a message and its reply each counting one;
-  the next message is held for the owner to allow more. Deny holds for the
+  Thread that turns unattended later gets nothing from an unlinked pair. Every
+  message and reply is checked again as its turn is about to start, under the
+  same lock as the owner's decisions: the switch must be on, the pair allowed,
+  both Threads active, and linked if either is unattended; a Deny, Reset,
+  mode change or switch-off that came first stops it (it fails with the
+  reason, nothing is sent), one after finds it sent. One allowance covers 6
+  deliveries, a message and its reply each counting one; the next message is
+  held for the owner to allow more. A message counts against the allowance
+  it was sent under: one an earlier allowance covered gives nothing back to
+  the next when it ends without a reply. The `uam` tool's `tasks` rows show
+  each pair's last message, its status and reason. Turning the switch on
+  reaches an open conversation only after it reopens. The receiving
+  Thread's spending limit, not the sender's, applies to the turn a message
+  starts; the pair's approval is the control on moving work between
+  Threads. Deny holds for the
   pair until the owner resets it. Settling or archiving either Thread ends
   the pair's allowance (a denial stays); deleting a Thread drops its pairs. A
   message whose turn is stopped or fails, or that the owner removes from the
