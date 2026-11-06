@@ -84,3 +84,10 @@ test('two threads of the same name in the same project are told apart by a short
   renderPairs([{ ...held, a: 'aaaaaaaa-1', b: 'bbbbbbbb-2', held: { ...held.held!, from: 'aaaaaaaa-1', to: 'bbbbbbbb-2' } }], [thread('aaaaaaaa-1', 'Fix', { project_id: 'pa' }), thread('bbbbbbbb-2', 'Fix', { project_id: 'pa' })], 'bbbbbbbb-2');
   expect(screen.getByRole('button', { name: 'Fix · aaaaaaaa' })).toBeTruthy();
 });
+
+test('a thread missing from the list does not force a link, and the limit comes from the pair', () => {
+  renderPairs([{ ...held, limit: 4, held: { ...held.held!, reason: 'limit' } }], [thread('b', 'Receiver')], 'b');
+  expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Link and allow' })).toBeNull();
+  expect(screen.getByText(/Allow covers 4 more/)).toBeTruthy();
+});

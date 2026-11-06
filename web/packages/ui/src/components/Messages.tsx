@@ -11,11 +11,11 @@ import { AlertDialog, useConfirm } from './ui/dialog';
 /** The pairs of Threads that message each other (`message_pairs`), from the app state. */
 export const MessagePairsContext = createContext<MessagePair[]>([]);
 
-const REASONS: Record<NonNullable<MessagePair['held']>['reason'], string> = {
+const reasons = (limit: number): Record<NonNullable<MessagePair['held']>['reason'], string> => ({
   first: 'The first message between these threads waits for you.',
-  limit: 'These threads used the deliveries you allowed. Allow covers 6 more.',
+  limit: `These threads used the deliveries you allowed. Allow covers ${limit} more.`,
   link: 'One of these threads runs unattended (Yolo, Assisted or autopilot): link them to let messages through.',
-};
+});
 
 const STATUS: Record<PeerStatus, string> = {
   held: 'waiting for you',
@@ -50,9 +50,9 @@ function useThreadName() {
   };
 }
 
-/** No person decides the Thread's permission requests, as the service judges it: its messages need a linked pair. */
+/** No person decides the Thread's permission requests, as the service judges it: its messages need a linked pair. A Thread missing from the list is not judged here; the service's answer to Allow decides. */
 export function unattended(s: SessionSummary | undefined): boolean {
-  return !s || s.mode === 'yolo' || s.mode === 'assisted' || !!s.mode_unknown || s.execution?.mode === 'autopilot';
+  return !!s && (s.mode === 'yolo' || s.mode === 'assisted' || !!s.mode_unknown || s.execution?.mode === 'autopilot');
 }
 
 function usePairAction(pair: MessagePair) {
@@ -112,7 +112,7 @@ function HeldMessage({ pair, self }: Readonly<{ pair: MessagePair; self: string 
       <h3 id={titleId} className="text-title text-ink">
         {held.from === self ? sender : <ThreadButton id={held.from} name={sender} />} <span className="text-muted">({project(held.from)})</span> to {held.to === self ? receiver : <ThreadButton id={held.to} name={receiver} />} <span className="text-muted">({project(held.to)})</span>
       </h3>
-      <p className="mt-1 text-caption text-muted">{REASONS[held.reason]}</p>
+      <p className="mt-1 text-caption text-muted">{reasons(pair.limit)[held.reason]}</p>
       <pre translate="no" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">{held.text}</pre>
       <p className="mt-1 text-caption text-muted">It comes from an agent. Allowed, it starts a turn in {receiver}, whose reply goes back the same way.</p>
       <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
