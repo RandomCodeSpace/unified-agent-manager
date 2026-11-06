@@ -40,12 +40,12 @@ export type Unread = (s: SessionSummary) => boolean;
 const never: Unread = () => false;
 
 /**
- * Whether a Task needs the user (the Needs you count, Alt+J/K): a request waits (`needsYou` in api.ts), or the Task failed
+ * Whether a Task needs the user (the Needs you count, Alt+J/K): a request or a held message waits (`needsYou` in api.ts), or the Task failed
  * or was interrupted and has not been opened since. Never the shelves.
  */
 export function needsYouNow(s: SessionSummary, unread: Unread = never): boolean {
   if (readOnly(s)) return false;
-  return s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s) || ((s.state === 'failed' || s.state === 'interrupted') && unread(s));
+  return s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s) || (s.messages_held ?? 0) > 0 || ((s.state === 'failed' || s.state === 'interrupted') && unread(s));
 }
 
 /** How many Tasks need the user: the count the tab title, the app badge and the drawer button carry. */
