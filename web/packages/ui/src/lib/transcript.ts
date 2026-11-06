@@ -1078,3 +1078,10 @@ export function timelineRows(entries: readonly Entry[], { live, approvals, skip,
   const tail = rows.slice(rows.indexOf(steps[steps.length - CAP_TAIL]));
   return [rows[0], { type: 'more', key: 'more', hidden: steps.length - 1 - CAP_TAIL, calls }, ...tail];
 }
+
+/** A peer message (`uam_send`) without uam's lead paragraph, which its caption says for the owner, and unquoted: uam quotes each line after "> ". */
+export function peerText(text: string): string {
+  const end = text.indexOf('\n\n');
+  if (!text.startsWith('[uam] ') || end < 0) return text;
+  return text.slice(end + 2).split('\n').map((line) => (line.startsWith('> ') ? line.slice(2) : line === '>' ? '' : line)).join('\n');
+}

@@ -1,6 +1,6 @@
 import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
-import type { AccountUsage, HistoryPage, ModelCalls, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
+import type { AccountUsage, HistoryPage, MessagePair, ModelCalls, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -71,6 +71,8 @@ export interface State {
   usage: AccountUsage | null;
   /** Model calls in flight across the service's Threads, from the snapshot and `model_calls` frames; null until a snapshot carries them. */
   modelCalls: ModelCalls | null;
+  /** The pairs of Threads that message each other, from the snapshot and `message_pairs` frames. */
+  messagePairs: MessagePair[];
   /** Why the service's latest save of the Threads failed, from the snapshot and `save_status` frames; "" while saves succeed. */
   saveError: string;
 }
@@ -96,6 +98,7 @@ export const initialState: State = {
   settings: DEFAULT_SETTINGS,
   usage: null,
   modelCalls: null,
+  messagePairs: [],
   saveError: '',
 };
 
@@ -148,7 +151,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.status, detail };
     }
     case 'snapshot': {
-      const { seq, sessions, session, projects, settings, usage, model_calls, save_error } = action.data;
+      const { seq, sessions, session, projects, settings, usage, model_calls, message_pairs, save_error } = action.data;
       const detail = session?.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
@@ -174,6 +177,7 @@ export function reducer(state: State, action: Action): State {
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
         modelCalls: model_calls ?? null,
+        messagePairs: message_pairs ?? [],
         saveError: save_error ?? '',
       };
     }
@@ -314,6 +318,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, usage: d.usage };
         case 'model_calls':
           return { ...state, modelCalls: d.model_calls };
+        case 'message_pairs':
+          return { ...state, messagePairs: d.message_pairs };
         case 'save_status':
           return { ...state, saveError: d.save_error ?? '' };
       }
@@ -498,7 +504,7 @@ export const SUMMARY_KEYS = Object.keys({
   id: 1, project_id: 1, provider: 1, name: 1, title: 1, title_pending: 1, workdir: 1, real_workdir: 1, branch: 1, branch_link_url: 1, branch_link_branch: 1, worktree: 1, git_pending: 1, conversation_id: 1, model: 1, last_model: 1, subagents_running: 1,
   background_tasks_running: 1, effort: 1, context_size: 1, agent: 1, output_style: 1, context: 1, usage: 1, budget: 1, handoff: 1, mode: 1, mode_unknown: 1, execution: 1, stage: 1, settled_at: 1,
   archived_at: 1, settled_by: 1, spawned_by: 1, routine_id: 1, diff: 1, rerun_of: 1, fork_of: 1, fork_user_item_id: 1, not_started: 1, rewind: 1, outcome: 1, compacting: 1, compacting_background: 1, compact_threshold: 1, stop_reason: 1, queued: 1, state: 1, state_detail: 1, interrupted_at: 1,
-  open: 1, pending: 1, ask: 1, event_at: 1, created_at: 1, updated_at: 1, capabilities: 1,
+  open: 1, pending: 1, messages_held: 1, ask: 1, event_at: 1, created_at: 1, updated_at: 1, capabilities: 1,
 } satisfies Record<keyof SessionSummary, 1>) as (keyof SessionSummary)[];
 
 function withSession(state: State, s: SessionSummary): State {

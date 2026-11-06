@@ -1,7 +1,7 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FilePen, FilePlus, Files, FileText, FolderSearch, GitBranch, Globe, Image as ImageIcon, MessageCircleQuestion, Minus, Pencil, Plug, RotateCcw, Search, ShieldQuestionMark, Signpost, Terminal, Workflow, X, type LucideIcon } from 'lucide-react';
 import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
-import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnTiming } from '../api';
+import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnPeer, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
 import { isChartCall } from '../lib/chart';
@@ -10,7 +10,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { formatCount, lineCountsText } from '../lib/cost';
-import { approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { receipts, type Stamp } from '../lib/receipts';
@@ -132,6 +132,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   const turnIds = useGroupIdentities(groupItems);
   const replyActions = useMemo(() => ({ threadChanges: onOpenThreadChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenThreadChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const stamps = new Map<string, Stamp[]>();
+  const peers = new Map(turnTimings.flatMap((t) => (t.peer && t.user_item_id ? [[t.user_item_id, t.peer] as const] : [])));
   const gitlab = useContext(GitLabItemsContext);
   const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
   const scratch = scratchPlan(planPath, workdir);
@@ -216,7 +217,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     flush();
     userItemId = entry.item.id;
     ownMessage = true;
-    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} />);
+    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} peer={agentId ? undefined : peers.get(entry.item.id)} />);
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
@@ -1081,14 +1082,28 @@ export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean
 }
 
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
-const UserBubble = memo(function UserBubble({ item, sessionId, className, asideTurn }: { item: Item; sessionId?: string; className?: string; /** Set while the message's turn has no reply foot: its asides chip goes in this one. */ asideTurn?: string }) {
+const UserBubble = memo(function UserBubble({ item, sessionId, className, asideTurn, peer }: { item: Item; sessionId?: string; className?: string; /** Set while the message's turn has no reply foot: its asides chip goes in this one. */ asideTurn?: string; /** Set when another Thread's message, or the reply to this Thread's, started the turn. */ peer?: TurnPeer }) {
+  if (peer) return userBubble({ item, text: peerText(item.text ?? ''), sessionId, className, asideTurn, peer });
   return item.clipped ? <ClippedMessage item={item} sessionId={sessionId} className={className} asideTurn={asideTurn} /> : userBubble({ item, text: item.text ?? '', sessionId, className, asideTurn });
 });
 
-/** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string }
+/** Who sent a peer message: a button that opens that Thread. */
+function PeerCaption({ peer }: Readonly<{ peer: TurnPeer }>) {
+  const actions = useTaskActions();
+  const name = peer.from_name || 'another thread';
+  return (
+    <span className="block text-caption text-accent">
+      {peer.reply ? 'Reply from ' : 'From '}
+      <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(peer.from)}>{name}</button>
+      {peer.from_project && !peer.reply ? <span className="text-muted"> · {peer.from_project}</span> : null}
+    </span>
+  );
+}
 
-function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
+/** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string; peer?: TurnPeer }
+
+function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
   const attachments = item.attachments ?? [];
   const chips = attachments.length > 0 && !!sessionId;
@@ -1097,7 +1112,7 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn }: Mess
   const bubble = (
     // A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text.
     <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
-      <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
+      {peer ? <PeerCaption peer={peer} /> : <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>}
       {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
       {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
       {text && (reviewRequest ? <GitLabReviewRequest request={reviewRequest} text={text} /> : whole?.status === 'whole' ? plainText(text) : <Markdown text={text} breaks tally={false} />)}

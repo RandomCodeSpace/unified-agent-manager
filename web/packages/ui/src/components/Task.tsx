@@ -24,6 +24,7 @@ import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
 import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
+import { ThreadMessages } from './Messages';
 import { SubagentScope } from './Subagents';
 import { SubagentBar, SubagentView } from './SubagentView';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
@@ -1085,6 +1086,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {editError && <Note tone="error" role="alert">{editError}</Note>}
               {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
               {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
+              <ThreadMessages session={session} />
               {cards.map((i) => (
                 <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                   <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />

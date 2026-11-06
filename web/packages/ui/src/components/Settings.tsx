@@ -846,6 +846,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <Row id="suggest-replies" label="Suggest replies" help="Suggests one reply based on what the turn did; no model call when the choice is clear.">
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
+      {api.supports('thread-messages-v1') && (
+        <Row id="thread-messages" label="Threads can message each other" help="Threads get a tool to message another thread; its final reply comes back the same way. You allow the first message of each pair, link pairs with an unattended thread, and allow more after 6 deliveries. An open thread gets the tool only after its conversation reopens.">
+          <Switch aria-label="Threads can message each other" aria-describedby="thread-messages-help" checked={!!settings.thread_messages} disabled={saving} onCheckedChange={(thread_messages) => void save({ thread_messages })} />
+        </Row>
+      )}
       {repliesPaused && (
         <Note tone="warn" role="status" className="max-w-3xl">
           {`Paused until tomorrow (${resumeText(pausedPurposes.resetsAt)}) after repeated unusable answers from the Utility model. Settings → Background AI lists them in its log.`}
