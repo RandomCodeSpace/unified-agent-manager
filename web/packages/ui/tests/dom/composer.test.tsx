@@ -109,6 +109,21 @@ describe('sending', () => {
     await waitFor(() => expect(document.activeElement).toBe(composer()));
   });
 
+  test('Stop gives focus back even when the turn ends before the cancel request answers', async () => {
+    const { user } = await openTask('t1');
+    let release = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const cancel = api.cancel.bind(api);
+    // The service ends the turn (its events arrive) and only then answers the POST.
+    const spy = vi.spyOn(api, 'cancel').mockImplementation(async (id) => { const done = await cancel(id); await gate; return done; });
+    onTestFinished(() => spy.mockRestore());
+    await user.click(screen.getByRole('button', { name: 'Stop turn' }));
+    expect(await log().findByText('Turn stopped.')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop turn' })).toBeNull());
+    release();
+    await waitFor(() => expect(document.activeElement).toBe(composer()));
+  });
+
   test('clearing the queue and cancelling one prompt are confirmed first', async () => {
     const { user } = await openTask('t1');
     await user.click(screen.getByRole('button', { name: /^Cancel waiting message: Then describe/ }));

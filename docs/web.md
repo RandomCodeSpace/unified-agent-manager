@@ -1815,11 +1815,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "3 files changed; tests pass". The
-  Thread's row in the sidebar keeps it in its hover text ("Review" is the
-  visible status until you open the Thread, then "Finished"). It is the finish evidence's own reading
+  Thread's row in the sidebar keeps it in its hover text (the status reads
+  "Finished", with an unread mark until you open the Thread). It is the finish evidence's own reading
   of the turn, with no model call (the service reads it
   once, for both): the files the Thread's edit tools changed in the turn (the main
-  agent's and its subagents', the files Changes shows for "Last turn"),
+  agent's and its subagents', the files that turn's View changes opens on),
   whether the main agent's last test run (a "Ran the tests" row in the
   evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
@@ -1829,7 +1829,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   as in "Fixed the flaky redraw test; 3 files changed; tests pass".
   A new turn clears the line, and a turn that is stopped or fails gets none.
   What the line reports is no state: a Thread whose turn says "tests fail" or
-  that commands failed is Review or Finished like any other, the line's words
+  that commands failed is Finished like any other, the line's words
   in its row tip.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
@@ -2190,9 +2190,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     When the turn made claims but ran no check, one line says no tests,
     builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the
-    main agent's and its subagents'; edits that failed left out), the same
-    files Changes lists for "Last turn", named from the repository's top
-    as Changes names them, with their line counts. A long list scrolls
+    main agent's and its subagents'; edits that failed left out), the files
+    the turn's View changes opens on in the Thread's one Changes list, named
+    from the repository's top as Changes names them, with their line counts. A long list scrolls
     inside the section.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
@@ -2467,11 +2467,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   branches (when a turn ends, after Commit, Pull and Set up git, and when a
   page loads), and after Push; the summary carries it as
   `git_pending {uncommitted, unpushed}`. The status is one of "Needs answer", "Needs permission", "Starting",
-  "Working", "Review", "Finished", "Error", "Interrupted", "Stopped", or "Idle";
+  "Working", "Finished", "Error", "Interrupted", "Stopped", or "Idle";
   the header and the strip's live line use the same words. "Needs you" is only
   the count of Threads that want you.
   Needs answer, Needs permission and Interrupted are amber; Working/Starting blue; Compacting violet;
-  Review teal; Finished green; Error red; inactive states gray.
+  Finished green (an unread one teal, with an eye); Error red; inactive states gray.
   The second line shows the Thread title, its branch in muted text (a
   Thread in its own worktree shows the worktree's branch, not the Project
   folder's), and how long ago the Thread changed. Hovering the row shows the full title,

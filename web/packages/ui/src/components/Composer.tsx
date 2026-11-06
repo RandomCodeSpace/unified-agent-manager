@@ -859,14 +859,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // Never on a touch screen, where the keyboard would rise over the conversation.
   const stopShown = !subagent && (live || session.execution?.objective?.status === 'active');
   const stopRefocus = useRef(false);
+  // The text box is disabled while the cancel request runs, so the mark waits for both the button and the request.
   useEffect(() => {
-    if (!stopRefocus.current) return;
-    stopRefocus.current = false; // a new turn's Stop clears a mark the last one left
-    if (stopShown) return;
+    if (!stopRefocus.current || stopShown || busy) return;
+    stopRefocus.current = false;
     const active = document.activeElement;
     if (window.matchMedia(COARSE).matches || (active && active !== document.body && !active.closest('[inert]'))) return;
     textarea.current?.focus();
-  }, [stopShown]);
+  }, [stopShown, busy]);
 
   // The draft follows the text, the picked files and the finished uploads once typing pauses;
   // leaving the Task writes it at once. An accepted send clears it (see `send`).
@@ -1926,7 +1926,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {(busy === 'stop' || stopping) && <output className="mr-1 text-caption text-muted">Stopping…</output>}
         <Appear show={stopShown}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => { onSessionUpdate(await api.cancel(session.id)); stopRefocus.current = true; setStopping(true); })}>
+            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => {
+              // Marked at the press: the turn's end can arrive before the cancel request answers.
+              stopRefocus.current = true;
+              try { onSessionUpdate(await api.cancel(session.id)); } catch (err) { stopRefocus.current = false; throw err; }
+              setStopping(true);
+            })}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
           </Tip>

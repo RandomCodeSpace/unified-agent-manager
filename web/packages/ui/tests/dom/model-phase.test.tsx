@@ -44,7 +44,8 @@ describe('the live line at the strip', () => {
     expect(liveLine(reads, false)?.phase).toBe('Reading 3 files');
     expect(liveLine(task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view')] }), false)?.phase).toBe('Reading redraw_test.go');
     const you = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission', interactions: [{ id: 'p', kind: 'permission', title: 'Run shell command', detail: 'rm -rf build/', state: 'pending', time: ago(72) }] as SessionDetail['interactions'] });
-    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs permission', detail: 'allow rm -rf build/', since: ago(72) });
+    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs permission', detail: 'approve bash', since: ago(72) });
+    // The permission card shows the command: the line names the state and the tool only.
     const agents = task({ kind: 'model', since: ago(5), calls: 3, subagents: 3 }, { subagents: [{ id: 'a', status: 'running' }, { id: 'b', status: 'running' }, { id: 'c', status: 'running' }, { id: 'd', status: 'completed' }] as SessionDetail['subagents'] });
     expect(liveLine(agents, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents' });
     expect(liveLine(task({ kind: 'model', by: 'compaction', since: ago(18), calls: 1 }), false)).toEqual({ mark: 'dot', phase: 'Compacting the conversation', since: ago(18) });
@@ -198,7 +199,7 @@ describe('the live line at the strip', () => {
   test.each([
     ['t1', /^Running go test \.\/internal\/vterm\/\.\.\. -run Redraw -count=1, /],
     ['t8', /^Waiting for the model, /],
-    ['t6', /^Needs permission, allow chmod 0644/],
+    ['t6', /^Needs permission, approve bash, /],
     ['t7', /^Compacting the conversation, /],
     ['t22', /^Waiting on 4 subagents, /],
   ])('mock Thread %s says its own phase on the strip', async (id, words) => {
