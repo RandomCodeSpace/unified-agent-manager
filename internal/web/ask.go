@@ -17,6 +17,10 @@ type Ask struct {
 	// Title is a permission's title, or the first line of a question's text
 	// (its header, else the interaction title, when the text is empty).
 	Title string `json:"title"`
+	// Detail is a permission's most specific text for a notice body: the
+	// first paragraph of the request's detail (the command, path or URL),
+	// empty when that is JSON arguments, which say less than the title.
+	Detail string `json:"-"`
 }
 
 // pendingAsk is the Ask for the request the state reports: the first pending
@@ -59,5 +63,10 @@ func askOf(ix agentapi.Interaction) Ask {
 		a.Title = firstNonEmpty(firstLine(q.Text), strings.TrimSpace(q.Header), ix.Title)
 	}
 	a.Title = clipRunes(a.Title, maxAskRunes)
+	if ix.Kind == agentapi.InteractionPermission {
+		if d, _, _ := strings.Cut(strings.TrimSpace(ix.Detail), "\n\n"); d != "" && d[0] != '{' && d[0] != '[' {
+			a.Detail = clipRunes(d, maxAskRunes)
+		}
+	}
 	return a
 }

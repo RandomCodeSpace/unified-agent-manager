@@ -328,6 +328,10 @@ func TestSessionPathsReadAtTurnEndSurviveRestart(t *testing.T) {
 		defer m.mu.Unlock()
 		return slices.Equal(m.sessions[sum.ID].nativePaths, []string{"shell.txt"})
 	})
+	idle, err := m.Create(CreateRequest{Provider: "native", ProjectID: sum.ProjectID}) // never prompted
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -338,6 +342,28 @@ func TestSessionPathsReadAtTurnEndSurviveRestart(t *testing.T) {
 	}
 	if len(prov.Opens()) != 0 {
 		t.Fatal("the guard resumed a closed conversation after a restart")
+	}
+
+	// Reading Changes lists the saved session paths and leaves the closed
+	// Thread as it was: no open, no state change, no notice.
+	before := mustSummary(t, m, sum.ID).State
+	out, err := m.Changes(t.Context(), sum.ID, ScopeSession)
+	if err != nil || out.Label != closedSessionLabel || len(out.Files) != 1 || out.Files[0].Path != "shell.txt" || !out.Files[0].SessionTracked {
+		t.Fatalf("restarted session changes = %+v, %v", out, err)
+	}
+	if _, err := m.FileChange(t.Context(), sum.ID, ScopeSession, "shell.txt"); err != nil {
+		t.Fatalf("restarted session file: %v", err)
+	}
+	if len(prov.Opens()) != 0 || mustSummary(t, m, sum.ID).State != before {
+		t.Fatalf("reading Changes opened the conversation (%d) or moved the state to %s", len(prov.Opens()), mustSummary(t, m, sum.ID).State)
+	}
+	if _, err := m.Changes(t.Context(), idle.ID, ScopeSession); err != nil || len(prov.Opens()) != 0 || mustSummary(t, m, idle.ID).State != StateIdle {
+		t.Fatalf("idle Thread after reading Changes: %v, opens %d, state %s", err, len(prov.Opens()), mustSummary(t, m, idle.ID).State)
+	}
+	for _, kind := range []string{noticeQuestion, noticePermission, noticeFailed, noticeFinished} {
+		if n := countOf(m, "notices_"+kind); n != 0 {
+			t.Fatalf("reading Changes fired %d %s notices", n, kind)
+		}
 	}
 }
 
