@@ -1,7 +1,7 @@
 import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu';
 import { Menu as BaseMenu } from '@base-ui/react/menu';
 import { Check } from 'lucide-react';
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { cn } from '../../lib/cn';
 
@@ -92,16 +92,23 @@ function useDeferredActions(onOpenChangeComplete?: (open: boolean) => void) {
   return { ctx, onComplete };
 }
 
-function renderActions(parts: MenuParts, items: ActionItem[], defer: Deferred['defer']) {
-  return items.map((it) => (
+/** Items disabled in a row for the same reason (Settle and Archive on a busy Thread) show it once, under the last, and each is described by it. */
+function renderActions(parts: MenuParts, items: ActionItem[], defer: Deferred['defer'], id: string) {
+  const reason = (it?: ActionItem) => (it?.disabled && it.reason) || undefined;
+  const shownUnder = (i: number) => {
+    let last = i;
+    while (reason(items[last + 1]) === reason(items[i])) last++;
+    return `${id}-${last}`;
+  };
+  return items.map((it, i) => (
     <div key={it.key} className="contents">
       {it.separator && <parts.Separator className={separatorClass} />}
-      <parts.Item className={cn(itemClass, it.danger && dangerItemClass)} disabled={it.disabled} onClick={() => defer(it.onSelect, it.takesFocus)}>
+      <parts.Item className={cn(itemClass, it.danger && dangerItemClass)} disabled={it.disabled} aria-describedby={reason(it) && shownUnder(i)} onClick={() => defer(it.onSelect, it.takesFocus)}>
         {it.icon}
         <span className="flex-1">{it.label}</span>
         {it.hint && <span className="text-caption text-muted">{it.hint}</span>}
       </parts.Item>
-      {it.disabled && it.reason && <p className="max-w-64 px-2 pb-1.5 text-caption text-muted">{it.reason}</p>}
+      {reason(it) && reason(items[i + 1]) !== reason(it) && <p id={`${id}-${i}`} className="max-w-64 px-2 pb-1.5 text-caption text-muted">{it.reason}</p>}
     </div>
   ));
 }
@@ -174,7 +181,8 @@ export const Menu = {
   },
   Actions({ items }: { items: ActionItem[] }) {
     const { defer } = useContext(DeferContext);
-    return <>{renderActions({ Item: BaseMenu.Item, Separator: BaseMenu.Separator }, items, defer)}</>;
+    const id = useId();
+    return <>{renderActions({ Item: BaseMenu.Item, Separator: BaseMenu.Separator }, items, defer, id)}</>;
   },
 };
 
@@ -204,7 +212,8 @@ export const ContextMenu = {
   },
   Actions({ items }: { items: ActionItem[] }) {
     const { defer } = useContext(DeferContext);
-    return <>{renderActions({ Item: BaseContextMenu.Item, Separator: BaseContextMenu.Separator }, items, defer)}</>;
+    const id = useId();
+    return <>{renderActions({ Item: BaseContextMenu.Item, Separator: BaseContextMenu.Separator }, items, defer, id)}</>;
   },
 };
 
