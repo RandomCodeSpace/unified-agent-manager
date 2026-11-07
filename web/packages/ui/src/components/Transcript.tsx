@@ -1192,6 +1192,22 @@ const NOTE_START = /\s(?=uam (?:thread|trail|budget|memory): |The user edited [^
 /** A notice that starts with a uam note UamNotes shows. */
 const UAM_NOTES = /^(?:uam (?:thread|trail|memory): |The user edited )/;
 
+/** The Copilot CLI's warning after a resume found tool calls with no result (a `session.warning`, as noticeText words it). */
+const RESUME_WARNING = /^Warning: (\d+) tool call\(s\) had no recorded result at resume\./;
+
+/** The resume warning as one folded line, the CLI's whole text on expand; the turn line already counts the failed calls. */
+function ResumeWarning({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const calls = RESUME_WARNING.exec(text)?.[1] ?? '';
+  return (
+    <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
+      <details>
+        <summary className="cursor-pointer">{calls} tool {calls === '1' ? 'call' : 'calls'} had no result at resume</summary>
+        <Markdown text={text} className="mt-1 [&_p]:m-0" />
+      </details>
+    </div>
+  );
+}
+
 /** A Go-quoted name as written, when it is not also a JSON string. */
 function unquote(raw: string): string {
   try { return JSON.parse(`"${raw}"`) as string; } catch { return raw; }
@@ -1680,6 +1696,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
       if (item.kind === 'notice' && UAM_NOTES.test(item.text ?? '')) return <UamNotes text={item.text ?? ''} className={className} />;
+      if (item.kind === 'notice' && RESUME_WARNING.test(item.text ?? '')) return <ResumeWarning text={item.text ?? ''} className={className} />;
       return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
