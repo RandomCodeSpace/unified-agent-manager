@@ -1708,6 +1708,9 @@ export interface EvidenceCheck {
   /** Why the outcome is unclear, or how it passed. */
   note?: string;
   has_output: boolean;
+  /** The subagent that ran it (absent for the main agent), and its name when known. */
+  agent_id?: string;
+  agent_name?: string;
 }
 
 export type CheckKind = 'test' | 'build' | 'lint' | 'vet' | 'typecheck';

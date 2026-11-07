@@ -121,6 +121,28 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByRole('dialog', { name: 'Finished — check the evidence' })).toBeNull();
   });
 
+  test('a check a subagent ran says so, with its name when known, and opens that subagent’s output', async () => {
+    vi.spyOn(api, 'evidence').mockResolvedValue({
+      checks: [
+        { item_id: 's1', kinds: ['test'], command: 'go test ./...', outcome: 'pass', exit: 0, has_output: true, agent_id: 'sa', agent_name: 'tester' },
+        { item_id: 's2', kinds: ['build'], command: 'go build ./...', outcome: 'pass', exit: 0, has_output: false, agent_id: 'sb' },
+      ],
+      claims: [],
+      files: [],
+    });
+    const body = vi.spyOn(api, 'itemBody').mockRejectedValue(new Error('The item is gone.'));
+    onTestFinished(() => { vi.restoreAllMocks(); });
+    const { user } = await openTask('t20');
+    await user.click(await screen.findByRole('button', { name: /evidence available/ }));
+    const card = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
+    const tests = card.getByText('Ran the tests').closest('li')!;
+    expect(tests.textContent).toContain('go test ./... · exit 0 · by subagent tester');
+    expect(card.getByText('Ran the build').closest('li')!.textContent).toContain('go build ./... · exit 0 · by a subagent');
+    await user.click(within(tests).getByRole('button', { name: 'Show output' }));
+    // Its output is the subagent's item, read with its agent.
+    await waitFor(() => expect(body).toHaveBeenCalledWith('t20', 's1', 'sa', expect.anything()));
+  });
+
   test('keyboard and close button dismiss Changes and restore branch focus', async () => {
     const { user } = await openTask('t20');
     const trigger = await screen.findByRole('button', { name: /evidence available/ });
