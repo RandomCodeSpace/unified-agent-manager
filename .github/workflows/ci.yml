@@ -1,12 +1,13 @@
 name: CI
 
-# One workflow for pull requests, main, the weekly schedule and release
-# fallbacks. The web bundle is built once and shared by every Go job.
+# One workflow for pull requests, the merge queue, main, the weekly schedule
+# and release fallbacks. The web bundle is built once and shared by every Go job.
 
 on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
   schedule:
     - cron: "17 5 * * 3"
   workflow_call:
@@ -22,7 +23,7 @@ permissions:
   contents: read
   pull-requests: read
 
-# Group PR runs together; keep main, manual and release runs independent.
+# Group PR runs together; keep merge queue, main, manual and release runs independent.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
@@ -365,11 +366,11 @@ jobs:
       - name: Detect release tooling changes
         id: tooling
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           EVENT: ${{ github.event_name }}
         run: |
           changed=true
-          if { test "$EVENT" = pull_request || test "$EVENT" = push; } && test -n "$BASE" && files=$(git diff --name-only "$BASE" HEAD); then
+          if { test "$EVENT" = pull_request || test "$EVENT" = merge_group || test "$EVENT" = push; } && test -n "$BASE" && files=$(git diff --name-only "$BASE" HEAD); then
             grep -qE '^(scripts/|Makefile$|\.goreleaser\.yml$|go\.(mod|sum)$|\.github/workflows/|web/(package|package-lock)\.json$|web/\.node-version$|internal/version/)' <<< "$files" || changed=false
           fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
