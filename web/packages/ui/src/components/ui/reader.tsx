@@ -1,7 +1,7 @@
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { X } from 'lucide-react';
-import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 import { Button } from './button';
 import { backdropClass, readerPopupClass } from './dialog';
@@ -114,6 +114,9 @@ export function BottomSheet({ open, onClose, onClosed, label, className, backdro
 
 type VirtualAnchor = { getBoundingClientRect: () => DOMRect };
 
+/** True while Settings or Routines cover the Thread beneath (App provides it around the pane). */
+export const CoveredContext = createContext(false);
+
 /** The reader's surface: a column at most 80% of the viewport tall and the room beside its anchor wide. */
 const READER_SURFACE = cn('flex max-h-[min(80vh,var(--available-height))] max-w-(--available-width)', readerPopupClass);
 
@@ -148,6 +151,12 @@ export function AnchoredReader({ id, open, sheet, anchor, lift = anchor instance
   onClosed: () => void;
   children: (close: ReactNode) => ReactNode;
 }>) {
+  // The reader sits in a portal, outside the pane a view makes inert; a fragment (Back, an edited URL) can open the view under it, so it closes.
+  const covered = useContext(CoveredContext);
+  const close = useEffectEvent(onClose);
+  useEffect(() => {
+    if (covered && open) close();
+  }, [covered, open]);
   if (sheet || !anchor) {
     return (
       <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className={cn('duration-160', sheetClassName)} backdropClassName="duration-160" initialFocus={initialFocus} finalFocus={finalFocus}>
