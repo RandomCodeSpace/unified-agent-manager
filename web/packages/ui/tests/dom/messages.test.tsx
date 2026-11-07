@@ -2,8 +2,8 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { api, needsYou, type Item, type MessagePair, type Project, type SessionSummary, type TurnTiming } from '../../src/api';
-import { MessagePairsContext, ThreadMessages } from '../../src/components/Messages';
+import { api, needsYou, type Item, type MessagePair, type PeerMessage, type Project, type SessionSummary, type TurnTiming } from '../../src/api';
+import { MessageOutcomesContext, MessagePairsContext, ThreadMessages } from '../../src/components/Messages';
 import { peerText } from '../../src/lib/transcript';
 import { Transcript } from '../../src/components/Transcript';
 import { TaskList } from '../../src/components/taskActions';
@@ -90,4 +90,24 @@ test('a thread missing from the list does not force a link, and the limit comes 
   expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Link and allow' })).toBeNull();
   expect(screen.getByText(/Allow covers 4 more/)).toBeTruthy();
+});
+
+test('a message a settled pair left undelivered keeps its outcome on both threads and follows the snapshot and frames', () => {
+  const outcome: PeerMessage = { id: 'm1', from: 'a', to: 'b', status: 'undelivered', detail: '"Receiver" was settled', at: '', updated_at: '' };
+  const sessions = [thread('a', 'Sender'), thread('b', 'Receiver', { stage: 'settled' } as Partial<SessionSummary>)];
+  for (const [self, line] of [['a', 'Message to Receiver · Not delivered: "Receiver" was settled'], ['b', 'Message from Sender · Not delivered: "Receiver" was settled']]) {
+    const { unmount } = render(
+      <TaskList.Provider value={{ sessions, projects: [], openTask: () => {} }}>
+        <MessageOutcomesContext.Provider value={[outcome]}>
+          <ThreadMessages session={sessions.find((s) => s.id === self)!} />
+        </MessageOutcomesContext.Provider>
+      </TaskList.Provider>,
+    );
+    expect(screen.getByRole('status').textContent).toBe(line);
+    unmount();
+  }
+  const snap = reducer(initialState, { type: 'snapshot', data: { seq: 1, projects: [], sessions: [], session: null, message_pairs: [], message_outcomes: [outcome] } } as never);
+  expect(snap.messageOutcomes).toEqual([outcome]);
+  const next = reducer(snap, { type: 'update', data: { name: 'message_pairs', seq: 2, message_pairs: [], message_outcomes: [] } } as never);
+  expect(next.messageOutcomes).toEqual([]);
 });

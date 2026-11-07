@@ -1355,6 +1355,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Threads. Deny holds for the
   pair until the owner resets it. Settling or archiving either Thread ends
   the pair's allowance (a denial stays); deleting a Thread drops its pairs. A
+  message of that pair still held, queued or being answered then ends as
+  not delivered, with the reason (`"<Thread>" was settled` or archived), and
+  no agent is sent anything: both Threads show it as "Message to <Thread> ·
+  Not delivered: ..." ("from" on the receiver), each keeping its newest 20
+  across restarts, and the `uam` tool's `tasks` rows show it as the pair's
+  last message until a new message between the two Threads replaces it. A
   message whose turn is stopped or fails, or that the owner removes from the
   queue, gets no reply and no turn saying so; its status shows on the pair.
   Messages and replies use the receiving Thread's current model settings and

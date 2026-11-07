@@ -1,6 +1,6 @@
 import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
-import type { AccountUsage, HistoryPage, MessagePair, ModelCalls, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
+import type { AccountUsage, HistoryPage, MessagePair, ModelCalls, PeerMessage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -73,6 +73,8 @@ export interface State {
   modelCalls: ModelCalls | null;
   /** The pairs of Threads that message each other, from the snapshot and `message_pairs` frames. */
   messagePairs: MessagePair[];
+  /** Messages a dropped pair left undelivered, from the snapshot and `message_pairs` frames. */
+  messageOutcomes: PeerMessage[];
   /** Why the service's latest save of the Threads failed, from the snapshot and `save_status` frames; "" while saves succeed. */
   saveError: string;
 }
@@ -99,6 +101,7 @@ export const initialState: State = {
   usage: null,
   modelCalls: null,
   messagePairs: [],
+  messageOutcomes: [],
   saveError: '',
 };
 
@@ -151,7 +154,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, connection: action.status, detail };
     }
     case 'snapshot': {
-      const { seq, sessions, session, projects, settings, usage, model_calls, message_pairs, save_error } = action.data;
+      const { seq, sessions, session, projects, settings, usage, model_calls, message_pairs, message_outcomes, save_error } = action.data;
       const detail = session?.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
@@ -178,6 +181,7 @@ export function reducer(state: State, action: Action): State {
         usage: usage ?? null,
         modelCalls: model_calls ?? null,
         messagePairs: message_pairs ?? [],
+        messageOutcomes: message_outcomes ?? [],
         saveError: save_error ?? '',
       };
     }
@@ -319,7 +323,7 @@ export function reducer(state: State, action: Action): State {
         case 'model_calls':
           return { ...state, modelCalls: d.model_calls };
         case 'message_pairs':
-          return { ...state, messagePairs: d.message_pairs };
+          return { ...state, messagePairs: d.message_pairs, messageOutcomes: d.message_outcomes ?? [] };
         case 'save_status':
           return { ...state, saveError: d.save_error ?? '' };
       }

@@ -509,15 +509,18 @@ func (m *Manager) changePairsLocked(ids []string, change func()) {
 	case m.wake <- struct{}{}:
 	default:
 	}
-	pairs := m.pairListLocked()
-	m.broadcastLocked("message_pairs", "", func(seq uint64) any { return messagePairsEvent{Seq: seq, MessagePairs: pairs} })
+	pairs, outcomes := m.pairListLocked(), m.outcomeListLocked()
+	m.broadcastLocked("message_pairs", "", func(seq uint64) any {
+		return messagePairsEvent{Seq: seq, MessagePairs: pairs, MessageOutcomes: outcomes}
+	})
 	for _, t := range threads {
 		m.changedLocked(t.s, t.before)
 	}
 }
 
 // dropPairsLocked removes the pairs of the Thread id: every one when all,
-// else the ones the owner did not deny. The caller holds mu and publishes
+// else the ones the owner did not deny, whose messages that had not ended
+// stay on both Threads as not delivered. The caller holds mu and publishes
 // id's own summary.
 func (m *Manager) dropPairsLocked(id string, all bool) {
 	var ids []string
@@ -538,15 +541,76 @@ func (m *Manager) dropPairsLocked(id string, all bool) {
 	m.changePairsLocked(ids, func() {
 		for _, p := range m.pairs {
 			if (p.A == id || p.B == id) && (all || p.State != store.PairDenied) {
+				if !all {
+					m.keepUndeliveredLocked(id, p)
+				}
 				delete(m.pairs, p.ID)
 			}
 		}
 	})
 }
 
+// keepUndeliveredLocked records on both Threads of p, which settling or
+// archiving the Thread id drops, each message of p that had not ended: not
+// delivered, because id was settled or archived. Nothing is sent to either
+// agent; the uam tool's tasks op shows it as the pair's last message. The
+// caller holds mu.
+func (m *Manager) keepUndeliveredLocked(id string, p store.WebMessagePair) {
+	s := m.sessions[id]
+	if s == nil {
+		return
+	}
+	why, now := fmt.Sprintf("%q was %s", peerName(s), stageName(s.stage)), m.now()
+	for _, x := range p.Messages {
+		if x.Status != peerHeld && x.Status != peerQueued && x.Status != peerWorking && x.Status != peerReplying {
+			continue
+		}
+		x.Status, x.Detail, x.UpdatedAt = peerUndelivered, why, now
+		for _, t := range []*webSession{m.sessions[p.A], m.sessions[p.B]} {
+			if t != nil {
+				t.messageOutcomes = appendPeerMessage(t.messageOutcomes, x)
+				m.persistLocked(t)
+			}
+		}
+	}
+}
+
+// outcomeListLocked is the undelivered messages of dropped pairs that the
+// Threads keep, each once, oldest change first. The caller holds mu.
+func (m *Manager) outcomeListLocked() []store.WebPeerMessage {
+	out := []store.WebPeerMessage{}
+	seen := map[string]bool{}
+	for _, s := range m.sessions {
+		for _, x := range s.messageOutcomes {
+			if !s.removed && !seen[x.ID] {
+				seen[x.ID] = true
+				out = append(out, x)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b store.WebPeerMessage) int {
+		return cmp.Or(a.UpdatedAt.Compare(b.UpdatedAt), strings.Compare(a.ID, b.ID))
+	})
+	return out
+}
+
+// loadMessageOutcomes keeps the stored outcomes that are well formed, the
+// newest store.MaxPairMessages.
+func loadMessageOutcomes(stored []store.WebPeerMessage) []store.WebPeerMessage {
+	var out []store.WebPeerMessage
+	for _, x := range stored {
+		if x.ID != "" && x.From != "" && x.To != "" && x.Status == peerUndelivered {
+			x.Detail = clipRunes(displaytext.Sanitize(x.Detail), maxDetailRunes)
+			out = appendPeerMessage(out, x)
+		}
+	}
+	return out
+}
+
 type messagePairsEvent struct {
-	Seq          uint64                 `json:"seq"`
-	MessagePairs []store.WebMessagePair `json:"message_pairs"`
+	Seq             uint64                 `json:"seq"`
+	MessagePairs    []store.WebMessagePair `json:"message_pairs"`
+	MessageOutcomes []store.WebPeerMessage `json:"message_outcomes"`
 }
 
 // pairListLocked is every pair, oldest change first. The caller holds mu.
@@ -628,8 +692,13 @@ func (m *Manager) uamPairLocked(caller, s *webSession) *uamPairRow {
 	}
 	p, _ := m.pairOfLocked(caller.id, s.id)
 	row := &uamPairRow{State: p.State, Linked: p.Linked, Used: p.Used, Limit: p.Limit, Held: p.Held != nil}
-	if n := len(p.Messages); n > 0 {
-		x := p.Messages[n-1]
+	list := p.Messages
+	if len(list) == 0 {
+		// A pair settling or archiving dropped leaves its undelivered messages.
+		list = slices.DeleteFunc(slices.Clone(caller.messageOutcomes), func(x store.WebPeerMessage) bool { return x.From != s.id && x.To != s.id })
+	}
+	if n := len(list); n > 0 {
+		x := list[n-1]
 		row.Last = &uamLastMessage{ID: x.ID, From: x.From, Status: x.Status, Detail: x.Detail}
 	}
 	return row
