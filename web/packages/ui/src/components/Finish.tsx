@@ -43,6 +43,16 @@ function checkDetail(c: EvidenceCheck): string {
   return [c.exit !== undefined ? `exit ${c.exit}` : '', c.counts ?? '', c.took_ms !== undefined ? formatMs(c.took_ms) : '', c.note ?? ''].filter(Boolean).join(' · ');
 }
 
+/** Identical checks (the same kinds and outcome) share one row, failing rows first; each keeps its runs in turn order. */
+function checkRows(checks: readonly EvidenceCheck[]): EvidenceCheck[][] {
+  const rows = new Map<string, EvidenceCheck[]>();
+  for (const c of checks) {
+    const key = `${c.outcome}:${c.kinds.join()}`;
+    rows.set(key, [...(rows.get(key) ?? []), c]);
+  }
+  return [...rows.values()].sort((a, b) => Number(b[0].outcome === 'fail') - Number(a[0].outcome === 'fail'));
+}
+
 const MARK = {
   pass: <CheckCircle2 aria-label="Passed" className="mt-0.5 size-4 shrink-0 text-success" />,
   fail: <CircleX aria-label="Failed" className="mt-0.5 size-4 shrink-0 text-error" />,
@@ -140,19 +150,40 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
         <div className="flex flex-col gap-3 pt-2">
           {unverified > 0 && <Chip className="self-start bg-warning-wash text-warning">{unverified} {unverified === 1 ? 'claim' : 'claims'} not verified</Chip>}
           {(checks.length > 0 || claims.length > 0) && <ul className="flex flex-col divide-y divide-hairline">
-            {checks.map((c) => (
-              <li key={c.item_id} className="flex items-start gap-3 py-2.5">
-                {MARK[c.outcome]}
-                <div className="min-w-0 flex-1">
-                  <p className="text-ui text-ink">{checkText(c.kinds)}</p>
-                  <p className="text-caption text-muted">
-                    <code className="font-mono text-code-sm break-all text-body">{c.command}</code>
-                    {checkDetail(c) && <span> · {checkDetail(c)}</span>}
-                  </p>
-                </div>
-                {c.has_output && <Button size="sm" variant="subtle" className="text-accent" onClick={() => show(c)}>Show output</Button>}
-              </li>
-            ))}
+            {checkRows(checks).map((runs) => {
+              const c = runs[0];
+              const run = (r: EvidenceCheck) => (
+                <p className="text-caption text-muted">
+                  <code className="font-mono text-code-sm break-all text-body">{r.command}</code>
+                  {checkDetail(r) && <span> · {checkDetail(r)}</span>}
+                </p>
+              );
+              const output = (r: EvidenceCheck) => r.has_output && <Button size="sm" variant="subtle" className="text-accent" onClick={() => show(r)}>Show output</Button>;
+              return (
+                <li key={c.item_id} className="flex items-start gap-3 py-2.5">
+                  {MARK[c.outcome]}
+                  {runs.length === 1 ? <>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-ui text-ink">{checkText(c.kinds)}</p>
+                      {run(c)}
+                    </div>
+                    {output(c)}
+                  </> : (
+                    <details className="min-w-0 flex-1">
+                      <summary className="cursor-pointer text-ui text-ink">{`${checkText(c.kinds)} ×${runs.length}`}</summary>
+                      <ul className="flex flex-col gap-1.5 pt-1.5">
+                        {runs.map((r) => (
+                          <li key={r.item_id} className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">{run(r)}</div>
+                            {output(r)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
             {checks.length === 0 && (
               <li className="flex items-start gap-3 py-2.5">
                 <CircleDashed aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-faint" />
