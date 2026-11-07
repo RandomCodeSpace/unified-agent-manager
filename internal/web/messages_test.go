@@ -406,6 +406,82 @@ func TestSettleEndsTheAllowance(t *testing.T) {
 	}
 }
 
+// Settling the receiver of a held message drops the pair, and the message
+// stays on both Threads as not delivered, across a restart; the uam tool's
+// tasks op shows it as the pair's last message. Neither agent is sent
+// anything.
+func TestSettleKeepsWhatBecameOfAMessage(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	messagesOn(t, m)
+	a, ca := createSession(t, m, prov)
+	b, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: a.ProjectID, Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb := taskConv(t, prov, b.ID)
+	sendTo(t, ca, "c1", b.ID, "one")
+	msg := onlyPair(t, m).Messages[0].ID
+	if _, err := m.Settle(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	const want = `"task" was settled`
+	check := func(m *Manager) {
+		t.Helper()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if len(m.pairs) != 0 {
+			t.Fatalf("pairs after settle = %+v", m.pairs)
+		}
+		for _, id := range []string{a.ID, b.ID} {
+			got := m.sessions[id].messageOutcomes
+			if len(got) != 1 || got[0].ID != msg || got[0].From != a.ID || got[0].To != b.ID || got[0].Status != peerUndelivered || got[0].Detail != want {
+				t.Fatalf("outcomes of %s = %+v", id, got)
+			}
+		}
+		if list := m.outcomeListLocked(); len(list) != 1 || list[0].ID != msg {
+			t.Fatalf("published outcomes = %+v", list)
+		}
+	}
+	check(m)
+	var row struct {
+		Messages *uamPairRow `json:"messages"`
+	}
+	uamReadJSON(t, ca, fmt.Sprintf(`{"op":"task","args":{"id":%q}}`, b.ID), &row)
+	if r := row.Messages; r == nil || r.State != store.PairPending || r.Held || r.Last == nil || r.Last.ID != msg || r.Last.Status != peerUndelivered || r.Last.Detail != want {
+		t.Fatalf("tasks row = %+v", r)
+	}
+	if len(ca.Sends()) != 0 || len(cb.Sends()) != 0 {
+		t.Fatalf("sends: a %q, b %q", ca.Sends(), cb.Sends())
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	check(startManager(t, st, agenttest.NewProvider("fake", allCaps)))
+}
+
+// Archiving the sender of a queued message ends it as not delivered, and
+// the receiver never gets it.
+func TestArchiveEndsAQueuedMessageUndelivered(t *testing.T) {
+	m, _, _, a, ca, b, cb := twoThreads(t)
+	allowedQueued(t, m, ca, b)
+	if _, err := m.Archive(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	got := slices.Clone(m.sessions[b.ID].messageOutcomes)
+	m.mu.Unlock()
+	if len(got) != 1 || got[0].From != a.ID || got[0].Status != peerUndelivered || got[0].Detail != `"task" was archived` {
+		t.Fatalf("outcomes of the receiver = %+v", got)
+	}
+	if err := m.ResumeQueue(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the queue to drop the message", func() bool { return len(detail(t, m, b.ID).Queue) == 0 })
+	if len(cb.Sends()) != 0 {
+		t.Fatalf("the receiver got %q", cb.Sends())
+	}
+}
+
 // A restart keeps held messages and the owner's decisions, and reports a
 // message that was waiting in a queue as interrupted, never sending it.
 func TestMessagesAcrossARestart(t *testing.T) {

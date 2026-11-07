@@ -589,6 +589,10 @@ type webSession struct {
 	memoryRun     chan struct{}
 	memoryPin     string
 
+	// messageOutcomes are the messages of this Thread's dropped pairs that
+	// were not delivered (messages.go).
+	messageOutcomes []store.WebPeerMessage
+
 	// edits maps each file the Task's edit tools touched, as the tool gave
 	// its path, to when it was last touched, and turnStart is when the
 	// latest ordinary prompt to the main agent began (task_changes.go).
@@ -1053,6 +1057,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		s.handoff = web.Handoff
 		s.memoryNotes = loadMemoryNotes(web.MemoryNotes)
+		s.messageOutcomes = loadMessageOutcomes(web.MessageOutcomes)
 		if web.NativePaths != nil {
 			s.nativePaths, s.nativePathsAt = web.NativePaths.Paths, web.NativePaths.At
 		}
@@ -2555,7 +2560,7 @@ func (m *Manager) flush() (err error) {
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
-				MemoryNotes: slices.Clone(s.memoryNotes), NativePaths: nativePathsRecord(s),
+				MemoryNotes: slices.Clone(s.memoryNotes), NativePaths: nativePathsRecord(s), MessageOutcomes: slices.Clone(s.messageOutcomes),
 			},
 		})
 	}

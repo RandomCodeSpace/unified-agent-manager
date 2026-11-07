@@ -60,6 +60,8 @@ type snapshotEvent struct {
 	// MessagePairs are the pairs of Threads that message each other
 	// (messages.go).
 	MessagePairs []store.WebMessagePair `json:"message_pairs"`
+	// MessageOutcomes are the messages dropped pairs did not deliver.
+	MessageOutcomes []store.WebPeerMessage `json:"message_outcomes"`
 	// SaveError is why saving the Threads failed, until a save succeeds.
 	SaveError string `json:"save_error,omitempty"`
 }
@@ -284,7 +286,7 @@ func (m *Manager) captureSubscription(sessionID string, toolDeltas, recentHistor
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked(), MessagePairs: m.pairListLocked(), SaveError: m.saveError}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), ModelCalls: m.modelCallsLocked(), Sessions: m.summariesLocked(), MessagePairs: m.pairListLocked(), MessageOutcomes: m.outcomeListLocked(), SaveError: m.saveError}
 	for i := range snapshot.Sessions {
 		snapshot.Sessions[i] = snapshotSummary(snapshot.Sessions[i])
 	}

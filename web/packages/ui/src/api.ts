@@ -1802,6 +1802,8 @@ export interface SnapshotData extends Representation {
   model_calls?: ModelCalls;
   /** Absent from a service older than messages between Threads. */
   message_pairs?: MessagePair[];
+  /** Messages that settling or archiving a Thread of their pair left undelivered; absent from older services. */
+  message_outcomes?: PeerMessage[];
   /** Why saving the Threads failed, until a save succeeds; absent while saves succeed. */
   save_error?: string;
   sessions: SessionSummary[];
@@ -1818,7 +1820,7 @@ export type UpdateData =
   | { name: 'settings'; seq: number; settings: Settings }
   | { name: 'usage'; seq: number; usage: AccountUsage }
   | { name: 'model_calls'; seq: number; model_calls: ModelCalls }
-  | { name: 'message_pairs'; seq: number; message_pairs: MessagePair[] }
+  | { name: 'message_pairs'; seq: number; message_pairs: MessagePair[]; message_outcomes?: PeerMessage[] }
   | { name: 'save_status'; seq: number; save_error?: string }
   | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string; append?: boolean }
   | { name: 'tool_output'; seq: number; session_id: string; item_id: string; text: string; agent_id?: string }
