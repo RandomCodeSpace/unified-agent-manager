@@ -565,7 +565,7 @@ const MdContext = createContext<MdSource>({ text: '', streaming: false });
 /** The reply an assistant message's markdown belongs to (its id and whole text), so a mermaid fence knows which drawing is its own. */
 export const ItemContext = createContext<{ id: string; text: string } | null>(null);
 
-/** What a reply's rich blocks reach in their Thread: `plan`, the live todo list's states by title key (`planKey`), which a reply's task list or steps tick off. */
+/** What a reply's rich blocks reach in their Thread: `plan`, the todo list's states by title key (`planKey`; the live list, else the kept one), which a reply's task list or steps tick off. */
 export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus> }
 export const ReplyContext = createContext<ReplyTools>({});
 

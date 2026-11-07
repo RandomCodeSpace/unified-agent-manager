@@ -3,7 +3,7 @@ import { planKey } from '../lib/richMarkdown';
 import { ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
+import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace, type TodoView } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -984,9 +984,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const line = statusLine(session, labelled, compacting, connected);
   // The strip stays while the Thread has subagents, which it counts at its right end, or a todo list (live or kept) at its left.
   const strip = !!line || session.subagents.length > 0 || stripHasTodos(session);
-  // A reply's plan ticks off from the live todo list.
-  const todoView = session.turn_activity?.todos;
-  const replyTools = useMemo(() => ({ plan: todoView?.known ? new Map(todoView.todos.map((t) => [planKey(t.title), t.status])) : undefined }), [todoView]);
+  // A reply's plan ticks off from the live todo list, else (a closed Thread) from the kept list the strip shows.
+  const [keptTodos, setKeptTodos] = useState<TodoView>();
+  const todoView = session.turn_activity?.todos?.known ? session.turn_activity.todos : keptTodos;
+  const replyTools = useMemo(() => ({ plan: todoView ? new Map(todoView.todos.map((t) => [planKey(t.title), t.status])) : undefined }), [todoView]);
   // A subagent in the Conversation pane (DESIGN.md subagent view): the Thread's conversation stays beneath, where it was.
   const viewed = subagent ? session.subagents.find((s) => s.id === subagent) : undefined;
   const backToThread = useCallback(() => onSubagent(null), [onSubagent]);
@@ -1112,7 +1113,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} onKept={setKeptTodos} />
             <Schedules snapshot={session.schedules} open={session.open} />
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">

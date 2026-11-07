@@ -17,7 +17,7 @@
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, History, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
-import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type SessionDetail, type Subagent, type TodoHistory } from '../api';
+import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type SessionDetail, type Subagent, type TodoHistory, type TodoView } from '../api';
 import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
@@ -211,7 +211,7 @@ const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text
  * opens from the bottom, and the arrow stands alone). `error`: why the last jump to a subagent
  * did not land, said in the sheet.
  */
-export function StatusLine({ line: given, session, since, hidden, hideTodos = false, error, jump, onJump }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, hideTodos = false, error, jump, onJump, onKept }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
@@ -223,6 +223,8 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   /** The reader is away from the bottom: the arrow shows. */
   jump: boolean;
   onJump: MouseEventHandler<HTMLButtonElement>;
+  /** The kept list that stands in for an unknown live one, as it changes: a reply's plan ticks off from it too. */
+  onKept?: (view: TodoView | undefined) => void;
 }>) {
   // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) says "Working":
   // the strip is never blank while a turn works. Subagents that outlived the turn (`since`) also count their time.
@@ -261,7 +263,9 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   useEffect(() => {
     if (wantLive) read(session.id);
   }, [wantLive, turns.length, session.id, read]);
-  const shownView = known ?? (kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined);
+  const keptView = kept?.data?.live?.known && kept.data.live.counts.total ? kept.data.live : undefined;
+  useEffect(() => onKept?.(keptView), [keptView, onKept]);
+  const shownView = known ?? keptView;
   const working = line?.kind === 'working';
   // Idle, the latest turn's card states these same counts (TurnTodo): the strip leaves them to it and keeps the history.
   const latest = session.turn_timings?.at(-1);
