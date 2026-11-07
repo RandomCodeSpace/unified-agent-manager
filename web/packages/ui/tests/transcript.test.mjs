@@ -505,3 +505,9 @@ test('a call the budget denied reads as stopped by the budget, not as a failure'
   const failed = { ...denied, id: 'c3', tool: { ...denied.tool, budget_stopped: undefined } };
   assert.deepEqual(stepResult(failed.tool), { kind: 'failed' });
 });
+
+test('a piped command’s exit 0 is the pipe’s last command’s, never a pass', () => {
+  assert.deepEqual(stepResult({ name: 'bash', status: 'completed', display_arg: 'npm test 2>&1 | tail -5', exit_code: 0 }), { kind: 'piped' });
+  assert.deepEqual(stepResult({ name: 'bash', status: 'completed', display_arg: 'npm test', exit_code: 0 }), { kind: 'exit', code: 0 });
+  assert.deepEqual(stepResult({ name: 'bash', status: 'failed', display_arg: 'npm test | tail -5', exit_code: 1 }), { kind: 'exit', code: 1 }, 'a failure is a failure, piped or not');
+});

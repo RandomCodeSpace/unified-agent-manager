@@ -649,6 +649,11 @@ describe('activity', () => {
     expect(plain.queryByText(/passed/)).toBeNull();
     expect(plain.getByTitle('exit 0').className).toContain('bg-success-wash');
     plain.unmount();
+    // A pipe exits with its last command: no green pass for the run before it.
+    const piped = render(<ToolRow item={{ ...run('b6'), tool: { ...run('b6').tool!, input: JSON.stringify({ command: 'go test ./... | tail -20' }) } }} live={false} />);
+    expect(piped.queryByTitle('exit 0')).toBeNull();
+    expect(piped.getByText('exit 0 · piped').closest('[title]')!.className).not.toContain('bg-success-wash');
+    piped.unmount();
     const broke = render(<ToolRow item={run('b5', undefined, 2, 'failed')} live={false} />);
     expect(broke.getByTitle('exit 2').className).toContain('bg-error-wash');
     broke.unmount();

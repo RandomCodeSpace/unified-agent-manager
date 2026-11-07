@@ -1,5 +1,5 @@
 import type { Item } from '../api';
-import { mainArgument, patchPaths, toolKind } from './transcript.ts';
+import { mainArgument, patchPaths, PIPED, toolKind } from './transcript.ts';
 
 // Receipts (DESIGN.md Receipts): what a turn's last reply claims, checked against what the
 // turn's record shows. The reply names paths and commands in code spans and says whether tests
@@ -36,8 +36,6 @@ const COMMAND_HEADS = new Set(['go', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno'
 const TEST_COMMAND = /(^|[;&|(]\s*|\bthen\s+|\bdo\s+)(?:rtk\s+)?(?:go\s+test|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+(?:run\s+)?test|bun\s+test|npx\s+(?:vitest|jest|playwright\s+test|mocha)|vitest|jest|pytest|python3?\s+-m\s+pytest|cargo\s+test|make\s+test|node\s+--test|dotnet\s+test|mvn\s+(?:test|verify)|gradle\s+test|\.\/gradlew\s+test|rspec|phpunit|ctest)\b/;
 /** The words that claim the tests pass, in prose outside code spans. */
 const TESTS_PASS = /\b(?:all\s+)?(?:\d+\s+)?(?:unit\s+|integration\s+|e2e\s+)?tests?\s+(?:(?:are|is|now|still|all)\s+)*(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?)\b|\btest\s+suites?\s+(?:(?:is|are|now)\s+)*(?:pass(?:es|ed|ing)?|green)\b|\b(?:\d+)\s+passed\b(?!\s*,?\s*\d+\s+failed)|\b(?:everything|they)\s+pass(?:es|ed)\b/i;
-/** A single pipe: the shell reports the last command's exit, not the test runner's. */
-const PIPED = /[^|]\|[^|]/;
 
 /** Test output that says some test failed, whatever the exit code. */
 const FAILED_OUTPUT = /\b([1-9]\d*)\s+failed\b|^(?:FAIL|--- FAIL|FAILED)\b/m;

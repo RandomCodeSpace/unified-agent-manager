@@ -1339,9 +1339,9 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
 
 /**
  * A finished step's result at the end of its row (DESIGN.md steps), from what the call recorded:
- * its test counts ("✓ 12 passed", "✗ 14 passed · 1 failed"), its exit code ("✓ exit 0", "✗ exit 2")
- * or that it failed, each a block; its edits' line counts as coloured numbers ("+12 −3") when it has
- * no file rows under it to carry them. The block's
+ * its test counts ("✓ 12 passed", "✗ 14 passed · 1 failed"), its exit code ("✓ exit 0", "✗ exit 2";
+ * a pipe's exit 0 neutral, "exit 0 · piped") or that it failed, each a block; its edits' line counts
+ * as coloured numbers ("+12 −3") when it has no file rows under it to carry them. The block's
  * words carry it all, never the colour alone; a phone keeps a test run's failures alone.
  */
 function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
@@ -1363,6 +1363,8 @@ function StepOutcome({ tool }: Readonly<{ tool: Item['tool'] }>) {
     return <Blocks className="font-sans" items={[{ key: 'tests', tone: failed ? 'error' : 'success', Icon: failed ? X : Check, label, title: words }]} />;
   }
   if (result.kind === 'budget') return <Blocks className="font-sans" items={[{ key: 'result', tone: 'none', Icon: Minus, label: BUDGET_STOPPED, title: BUDGET_STOPPED }]} />;
+  // A pipe exits with its last command: exit 0 is no pass for the ones before it.
+  if (result.kind === 'piped') return <Blocks className="font-sans" items={[{ key: 'result', tone: 'none', label: 'exit 0 · piped', title: 'exit 0 · piped: the exit code is the last piped command’s' }]} />;
   const ok = result.kind === 'exit' && result.code === 0;
   const words = result.kind === 'exit' ? `exit ${result.code}` : 'failed';
   return <Blocks className="font-sans" items={[{ key: 'result', tone: ok ? 'success' : 'error', Icon: ok ? Check : X, label: words, title: words }]} />;
