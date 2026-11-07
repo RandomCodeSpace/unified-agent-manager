@@ -193,6 +193,47 @@ func TestCheckOutcomesFollowTheReportedStatus(t *testing.T) {
 	}
 }
 
+// A check a subagent ran is the turn's evidence, named for its subagent; its
+// prompt starts no turn, its message is not the reply, and its commands are
+// not the main agent's.
+func TestSubagentChecksAreEvidence(t *testing.T) {
+	e := newEvidenceTurn()
+	start := e.s.turnStart
+	e.s.subIdx = map[string]*agentapi.Subagent{"sa": {ID: "sa", Name: "tester"}}
+	run := func(agent, command string, exit int, output string) {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		// Both subagents' calls share an ID: each is its own evidence.
+		e.note(agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, AgentID: agent, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: string(input), Output: output, ExitCode: &exit}})
+	}
+	e.note(agentapi.Item{ID: "su", Kind: agentapi.ItemUser, AgentID: "sa", Text: "run the tests"})
+	run("sa", "go test ./...", 0, goOK)
+	run("sb", "go build ./...", 1, "")
+	e.reply("All tests pass.")
+	e.note(agentapi.Item{ID: "sm", Kind: agentapi.ItemAssistant, AgentID: "sa", Text: "Ran them."})
+	if !e.s.turnStart.Equal(start) {
+		t.Fatalf("a subagent prompt moved the turn start to %v", e.s.turnStart)
+	}
+	f := e.facts(t)
+	type row struct{ id, agent, name, outcome string }
+	var got []row
+	for _, c := range f.checks {
+		got = append(got, row{c.ItemID, c.AgentID, c.AgentName, c.Outcome})
+	}
+	if want := []row{{"c1", "sa", "tester", outcomePass}, {"c1", "sb", "", outcomeFail}}; !slices.Equal(got, want) {
+		t.Fatalf("checks = %+v, want %+v", got, want)
+	}
+	if f.final != "All tests pass." || f.commands != 0 || f.failed != 0 {
+		t.Fatalf("final %q, commands %d, failed %d: the main agent's only", f.final, f.commands, f.failed)
+	}
+	if got := claimDetails(f.judgeClaims("/repo")); !slices.Equal(got, []string{"All tests pass. | true | go test ./... · exit 0"}) {
+		t.Fatalf("claims = %q", got)
+	}
+	e.s.turnTimings = []TurnTiming{{ID: "tt", StartedAt: start, EndedAt: e.at, State: StateCompleted}}
+	if since := e.s.sinceYouLeft(start, e.at.Add(time.Hour)); since == nil || since.Text != "the agent finished" || !slices.Equal(since.IDs, []string{"a"}) {
+		t.Fatalf("since = %+v", since)
+	}
+}
+
 func TestClaimsAreJudgedAgainstTheWholeTurn(t *testing.T) {
 	e := newEvidenceTurn()
 	e.edit("e1", "/repo/calc.go", "")
