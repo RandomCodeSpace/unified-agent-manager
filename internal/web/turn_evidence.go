@@ -26,10 +26,12 @@ import (
 // left" all read it here, so they never disagree. It leans towards
 // under-claiming: anything unclear reads "Not verified".
 //
-// The main agent's items are noted as they arrive live or from the
-// provider's record (noteActivity), so the evidence covers the whole turn
-// however much of the transcript is held; edits, the main agent's and the
-// subagents', are the Task's edits (task_changes.go).
+// Items are noted as they arrive live or from the provider's record
+// (noteActivity), so the evidence covers the whole turn however much of the
+// transcript is held. Checks are the main agent's and the subagents'; the
+// rest (the final message, commands, "Since you left") is the main agent's.
+// Edits, the main agent's and the subagents', are the Task's edits
+// (task_changes.go).
 
 const (
 	// maxActivity bounds the items a Task's evidence remembers.
@@ -43,10 +45,12 @@ const (
 // commandTools are the tools that run a shell command.
 var commandTools = map[string]bool{"bash": true, "shell": true, "powershell": true}
 
-// activity is what the evidence keeps of one main-agent item.
+// activity is what the evidence keeps of one item, keyed by itemKey.
 type activity struct {
 	at, ended time.Time
 	kind      agentapi.ItemKind
+	// agent is the subagent whose item it is, "" for the main agent's.
+	agent string
 	// text marks an assistant message with text.
 	text     bool
 	question bool
@@ -70,12 +74,13 @@ func startsTurn(it agentapi.Item) bool {
 	return it.AgentID == "" && it.Kind == agentapi.ItemUser && it.Delivery != agentapi.DeliverySteer && it.Delivery != agentapi.DeliveryAutopilot
 }
 
-// noteActivity records what the evidence needs of one main-agent item.
+// noteActivity records what the evidence needs of one item.
 func (s *webSession) noteActivity(it agentapi.Item) {
-	if it.AgentID != "" || it.ID == "" {
+	if it.ID == "" {
 		return
 	}
-	a := activity{at: it.Time, ended: it.EndedAt, kind: it.Kind}
+	key := itemKey(it.AgentID, it.ID)
+	a := activity{at: it.Time, ended: it.EndedAt, kind: it.Kind, agent: it.AgentID}
 	switch it.Kind {
 	case agentapi.ItemAssistant:
 		a.text = strings.TrimSpace(it.Text) != ""
@@ -104,13 +109,13 @@ func (s *webSession) noteActivity(it agentapi.Item) {
 		}
 	}
 	// An item keeps the time it began, as the held transcript does.
-	if prev, ok := s.activity[it.ID]; ok && !prev.at.IsZero() && prev.at.Before(a.at) {
+	if prev, ok := s.activity[key]; ok && !prev.at.IsZero() && prev.at.Before(a.at) {
 		a.at = prev.at
 	}
 	if s.activity == nil {
 		s.activity = map[string]activity{}
 	}
-	s.activity[it.ID] = a
+	s.activity[key] = a
 	if len(s.activity) > maxActivity {
 		ids := slices.Collect(maps.Keys(s.activity))
 		slices.SortFunc(ids, func(x, y string) int { return s.activity[x].at.Compare(s.activity[y].at) })
@@ -464,6 +469,10 @@ type EvidenceCheck struct {
 	// Note says why the outcome is unclear, or how it passed.
 	Note      string `json:"note,omitempty"`
 	HasOutput bool   `json:"has_output"`
+	// AgentID is the subagent that ran it, "" for the main agent; AgentName
+	// is its name when the Task holds its record.
+	AgentID   string `json:"agent_id,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
 
 	at       time.Time
 	outcomes map[string]string
@@ -507,7 +516,8 @@ type TurnEvidence struct {
 
 // turnFacts is a turn's evidence as the locked session holds it.
 type turnFacts struct {
-	start  time.Time
+	start time.Time
+	// checks are the main agent's and the subagents'.
 	checks []EvidenceCheck
 	// final is the turn's last main-agent message with text.
 	final string
@@ -554,26 +564,33 @@ func (s *webSession) turnFacts() (f turnFacts, ok bool) {
 	f.start = s.turnStart
 	inTurn := func(a activity) bool { return !a.at.Before(s.turnStart) }
 	finalID := ""
-	for _, id := range s.sortedActivity(inTurn) {
-		a := s.activity[id]
-		if a.text {
-			finalID = id
+	for _, key := range s.sortedActivity(inTurn) {
+		a := s.activity[key]
+		main := a.agent == ""
+		if a.text && main {
+			finalID = key
 		}
 		if !a.shell {
 			continue
 		}
-		f.commands++
-		for _, w := range gitWriteRE.FindAllStringSubmatch(a.command, -1) {
-			f.committed = f.committed || w[1] == "commit"
-			f.pushed = f.pushed || w[1] == "push"
-		}
-		if a.status == agentapi.ToolFailed || a.exit != nil && *a.exit != 0 {
-			f.failed++
+		if main {
+			f.commands++
+			for _, w := range gitWriteRE.FindAllStringSubmatch(a.command, -1) {
+				f.committed = f.committed || w[1] == "commit"
+				f.pushed = f.pushed || w[1] == "push"
+			}
+			if a.status == agentapi.ToolFailed || a.exit != nil && *a.exit != 0 {
+				f.failed++
+			}
 		}
 		if a.checks == nil {
 			continue
 		}
-		c := EvidenceCheck{ItemID: id, Command: a.command, Exit: a.exit, HasOutput: a.output, at: a.at, outcomes: map[string]string{}}
+		// The key less its itemKey prefix is the item's own ID.
+		c := EvidenceCheck{ItemID: strings.TrimPrefix(key, itemKey(a.agent, "")), AgentID: a.agent, Command: a.command, Exit: a.exit, HasOutput: a.output, at: a.at, outcomes: map[string]string{}}
+		if sa := s.subIdx[a.agent]; sa != nil {
+			c.AgentName = sa.Name
+		}
 		if a.counts != nil && slices.ContainsFunc(a.checks, func(r checkRun) bool { return r.kind == checkTest }) {
 			c.Counts = a.counts.label
 		}
@@ -622,10 +639,13 @@ func (f turnFacts) files(workdir string) int {
 	return len(seen)
 }
 
-// tests is the result of the turn's last test run: pass, fail, or "" when
-// it ran none or that run's result is unclear.
+// tests is the result of the main agent's last test run in the turn: pass,
+// fail, or "" when it ran none or that run's result is unclear.
 func (f turnFacts) tests() string {
 	for i := len(f.checks) - 1; i >= 0; i-- {
+		if f.checks[i].AgentID != "" {
+			continue
+		}
 		if outcome, ok := f.checks[i].outcomes[checkTest]; ok {
 			if outcome == outcomePass || outcome == outcomeFail {
 				return outcome
@@ -940,7 +960,7 @@ func count(n int, word string) string {
 // questions asked. Nil when the main agent did nothing in between.
 func (s *webSession) sinceYouLeft(mark, until time.Time) *SinceSummary {
 	after := func(t time.Time) bool { return t.After(mark) && !t.After(until) }
-	fresh := s.sortedActivity(func(a activity) bool { return after(a.at) })
+	fresh := s.sortedActivity(func(a activity) bool { return a.agent == "" && after(a.at) })
 	if len(fresh) == 0 {
 		return nil
 	}

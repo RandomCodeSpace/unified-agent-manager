@@ -38,9 +38,10 @@ function checkText(kinds: readonly CheckKind[]): string {
   return `Ran ${words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`}`;
 }
 
-/** A check's result line: exit status, counts, time and why it is unclear. */
+/** A check's result line: exit status, counts, time, why it is unclear and the subagent that ran it. */
 function checkDetail(c: EvidenceCheck): string {
-  return [c.exit !== undefined ? `exit ${c.exit}` : '', c.counts ?? '', c.took_ms !== undefined ? formatMs(c.took_ms) : '', c.note ?? ''].filter(Boolean).join(' · ');
+  const by = c.agent_id ? (c.agent_name ? `by subagent ${c.agent_name}` : 'by a subagent') : '';
+  return [c.exit !== undefined ? `exit ${c.exit}` : '', c.counts ?? '', c.took_ms !== undefined ? formatMs(c.took_ms) : '', c.note ?? '', by].filter(Boolean).join(' · ');
 }
 
 /** Identical checks (the same kinds and outcome) share one row, failing rows first; each keeps its runs in turn order. */
@@ -139,9 +140,9 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
 
   function show(c: EvidenceCheck) {
     const open = (body: Item) => onShowOutput({ id: c.item_id, name: c.command, title: c.command, text: body.tool?.output ?? '', markdown: false });
-    const held = items.find((item) => item.id === c.item_id && !item.agent_id && !item.compact && !item.clipped);
+    const held = items.find((item) => item.id === c.item_id && (item.agent_id ?? '') === (c.agent_id ?? '') && !item.compact && !item.clipped);
     if (held || !read) return held && open(held);
-    read({ id: c.item_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setOutputError(describeError(e)));
+    read({ id: c.item_id, agent_id: c.agent_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setOutputError(describeError(e)));
   }
   return (
     <section aria-label="Finished — check the evidence" className="max-h-[35%] min-h-10 shrink overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
