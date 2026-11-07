@@ -121,6 +121,30 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByRole('dialog', { name: 'Finished — check the evidence' })).toBeNull();
   });
 
+  test('identical checks share one row with a count, failures first, and every run stays listed', async () => {
+    const run = (id: string, outcome: 'pass' | 'fail', exit: number) => ({ item_id: id, kinds: ['test' as const], command: `go test ./internal/${id}`, outcome, exit, has_output: true });
+    vi.spyOn(api, 'evidence').mockResolvedValue({
+      checks: [run('a', 'pass', 0), run('b', 'pass', 0), { ...run('c', 'pass', 0), kinds: ['build'] }, run('d', 'fail', 1), run('e', 'pass', 0), run('f', 'pass', 0)],
+      claims: [],
+      files: [],
+    });
+    onTestFinished(() => { vi.restoreAllMocks(); });
+    const { user } = await openTask('t20');
+    await user.click(await screen.findByRole('button', { name: /evidence available/ }));
+    const card = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
+    const rows = within(card.getAllByRole('list')[0]).getAllByRole('listitem').filter((li) => li.querySelector(':scope > svg'));
+    // The failing run first, then the rest in turn order; a differing outcome or kind keeps its own row.
+    expect(rows.map((li) => li.querySelector('p, summary')!.textContent)).toEqual(['Ran the tests', 'Ran the tests ×4', 'Ran the build']);
+    expect(rows[0].textContent).toContain('go test ./internal/d · exit 1');
+    const merged = rows[1].querySelector('details')!;
+    expect(merged.open).toBe(false);
+    await user.click(card.getByText('Ran the tests ×4'));
+    expect(merged.open).toBe(true);
+    const runs = within(rows[1]).getAllByRole('listitem');
+    expect(runs.map((li) => li.querySelector('code')!.textContent)).toEqual(['go test ./internal/a', 'go test ./internal/b', 'go test ./internal/e', 'go test ./internal/f']);
+    for (const li of runs) expect(within(li).getByRole('button', { name: 'Show output' })).toBeTruthy();
+  });
+
   test('keyboard and close button dismiss Changes and restore branch focus', async () => {
     const { user } = await openTask('t20');
     const trigger = await screen.findByRole('button', { name: /evidence available/ });
