@@ -27,3 +27,11 @@ test('only the ring, the live line\'s breathing dot and the step dots loop: the 
   const endless = source.split('\n').filter((line) => /\binfinite\b/.test(line));
   assert.deepEqual(endless.map((line) => line.trim()), ['--animate-spin: spin 1s linear infinite;', '--animate-breathe: breathe 2.4s ease-in-out infinite;', '--animate-step: step 1.2s ease-in-out infinite;']);
 });
+
+test('a table cell never breaks inside a word, so an identifier stays whole and a wide table scrolls in its box', () => {
+  const css = styles.build([]);
+  const cells = css.match(/\.data-table :is\(th, td\)[^{]*\{([^}]*)\}/);
+  assert.ok(cells, 'the data table cell rule');
+  assert.match(cells[1], /overflow-wrap: normal;/);
+  assert.doesNotMatch(css.slice(css.indexOf('.data-table')), /\.data-table[^{]*\{[^}]*overflow-wrap: (anywhere|break-word)/);
+});
