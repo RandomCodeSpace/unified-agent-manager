@@ -63,7 +63,7 @@ function StatusLabel({ status, text }: Readonly<{ status: CellStatus; text: stri
 /** Local view over immutable rows. No data fetch, transcript update or model call. */
 export const DataTable = memo(function DataTable({ columns, rows, label, rowHeaders = false, visual = false }: Readonly<{
   columns: readonly TableColumn[]; rows: readonly TableRow[]; label?: string; rowHeaders?: boolean;
-  /** Draw a bar behind each number of a column that reads as one quantity (a reply's table). */
+  /** Draw a bar under each number of a column that reads as one quantity (a reply's table). */
   visual?: boolean;
 }>) {
   const bars = useMemo(() => visual ? barColumns(columns, rows) : null, [visual, columns, rows]);
@@ -132,12 +132,13 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
             const max = bars?.[index];
             const n = max ? magnitude(row.values[index]) : null;
             if (!max || !n) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
-            // The bar sits behind the number on its first line, in a track at most 9rem wide, from the side the column is aligned to, so the number ends on it.
+            // The bar runs on a slim track just under the number, never behind it (so it cannot read as a selection): below its line
+            // (the cell's top padding is 5px), at most 9rem wide, from the side the column is aligned to. The figure stays on one line.
             const pct = (n / max) * 100;
             const end = column.align === 'right';
-            return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn('relative', alignment(column.align), 'tabular-nums')}>
-              <svg aria-hidden="true" className={cn('pointer-events-none absolute top-1 h-5.5 w-[min(calc(100%-0.5rem),9rem)]', end ? 'right-1' : 'left-1')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" rx="2" className="fill-accent-wash" /></svg>
-              <span className="relative">{row.cells[index]}</span>
+            return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn('relative whitespace-nowrap', alignment(column.align), 'tabular-nums')}>
+              {row.cells[index]}
+              <svg aria-hidden="true" className={cn('pointer-events-none absolute top-[calc(1lh+5px)] h-0.75 w-[min(calc(100%-1.25rem),9rem)] rounded-full bg-accent-wash', end ? 'right-2.5' : 'left-2.5')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" className="fill-accent/50" /></svg>
             </Cell>;
           })}</tr>)}</tbody>
         </table>
