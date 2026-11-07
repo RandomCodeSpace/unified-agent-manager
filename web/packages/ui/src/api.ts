@@ -237,6 +237,8 @@ export interface TimeSplit {
   /** Permission requests, questions and elicitations, answered at once or not. */
   waits: number;
   tools: { name: string; ms: number; runs: number }[];
+  /** The tokens the journal's usage records report, main agent and subagents; absent when none does, a count absent when no record has it. */
+  tokens?: { input?: number; output?: number; cache_read?: number; reasoning?: number };
 }
 export interface UsageMetricModel {
   model: string;
