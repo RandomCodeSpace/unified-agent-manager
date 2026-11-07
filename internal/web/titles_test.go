@@ -571,10 +571,12 @@ func submitUploads(t *testing.T, m *Manager, id string, ids ...string) {
 }
 
 // A first message of only an image goes, image included, to a title model
-// that sees images: here the Task's own model, as no Utility model is set.
-// An image-only follow-up never titles again.
+// that sees images. An image-only follow-up never titles again.
 func TestImageOnlyFirstMessageIsTitledFromTheImage(t *testing.T) {
 	m, prov, project := mediaTitleManager(t, mediaModels)
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "vision"}}); err != nil {
+		t.Fatal(err)
+	}
 	placeholder := make(chan struct{})
 	prov.SetTitleHook(func(context.Context, agentapi.TitleRequest) (string, error) {
 		<-placeholder
@@ -597,7 +599,7 @@ func TestImageOnlyFirstMessageIsTitledFromTheImage(t *testing.T) {
 		t.Fatalf("title requests = %+v", reqs)
 	}
 	waitUntil(t, "the logged call", func() bool { return len(m.UtilityLog(0, utilityPage).Calls) == 1 })
-	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Model != "vision" || !c.SessionModel || c.Outcome != utilityOK {
+	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Model != "vision" || c.SessionModel || c.Outcome != utilityOK {
 		t.Fatalf("logged call = %+v", c)
 	}
 
@@ -661,41 +663,9 @@ func TestImageOnlyFirstMessageIsTitledFromTheReply(t *testing.T) {
 	}
 }
 
-// Without a Utility model, the Task's own model titles it and the log marks
-// the call; when that model fails the cheapest priced model is asked; a
-// Task on auto uses the cheapest at once; past the daily limit nothing more
-// is asked.
-func TestTitleModelsShareTheBudget(t *testing.T) {
-	m, prov, project := mediaTitleManager(t, []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6)})
-	var mu sync.Mutex
-	left := map[string]time.Duration{}
-	prov.SetTitleHook(func(ctx context.Context, req agentapi.TitleRequest) (string, error) {
-		deadline, _ := ctx.Deadline()
-		mu.Lock()
-		left[req.Model] = time.Until(deadline)
-		mu.Unlock()
-		if req.Model == "cheap" {
-			return "", context.DeadlineExceeded
-		}
-		return "Title by " + req.Model, nil
-	})
-	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "dear"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustSubmit(t, m, sum.ID, "Fix the login form", mustUUID(t), ModeSend, SubmissionAccepted)
-	waitUntil(t, "the second model's title", func() bool { return summaryOf(t, m, sum.ID).Title == "Title by dear" })
-	mu.Lock()
-	defer mu.Unlock()
-	// The first model gets half the budget, leaving the rest for the next.
-	if first := left["cheap"]; first <= 0 || first > titleTimeout/2 {
-		t.Fatalf("first model had %s of %s", first, titleTimeout)
-	}
-	if second := left["dear"]; second <= titleTimeout/2 {
-		t.Fatalf("second model had %s of %s", second, titleTimeout)
-	}
-}
-
+// Without a Utility model, the cheapest priced model titles a Task, on auto
+// too; when it fails the Task keeps its first message as the title and its
+// own model is never asked; past the daily limit nothing more is asked.
 func TestCheapestModelTitlesWithoutAUtilityModel(t *testing.T) {
 	m, prov, project := mediaTitleManager(t, []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6), {ID: "auto"}})
 	var mu sync.Mutex
@@ -732,14 +702,18 @@ func TestCheapestModelTitlesWithoutAUtilityModel(t *testing.T) {
 	mu.Lock()
 	failing = "cheap"
 	mu.Unlock()
-	fallback := titled("dear", "Write the release notes")
-	waitUntil(t, "the fallback title", func() bool { return summaryOf(t, m, fallback.ID).Title == "Title by dear" })
-	got := calls(3)
-	if c := got[1]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityError {
+	failed := titled("dear", "Write the release notes")
+	if c := calls(2)[0]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityError || c.TaskID != failed.ID {
 		t.Fatalf("failed cheapest-model call = %+v", c)
 	}
-	if c := got[0]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityOK {
-		t.Fatalf("fallback call = %+v", c)
+	waitUntil(t, "the failed title job", func() bool { return !summaryOf(t, m, failed.ID).TitlePending })
+	if got := summaryOf(t, m, failed.ID).Title; got != "Write the release notes" {
+		t.Fatalf("title after the cheapest model failed = %q", got)
+	}
+	for _, req := range prov.TitleRequests() {
+		if req.Model == "dear" {
+			t.Fatalf("the Task's own model was asked: %+v", req)
+		}
 	}
 	mu.Lock()
 	failing = ""
@@ -747,20 +721,20 @@ func TestCheapestModelTitlesWithoutAUtilityModel(t *testing.T) {
 
 	auto := titled("auto", "Tidy the README")
 	waitUntil(t, "the auto Task's title", func() bool { return summaryOf(t, m, auto.ID).Title == "Title by cheap" })
-	if c := calls(4)[0]; c.Model != "cheap" || c.SessionModel {
+	if c := calls(3)[0]; c.Model != "cheap" || c.SessionModel {
 		t.Fatalf("auto Task's call = %+v", c)
 	}
 
-	setUtilityLimit(t, m, new(4))
+	setUtilityLimit(t, m, new(3))
 	before := len(prov.TitleRequests())
 	capped := titled("dear", "Add a dark mode toggle")
-	if c := calls(5)[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.Model != "cheap" || c.SessionModel {
+	if c := calls(4)[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.Model != "cheap" || c.SessionModel {
 		t.Fatalf("capped call = %+v", c)
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(prov.TitleRequests()); n != before || len(m.UtilityLog(0, utilityPage).Calls) != 5 || summaryOf(t, m, capped.ID).Title != "Add a dark mode toggle" || summaryOf(t, m, capped.ID).TitlePending {
+	if n := len(prov.TitleRequests()); n != before || len(m.UtilityLog(0, utilityPage).Calls) != 4 || summaryOf(t, m, capped.ID).Title != "Add a dark mode toggle" || summaryOf(t, m, capped.ID).TitlePending {
 		t.Fatalf("past the limit: %d new requests, %d calls", n-before, len(m.UtilityLog(0, utilityPage).Calls))
 	}
 }

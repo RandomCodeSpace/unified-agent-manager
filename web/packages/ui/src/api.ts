@@ -593,8 +593,8 @@ export interface Settings {
   subagent_models?: Record<string, string[]>;
   /**
    * The Utility model by provider, the model UAM uses for its own small AI jobs such as titling new Tasks: a model ID,
-   * or `none` to keep the provider's own title. A provider without an entry uses its `cheapest_model`, and titles a Task
-   * with the Task's own model at its lowest effort when the cheapest model fails. PATCH `''` unsets.
+   * or `none` to keep the provider's own title. A provider without an entry uses its `cheapest_model` only. PATCH `''`
+   * unsets.
    */
   title_model?: Record<string, string>;
   /** OpenAI-compatible models the owner brought; omitted when there are none. PATCH replaces the whole list. */
@@ -712,7 +712,7 @@ export interface UtilityCall {
   purpose: string;
   provider?: string;
   model?: string;
-  /** A title made with the Task's own model after the cheapest model failed, with no Utility model set. */
+  /** A title older versions made with the Task's own model after the cheapest model failed. */
   session_model?: boolean;
   task_id?: string;
   project_id?: string;

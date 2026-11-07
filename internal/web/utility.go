@@ -129,8 +129,8 @@ func utilityFailed(what string, err error) *Error {
 // characters. PromptChars counts what the service sent the provider: a
 // Utility request's system message and prompt, or the text a title is made
 // from. Reason is why a call was skipped
-// (daily_limit or off) or failed. SessionModel marks a title call made on
-// the Task's own model because no Utility model is set.
+// (daily_limit or off) or failed. SessionModel marks a title call older
+// versions made on the Task's own model when the cheapest model failed.
 type UtilityCall struct {
 	ID           int64     `json:"id"`
 	At           time.Time `json:"at"`
