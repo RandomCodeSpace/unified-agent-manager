@@ -138,6 +138,9 @@ test('a step reads as plain words with its recorded result: the call kind, the f
   assert.deepEqual(words(bash('b2', 'go vet ./...', at(2), { status: 'failed', exit_code: 1, output: '# pkg\nredraw.go:88:2: unreachable code\nexit status 1' })), ['Ran go vet ./...', 'exit 1 · redraw.go:88:2: unreachable code', 'error']);
   assert.deepEqual(words(bash('b6', 'make', at(2), { exit_code: 2, output: 'make: *** [all] Error 2' })), ['Ran make', 'exit 2 · make: *** [all] Error 2', 'error'], 'a completed call that exited non-zero failed');
   assert.deepEqual(words(bash('b7', 'go test', at(2), { tests: { passed: 3, failed: 1 } })), ['Ran go test', '3 passed · 1 failed', 'error']);
+  // A pipe exits with its last command: exit 0 claims nothing of the test run before it.
+  assert.deepEqual(words(bash('b8', 'python -m pytest tests/ | tail -20', at(2), { exit_code: 0, output: 'json.decoder.JSONDecodeError: Expecting value' })), ['Ran python -m pytest tests/ | tail -20', 'exit 0 · piped', 'muted']);
+  assert.deepEqual(words(bash('b9', 'go test ./... || true', at(2), { exit_code: 0 })), ['Ran go test ./... || true', 'ok', 'muted'], 'an or-list is not a pipe');
   assert.deepEqual(words(bash('b3', 'sleep 9', at(2), { status: 'running' }), true), ['Running sleep 9', '', 'muted']);
   assert.deepEqual(words(bash('b4', 'sleep 9', at(2), { status: 'running' })), ['Ran sleep 9', 'no result', 'muted']);
   assert.deepEqual(words(edit('e1', 'a/redraw.go', at(2), { file_edits: [{ path: 'a/redraw.go', kind: 'update', diff_status: 'available', additions: 12, deletions: 3 }] }), false, [perm('p1')]), ['Edited redraw.go', '+12 −3 · auto-approved', 'muted']);
