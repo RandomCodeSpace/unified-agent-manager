@@ -12,7 +12,7 @@ const source = '| package | year | requests |\n|---|---:|---:|\n| router | 2024 
 /** Each body row's cells as [text, bar width or null]. */
 const cells = (table: HTMLElement) => within(table).getAllByRole('row').slice(1).map(row => [...row.children].map(cell => [cell.textContent, cell.querySelector('rect')?.getAttribute('width') ?? null]));
 
-test('a numeric column draws one bar behind each nonzero number; a year column and a zero do not', () => {
+test('a numeric column draws one bar under each nonzero number; a year column and a zero do not', () => {
   const view = render(<Markdown text={source} />);
   expect(cells(view.getByRole('table'))).toEqual([
     [['router', null], ['2024', null], ['48,210', '100%']],
@@ -22,9 +22,14 @@ test('a numeric column draws one bar behind each nonzero number; a year column a
   ]);
   // The bar is decoration: the right-aligned column's bar grows from the right, and the number is read as text.
   const rect = view.getByRole('table').querySelector('rect')!;
-  expect(rect.closest('svg')!.getAttribute('aria-hidden')).toBe('true');
+  const svg = rect.closest('svg')!;
+  expect(svg.getAttribute('aria-hidden')).toBe('true');
   expect(rect.getAttribute('x')).toBe('0%');
-  expect(rect.getAttribute('class')).toBe('fill-accent-wash');
+  // On a slim track below the number's line, not behind its digits, where near-equal values read as a stuck selection.
+  expect(svg.previousSibling?.textContent).toBe('48,210');
+  expect(svg.getAttribute('class')).toMatch(/(^| )top-\[calc\(1lh\+5px\)\] h-0\.75 .*bg-accent-wash/);
+  expect(svg.closest('td')!.className).toContain('whitespace-nowrap');
+  expect(rect.getAttribute('class')).toBe('fill-accent/50');
   expect(view.getByRole('cell', { name: '48,210' })).toBeTruthy();
 });
 
