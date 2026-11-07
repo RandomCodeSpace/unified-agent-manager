@@ -1989,11 +1989,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in Settings, the lowest input plus output price per token wins, then the
   lower input price, then the lower ID. `/api/meta` gives it per provider
   as `cheapest_model`, omitted when no model is priced; then those jobs
-  are not run. Titles have a fallback: with no entry, when the cheapest
-  model's call fails, the Thread's own model is asked at the lowest
-  reasoning effort that model offers, which spends that model's credits
-  (not on `auto`); with neither, the Thread keeps its first message as the
-  title. A `PATCH`
+  are not run. There is no fallback: when the cheapest model's call
+  fails, the Thread's own model is not asked and the Thread keeps its first
+  message as the title. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so a Thread keeps its
   first message as the title, a subagent its own report, and UAM makes no utility AI call; an empty ID removes the entry, back to
@@ -2006,8 +2004,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The model is asked for 2 to 6 words naming what the message asks, not
   answering it. A reply longer than 60 characters or 7 words, or one that
   reads as an answer (it opens like "Sure", "I will" or "It is", gives a
-  reason with "because", or holds two sentences), is no title: the next
-  model is asked, and without one the first message stays the title. UAM
+  reason with "because", or holds two sentences), is no title, and the
+  first message stays the title. UAM
   then shows the title and writes it into the
   Copilot session, so `copilot --resume` shows it too. Only the first
   message counts: later messages, attachment-only ones included, commands,
@@ -2016,9 +2014,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   that accepts images; otherwise, or when it carried only files, the title
   waits for the end of the first turn that has a reply and is made from that
   reply, over the provider's placeholder. A name you type wins, even while the title is on its way. The
-  models asked share 45 s, each getting an equal part of the time left, so
-  one that does not answer leaves time for the next; if they fail or run out
-  of time, the Thread keeps the title it has, and the service log says why. In the Background AI log
+  model has 45 s; if it fails or runs out of time, the Thread keeps the
+  title it has, and the service log says why. In the Background AI log
   a call that ran out of time says how long it waited and at which step,
   e.g. "the Utility model did not answer within 45 s (its session was open
   after 0.1 s)". Each title costs AI credits,
@@ -2034,7 +2031,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   confirmation). The sidebar has no Archived shelf; its search still finds
   archived Threads.
 - **Background AI**: every call UAM makes on the Utility model (Thread
-  titles, also those made with a Thread's own model, subagent result lines and suggested replies) counts
+  titles, subagent result lines and suggested replies) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log** (collapsed until opened, and read only while
@@ -2046,7 +2043,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Outcome line", and their suggested replies as `suggest-replies`), the
   Thread (a click opens
   it) or Project, the model
-  (marked "the thread's model" for a title made with the Thread's own model, `session_model` in the log),
+  (marked "the thread's model" for a title an older version made with the Thread's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
   reports none, the tokens are estimated at 4 characters each and marked

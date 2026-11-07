@@ -85,12 +85,10 @@ func (m *Manager) cheapestModelLocked(provider string) string {
 const defaultPriceBatch = 1_000_000
 
 // titleCandidate is a model a title job may ask. images is set when the
-// first message's images go with the request; session when it is the
-// Task's own model, asked because no Utility model is set.
+// first message's images go with the request.
 type titleCandidate struct {
-	model   string
-	images  bool
-	session bool
+	model  string
+	images bool
 }
 
 // titlePlan is how a Task's first message gets its title: the models to
@@ -113,9 +111,9 @@ const maxTitleImages = 3
 // than a fallback, no user item and no submission the provider may have
 // taken, and while its provider titles Tasks.
 //
-// A Utility model set in Settings titles it. Unset, the cheapest priced
-// model does, then the Task's own model when that one fails (not auto,
-// which names no model; the provider asks it at its lowest effort). A message
+// A Utility model set in Settings titles it; unset, the cheapest priced
+// model does, and only that one: a background job never spends the Task's
+// own model. A message
 // with no text goes with its images to a model that accepts them; otherwise
 // the job waits for the first turn to end and titles from the agent's reply.
 func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload) *titlePlan {
@@ -128,12 +126,8 @@ func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload
 	case store.WebTitleModelNone:
 		return nil
 	case "":
-		cheapest := m.cheapestModelLocked(s.provider)
-		if cheapest != "" {
+		if cheapest := m.cheapestModelLocked(s.provider); cheapest != "" {
 			models = append(models, titleCandidate{model: cheapest})
-		}
-		if s.model != "" && s.model != "auto" && s.model != cheapest && m.modelLocked(s.provider, s.model).ID != "" {
-			models = append(models, titleCandidate{model: s.model, session: true})
 		}
 	default:
 		models = append(models, titleCandidate{model: setting})
@@ -388,7 +382,7 @@ func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, mod
 		if c.images {
 			req.Images = m.titleImages(provider, c.model, blobs)
 		}
-		call.Model, call.SessionModel = c.model, c.session
+		call.Model = c.model
 		var title string
 		var invalid error
 		attempt, stop := context.WithTimeout(ctx, time.Until(deadline)/time.Duration(len(models)-i))

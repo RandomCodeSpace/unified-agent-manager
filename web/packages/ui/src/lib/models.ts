@@ -47,7 +47,7 @@ export const UTILITY_NONE = 'none';
 
 /**
  * The label of the unset Utility model, which the service resolves to the provider's cheapest priced model for its
- * jobs; a title falls back to the Task's own model when the cheapest model fails.
+ * jobs, with no fallback to the Task's own model.
  */
 export function cheapestLabel(provider: Pick<ProviderInfo, 'display_name' | 'models' | 'cheapest_model'>): string {
   const id = provider.cheapest_model;
