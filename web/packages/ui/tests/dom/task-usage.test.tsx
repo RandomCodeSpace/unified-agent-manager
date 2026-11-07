@@ -150,6 +150,18 @@ test('closed and inactive Tasks never read or resume, while unsupported services
   expect(read).not.toHaveBeenCalled();
 });
 
+test('a closed Thread takes its tokens from the session log, with cache and reasoning only where recorded; Code stays unavailable', async () => {
+  const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  vi.spyOn(api, 'taskTimeSplit').mockResolvedValue({ ...split, tokens: { input: 1_500_000, output: 42_000, cache_read: 900_000 } });
+  draw({ ...session, open: false });
+  await openUsage();
+  expect(await screen.findByText('Native usage metrics are unavailable for a closed or inactive Thread; tokens are from the session log.')).toBeTruthy();
+  expect(tile('Tokens in')).toBe('Tokens in1.5M900K from cache');
+  expect(tile('Tokens out')).toBe('Tokens out42K');
+  expect(tile('Code')).toBe('CodeNot available');
+  expect(read).not.toHaveBeenCalled();
+});
+
 test('native optional counters remain unknown and failures never become zero totals', async () => {
   const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue({ ...metrics, ai_units: undefined, premium_request_cost: .000001, agents: [], truncated: true });
   draw({ ...session, usage: undefined });

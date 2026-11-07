@@ -164,6 +164,9 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   const part = (n: number | undefined, words: string) => n === undefined ? undefined : <><Num value={n} /> {words}</>;
   const pct = split && shares(split);
   const timed = (ms: number | null, sub: string) => !supported || splitError ? { value: 'Not available', muted: true } : !split ? { value: '…', muted: true } : ms === null ? { value: 'Not recorded', muted: true, sub } : { value: time(ms), sub };
+  // With no native read (a closed or inactive Thread), the tokens come from the Thread's session log, the time split's read.
+  const logged = native ? undefined : split?.tokens;
+  const tokens = (key: 'input' | 'output', sub: 'cache_read' | 'reasoning', words: string) => logged ? { value: count(logged[key]), sub: part(logged[sub], words) } : metric((s) => count(total(s.models, key)), (s) => part(total(s.models, sub), words));
   const tokenTypes = snapshot ? [...snapshot.token_details.map((row) => [row.type, count(row.tokens)] as const), ...snapshot.models.flatMap((m) => m.token_details.map((row) => [`${m.model} · ${row.type}`, count(row.tokens)] as const))] : [];
   return <>
     {session.id && !inactive && api.supports('thread-budget-v1') && <Budget session={session} />}
@@ -172,12 +175,12 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
         <Tile label="AI credits" value={session.usage ? units(session.usage.ai_units) : 'Not reported yet'} muted={!session.usage} sub={snapshot && plural(snapshot.user_requests, 'request')} />
         <Tile label="Model time" {...timed(split?.model_ms ?? null, `${plural(split?.model_calls ?? 0, 'call')}${pct ? ` · ${pct.model}%` : ''}`)} />
         <Tile label="Local time" {...timed(split?.local_ms ?? 0, `${plural(split?.local_runs ?? 0, 'run')}${pct ? ` · ${pct.local}%` : ''}`)} />
-        <Tile label="Tokens in" {...metric((s) => count(total(s.models, 'input')), (s) => part(total(s.models, 'cache_read'), 'from cache'))} />
-        <Tile label="Tokens out" {...metric((s) => count(total(s.models, 'output')), (s) => part(total(s.models, 'reasoning'), 'reasoning'))} />
+        <Tile label="Tokens in" {...tokens('input', 'cache_read', 'from cache')} />
+        <Tile label="Tokens out" {...tokens('output', 'reasoning', 'reasoning')} />
         <Tile label="Code" {...metric((s) => plural(s.code_changes.files, 'file'), (s) => <LineCounts additions={s.code_changes.added} deletions={s.code_changes.removed} />)} />
       </div>
       {session.capabilities.usage_metrics && (!session.id ? <p className="text-caption text-muted">Native usage metrics are reported once the Thread starts.</p>
-        : !session.open || inactive ? <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread.</p>
+        : !session.open || inactive ? <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread{logged ? '; tokens are from the session log' : ''}.</p>
           : error && <p role="status" className="text-caption text-muted">{error}</p>)}
       {splitError && <p className="text-caption text-muted">{splitError}</p>}
       {snapshot?.current_model && <p className="break-words text-caption text-muted">Current model: {snapshot.current_model}</p>}

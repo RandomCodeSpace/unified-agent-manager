@@ -127,6 +127,23 @@ func TestTimeSplitWithoutUsageRecordsReportsLocalOnly(t *testing.T) {
 	}
 }
 
+// A closed Thread's Usage tokens come from its records: summed over the main
+// agent and subagents, each count only where some record reports it.
+func TestTimeSplitTotalsTheUsageRecordsTokens(t *testing.T) {
+	if got := readSplit(t, modelCall(1, "", 500), toolStart(1, "", "c1", "bash"), toolDone(2, "", "c1")); got.Tokens != nil {
+		t.Fatalf("no token counts: tokens=%+v", got.Tokens)
+	}
+	got := readSplit(t,
+		splitLine(1, "session.usage_record", "", `{"usage":{"model":"m","duration":500,"inputTokens":1200,"outputTokens":80,"cacheReadTokens":900}}`),
+		splitLine(2, "session.usage_record", "a1", `{"usage":{"model":"m","duration":400,"inputTokens":300,"outputTokens":20,"cacheReadTokens":0}}`),
+		splitLine(3, "session.usage_record", "", `{"usage":{"model":"m","duration":100}}`),
+	)
+	b, err := json.Marshal(got.Tokens)
+	if err != nil || string(b) != `{"input":1500,"output":100,"cache_read":900}` || got.ModelCalls != 3 {
+		t.Fatalf("tokens=%s calls=%d err=%v", b, got.ModelCalls, err)
+	}
+}
+
 // A stopped subagent records subagent.completed (or failed) but no completion
 // for its running tool: its runs and waits end there, other agents' do not.
 func TestTimeSplitEndsAStoppedSubagentsRunsAtItsEnd(t *testing.T) {

@@ -52,6 +52,20 @@ type TimeSplit struct {
 	// overlapping each other or a model call count in full, so the rows may
 	// add up to more than LocalMS.
 	Tools []TimeSplitTool `json:"tools"`
+	// Tokens totals the token counts the journal's session.usage_record
+	// events report, main agent and subagents; nil when none reports any.
+	// Tools -> Usage shows them once the native metrics are gone (a closed
+	// Thread).
+	Tokens *TimeSplitTokens `json:"tokens,omitempty"`
+}
+
+// TimeSplitTokens is TimeSplit.Tokens; a field is nil when no record reports
+// it. Cache reads are part of the input, reasoning part of the output.
+type TimeSplitTokens struct {
+	Input     *int64 `json:"input,omitempty"`
+	Output    *int64 `json:"output,omitempty"`
+	CacheRead *int64 `json:"cache_read,omitempty"`
+	Reasoning *int64 `json:"reasoning,omitempty"`
 }
 
 // TimeSplitTool is one tool's row in TimeSplit.
@@ -153,7 +167,11 @@ type splitEvent struct {
 		ToolName   string `json:"toolName"`
 		RequestID  string `json:"requestId"`
 		Usage      struct {
-			Duration *float64 `json:"duration"`
+			Duration        *float64 `json:"duration"`
+			InputTokens     *float64 `json:"inputTokens"`
+			OutputTokens    *float64 `json:"outputTokens"`
+			CacheReadTokens *float64 `json:"cacheReadTokens"`
+			ReasoningTokens *float64 `json:"reasoningTokens"`
 		} `json:"usage"`
 		// Of session.compaction_complete: absent when nothing was compacted,
 		// so no model was called. StatusCode is a failed call's.
@@ -186,6 +204,7 @@ type splitFold struct {
 	compactions  int // compactions that called a model
 	waitCount    int
 	recorded     bool
+	tokens       TimeSplitTokens
 	open         map[[2]string]toolRun // running tools by agent and call
 	asking       map[string]asked      // owner requests by request ID
 	compacting   int64                 // the running compaction's start, 0 for none
@@ -242,6 +261,10 @@ func (f *splitFold) add(e *splitEvent) {
 			f.modelCalls++
 			f.model = append(f.model, span{at - int64(*d.Usage.Duration), at})
 		}
+		addTokens(&f.tokens.Input, d.Usage.InputTokens)
+		addTokens(&f.tokens.Output, d.Usage.OutputTokens)
+		addTokens(&f.tokens.CacheRead, d.Usage.CacheReadTokens)
+		addTokens(&f.tokens.Reasoning, d.Usage.ReasoningTokens)
 	case "session.compaction_start":
 		f.compacting = at
 	case "session.compaction_complete":
@@ -332,6 +355,18 @@ func (f *splitFold) finish(run toolRun, at int64) {
 	f.runs = append(f.runs, run)
 }
 
+// addTokens adds a record's count to sum, starting it at the first record
+// that reports one.
+func addTokens(sum **int64, n *float64) {
+	if n == nil || *n < 0 {
+		return
+	}
+	if *sum == nil {
+		*sum = new(int64)
+	}
+	**sum += int64(*n)
+}
+
 func (f *splitFold) wait(from, to int64) {
 	f.waitCount++
 	if to > from {
@@ -348,6 +383,9 @@ func (f *splitFold) split() TimeSplit {
 		out.ModelMS, out.ModelCalls = &total, out.ModelCalls+f.compactions
 	}
 	out.WaitingMS = spanLength(waits)
+	if f.tokens != (TimeSplitTokens{}) {
+		out.Tokens = &f.tokens
+	}
 	all := make([]span, 0, len(f.runs))
 	byTool := map[string]*TimeSplitTool{}
 	for _, run := range f.runs {
