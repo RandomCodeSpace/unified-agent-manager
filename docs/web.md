@@ -593,7 +593,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Thread's budget first, then six figures: the AI units recorded for the
   Thread, the time split, see **Time split**, tokens and code from Copilot's
   own usage metrics, with the breakdowns by model, agent, tool and token
-  type folded under them) and Agent (see **Agent**; shown only when the Project has a
+  type folded under them; on a closed or inactive Thread, whose native
+  metrics are gone, the tokens come from the time split's `tokens`) and Agent (see **Agent**; shown only when the Project has a
   custom agent or the Thread names one). The open panel reads its counts again
   whenever the Thread reports new usage or context. The arrow keys move
   between tabs and Esc closes it; on a phone it is a bottom sheet, and so is
@@ -1065,7 +1066,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   archived Thread has it too, and is cached until the journal's size or
   modification time changes. It returns `{"model_ms", "model_calls",
   "local_ms", "local_runs", "waiting_ms", "waits", "tools": [{"name", "ms",
-  "runs"}]}` in milliseconds. Model time is the wall time any model call was
+  "runs"}], "tokens": {"input", "output", "cache_read", "reasoning"}}` in
+  milliseconds; `tokens` totals the `session.usage_record` token counts,
+  main agent and subagents, and is left out when no record has any (a count
+  is left out when no record has it). Model time is the wall time any model call was
   running, subagents and compaction included and parallel calls counted once
   (each `session.usage_record` spans its `duration` up to its timestamp;
   `session.usage_record` never records compaction, so each
