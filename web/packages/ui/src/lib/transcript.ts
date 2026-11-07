@@ -801,11 +801,15 @@ export function localToolMs(entries: readonly Entry[], pausedMs = 0): number {
 /** A call the Thread's budget denied: it never ran. */
 export const BUDGET_STOPPED = 'stopped by budget';
 
-/** What a finished step produced, as its row's result: test counts, line counts of its edits, its exit code, or that it failed. */
+/** A single pipe: the shell reports the last command's exit, not the test runner's. */
+export const PIPED = /[^|]\|[^|]/;
+
+/** What a finished step produced, as its row's result: test counts, line counts of its edits, its exit code, or that it failed. `piped`: exit 0 from a pipe's last command, which says nothing of the commands before it. */
 export type StepResult =
   | { kind: 'tests'; passed: number; failed: number }
   | { kind: 'diff'; additions: number; deletions: number }
   | { kind: 'exit'; code: number }
+  | { kind: 'piped' }
   | { kind: 'failed' }
   | { kind: 'budget' };
 
@@ -817,7 +821,8 @@ export function stepResult(tool: ToolCall | undefined): StepResult | null {
   if (known.length) return { kind: 'diff', additions: known.reduce((n, e) => n + (e.additions ?? 0), 0), deletions: known.reduce((n, e) => n + (e.deletions ?? 0), 0) };
   if (tool.budget_stopped) return { kind: 'budget' };
   if (tool.status === 'failed') return tool.exit_code ? { kind: 'exit', code: tool.exit_code } : { kind: 'failed' };
-  return tool.exit_code === 0 ? { kind: 'exit', code: 0 } : null;
+  if (tool.exit_code !== 0) return null;
+  return COMMAND_TOOLS.has(tool.name.toLowerCase()) && PIPED.test(toolLabel(tool).arg) ? { kind: 'piped' } : { kind: 'exit', code: 0 };
 }
 
 function spanMs(spans: [number, number][]): number {
@@ -992,6 +997,7 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   if (r?.kind === 'tests') result.push(r.failed ? { text: `${r.passed} passed · ${r.failed} failed`, tone: 'error' } : { text: `ok · ${r.passed} passed`, tone: 'muted' });
   else if (r?.kind === 'diff') result.push({ text: lineCountsText(r.additions, r.deletions), tone: 'muted' });
   else if (r?.kind === 'exit') result.push({ text: r.code === 0 ? 'ok' : `exit ${r.code}`, tone: r.code === 0 ? 'muted' : 'error' });
+  else if (r?.kind === 'piped') result.push({ text: 'exit 0', tone: 'muted' }, { text: 'piped', tone: 'muted' });
   else if (r?.kind === 'failed') result.push({ text: 'failed', tone: 'error' });
   else if (r?.kind === 'budget') result.push({ text: BUDGET_STOPPED, tone: 'muted' });
   // A completed call that exited non-zero failed all the same (stepResult leaves its code out).
