@@ -61,6 +61,22 @@ describe('messages', () => {
     expect(view.getByText(/^uam budget: this Thread is close/)).toBeTruthy();
   });
 
+  test('the CLI\'s resume warning folds to one line that opens to its whole text', () => {
+    const warning = 'Warning: 1 tool call(s) had no recorded result at resume. Files or other state may be partially changed. Completed tool results were retained; unresolved operations were not automatically retried. Verify the current state before continuing.';
+    const items: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Go on' },
+      { id: 'n', kind: 'notice', time: '2026-10-09T00:00:01Z', text: warning },
+      { id: 'n2', kind: 'notice', time: '2026-10-09T00:00:02Z', text: warning.replace('1 tool', '3 tool') },
+    ];
+    const view = render(<Transcript sessionId="s" items={items} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    const summary = view.getByText('1 tool call had no result at resume');
+    expect(summary.tagName).toBe('SUMMARY');
+    const details = summary.closest('details')!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain('Verify the current state before continuing.');
+    expect(view.getByText('3 tool calls had no result at resume').tagName).toBe('SUMMARY');
+  });
+
   test('skill invocation notices stay visible and ordered in turns', () => {
     const items: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Review the change' },
