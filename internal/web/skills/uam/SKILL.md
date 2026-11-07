@@ -359,7 +359,10 @@ again for it.
   `limit`, `held`, and `last`: the newest message's `id`, `from`, `status`
   (`held`, `queued`, `working`, `replying`, `replied`, `stopped`, `failed`,
   `interrupted`, `cancelled`, `declined` or `undelivered`) and `detail`, the
-  reason. Read it there instead of asking again.
+  reason. Read it there instead of asking again. When the owner settles or
+  archives either Thread, the pair starts over as `pending`, and a message
+  not delivered by then stays as `last` with status `undelivered` and a
+  `detail` such as `"<thread>" was settled`.
 - The receiving Thread's own spending limit applies to the turn your
   message starts, not yours: the owner's approval of the pair is what lets
   work move to another Thread.

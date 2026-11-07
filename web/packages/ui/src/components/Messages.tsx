@@ -1,6 +1,6 @@
 import { MessagesSquare } from 'lucide-react';
 import { createContext, useContext, useId, useState } from 'react';
-import { describeError, type MessagePair, type PeerStatus, type SessionSummary } from '../api';
+import { describeError, type MessagePair, type PeerMessage, type PeerStatus, type SessionSummary } from '../api';
 import { useApi } from '../ApiContext';
 import { Note } from './common';
 import { TaskList, useTaskActions } from './taskActions';
@@ -10,6 +10,9 @@ import { AlertDialog, useConfirm } from './ui/dialog';
 
 /** The pairs of Threads that message each other (`message_pairs`), from the app state. */
 export const MessagePairsContext = createContext<MessagePair[]>([]);
+
+/** Messages that settling or archiving a Thread of their pair left undelivered (`message_outcomes`), from the app state. */
+export const MessageOutcomesContext = createContext<PeerMessage[]>([]);
 
 const reasons = (limit: number): Record<NonNullable<MessagePair['held']>['reason'], string> => ({
   first: 'The first message between these threads waits for you.',
@@ -31,14 +34,27 @@ const STATUS: Record<PeerStatus, string> = {
   undelivered: 'not delivered',
 };
 
-/** A pair's held message, or one line saying how it stands, for each pair of the Thread `session`. */
+/** A pair's held message, or one line saying how it stands, for each pair of the Thread `session`, then one line for each of its messages a dropped pair left undelivered. */
 export function ThreadMessages({ session }: Readonly<{ session: SessionSummary }>) {
   const pairs = useContext(MessagePairsContext).filter((p) => p.a === session.id || p.b === session.id);
-  if (pairs.length === 0) return null;
+  const outcomes = useContext(MessageOutcomesContext).filter((o) => o.from === session.id || o.to === session.id);
+  if (pairs.length === 0 && outcomes.length === 0) return null;
   return (
     <>
       {pairs.map((p) => (p.held ? <HeldMessage key={p.id} pair={p} self={session.id} /> : <PairLine key={p.id} pair={p} self={session.id} />))}
+      {outcomes.map((o) => <OutcomeLine key={o.id} outcome={o} self={session.id} />)}
     </>
+  );
+}
+
+function OutcomeLine({ outcome, self }: Readonly<{ outcome: PeerMessage; self: string }>) {
+  const name = useThreadName();
+  const sent = outcome.from === self;
+  const other = sent ? outcome.to : outcome.from;
+  return (
+    <Note role="status">
+      Message {sent ? 'to' : 'from'} <ThreadButton id={other} name={name(other)} /> · Not delivered: {outcome.detail}
+    </Note>
   );
 }
 

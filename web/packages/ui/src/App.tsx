@@ -9,7 +9,7 @@ import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
-import { MessagePairsContext } from './components/Messages';
+import { MessageOutcomesContext, MessagePairsContext } from './components/Messages';
 import { Login } from './components/Login';
 import { Home } from './components/Home';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
@@ -1574,6 +1574,7 @@ export default function App() {
     <AppContext.Provider value={ctx}>
       <ModelCallsContext.Provider value={state.modelCalls}>
       <MessagePairsContext.Provider value={state.messagePairs}>
+      <MessageOutcomesContext.Provider value={state.messageOutcomes}>
       <TaskList.Provider value={taskList}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
@@ -1756,6 +1757,7 @@ export default function App() {
         </TooltipProvider>
       </TaskActionsContext.Provider>
       </TaskList.Provider>
+      </MessageOutcomesContext.Provider>
       </MessagePairsContext.Provider>
       </ModelCallsContext.Provider>
     </AppContext.Provider>

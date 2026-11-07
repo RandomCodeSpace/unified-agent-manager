@@ -591,6 +591,10 @@ type WebState struct {
 	// diff, kept so a closed Thread's Settle guard and file links still know
 	// the files only that diff lists after a restart; nil before the first.
 	NativePaths *WebNativePaths `json:"native_paths,omitempty"`
+	// MessageOutcomes are the messages to or from the Thread that were not
+	// delivered because settling or archiving one of the pair dropped their
+	// pair, oldest first; the other Thread keeps the same records.
+	MessageOutcomes []WebPeerMessage `json:"message_outcomes,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -700,6 +704,7 @@ var knownWebStateFields = map[string]struct{}{
 	"place":               {},
 	"context":             {},
 	"native_paths":        {},
+	"message_outcomes":    {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.
