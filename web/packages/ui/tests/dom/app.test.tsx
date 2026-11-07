@@ -488,7 +488,10 @@ describe('task lifecycle', () => {
     const menu = await openMenu(user);
     expect(within(menu).getByRole('menuitem', { name: /^Settle/ }).getAttribute('aria-disabled')).toBe('true');
     expect(document.querySelector('[data-task-row="t1"] [data-settle]')).toBeNull();
-    expect(within(menu).getAllByText(/Stop the turn, answer what is waiting/).length).toBeGreaterThan(0);
+    // Settle and Archive are disabled for the same reason: it shows once and describes both.
+    const reason = within(menu).getByText(/Stop the turn, answer what is waiting/);
+    expect(reason.id).toBeTruthy();
+    for (const name of [/^Settle/, /^Archive$/]) expect(within(menu).getByRole('menuitem', { name }).getAttribute('aria-describedby')).toBe(reason.id);
   });
 });
 

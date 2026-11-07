@@ -1,6 +1,7 @@
 // Settings → Archived: the archived Tasks the sidebar no longer shelves (mock t12, archived a day ago, and t13, five days ago).
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { pageMatches, SETTINGS_PAGES } from '../../src/components/SettingsNav';
 import * as data from '../../src/mock/data';
 import { openMenu, renderApp, sidebar } from './render';
 
@@ -45,6 +46,12 @@ describe('Settings → Archived', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Delete thread' }));
     await waitFor(() => expect(list.queryByRole('button', { name: /Node 24.*archived/ })).toBeNull());
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
+  });
+
+  test('the Settings entry says an archived thread is read-only until Unarchive, and Find a setting finds it by that word', () => {
+    const page = SETTINGS_PAGES.find((p) => p.id === 'archived')!;
+    expect(page.blurb).not.toMatch(/for good/);
+    expect(pageMatches(page, 'unarchive')).toBe(true);
   });
 
   test('Unarchive opens the same Task as Finished without sending a prompt', async () => {
