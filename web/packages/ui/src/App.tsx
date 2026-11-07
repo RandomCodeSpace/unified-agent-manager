@@ -36,6 +36,7 @@ import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
 import { EXIT_MS, usePresence } from './components/ui/collapse';
 import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
+import { CoveredContext } from './components/ui/reader';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
@@ -1656,7 +1657,9 @@ export default function App() {
                 </div>
                 {/* A cached page is presentation only; actions and typing wait for confirmation. Under a view the pane is skipped, not unmounted: content-visibility keeps its scroll, display:none would not. */}
                 <div className={cn('flex min-h-0 flex-1 flex-col', !!view && '[content-visibility:hidden]')} inert={stale || !!view} aria-hidden={!!view || undefined} aria-busy={stale || undefined}>
-                  <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
+                  <CoveredContext.Provider value={!!view}>
+                    <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
+                  </CoveredContext.Provider>
                 </div>
                 {/* Always mounted, so a view that opens in a transition waits here for its code instead of showing the fallback. */}
                 <Suspense fallback={<div className="absolute inset-0 flex flex-col bg-canvas"><ViewLoading leading={leading} /></div>}>

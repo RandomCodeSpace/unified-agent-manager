@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as data from '../../src/mock/data';
-import { openTask, renderApp, sidebar } from './render';
+import { openSubagentIndex, openTask, renderApp, sidebar } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -131,6 +131,15 @@ describe('app shell', () => {
     await waitFor(() => expect(header().textContent).toBe('Settings'));
     history.pushState(null, '', '/#routines');
     window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await waitFor(() => expect(header().textContent).toBe('Routines'));
+  });
+
+  test('a fragment that opens a view over the Thread closes the Thread reader floating outside the pane', async () => {
+    const { user } = await openTask('t8');
+    await openSubagentIndex(user);
+    history.pushState(null, '', '/#routines');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagents' })).toBeNull());
     await waitFor(() => expect(header().textContent).toBe('Routines'));
   });
 
