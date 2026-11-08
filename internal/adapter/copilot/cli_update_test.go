@@ -205,6 +205,7 @@ func TestNewerRelease(t *testing.T) {
 		{"1.0.100", "1.0.99", true},
 		{"1.0.9", "1.0.10", false},
 		{"2.0.0", "1.9.9", true},
+		{"1.0.93", "1.0.94-01", false},
 	} {
 		if got := newerRelease(tc.release, tc.version); got != tc.want {
 			t.Errorf("newerRelease(%s, %s) = %v", tc.release, tc.version, got)

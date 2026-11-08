@@ -2,7 +2,6 @@ package copilot
 
 import (
 	"archive/tar"
-	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -17,12 +16,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"golang.org/x/mod/semver"
 	"golang.org/x/sys/unix"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -555,18 +554,11 @@ func cliVersion(ctx context.Context, path string) (string, error) {
 }
 
 // newerRelease reports whether release (X.Y.Z) is newer than version, which
-// may be a prerelease: a prerelease sorts below its release.
+// may be a prerelease: a prerelease sorts below its release. A version that
+// is not valid semver is never offered an update, so no downgrade is offered.
 func newerRelease(release, version string) bool {
-	core, pre, _ := strings.Cut(version, "-")
-	a, b := strings.Split(release, "."), strings.Split(core, ".")
-	for i := range 3 {
-		x, _ := strconv.Atoi(a[i])
-		y, _ := strconv.Atoi(b[i])
-		if c := cmp.Compare(x, y); c != 0 {
-			return c > 0
-		}
-	}
-	return pre != ""
+	v := "v" + version
+	return semver.IsValid(v) && semver.Compare("v"+release, v) > 0
 }
 
 // runCLI runs name with args and returns its trimmed output. npm and the
