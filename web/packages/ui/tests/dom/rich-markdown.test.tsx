@@ -126,6 +126,14 @@ test('a list whose every item opens with ✅ ❌ ⚠️ is a status list: failur
   expect(plain.textContent).toContain('✅ done');
 });
 
+test('a numbered list keeps its order: status marks and severity labels do not re-sort it', () => {
+  const { container } = render(<Markdown text={'1. ✅ Backup\n2. ❌ Deploy\n\nNext:\n\n1. **Low:** typo\n2. **High:** token in the log'} />);
+  expect(container.querySelector('.md-status, .md-severity')).toBeNull();
+  const [status, severity] = [...container.querySelectorAll('ol')].map((ol) => [...ol.querySelectorAll(':scope > li')].map((li) => li.textContent));
+  expect(status).toEqual(['✅ Backup', '❌ Deploy']);
+  expect(severity).toEqual(['Low: typo', 'High: token in the log']);
+});
+
 test('a list of severity labels is grouped most severe first with a count line; the label leaves the text', () => {
   const { container } = render(<Markdown text={'- **Medium:** retry has no cap\n- **High:** token in the log\n- **Low**: typo\n- **P1:** race on close'} />);
   const rows = [...container.querySelectorAll('ul.md-severity > li')];
