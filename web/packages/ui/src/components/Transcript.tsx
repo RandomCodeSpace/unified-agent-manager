@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -504,6 +504,9 @@ function StepButton({ label, result, open, onClick, fold = false, intent = false
   );
 }
 
+/** Text that holds a git diff (a `diff --git` header and a hunk), highlighted as one. */
+const isDiff = (text: string) => /^diff --git /m.test(text) && /^@@ /m.test(text);
+
 /** A long text in a call's raw view: three lines, then "Show all N lines". */
 function RawLines({ text: raw, className }: Readonly<{ text: string; className?: string }>) {
   const [all, setAll] = useState(false);
@@ -511,7 +514,7 @@ function RawLines({ text: raw, className }: Readonly<{ text: string; className?:
   const lines = text.split('\n').length;
   return (
     <>
-      <pre translate="no" className={cn('m-0 font-mono text-code-sm whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[3lh] overflow-hidden', className)}>{text}</pre>
+      <pre translate="no" className={cn('m-0 font-mono text-code-sm whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[3lh] overflow-hidden', className)}>{isDiff(text) ? <Highlighted language="diff" code={text} /> : text}</pre>
       {lines > 3 && (
         <Button variant="link" aria-expanded={all} className="w-fit" onClick={() => setAll((a) => !a)}>
           <ChevronDown aria-hidden="true" className={cn('size-3', all && 'rotate-180')} />
@@ -1308,7 +1311,7 @@ export function ToolDetails({ item, className }: Readonly<{ item: Item; classNam
     <div className={cn('my-1 flex flex-col gap-1 text-ui', className)}>
       {item.text && <Markdown text={item.text} />}
       {t?.input && input && <CodeBlock language={raw ? 'input' : input.kind} head={rawToggle || undefined}>{raw ? t.input : input.text}</CodeBlock>}
-      {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
+      {t?.output && <CodeBlock language="output">{isDiff(t.output) ? <Highlighted language="diff" code={t.output} /> : t.output}</CodeBlock>}
       {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
     </div>
   );

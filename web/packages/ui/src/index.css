@@ -989,6 +989,9 @@
     margin: 0;
     border-top: 1px solid var(--color-hairline);
   }
+  .md .md-outline ol:first-child > li:first-child {
+    border-top: 0;
+  }
   .md-outline button {
     display: flex;
     width: 100%;

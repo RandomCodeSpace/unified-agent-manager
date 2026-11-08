@@ -1123,32 +1123,40 @@ function echoLeave() {
   if (typeof CSS !== 'undefined' && 'highlights' in CSS) CSS.highlights.delete('echo');
 }
 
-/** The reply's outline (`outlineOf`), when it has one: its title heading carries the section index. */
+/** The reply's outline (`outlineOf`), when it has one: its title heading carries the section index, or the reply's top without a title. */
 const OutlineContext = createContext<Outline | null>(null);
 
 const hastText = (node: HastNode | HastNode['children'][number]): string => node.type === 'text' ? node.value : 'children' in node ? node.children.map(hastText).join('') : '';
 
-/** A long reply's title with an index of its sections under it; a click brings the section into view. Any other heading as written. */
+/** An outline's numbered section index; a click brings the section into view (a repeated name finds its own heading). */
+function OutlineIndex({ sections }: Readonly<{ sections: string[] }>) {
+  const show = (target: HTMLElement, i: number) => {
+    const nth = sections.slice(0, i).filter((s) => s === sections[i]).length;
+    const named = [...(target.closest('.md')?.querySelectorAll('h2') ?? [])].filter((h) => h.textContent?.trim() === sections[i]);
+    named[nth]?.scrollIntoView({ block: 'start' });
+  };
+  return (
+    <ol aria-label="Sections">
+      {sections.map((section, i) => (
+        <li key={i}>
+          <button type="button" onClick={(e) => show(e.currentTarget, i)}>
+            <span aria-hidden="true" className="md-outline-n">{String(i + 1).padStart(2, '0')}</span>
+            {section}
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** A long reply's title with the index of its sections under it. Any other heading as written. */
 function MdTitle({ node, children, ...props }: Readonly<{ children?: ReactNode } & ExtraProps & Omit<ComponentProps<'h1'>, 'children'>>) {
   const outline = useContext(OutlineContext);
-  if (!outline || !node || hastText(node).trim() !== outline.title) return <h1 {...props}>{children}</h1>;
-  const show = (target: HTMLElement, section: string) => {
-    const heading = [...(target.closest('.md')?.querySelectorAll('h2') ?? [])].find((h) => h.textContent?.trim() === section);
-    heading?.scrollIntoView({ block: 'start' });
-  };
+  if (!outline?.title || !node || hastText(node).trim() !== outline.title) return <h1 {...props}>{children}</h1>;
   return (
     <div className="md-outline">
       <h1 {...props}>{children}</h1>
-      <ol aria-label="Sections">
-        {outline.sections.map((section, i) => (
-          <li key={i}>
-            <button type="button" onClick={(e) => show(e.currentTarget, section)}>
-              <span aria-hidden="true" className="md-outline-n">{String(i + 1).padStart(2, '0')}</span>
-              {section}
-            </button>
-          </li>
-        ))}
-      </ol>
+      <OutlineIndex sections={outline.sections} />
     </div>
   );
 }
@@ -1263,6 +1271,7 @@ export function Markdown({ text, streaming = false, breaks = false, tally = true
   return (
     <OutlineContext.Provider value={outline}>
       <div ref={fileDemand} className={cn('md', className)} onPointerOver={echoOver} onPointerLeave={echoLeave}>
+        {outline && outline.title === null && <div className="md-outline"><OutlineIndex sections={outline.sections} /></div>}
         {blocks.map((block, i) => (
           <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} tally={tally} rehypePlugins={rehypePlugins} />
         ))}
