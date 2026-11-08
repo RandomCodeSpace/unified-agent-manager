@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -42,6 +43,8 @@ func (p *webProvider) subagentModels() []string {
 // here; the call is refused when no allowed model is usable.
 func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
 	var note string
+	// The skill's reference files are uam's own guide, read in every mode without asking.
+	skillRead := in.ToolName == "view" && skillFile(c.skillDirs, in.ToolArgs)
 	if c.hooks.Pre != nil {
 		args, _ := in.ToolArgs.(map[string]any)
 		if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
@@ -58,6 +61,8 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 			}
 			if verdict.Deny != "" {
 				out.PermissionDecision, out.PermissionDecisionReason = "deny", verdict.Deny
+			} else if skillRead {
+				out.PermissionDecision = "allow"
 			}
 			// A task call uam lets through goes on to the model check, with
 			// uam's context.
@@ -66,6 +71,9 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 			}
 			note = verdict.Context
 		}
+	}
+	if skillRead {
+		return &copilot.PreToolUseHookOutput{PermissionDecision: "allow"}, nil
 	}
 	allowed := c.p.subagentModels()
 	if in.ToolName != taskTool {
@@ -100,6 +108,30 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 // logNotice records host context in the transcript: SDK hook context
 // reaches the model but is not in hook.end. A durable SDK notification uses
 // the existing notice mapper.
+// skillFile reports whether a view call's absolute path, with symlinks
+// resolved, names something inside one of the skill folders.
+func skillFile(dirs []string, args any) bool {
+	m, _ := args.(map[string]any)
+	path, _ := m["path"].(string)
+	if len(dirs) == 0 || !filepath.IsAbs(path) {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	for _, dir := range dirs {
+		root, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			continue
+		}
+		if rel, err := filepath.Rel(root, real); err == nil && filepath.IsLocal(rel) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *conversation) logNotice(text string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	err := c.sess.Log(ctx, text)
