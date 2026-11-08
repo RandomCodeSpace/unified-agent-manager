@@ -3,6 +3,8 @@ package copilot
 import (
 	"context"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -216,5 +218,59 @@ func TestWebSucceededToolUseHookOnCreateAndResume(t *testing.T) {
 		if call.Tool != "bash" || call.Workdir != "/work" || call.Args["command"] != "git commit -m fix" {
 			t.Fatalf("success callback = %+v", call)
 		}
+	}
+}
+
+// A view of a file in uam's skill folders is allowed without a permission
+// request; nothing else is, and uam's own refusal still wins.
+func TestPreToolUseAllowsSkillFileViews(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	dir := t.TempDir()
+	skills := filepath.Join(dir, "skills")
+	ref := filepath.Join(skills, "uam", "references", "files.md")
+	secret := filepath.Join(dir, "secret.txt")
+	if err := os.MkdirAll(filepath.Dir(ref), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{ref, secret} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(skills, "uam", "link.md")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	c.skillDirs = []string{skills}
+	view := func(tool, path string) string {
+		out, err := c.preToolUse(copilot.PreToolUseHookInput{ToolName: tool, ToolArgs: map[string]any{"path": path}}, copilot.HookInvocation{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil {
+			return ""
+		}
+		return out.PermissionDecision
+	}
+	if got := view("view", ref); got != "allow" {
+		t.Fatalf("reference file = %q, want allow", got)
+	}
+	for _, tc := range []struct{ tool, path string }{
+		{"view", secret},
+		{"view", link},
+		{"view", filepath.Join(skills, "uam", "..", "..", "secret.txt")},
+		{"view", "uam/references/files.md"},
+		{"bash", ref},
+	} {
+		if got := view(tc.tool, tc.path); got == "allow" {
+			t.Errorf("%s %s allowed", tc.tool, tc.path)
+		}
+	}
+	c.hooks.Pre = func(context.Context, agentapi.ToolUse) agentapi.ToolVerdict {
+		return agentapi.ToolVerdict{Deny: "refused"}
+	}
+	if got := view("view", ref); got != "deny" {
+		t.Fatalf("refused reference file = %q, want deny", got)
 	}
 }

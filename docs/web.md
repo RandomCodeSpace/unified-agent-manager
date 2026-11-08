@@ -642,7 +642,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it tells the agent to follow your own instructions and design skills and the
   project's design system (a `DESIGN.md`, tokens, its component library) first.
   uam writes both to `skills/<name>/SKILL.md` beside `sessions.json` at each
-  start. uam also appends a system instruction asking
+  start. The `uam` skill's `SKILL.md` is short and points to `references/`
+  files beside it, which the agent reads only when its work needs them. Those
+  reads of uam's own skill files never ask for permission, even in Safe mode.
+  uam also appends a system instruction asking
   the agent to put results in its reply, since tool calls are folded, to
   load the `uam` skill before it shows files, diagrams or charts, starts
   another Thread or starts subagents, to give a question's options as separate

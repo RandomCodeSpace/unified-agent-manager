@@ -1200,7 +1200,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c := &conversation{
-		p: p, client: client, id: req.ConversationID, sink: req.Events, hooks: req.Hooks, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		p: p, client: client, id: req.ConversationID, sink: req.Events, hooks: req.Hooks, skillDirs: req.SkillDirectories, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
@@ -2116,6 +2116,9 @@ type conversation struct {
 	id     string
 	sink   agentapi.EventSink
 	hooks  agentapi.ToolHooks
+	// skillDirs are uam's built-in skill folders; reading a file in them
+	// needs no approval (preToolUse).
+	skillDirs []string
 
 	mu        sync.Mutex
 	closed    bool
