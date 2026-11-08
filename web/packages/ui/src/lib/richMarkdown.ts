@@ -195,10 +195,10 @@ export const STATUS_ORDER = ['fail', 'warn', 'skip', 'ok'] as const;
 /** Stable order by `rank`, lowest first. */
 const ranked = (items: MdNode[], rank: (item: MdNode) => number) => items.map((item, i) => ({ item, i })).sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i).map(({ item }) => item);
 
-/** A list whose every item opens with ✅ ❌ ⚠️ (or ✔ ✗ ⏭): each item's mark gives way to its state, failures first. */
+/** A bullet list whose every item opens with ✅ ❌ ⚠️ (or ✔ ✗ ⏭): each item's mark gives way to its state, failures first. */
 function statusList(list: MdNode): boolean {
   const items = list.children ?? [];
-  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  if (list.ordered || items.length < 2 || items.some((i) => i.checked != null)) return false;
   const leads = items.map((i) => {
     const text = leadText(i);
     const m = text ? STATUS_LEAD.exec(text.value ?? '') : null;
@@ -219,10 +219,10 @@ const SEVERITY: Record<string, string> = { critical: 'critical', high: 'high', m
 /** The order findings take, most severe first. */
 export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'] as const;
 
-/** A list whose every item opens `**High:**` (Critical, High, Medium, Low or P0–P3): the label leaves the text for the row's own, most severe first. */
+/** A bullet list whose every item opens `**High:**` (Critical, High, Medium, Low or P0–P3): the label leaves the text for the row's own, most severe first. */
 function severityList(list: MdNode): boolean {
   const items = list.children ?? [];
-  if (items.length < 2 || items.some((i) => i.checked != null)) return false;
+  if (list.ordered || items.length < 2 || items.some((i) => i.checked != null)) return false;
   const rows = items.map((i) => {
     const row = labelled(i.children?.[0]);
     const level = row && SEVERITY[plain(row.label).trim().toLowerCase()];
