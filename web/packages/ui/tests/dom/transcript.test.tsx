@@ -646,12 +646,20 @@ describe('activity', () => {
     copy.mockRestore();
   });
 
-  test('a tool output that holds a git diff is highlighted as one; other output stays plain', async () => {
-    const run = (output: string): Item => ({ id: 'd1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'git diff' }), output } });
-    const diff = render(<ToolDetails item={run('diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new')} />);
-    await waitFor(() => expect([...diff.container.querySelectorAll('.hljs-addition')].map((s) => s.textContent)).toEqual(['+new']));
-    expect([...diff.container.querySelectorAll('.hljs-deletion')].map((s) => s.textContent)).toEqual(['-old']);
-    diff.unmount();
+  test('a tool output that holds a git diff is highlighted as one, in its step and its tool row; other output stays plain', async () => {
+    const run = (output: string): Item => ({ id: 'd1', kind: 'tool', time: '2026-11-08T10:00:01Z', ended_at: '2026-11-08T10:00:02Z', tool: { name: 'bash', status: 'completed', exit_code: 0, input: JSON.stringify({ command: 'git diff' }), output } });
+    const diff = run('diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new');
+    const marks = (root: ParentNode) => [...root.querySelectorAll('.hljs-addition, .hljs-deletion')].map((s) => s.textContent);
+    const row = render(<ToolDetails item={diff} />);
+    await waitFor(() => expect(marks(row.container)).toEqual(['-old', '+new']));
+    row.unmount();
+    const turn: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: '2026-11-08T10:00:00Z', ended_at: '2026-11-08T10:00:03Z', state: 'completed' };
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: '2026-11-08T10:00:00Z', text: 'Show the diff' }, diff];
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[turn]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    await userEvent.click(view.getAllByRole('button', { name: /activity of this turn/ })[0]);
+    await userEvent.click(await view.findByRole('button', { name: /^Ran git diff/ }));
+    await waitFor(() => expect(marks(view.container)).toEqual(['-old', '+new']));
+    view.unmount();
     const plain = render(<ToolDetails item={run('--- a\n+++ b\n-x\n+y')} />);
     expect(plain.container.querySelector('[class^="hljs-"]')).toBeNull();
     expect(plain.getByText(/^--- a/).textContent).toBe('--- a\n+++ b\n-x\n+y');

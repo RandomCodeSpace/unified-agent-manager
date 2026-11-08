@@ -504,6 +504,9 @@ function StepButton({ label, result, open, onClick, fold = false, intent = false
   );
 }
 
+/** Text that holds a git diff (a `diff --git` header and a hunk), highlighted as one. */
+const isDiff = (text: string) => /^diff --git /m.test(text) && /^@@ /m.test(text);
+
 /** A long text in a call's raw view: three lines, then "Show all N lines". */
 function RawLines({ text: raw, className }: Readonly<{ text: string; className?: string }>) {
   const [all, setAll] = useState(false);
@@ -511,7 +514,7 @@ function RawLines({ text: raw, className }: Readonly<{ text: string; className?:
   const lines = text.split('\n').length;
   return (
     <>
-      <pre translate="no" className={cn('m-0 font-mono text-code-sm whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[3lh] overflow-hidden', className)}>{text}</pre>
+      <pre translate="no" className={cn('m-0 font-mono text-code-sm whitespace-pre-wrap text-body [overflow-wrap:anywhere]', !all && 'max-h-[3lh] overflow-hidden', className)}>{isDiff(text) ? <Highlighted language="diff" code={text} /> : text}</pre>
       {lines > 3 && (
         <Button variant="link" aria-expanded={all} className="w-fit" onClick={() => setAll((a) => !a)}>
           <ChevronDown aria-hidden="true" className={cn('size-3', all && 'rotate-180')} />
@@ -1287,9 +1290,6 @@ export function ToolMark({ tone }: Readonly<{ tone: string }>) {
   if (tone === 'failed') return <X aria-hidden="true" className="size-3.5 text-error" strokeWidth={2.5} />;
   return <Minus aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2.5} />;
 }
-
-/** Output that holds a git diff (a `diff --git` header and a hunk), highlighted as one. */
-const isDiff = (output: string) => /^diff --git /m.test(output) && /^@@ /m.test(output);
 
 /**
  * A tool call's details: its text, then the input and output as code blocks; "No details yet."
