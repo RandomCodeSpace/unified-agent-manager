@@ -50,9 +50,13 @@ func TestToolOutputStreamNegotiationAndPayload(t *testing.T) {
 						}
 						raw.WriteString(line)
 					}
-					if strings.HasPrefix(raw.String(), "event:") {
+					if !strings.HasPrefix(raw.String(), "event:") {
+						continue
+					}
+					// An event in a new minute republishes the summary (EventAt).
+					if f := parseFrame(t, []byte(raw.String())); f.event != "session" {
 						bytes += raw.Len()
-						return parseFrame(t, []byte(raw.String()))
+						return f
 					}
 				}
 			}
