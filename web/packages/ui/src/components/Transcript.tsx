@@ -19,7 +19,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
@@ -1288,6 +1288,9 @@ export function ToolMark({ tone }: Readonly<{ tone: string }>) {
   return <Minus aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2.5} />;
 }
 
+/** Output that holds a git diff (a `diff --git` header and a hunk), highlighted as one. */
+const isDiff = (output: string) => /^diff --git /m.test(output) && /^@@ /m.test(output);
+
 /**
  * A tool call's details: its text, then the input and output as code blocks; "No details yet."
  * with none of them. The input reads as its command, or decoded; "Raw" shows it as recorded.
@@ -1308,7 +1311,7 @@ export function ToolDetails({ item, className }: Readonly<{ item: Item; classNam
     <div className={cn('my-1 flex flex-col gap-1 text-ui', className)}>
       {item.text && <Markdown text={item.text} />}
       {t?.input && input && <CodeBlock language={raw ? 'input' : input.kind} head={rawToggle || undefined}>{raw ? t.input : input.text}</CodeBlock>}
-      {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
+      {t?.output && <CodeBlock language="output">{isDiff(t.output) ? <Highlighted language="diff" code={t.output} /> : t.output}</CodeBlock>}
       {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
     </div>
   );

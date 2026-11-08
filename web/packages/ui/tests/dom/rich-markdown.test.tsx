@@ -258,10 +258,27 @@ test('a # title with three or more ## sections gets a section index; a click bri
     expect(scrolled.at(-1)).toBe('Verification');
     unmount();
   }
-  for (const other of ['# Title\n\n## One\n\n## Two', '## Intro\n\n# Title\n\n## One\n\n## Two\n\n## Three']) {
+  for (const other of ['# Title\n\n## One\n\n## Two', '## One\n\n## Two', '## Intro\n\n# Title\n\n## One\n\n## Two\n\n## Three']) {
     const { container } = render(<Markdown text={other} />);
     expect(container.querySelector('.md-outline')).toBeNull();
   }
+  vi.restoreAllMocks();
+});
+
+test('three or more ## sections without a # title get the index at the reply top; a repeated name finds its own heading', async () => {
+  const scrolled: HTMLElement[] = [];
+  vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) { scrolled.push(this); });
+  const { container } = render(<Markdown text={'Intro.\n\n## Checks\n\nA.\n\n## Notes\n\nB.\n\n## Checks\n\nC.'} />);
+  const index = screen.getByRole('list', { name: 'Sections' });
+  expect(container.querySelector('.md')?.firstElementChild).toBe(index.closest('.md-outline'));
+  expect(container.querySelector('h1')).toBeNull();
+  const buttons = within(index).getAllByRole('button');
+  expect(buttons.map((b) => b.textContent)).toEqual(['01Checks', '02Notes', '03Checks']);
+  const headings = [...container.querySelectorAll('h2')];
+  await userEvent.click(buttons[2]);
+  expect(scrolled.at(-1)).toBe(headings[2]);
+  await userEvent.click(buttons[0]);
+  expect(scrolled.at(-1)).toBe(headings[0]);
   vi.restoreAllMocks();
 });
 

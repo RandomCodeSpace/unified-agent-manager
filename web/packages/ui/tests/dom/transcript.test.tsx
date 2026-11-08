@@ -6,7 +6,7 @@ import { ApiError, api, type Item, type SessionDetail, type SnapshotData, type T
 import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
-import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
+import { ToolDetails, ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { TaskActionsContext, type TaskActions } from '../../src/components/taskActions';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
 import { composer, log, openMenu, openSubagentIndex, openTask, renderApp } from './render';
@@ -644,6 +644,17 @@ describe('activity', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy input' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith('*** Begin Patch\n*** Add File: web/a.html\n+<!doctype html>\n*** End Patch\n'));
     copy.mockRestore();
+  });
+
+  test('a tool output that holds a git diff is highlighted as one; other output stays plain', async () => {
+    const run = (output: string): Item => ({ id: 'd1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'git diff' }), output } });
+    const diff = render(<ToolDetails item={run('diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new')} />);
+    await waitFor(() => expect([...diff.container.querySelectorAll('.hljs-addition')].map((s) => s.textContent)).toEqual(['+new']));
+    expect([...diff.container.querySelectorAll('.hljs-deletion')].map((s) => s.textContent)).toEqual(['-old']);
+    diff.unmount();
+    const plain = render(<ToolDetails item={run('--- a\n+++ b\n-x\n+y')} />);
+    expect(plain.container.querySelector('[class^="hljs-"]')).toBeNull();
+    expect(plain.getByText(/^--- a/).textContent).toBe('--- a\n+++ b\n-x\n+y');
   });
 
   test('a step ends in its result: its test counts, exit code or failure as a block, its edits as line counts', () => {

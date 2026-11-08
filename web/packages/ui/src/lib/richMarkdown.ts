@@ -538,15 +538,19 @@ export function commandsOf(text: string): Command[] | null {
   return out.length >= 2 ? out : null;
 }
 
-/** A long reply's title and its sections, for an index above them. */
-export interface Outline { title: string; sections: string[] }
+/** A long reply's sections, for an index above them, and its title when it opens with a `# Title`. */
+export interface Outline { title: string | null; sections: string[] }
 
 /** Heading text as it reads: emphasis, code marks and link targets dropped. */
 const headingText = (raw: string) => raw.replace(/\s+#+\s*$/, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').trim();
 
-/** A reply whose first heading is a `# Title` followed by three or more `## Section` headings (outside code fences): its outline; else null. */
+/**
+ * A reply with three or more `## Section` headings (outside code fences): its outline, titled when its first
+ * heading is a `# Title`. Null with fewer sections, or when a reply without that title has a `#` heading later.
+ */
 export function outlineOf(text: string): Outline | null {
   let title: string | null = null;
+  let first = true;
   const sections: string[] = [];
   let fence: string | null = null;
   for (const line of text.split('\n')) {
@@ -555,10 +559,11 @@ export function outlineOf(text: string): Outline | null {
     if (fence || f) continue;
     const h = /^(#{1,6}) (.+)$/.exec(line);
     if (!h || !headingText(h[2])) continue;
-    if (title === null) {
-      if (h[1] !== '#') return null;
-      title = headingText(h[2]);
+    if (h[1] === '#') {
+      if (first) title = headingText(h[2]);
+      else if (title === null) return null;
     } else if (h[1] === '##') sections.push(headingText(h[2]));
+    first = false;
   }
-  return title !== null && sections.length >= 3 ? { title, sections } : null;
+  return sections.length >= 3 ? { title, sections } : null;
 }
