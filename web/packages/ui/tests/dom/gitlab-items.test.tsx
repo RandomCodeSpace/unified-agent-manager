@@ -67,7 +67,7 @@ test('a reply that ended a turn which touched GitLab carries its items in its ou
   // Chips in the turn card's outcome row, with no "GitLab" label; the open MR's pipeline is a block of its own.
   expect(strip.closest('[data-outcome]')).toBeTruthy();
   expect(strip.textContent).not.toContain('GitLab');
-  expect(within(strip).getByTitle('pipeline running').className).toContain('bg-accent-wash');
+  expect(within(strip).getByTitle('pipeline running').dataset.tone).toBe('accent');
   expect(read).toHaveBeenCalledExactlyOnceWith('thread', ['mr:2', 'pipeline:91', 'job:7', 'issue:14']);
   // The reply's own link stays a plain link.
   expect(screen.getByRole('link', { name: 'the issue' }).getAttribute('href')).toBe(`${P}/issues/14`);

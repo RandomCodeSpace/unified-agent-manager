@@ -452,7 +452,7 @@ describe('subagents', () => {
     expect(progress.compareDocumentPosition(subagents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(strip).getByText('3 of 8')).toBeTruthy();
     // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
-    const cells = (blocks: string) => [...subagents.querySelectorAll(`${blocks} [title]`)].map((b) => [b.getAttribute('title'), b.className.match(/text-(error|accent|success|muted)/)?.[1], !!b.querySelector('svg')]);
+    const cells = (blocks: string) => [...subagents.querySelectorAll(`${blocks} [title]`)].map((b) => [b.getAttribute('title'), (b as HTMLElement).dataset.tone, !!b.querySelector('svg')]);
     expect(cells('.max-sm\\:hidden')).toEqual([
       ['1 failed', 'error', true],
       ['3 running', 'accent', true],
@@ -776,7 +776,7 @@ describe('one working ring per place', () => {
     expect(rings(header)).toHaveLength(0);
     expect(within(header).getByRole('group', { name: 'State: Working' }).className).toContain('before:bg-accent');
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
-    expect(strip.querySelector('[title="3 running"]')!.className).toContain('text-accent');
+    expect(strip.querySelector<HTMLElement>('[title="3 running"]')!.dataset.tone).toBe('accent');
     expect(rings(strip)).toHaveLength(0);
     // The live rows of the running ones: the step dots (no ring), "running" in their names.
     const live = screen.getByRole('region', { name: 'Subagents at work' });

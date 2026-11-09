@@ -61,13 +61,13 @@ export function SettleGuard({ target, open, onOpenChange, onClosed, busy, onConf
     >
       {p && <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
         {p.uncommitted > 0 && (
-          <span className="inline-flex h-5 items-center gap-1 rounded-xs bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
+          <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
             <FilePen aria-hidden="true" className="size-3" />
             {p.uncommitted} not committed
           </span>
         )}
         {p.unpushed > 0 && (
-          <span className="inline-flex h-5 items-center gap-1 rounded-xs bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
+          <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
             <ArrowUpFromLine aria-hidden="true" className="size-3" />
             {p.unpushed} not pushed
           </span>

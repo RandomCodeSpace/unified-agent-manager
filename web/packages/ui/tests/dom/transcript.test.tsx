@@ -295,8 +295,10 @@ describe('messages', () => {
     // "Todo", then a block per stage: its glyph and count in its tone, its words for a screen reader.
     expect(button.parentElement!.firstElementChild!.textContent).toBe('Todo');
     const block = (title: string) => within(button).getByTitle(title);
-    for (const [title, tone] of [['1 done', 'bg-success-wash'], ['1 blocked', 'bg-warning-wash'], ['1 to do', 'bg-tint-well']]) {
-      expect(block(title).className).toContain(tone);
+    for (const [title, tone] of [['1 done', 'success'], ['1 blocked', 'warning'], ['1 to do', 'none']]) {
+      expect(block(title).dataset.tone).toBe(tone);
+      // A fact: its fill is neutral, the tone is on its glyph.
+      expect(block(title).className).toContain('bg-tint-hover');
       expect(block(title).querySelector('svg')).toBeTruthy();
     }
     // The turn has ended, so nothing is in progress any more: that block keeps its glyph without the accent.
@@ -669,32 +671,32 @@ describe('activity', () => {
     const run = (id: string, tests?: { passed: number; failed: number }, exit = tests?.failed ? 1 : 0, status: 'completed' | 'failed' = 'completed'): Item => ({ id, kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status, exit_code: exit, input: JSON.stringify({ command: 'go test ./...' }), ...(tests && { tests }) } });
     const failing = render(<ToolRow item={run('b1', { passed: 12, failed: 2 })} live={false} />);
     const counts = failing.getByTitle('12 passed · 2 failed');
-    expect(counts.className).toContain('bg-error-wash');
+    expect(counts.dataset.tone).toBe('error');
     // A phone keeps the failures alone.
     expect(counts.querySelector('.max-sm\\:hidden')?.textContent).toBe('12 passed · ');
     expect(failing.queryByText(/\d+\/\d+/)).toBeNull();
     failing.unmount();
     const passing = render(<ToolRow item={run('b2', { passed: 15, failed: 0 })} live={false} />);
-    expect(passing.getByTitle('15 passed').className).toContain('bg-success-wash');
+    expect(passing.getByTitle('15 passed').dataset.tone).toBe('success');
     passing.unmount();
     const none = render(<ToolRow item={run('b4', { passed: 0, failed: 3 })} live={false} />);
     expect(none.getByTitle('3 failed')).toBeTruthy();
     none.unmount();
     const plain = render(<ToolRow item={run('b3')} live={false} />);
     expect(plain.queryByText(/passed/)).toBeNull();
-    expect(plain.getByTitle('exit 0').className).toContain('bg-success-wash');
+    expect(plain.getByTitle('exit 0').dataset.tone).toBe('success');
     plain.unmount();
     // A pipe exits with its last command: no green pass for the run before it.
     const piped = render(<ToolRow item={{ ...run('b6'), tool: { ...run('b6').tool!, input: JSON.stringify({ command: 'go test ./... | tail -20' }) } }} live={false} />);
     expect(piped.queryByTitle('exit 0')).toBeNull();
-    expect(piped.getByText('exit 0 · piped').closest('[title]')!.className).not.toContain('bg-success-wash');
+    expect(piped.getByText('exit 0 · piped').closest<HTMLElement>('[title]')!.dataset.tone).not.toBe('success');
     piped.unmount();
     const broke = render(<ToolRow item={run('b5', undefined, 2, 'failed')} live={false} />);
-    expect(broke.getByTitle('exit 2').className).toContain('bg-error-wash');
+    expect(broke.getByTitle('exit 2').dataset.tone).toBe('error');
     broke.unmount();
     const fetch: Item = { id: 'f1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'web_fetch', status: 'failed', input: JSON.stringify({ url: 'https://example.test' }) } };
     const lost = render(<ToolRow item={fetch} live={false} />);
-    expect(lost.getByTitle('failed').className).toContain('bg-error-wash');
+    expect(lost.getByTitle('failed').dataset.tone).toBe('error');
     lost.unmount();
     const edit: Item = { id: 'e1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'edit', status: 'completed', edit_event_id: 'ev', input: JSON.stringify({ path: 'a.go' }), file_edits: [{ path: 'a.go', kind: 'modified', additions: 12, deletions: 3, diff_status: 'available' }] } };
     // Its file rows carry the counts, so the step row shows none: one count per file.
