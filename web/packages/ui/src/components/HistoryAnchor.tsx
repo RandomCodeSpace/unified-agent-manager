@@ -191,7 +191,7 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
     if (!this.props.itemIds) return this.props.children;
     return <div>
       <div ref={this.topSpacer} data-history-top-spacer="" aria-hidden="true" style={{ height: bandHeight(this.before) }} />
-      <div ref={this.content} data-history-window="" data-history-content="" className={this.props.className ?? 'flex flex-col gap-6'}>{this.props.children}</div>
+      <div ref={this.content} data-history-window="" data-history-content="" className={this.props.className ?? 'flex flex-col gap-4'}>{this.props.children}</div>
       <div ref={this.bottomSpacer} data-history-bottom-spacer="" aria-hidden="true" style={{ height: bandHeight(this.after) }} />
     </div>;
   }

@@ -1,4 +1,5 @@
-import { useEffect, useId, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronRight, CircleDashed, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useApi } from '../ApiContext';
@@ -16,7 +17,11 @@ import { Button } from './ui/button';
 // first MAX_STAMPS show, the rest on request. A claim the main agent's calls leave unseen is
 // judged again once the turn's subagents' transcripts are read; its stamp opens that subagent.
 // Once every stamp has settled, one collapsed line counts the claims the turn's record does not
-// show (a reply often restates earlier turns' work, so it says "no record", never "false").
+// show (a reply often restates earlier turns' work, so it says "no record", never "false"). That line
+// is part of the turn's outcome: it stands on the turn's head (`NoRecordSlot`), its claims on a line under it.
+
+/** The place on a turn's head for its reply's "no record" line; without one the line stays under the stamps. */
+export const NoRecordSlot = createContext<HTMLElement | null>(null);
 
 /** `stamps`, those that ask for it judged again against the calls of the subagents the turn started, once read; as given until then, or outside a Thread. Second: whether that judgement is in (or there is none to wait for). */
 function useSubagentEvidence(stamps: readonly Stamp[]): [readonly Stamp[], boolean] {
@@ -48,6 +53,7 @@ export function Receipts({ stamps: given }: Readonly<{ stamps: readonly Stamp[] 
   // Pending stamps by what they settled to, keyed by the pending stamp itself (stamps keep their identity while the turn's calls are unchanged).
   const [settled, setSettled] = useState<ReadonlyMap<Stamp, Stamp>>(new Map());
   const [all, setAll] = useState(false);
+  const slot = useContext(NoRecordSlot);
   useEffect(() => {
     let alive = true;
     for (const stamp of stamps) {
@@ -105,12 +111,12 @@ export function Receipts({ stamps: given }: Readonly<{ stamps: readonly Stamp[] 
           )}
         </ul>
       )}
-      {unrecorded.length > 0 && <NoRecord stamps={unrecorded} className={shown.length ? 'mt-1' : 'mt-2'} />}
+      {unrecorded.length > 0 && (slot ? createPortal(<NoRecord stamps={unrecorded} className="contents" />, slot) : <NoRecord stamps={unrecorded} className={shown.length ? 'mt-1' : 'mt-2'} />)}
     </>
   );
 }
 
-/** The claims the turn's record does not show, behind one closed line. */
+/** The claims the turn's record does not show, behind one closed line. On a turn's head (`contents`) the line is one of the head's items and its claims take a line of their own under them. */
 function NoRecord({ stamps, className }: Readonly<{ stamps: readonly Stamp[]; className: string }>) {
   const locate = useLocateItem();
   const [open, setOpen] = useState(false);
@@ -125,7 +131,7 @@ function NoRecord({ stamps, className }: Readonly<{ stamps: readonly Stamp[]; cl
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint', open && 'rotate-90')} />
       </button>
       {open && (
-        <ul id={id} aria-label="Claims with no record in this turn">
+        <ul id={id} aria-label="Claims with no record in this turn" className="order-last basis-full">
           {stamps.map((s) => {
             const body = (
               <>
