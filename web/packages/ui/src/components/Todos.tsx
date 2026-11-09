@@ -4,18 +4,16 @@
 // it, that lifted above the dim, a compact head with the count and meter, eyebrow sections (by the
 // turn that added the rows once the kept records are read, else by stage), and a keycap foot. A
 // phone gets a sheet from the bottom. Dependencies are drawn as rails beside the rows (`Rails`), or,
-// when this browser's setting says so, as a Mermaid flowchart (`TodoGraph`). A row's title opens
-// its detail. The owner changes the list by asking in the chat.
+// when this browser's setting says so, as a board of turns and agents (`TodoBoard`). A row's title
+// or card opens its detail. The owner changes the list by asking in the chat.
 
 import { ArrowUpRight, Ban, Check, ChevronRight, Circle, CircleDot, ListChecks, RotateCw, type LucideIcon } from 'lucide-react';
 import { flushSync } from 'react-dom';
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Todo, type TodoCounts, type TodoHistory, type TodoStatus, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
-import { useScheme } from '../lib/theme';
-import { loadTodoGraph, todoMermaid, type TodoGroup } from '../lib/todoGraph';
+import { loadTodoGraph, todoBoard, type BoardEdge } from '../lib/todoGraph';
 import { DONE_ROWS, METER_ROWS, firstLine, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoDetail, todoLinks, todoOrigins, todoWord, turnSections, turnTally, turnTodoName, type RowDetail, type TodoLink, type TodoSection, type TurnOrigin, type TurnSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
@@ -123,12 +121,15 @@ function DetailLink({ todo, onRow }: Readonly<{ todo: Todo; onRow: (id: string) 
   );
 }
 
+/** A row's detail, but for where its links lead. */
+interface DetailParts { todo: Todo; detail: RowDetail; turn?: number; onTurn?: () => void; name?: string }
+
 /**
  * A row's detail under it: its note (a blocked row's already stands under its title), the rows it
  * waits on and those waiting on it, each opening its own row, its history from the turn records,
  * and the way to the turn that added it and to the subagent that wrote it.
  */
-function TodoDetail({ todo, detail, turn, onTurn, name, onRow }: Readonly<{ todo: Todo; detail: RowDetail; turn?: number; onTurn?: () => void; name?: string; onRow: (id: string) => void }>) {
+function TodoDetail({ todo, detail, turn, onTurn, name, onRow }: Readonly<DetailParts & { onRow: (id: string) => void }>) {
   const show = useActions()?.show;
   const note = todo.status !== 'blocked' && todo.note;
   return (
@@ -243,47 +244,179 @@ function Rails({ rows, links, lanes, focus, children }: Readonly<{ rows: readonl
   );
 }
 
+/** An arrow's colour: a blocked row's wait in the warning tone, any other link quiet. */
+const ARROW: Record<BoardEdge['kind'], string> = { wait: 'text-warning', link: 'text-faint' };
+/** A card's outline: in progress `accent`, blocked `warning`, the rest a hairline. */
+const CARD: Record<TodoStatus, string> = { in_progress: 'border-accent', blocked: 'border-warning', pending: 'border-hairline-strong', done: 'border-hairline' };
+/** The lane names' column and each turn's (its 40px left gutter, where the arrows run, then its cards), fixed so no title or prompt moves them. */
+const LANE_W = 152;
+const COLUMN_W = 256;
+
 /**
- * The dependencies as a Mermaid flowchart (`todoMermaid`), rendered in the sandboxed diagram frame
- * and shown as an image, as any Mermaid fence. The last drawing stays while the next renders, so
- * a change never blanks it; one that fails to render says so. The rows stay in a list for screen
- * readers, each saying what it waits on.
+ * The dependency board: a fixed grid, turns across (oldest first, each head its "Turn 2 · 3:05 PM"
+ * and prompt line) and the agent that wrote each row down (the main agent first, then each
+ * subagent, whose name opens it), a card per row in its cell, and the arrows drawn by uam in one
+ * SVG over the grid: same-column waits routed right-angled through the cell's left gutter,
+ * others as curves. It measures the cards once fonts are ready and whenever the grid resizes.
+ * Many turns scroll sideways. A card opens its row's detail below the board.
  */
-function TodoGraph({ rows, links, now, group }: Readonly<{ rows: readonly Todo[]; links: readonly TodoLink[]; now?: string; group?: (todo: Todo) => TodoGroup }>) {
-  const scheme = useScheme();
-  const source = todoMermaid(rows, links, now, group);
-  const [drawn, setDrawn] = useState<{ rendered?: Rendered; error?: string } | null>(null);
-  useEffect(() => {
+function TodoBoard({ board, label, prompt, name, now, detail }: Readonly<{
+  board: ReturnType<typeof todoBoard>;
+  label: (s: TurnSection) => string;
+  prompt: (s: TurnSection) => string | undefined;
+  name: (todo: Todo) => string | undefined;
+  now?: string;
+  detail: (todo: Todo) => DetailParts;
+}>) {
+  const grid = useRef<HTMLDivElement>(null);
+  const [boxes, setBoxes] = useState<{ size: [number, number]; at: Map<string, { x: number; y: number; w: number; h: number }> } | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el) return;
     let on = true;
-    renderDiagram(source).then(
-      (rendered) => on && setDrawn({ rendered }),
-      (err: unknown) => on && setDrawn((d) => ({ rendered: d?.rendered, error: err instanceof Error ? err.message : 'Rendering failed' })),
-    );
+    const measure = () => {
+      if (!on) return;
+      const top = el.getBoundingClientRect();
+      const at = new Map(Array.from(el.querySelectorAll<HTMLElement>('[data-card]'), (card) => {
+        const r = card.getBoundingClientRect();
+        return [card.dataset.card!, { x: r.left - top.left, y: r.top - top.top, w: r.width, h: r.height }] as const;
+      }));
+      setBoxes({ size: [el.scrollWidth, el.scrollHeight], at });
+    };
+    measure();
+    void document.fonts?.ready?.then(measure);
+    if (typeof ResizeObserver === 'undefined') return () => void (on = false);
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
     return () => {
       on = false;
+      observer.disconnect();
     };
-  }, [source, scheme]);
-  const titles = new Map(rows.map((t) => [t.id, t.title]));
-  const rendered = drawn?.rendered;
+  }, [board]);
+  const { columns, lanes, cards, edges } = board;
+  const titles = new Map(cards.map((c) => [c.todo.id, c.todo.title]));
+  const col = new Map(cards.map((c) => [c.todo.id, c.col]));
+  const pick = (id: string) => {
+    flushSync(() => setPicked(id));
+    grid.current?.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)?.focus();
+  };
+  const chosen = cards.find((c) => c.todo.id === picked)?.todo;
+  // Same-column arrows into one card fan out across the gutter.
+  const fan = new Map<string, number>();
+  const paths = boxes && edges.map((e, i) => {
+    const a = boxes.at.get(e.from), b = boxes.at.get(e.to);
+    if (!a || !b) return null;
+    const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2;
+    let d: string, head: string;
+    if (col.get(e.from) === col.get(e.to)) {
+      const n = fan.get(e.to) ?? 0;
+      fan.set(e.to, n + 1);
+      const x = Math.min(a.x, b.x), gx = x - 5 - (n % 3) * 3;
+      d = `M${a.x} ${y1} H${gx} V${y2} H${b.x}`;
+      head = `M${b.x - 4} ${y2 - 3} L${b.x} ${y2} L${b.x - 4} ${y2 + 3}`;
+    } else if (a.x < b.x) {
+      const x1 = a.x + a.w, mid = (x1 + b.x) / 2;
+      d = `M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${b.x} ${y2}`;
+      head = `M${b.x - 4} ${y2 - 3} L${b.x} ${y2} L${b.x - 4} ${y2 + 3}`;
+    } else {
+      const x2 = b.x + b.w, mid = (a.x + x2) / 2;
+      d = `M${a.x} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`;
+      head = `M${x2 + 4} ${y2 - 3} L${x2} ${y2} L${x2 + 4} ${y2 + 3}`;
+    }
+    const lit = !picked || picked === e.from || picked === e.to;
+    return (
+      <g key={i} stroke="currentColor" className={cn(ARROW[e.kind], 'transition-opacity duration-100', !lit && 'opacity-25')}>
+        <path d={d} />
+        <path d={head} />
+      </g>
+    );
+  });
   return (
-    <>
-      {rendered ? (
-        <img src={svgDataUrl(rendered.svg)} width={rendered.width} height={rendered.height} alt="" decoding="async" className="mx-auto block h-auto max-w-full" />
-      ) : (
-        <p className="py-6 text-center text-caption text-muted">{drawn?.error ? 'The graph could not be drawn' : 'Drawing the graph…'}</p>
+    <div className="flex min-w-0 flex-col gap-3">
+      <div className="-mx-4 overflow-x-auto overscroll-x-contain px-4 pb-1">
+        <div ref={grid} role="group" aria-label="Todo board" className="relative grid w-max" style={{ gridTemplateColumns: `${LANE_W}px repeat(${columns.length}, ${COLUMN_W}px)` }}>
+          <svg aria-hidden="true" width={boxes?.size[0] ?? 0} height={boxes?.size[1] ?? 0} className="pointer-events-none absolute top-0 left-0 overflow-visible" fill="none" strokeWidth={1.25} strokeLinecap="round" strokeLinejoin="round">
+            {paths}
+          </svg>
+          <span />
+          {columns.map((c) => {
+            const line = prompt(c);
+            return (
+              <div key={c.key} className="flex min-w-0 flex-col border-b border-hairline pb-2 pl-10">
+                <span className="truncate text-eyebrow uppercase text-muted">{label(c)}</span>
+                {line && <span className="truncate text-caption text-body">{`“${line}”`}</span>}
+              </div>
+            );
+          })}
+          {lanes.map((agent, lane) => {
+            const first = cards.find((c) => c.lane === lane)!.todo;
+            const who = agent ? name(first) : undefined;
+            return (
+              <Fragment key={agent ?? ''}>
+                <div className="flex min-w-0 flex-col justify-center border-b border-hairline py-2 pr-2 text-caption">
+                  {agent ? (
+                    <>
+                      <SubagentTag id={agent} name={who || 'subagent'} still={!who} className="max-w-full text-body" />
+                      <span className="pl-2.5 text-muted">subagent</span>
+                    </>
+                  ) : (
+                    <span className="flex items-center gap-1 text-body">
+                      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-ink" />
+                      Main agent
+                    </span>
+                  )}
+                </div>
+                {columns.map((c, ci) => (
+                  <div key={c.key} className="flex min-w-0 flex-col gap-1.5 border-b border-hairline py-2 pl-10">
+                    {cards.filter((x) => x.lane === lane && x.col === ci).map(({ todo }) => (
+                      <button
+                        key={todo.id}
+                        type="button"
+                        data-card={todo.id}
+                        aria-expanded={picked === todo.id}
+                        onClick={() => setPicked((p) => (p === todo.id ? null : todo.id))}
+                        className={cn('flex min-w-0 items-start gap-1.5 rounded-md border bg-raised px-2 py-1 text-left text-caption transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11', CARD[todo.status], todo.status === 'done' ? 'text-muted' : 'text-body', picked === todo.id && 'bg-tint-selected', todo.id === now && todo.status === 'in_progress' && 'border-2')}
+                      >
+                        <span className="flex h-4.5 shrink-0 items-center">
+                          <TodoMark status={todo.status} className="size-3" />
+                        </span>
+                        <span className="min-w-0 break-words">{todo.title}</span>
+                        <span className="sr-only">
+                          , {todoWord(todo.status)}
+                          {todo.depends_on?.some((id) => titles.has(id) && id !== todo.id) && `, waits on ${todo.depends_on.flatMap((id) => (id !== todo.id && titles.has(id) ? [titles.get(id)] : [])).join(', ')}`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </Fragment>
+            );
+          })}
+        </div>
+      </div>
+      <p className="flex flex-wrap items-center gap-x-4 text-caption text-muted">
+        <span className="flex items-center gap-1"><span aria-hidden="true">→</span> waits on</span>
+        <span className="flex items-center gap-1 text-warning"><span aria-hidden="true">—</span> blocked wait</span>
+        <span>A card opens its row; a lane opens its subagent</span>
+      </p>
+      {chosen && (
+        <div className="flex min-w-0 flex-col">
+          <span className="flex items-start gap-2 text-ui text-ink">
+            <span className="flex h-5 w-4 shrink-0 items-center justify-center">
+              <TodoMark status={chosen.status} />
+            </span>
+            {chosen.title}
+          </span>
+          <TodoDetail {...detail(chosen)} onRow={pick} />
+        </div>
       )}
-      {rendered && drawn?.error && <p className="text-caption text-muted">The graph could not be redrawn; this is the last one</p>}
-      <ul className="sr-only">
-        {rows.map((todo) => (
-          <TodoRow key={todo.id} todo={todo} now={todo.id === now && todo.status === 'in_progress'} waits={todo.depends_on?.map((id) => titles.get(id)).filter(Boolean).join(', ')} />
-        ))}
-      </ul>
-    </>
+    </div>
   );
 }
 
 /** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the rows in the list's own order the rails need when some wait on others (`rows`), the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. With the Thread's kept records (`history`) and its `timings`, the rows group by the turn that added them. */
-export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; /** Where the graph puts a row: the turn tag and the subagent box. */ group?: (todo: Todo) => TodoGroup; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode; history?: TodoHistory | null; timings?: readonly TurnTiming[]; /** The kept records are still being read: the list waits for them, so it opens grouped once instead of by stage first. */ pending?: boolean }
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode; history?: TodoHistory | null; timings?: readonly TurnTiming[]; /** The kept records are still being read: the list waits for them, so it opens grouped once instead of by stage first. */ pending?: boolean }
 
 /** One stage's section; Done shows its newest `DONE_ROWS` rows until "Show all". */
 function StageSection({ section, row }: Readonly<{ section: TodoSection; row: (todo: Todo) => ReactNode }>) {
@@ -383,18 +516,20 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
-  const graph = loadTodoGraph() === 'graph';
+  // With the Board setting, a list whose rows wait on others shows the board in place of the sections.
+  const graph = loadTodoGraph() === 'graph' && !!parts.rows && !!todoLinks(parts.rows);
   const origin = parts.history ? todoOrigins(parts.history, parts.timings ?? []) : null;
+  const board = graph ? todoBoard(parts.rows!, origin ?? (() => ({ key: '' }))) : null;
   const turns = origin && !graph ? turnSections(parts.sections.flatMap((s) => s.todos), origin) : null;
   const open = parts.sections.filter((s) => s.status !== 'done');
   const openRows = open.flatMap((s) => s.todos);
   const shownTurns = turns?.filter((s) => !s.folded || unfolded.has(s.key));
   // Rails link open rows only, as the stages do: a wait on a done row is met.
-  const railRows = graph ? parts.rows : (shownTurns?.flatMap((s) => s.todos.filter((t) => t.status !== 'done')) ?? openRows);
-  const rails = parts.rows && railRows ? todoLinks(railRows) : null;
-  const facts = [...parts.facts, turns && !parts.right ? plural(turns.length, 'turn') : '', rails?.loops ? (rails.loops === 1 ? '1 loop' : `${rails.loops} loops`) : '', rails?.hidden ? `${rails.hidden} more links not drawn` : ''].filter(Boolean);
+  const railRows = shownTurns?.flatMap((s) => s.todos.filter((t) => t.status !== 'done')) ?? openRows;
+  const rails = parts.rows && !graph ? todoLinks(railRows) : null;
+  const facts = [...parts.facts, (turns || board?.columns[0]?.key) && !parts.right ? plural((turns ?? board!.columns).length, 'turn') : '', board ? plural(board.edges.length, 'link') : '', rails?.loops ? (rails.loops === 1 ? '1 loop' : `${rails.loops} loops`) : '', rails?.hidden ? `${rails.hidden} more links not drawn` : ''].filter(Boolean);
   const all = parts.rows ?? parts.todos;
-  const railed = rails ? (railRows ?? []) : [];
+  const railed = rails ? railRows : [];
   const railAt = new Map(railed.map((t, i) => [t.id, i]));
   const titles = new Map(railed.map((t) => [t.id, t.title]));
   const goTo = (o: TurnOrigin) => {
@@ -413,9 +548,13 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
     });
     body.current?.querySelector<HTMLElement>(`li[data-row="${CSS.escape(id)}"] button[aria-expanded]`)?.focus();
   };
+  /** A row's detail, but for where its links lead (`onRow`). */
+  const detailOf = (todo: Todo): DetailParts => {
+    const o = origin?.(todo.id);
+    return { todo, detail: todoDetail(todo, all, parts.history), turn: o?.turn, onTurn: o && goTo(o), name: todo.agent_id ? parts.name(todo) : undefined };
+  };
   const row = (todo: Todo) => {
     const i = railAt.get(todo.id);
-    const o = origin?.(todo.id);
     const name = todo.agent_id ? parts.name(todo) : undefined;
     return (
       <TodoRow
@@ -434,7 +573,7 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
           onPointerDown: (e) => e.pointerType !== 'mouse' && setFocus((f) => (f === i ? null : i)),
         })}
       >
-        <TodoDetail todo={todo} detail={todoDetail(todo, all, parts.history)} turn={o?.turn} onTurn={o && goTo(o)} name={name} onRow={openTo} />
+        <TodoDetail {...detailOf(todo)} onRow={openTo} />
       </TodoRow>
     );
   };
@@ -476,8 +615,9 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
       </PanelHead>
       <div ref={body} className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {sheet && parts.blocks}
-        {!parts.pending && rails && parts.rows && graph && <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />}
-        {parts.pending ? null : turnList ? (
+        {parts.pending ? null : board ? (
+          <TodoBoard board={board} label={(c) => (c.key ? turnLabel(c) : '')} prompt={prompt} name={parts.name} now={parts.now} detail={detailOf} />
+        ) : turnList ? (
           rails ? (
             <Rails rows={railRows!} links={rails.links} lanes={rails.lanes} focus={focus}>
               <div className="flex flex-col gap-3">{turnList}</div>
@@ -485,12 +625,12 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
           ) : turnList
         ) : (
           <>
-            {rails && !graph && (
+            {rails && (
               <Rails rows={openRows} links={rails.links} lanes={rails.lanes} focus={focus}>
                 <ul>{openRows.map(row)}</ul>
               </Rails>
             )}
-            {!(rails && graph) && (rails ? parts.sections.filter((s) => s.status === 'done') : parts.sections).map((section) => <StageSection key={section.status} section={section} row={row} />)}
+            {(rails ? parts.sections.filter((s) => s.status === 'done') : parts.sections).map((section) => <StageSection key={section.status} section={section} row={row} />)}
           </>
         )}
       </div>
@@ -528,8 +668,10 @@ export function Reader({ id, open, phone, anchor, side, label, title = 'Todo', p
 }>) {
   const heading = useRef<HTMLHeadingElement>(null);
   const sheet = phone || !anchor;
+  // The board needs room: the reader widens for it, up to the window less a margin.
+  const wide = loadTodoGraph() === 'graph' && !!parts.rows && !!todoLinks(parts.rows);
   return (
-    <AnchoredReader id={id} open={open} sheet={sheet} anchor={anchor} side={side} label={label} className="w-[440px]" initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
+    <AnchoredReader id={id} open={open} sheet={sheet} anchor={anchor} side={side} label={label} className={wide ? 'w-[min(60rem,calc(100vw-2rem))]' : 'w-[440px]'} initialFocus={heading} finalFocus={() => anchor} onClose={onClose} onClosed={onClosed}>
       {(close) => <TodoBody title={title} parts={parts} sheet={sheet} heading={heading} close={close} onClose={onClose} />}
     </AnchoredReader>
   );
@@ -578,7 +720,6 @@ export function TurnTodo({ timing, blocks }: Readonly<{ timing: TurnTiming; /** 
     facts: rows ? snapshotFacts(rows.counts, clock) : [snap && 'error' in snap ? snap.error : 'Loading the list…'],
     sections: rows ? snapshotSections(rows.todos) : [],
     rows: rows?.todos,
-    group: (t) => ({ agent: agents.get(t.id) }),
     foot: 'Kept by uam when the turn ended',
     name: (t) => agents.get(t.id),
   };

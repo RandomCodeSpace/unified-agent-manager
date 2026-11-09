@@ -75,3 +75,27 @@ test('Go to turn closes the reader and lands on the prompt that started the turn
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Todo' })).toBeNull());
   await waitFor(() => expect(document.querySelector('[data-reply="i1"] .animate-flash, [data-reply="i1"].animate-flash')).toBeTruthy());
 });
+
+test('with the Board setting the reader is a board: a card sits in its turn\'s column and its agent\'s lane, and a lane opens its subagent', async () => {
+  localStorage.setItem('uam.todoGraph', 'graph');
+  try {
+    const { user } = renderApp('#task=t8');
+    await user.click(await screen.findByRole('button', { name: /^Todo .*Show the list$/ }));
+    const reader = await screen.findByRole('dialog', { name: 'Todo' });
+    const board = await within(reader).findByRole('group', { name: 'Todo board' });
+    await waitFor(() => expect(within(board).getAllByText(/^Turn \d/).map((h) => h.textContent!.replace(/ · .*/, ''))).toEqual(['Turn 1', 'Turn 2', 'Turn 4']));
+    // After the arrows, rows of four cells (the lane name, then three turns), the head first; lanes: the main agent, then subagents in their rows' order.
+    const cells = [...board.children].slice(1);
+    const at = (id: string) => {
+      const i = cells.findIndex((c) => c.querySelector(`[data-card="${id}"]`));
+      return [Math.floor(i / 4), i % 4];
+    };
+    expect(at('lint')).toEqual([5, 2]);
+    expect(at('install')).toEqual([1, 3]);
+    expect(at('plan')).toEqual([1, 1]);
+    await user.click(within(board).getByRole('button', { name: 'Open subagent Run the accessibility linter' }));
+    await waitFor(() => expect(window.location.hash).toBe('#task=t8&agent=a3'));
+  } finally {
+    localStorage.removeItem('uam.todoGraph');
+  }
+});

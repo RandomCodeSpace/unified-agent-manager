@@ -594,10 +594,10 @@ describe('settings', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
     await user.click(within(browser.getByRole('radiogroup', { name: 'Motion' })).getByRole('radio', { name: 'Match system' }));
     expect(localStorage.getItem('uam.motion')).toBe('system');
-    // How todo dependencies are drawn: rails until the graph is chosen.
+    // How todo dependencies are drawn: rails until the board is chosen; it keeps the graph's stored value.
     const graph = within(browser.getByRole('radiogroup', { name: 'Todo dependencies' }));
     expect(graph.getByRole('radio', { name: 'Rails' }).getAttribute('aria-checked')).toBe('true');
-    await user.click(graph.getByRole('radio', { name: 'Graph' }));
+    await user.click(graph.getByRole('radio', { name: 'Board' }));
     expect(localStorage.getItem('uam.todoGraph')).toBe('graph');
     expect(browser.queryByRole('radiogroup', { name: 'Activity' })).toBeNull();
     expect(browser.queryByRole('radio', { name: 'Detailed' })).toBeNull();
