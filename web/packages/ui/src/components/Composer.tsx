@@ -1849,7 +1849,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           styleReason={newTask ? undefined : 'Fixed when the Thread started.'}
         />
         {!settledRow && <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />}
-        {settledRow ? null : subagent ? (
+        {!settledRow && (subagent ? (
           <Tip label={<>{`Effort: ${effortLabel(subagent.effort)}`}<span className="block text-on-primary/70">{SPAWNED}</span></>}>
             <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort: ${effortLabel(subagent.effort)}. Locked. ${SPAWNED}`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
@@ -1876,7 +1876,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Tip>
             <Menu.Content side="top" align="start" className={PHONE_PICKER}>{tuningItems}</Menu.Content>
           </Menu.Root>
-        )}
+        ))}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
         {subagent ? (
