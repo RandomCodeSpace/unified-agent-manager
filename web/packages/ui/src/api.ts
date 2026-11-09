@@ -868,6 +868,8 @@ export interface Project {
   branch?: string;
   /** Why the directory has no Changes or Files views: git is not installed, or the directory is in no Git repository. Absent in a repository and when git cannot tell. */
   no_git?: 'not_installed' | 'not_repository';
+  /** The default branch of the directory's origin, from its local refs; absent without an origin, when git cannot tell, and from older servers. */
+  default_branch?: string;
   /** How many charts are pinned to the Project; absent when none. */
   charts?: number;
   /** An https address with `{branch}` where the branch name goes, detected from origin or set in Edit project; '' once cleared (no link), absent until detected. */

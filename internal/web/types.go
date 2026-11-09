@@ -117,6 +117,10 @@ type Project struct {
 	// (git reports Dir is in no work tree). It is empty in a work tree and
 	// when git cannot tell. Read with Branch and never stored.
 	NoGit string `json:"no_git,omitempty"`
+	// DefaultBranch is the default branch of Dir's origin as its local refs
+	// record it (readDefaultBranch), read with Branch and never stored. It
+	// is empty without an origin or when git cannot tell.
+	DefaultBranch string `json:"default_branch,omitempty"`
 	// Charts counts the charts pinned to the Project (chart_pins.go).
 	Charts int `json:"charts,omitempty"`
 	// BranchLink is an https address with {branch} where a branch name goes

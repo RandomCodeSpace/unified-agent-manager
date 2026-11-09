@@ -340,6 +340,28 @@ func TestProjectBranchFromGit(t *testing.T) {
 	}
 }
 
+func TestProjectDefaultBranchFollowsOriginHead(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "work")
+	project := addProject(t, m, dir)
+	if p := m.Projects()[0]; p.DefaultBranch != "" {
+		t.Fatalf("no origin: default_branch = %q, want none", p.DefaultBranch)
+	}
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What a clone records: origin's HEAD names its default branch, whatever is checked out here.
+	gitIn(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	m.refreshBranches(t.Context(), true, project)
+	var announced Project
+	decodeField(t, frameOf(t, sub, "project"), "project", &announced)
+	if announced.DefaultBranch != "trunk" || announced.Branch != "work" {
+		t.Fatalf("project frame = %+v, want default_branch trunk on branch work", announced)
+	}
+}
+
 func TestProjectNoGitClearsOnceInitialised(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	dir := t.TempDir()

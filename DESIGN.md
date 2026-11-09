@@ -232,15 +232,14 @@ components:
     size: "32px × 18px"
     shadow: "inset 0 1px 2px rgba(20, 28, 45, 0.2)"
   task-row:
-    backgroundColor: "{colors.raised}"
+    backgroundColor: "{colors.rail}"
     textColor: "{colors.body}"
     fontSize: 12px
     rounded: "{rounded.md}"
-    padding: "8px 10px"
-    minHeight: 56px
-    shadow: "{shadows.raised}"
+    padding: "0 10px"
+    minHeight: 46px
   task-row-selected:
-    backgroundColor: "{colors.raised}"
+    backgroundColor: "{colors.tint-selected}"
     textColor: "{colors.ink}"
     typography: "{typography.ui}"
   task-row-meta:
@@ -534,7 +533,7 @@ The ViewTransition was removed later; Thread switches render at once.
   The permissions label takes its risk tone, like its shield.
 - The assistant does not get a bubble.
   The user does.
-- Density is a row: 32px sidebar rows, 28px shelf headers, 24px ledger rows, 44px headers, 28px composer pickers.
+- Density is a row: 46px Thread rows on a 48px pitch, 32px Settled rows, 28px shelf headers, 24px ledger rows, 44px headers, 28px composer pickers.
   A coarse pointer grows every target to 44px by padding, not by scaling type.
 - Motion is functional, short and consistent (see Motion); every animation is off under `prefers-reduced-motion` once Settings → Motion is "Match system", the default on a touch-first device; on a desktop the default, "Always on", runs it even then.
 
@@ -581,7 +580,7 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 | `rail` | #f5f5f5 | Sidebar and drawer floor |
 | `canvas` | #fafafa | Main pane: header, transcript, panels, login, empty states; the loading veil at 70% |
 | `surface` | #f2f2f2 | Hover step on raised controls; read-only composer |
-| `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs, Thread cards on the rail |
+| `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs |
 | `sunken` | #ededed | Wells: code blocks, thinking body, inline code, meter track |
 | `bubble-user` | #efefef | User message bubble |
 | `tint-well` | #f3f3f3 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 3.42:1) |
@@ -596,15 +595,15 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 | `ink` | #111111 | Titles, selected and needs-you rows, user bubble text, code |
 | `body` | #3b3b3b | Assistant prose, default UI text, rows at rest |
 | `muted` | #626262 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
-| `faint` | #838383 | Glyphs only: chevrons, idle and closed marks, separators, the dark Thread card edge, version (≥3:1) |
+| `faint` | #838383 | Glyphs only: chevrons, idle and closed marks, separators, version (≥3:1) |
 
 ### Lines
 | Role | Value | Use |
 |---|---|---|
-| `hairline` | #e5e5e5 | The sidebar's fading seam (`rail-edge`), markdown table rules and `hr` inside provider prose |
+| `hairline` | #e5e5e5 | The sidebar's seam (`rail-edge`), markdown table rules and `hr` inside provider prose |
 | `hairline-strong` | #c7c7c7 | The centre of every fading rule (`fade-rule`, `fade-rule-y`), the scrollbar thumb |
 
-No chrome draws a full-width or full-height line.
+No chrome draws a full-width or full-height line, with one exception: the sidebar's seam (`rail-edge`) is a full-height 1px `hairline` (owner, 2026-11-09, revamp mock 3).
 Where a seam still needs a rule (menu groups, the shelf headers, the answer under a question block, the tool rows' indent, the thinking text's left edge, the Changes list's foot, a dialog's secondary actions, the panel handle) it is a 1px gradient that fades out over its first and last 18% (`.fade-rule` horizontal, `.fade-rule-y` vertical, in `index.css`).
 Everywhere else separation is spacing, a surface step or an elevation level.
 
@@ -737,7 +736,7 @@ A collapsed sidebar does not change the panel limits: an inline panel still keep
 
 ### Spacing and density
 4px base.
-Sidebar rows 32px (44 on coarse pointers), shelf headers 28px, project rows 32px (40 with a branch line), ledger and disclosure rows 24px, headers 44px, buttons 32 (28 small, 36 large), inputs 36, chips 20, pickers 28, menu items 30 (44 on coarse pointers).
+Thread rows 46px on a 48px pitch, Settled rows 32px (44 on coarse pointers), shelf headers 28px, project rows 32px (40 with a branch line), ledger and disclosure rows 24px, headers 44px, buttons 32 (28 small, 36 large), inputs 36, chips 20, pickers 28, menu items 30 (44 on coarse pointers).
 
 ## Elevation & Depth
 
@@ -749,7 +748,7 @@ Shadows do not show on black, so in Dark each level's ring is white (7–16%) ov
 |---|---|---|---|
 | 0 Flat | Surface step only | none | Sidebar on `rail`, assistant prose and everything else on `canvas`; activity and tool rows are `tint-well` pills at this level |
 | −1 Well | `sunken` or `code-bg` fill | `well`: `inset 0 0 0 1px .05` | Inputs, selects, the segmented track, code blocks, the models checklist |
-| 1 Raised | `raised` fill | `raised`: `0 0 0 1px .05, 0 2px 6px .07` | Every Thread card on the rail (the open one `tint-selected`), the user bubble (on `bubble-user`), question blocks and the finish card (both on `tint-well` once settled), Settings cards, the segmented thumb, a selected file or folder row |
+| 1 Raised | `raised` fill | `raised`: `0 0 0 1px .05, 0 2px 6px .07` | The user bubble (on `bubble-user`), question blocks and the finish card (both on `tint-well` once settled), Settings cards, the segmented thumb, a selected file or folder row |
 | 2 Floating | `raised` | `float`: `0 0 0 1px .06, 0 6px 20px .10` | The composer, the pending interaction card, menus, context menus, popovers, selects' lists, the inline picker, tooltips (ink fill), a lifted card or thumbnail on hover |
 | 3 Modal | `raised` + `backdrop` | `modal`: `0 0 0 1px .06, 0 20px 48px .18` | Dialogs, the command palette, the drawer, overlay panels, the lightbox image |
 | Focus | any of the above | `focus`: `0 0 0 1px focus, 0 0 0 4px focus@18%` (`focus-float` adds `0 10px 28px .12`) | Fields, the sidebar search and, through `focus-within`, the composer |
@@ -773,17 +772,17 @@ States are Base UI data attributes (`data-open`, `data-highlighted`, `data-disab
 Hover is one surface step; press adds `ink`.
 
 ### Sidebar
-Sits on `rail`, 384px, no border to the main pane: the `rail` → `canvas` step is the seam, with a 1px `hairline` rule at the column's right edge that fades out over the top and bottom 12% (`rail-edge`).
+Sits on `rail`, 384px, no border to the main pane: the `rail` → `canvas` step is the seam, with a full-height 1px `hairline` rule at the column's right edge (`rail-edge`; owner, 2026-11-09, revamp mock 3: it no longer fades at its ends).
 
 **Header (44px, two rows below 640px).**
-The row keeps its 44px box and holds the same card as the Thread header (see Thread header): `raised`, `rounded-md`, `shadow-raised`, no blur, 4px from the row's top and bottom and 8px from its sides (6px on a phone), so the two top rows line up.
+The row keeps its 44px box and its controls sit flat on `rail`, with no bar card (owner, 2026-11-09, revamp mock 3), in the same 36px box as the Thread header's card (see Thread header): 4px from the row's top and bottom and 8px from its sides (6px on a phone), so the two top rows line up.
 In it, the compact 16px UAM mark with the `title` wordmark "UAM" beside it (one button) sits in the top-left corner, followed by local Search, the Project filter (a badge button), Add project and New thread (a pen, Alt+N).
 Search takes the spare toolbar width; below 640px it occupies a full-width second row so its text stays visible.
 The mark stays in the same position when the sidebar opens or closes.
 The UAM mark collapses the sidebar to its rail without changing the selected Thread or URL, retaining Ctrl/Cmd+B and focus restoration (focus on the sidebar moves to the rail's mark, and back).
 
 **Collapsed rail (48px, wide layout only).**
-Full height on `rail` with the same fading `rail-edge` seam, the sidebar's own controls stacked in one centred column with tips opening to the right: at the top, in a 44px row level with the pane headers, the UAM mark without the wordmark, which the 48px rail has no room for (Show sidebar, with the Needs you count pill on its corner); below it, in the header's order, the Project filter (the same badge button and list, opening to the right of the rail), Routines, Add project (the same dialog) and New thread (the pen, Alt+N, the same palette); at the foot Settings, the allowance (the share left over a short meter; see Account allowance in Usage) and the connection mark.
+Full height on `rail` with the same `rail-edge` seam, the sidebar's own controls stacked in one centred column with tips opening to the right: at the top, in a 44px row level with the pane headers, the UAM mark without the wordmark, which the 48px rail has no room for (Show sidebar, with the Needs you count pill on its corner); below it, in the header's order, the Project filter (the same badge button and list, opening to the right of the rail), Routines, Add project (the same dialog) and New thread (the pen, Alt+N, the same palette); at the foot Settings, the allowance (the share left over a short meter; see Account allowance in Usage) and the connection mark.
 Buttons are the header's 28px icon buttons, 6px apart, with 44px hit areas and 16px gaps on a coarse pointer.
 Search and the Thread list wait for the expanded sidebar.
 A phone keeps the drawer and never shows the rail.
@@ -817,14 +816,15 @@ Thread menus carry Thread actions only.
 Adding a Project selects its filter.
 The tab title, the app badge and the sidebar toggle (a filled `attention` count pill on its corner when the list is hidden or a drawer) carry the Needs you count.
 
-**Thread row (56px minimum).**
-Every row in every group is a Thread card: `raised` on the `raised` shadow (the elevation is its boundary on the rail; in dark, where shadows do not show, a 1px `faint` ring), `md` radius, 4px apart.
-Hover lifts it (`lift`: 1px up, the `float` shadow fading in on its pseudo-element); the open Thread's card is `tint-selected` instead of `raised`, with its name in semibold; an unread or Needs you row sets its name in medium `ink`.
+**Thread row (46px on a 48px pitch).**
+Every row in every group is flat on `rail` (owner, 2026-11-09, revamp mock 3): no card, no shadow and no ring in either theme, a 46px tile with `md` radius, 2px apart, so a hovered row beside the open one stays a separate tile.
+Hover tints the tile `tint-hover` (`fast`, no lift), its Settle button included; the open Thread's tile is `tint-selected`, with its name in semibold; an unread or Needs you row sets its name in medium `ink`.
 Two lines: first the 16px Project badge, visible Project name, and a short status label with a 14px icon in `caption` and its tone: "Needs answer" or "Needs permission" (`warning`, amber), "Finished" (`success`, green; an unread one an eye in `badge-teal`), "Error" (`error`, red), "Interrupted" (`warning`), "Starting" or "Working" (`accent`), and "Idle" or "Stopped" (`muted`).
 These are the only Thread states (owner, 2026-10-25: more create confusion): a phase of the work (compacting, wrapping up at a budget), what a finished turn found (tests fail, commands failed, a claim contradicted) and why a Thread is idle (closed, a branch not started) are the row tip's and the header chip's hover words, never another state.
-The second line holds the Thread title at 13px, the Project branch in normal-weight `meta` `muted`, and the relative time of its last change.
+The second line holds the Thread title at 13px, the Thread's branch in normal-weight `meta` `muted` (up to 112px) only when it is not the Project's default branch (owner, 2026-11-09, revamp mock 3: a branch on a row means "not the default"), and the relative time of its last change.
+The default is the default branch of the Project's origin as the folder's local refs record it (`default_branch`, never guessed from a name); when git cannot tell (no origin, an older server) the branch is drawn.
 Long titles and branches truncate.
-The row's tip (the styled tooltip, to the right, like a shelf row's; no native title) keeps the full question, permission request, outcome, quiet duration, branch, and reported `+N −M` line counts.
+The row's tip (the styled tooltip, to the right, like a shelf row's; no native title) keeps the full question, permission request, outcome, quiet duration, branch (always, the default one too), and reported `+N −M` line counts.
 A Needs you row carries no answer controls: questions and permissions are answered in the Thread.
 Selected rows set the name in semibold (600).
 Keyboard focus retains its visible outline.
@@ -1751,10 +1751,10 @@ Authored moments:
   A turn line, tool row and panel row mount their content on the first open (`appear`), so the closed transcript carries none of the hidden code blocks.
   Chevrons rotate (`base`).
   Nothing uses a native `<details>` snap.
-- **Rows** step surfaces in `fast`; the meta text and the "…" button cross-fade in place; inline rename swaps without layout shift (the card keeps its 56px); a settled row leaves at once and, while the shelf is closed, the **Settled** header flashes `accent-wash` for 1.4s (the locate flash's overlay).
+- **Rows** step surfaces in `fast`; the meta text and the "…" button cross-fade in place; inline rename swaps without layout shift (the row keeps its 46px); a settled row leaves at once and, while the shelf is closed, the **Settled** header flashes `accent-wash` for 1.4s (the locate flash's overlay).
   A **state change** fades the new state glyph in over the old one's 16px slot and steps the status word's and the chip's colour (`base`, `StateMark` and `Chip`), so a row turning from Working to Needs permission changes without a snap.
 - **Buttons:** the filled ones (primary, secondary, danger; an action) press to 0.97 (`fast`); ghost and subtle buttons only tint.
-- **Lift** (`.lift`): Thread cards and image thumbnails rise 1px on hover (transform, `base`) while the `float` shadow drawn on their pseudo-element fades in (opacity); the shadow itself never animates.
+- **Lift** (`.lift`): Settings cards and image thumbnails rise 1px on hover (transform, `base`) while the `float` shadow drawn on their pseudo-element fades in (opacity); the shadow itself never animates.
   **Switch** and **segmented** thumbs slide on their transform (`fast` / `base`).
 - **Menus, context menus, pickers, selects, popovers and tooltips** scale from 0.97 at their transform origin and fade (`fast`); **dialogs** scale from 0.97 and fade with the backdrop (`slow`); the **drawer** slides from the left (`slow`); overlay panels slide in from the right and back out, with the backdrop fading both ways; inline panels slide over their committed space and slide out before they leave, unless another inline panel replaces them: then the outgoing one leaves at once and only the incoming one slides; the terminal dock's content slides up into its band and back down the same way.
   **Anchored readers** scale from 0.98 and fade with their dim (`base`); the lifted copy of their anchor stands above the dim from the first frame to the last, with no fade of its own.
@@ -1856,7 +1856,7 @@ Consequences:
 - Don't show heuristics or previews in rows; rows show server state.
 - Don't put a colour on a ready row; ready is a time.
 - Don't put the transcript or the composer back in a centred fixed-width column, or make the sidebar resizable; it is fixed or collapsed to its rail, nothing between.
-- Don't animate a shadow, a filter or a size, add `backdrop-filter`, mask a scroll container, or add per-row shadows to a long list (the Thread cards' static `raised` shadow is the one exception: the active list is short and the shadow never animates); lift and deepen shadows through a pseudo-element's opacity, never add a coloured glow, and fade scroll edges with small overlays.
+- Don't animate a shadow, a filter or a size, add `backdrop-filter`, mask a scroll container, or add per-row shadows to a long list; lift and deepen shadows through a pseudo-element's opacity, never add a coloured glow, and fade scroll edges with small overlays.
 - Don't put New thread or Add project in the main pane; the placeholder stays quiet.
 - Don't show an empty state before its data has loaded once (a skeleton until then), and don't run a destructive action without its confirmation.
 - Don't use `<style>` elements or `style=""` markup; classes first, CSSOM custom properties for measured values.

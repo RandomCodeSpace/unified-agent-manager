@@ -598,9 +598,28 @@ func readBranch(ctx context.Context, dir string) (branch, noGit string) {
 	return clipRunes(displaytext.Sanitize(branch), maxNameRunes), ""
 }
 
+// readDefaultBranch returns the default branch of dir's origin as the local
+// refs record it (refs/remotes/origin/HEAD), made safe to show like
+// readBranch's. It is empty without an origin, when that ref is unset, or
+// when git cannot tell within branchTimeout; it never reads the network.
+func readDefaultBranch(ctx context.Context, dir string) string {
+	git, err := execpath.Resolve("git")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, branchTimeout)
+	defer cancel()
+	out, code, _, err := runGit(ctx, git, dir, 4096, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	name, ok := strings.CutPrefix(strings.TrimSpace(string(out)), "origin/")
+	if err != nil || code != 0 || !ok {
+		return ""
+	}
+	return clipRunes(displaytext.Sanitize(name), maxNameRunes)
+}
+
 // refreshBranches re-reads the branch of each Project in ids, or of every
-// Project when there are none, and publishes each Project whose branch, or
-// whether it has git views, changed; the Threads of those Projects get the
+// Project when there are none, and publishes each Project whose branch,
+// origin's default branch, or whether it has git views, changed; the Threads of those Projects get the
 // branch of their own folder, a worktree's included. Unless force, a branch
 // read within branchTTL is kept. Git runs outside mu, for all folders at
 // once, so a listing waits at most about branchTimeout however many there
@@ -633,10 +652,19 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		noGit  string
 	}
 	branches := make(map[string]read, len(folders))
+	defaults := make(map[string]string, len(dirs))
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
+	for _, dir := range dirs {
+		wg.Go(func() {
+			name := readDefaultBranch(ctx, dir)
+			mu.Lock()
+			defaults[dir] = name
+			mu.Unlock()
+		})
+	}
 	for dir := range folders {
 		wg.Go(func() {
 			branch, noGit := readBranch(ctx, dir)
@@ -658,8 +686,8 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		}
 		r := branches[dir]
 		m.branchAt[id] = time.Now()
-		if p.Branch != r.branch || p.NoGit != r.noGit {
-			p.Branch, p.NoGit = r.branch, r.noGit
+		if p.Branch != r.branch || p.NoGit != r.noGit || p.DefaultBranch != defaults[dir] {
+			p.Branch, p.NoGit, p.DefaultBranch = r.branch, r.noGit, defaults[dir]
 			m.publishProjectLocked(*p)
 		}
 	}

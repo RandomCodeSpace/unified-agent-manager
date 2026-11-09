@@ -33,10 +33,12 @@ test('an idle Thread\'s header card stays neutral', async () => {
   expect(bar().className).not.toMatch(/before:bg-/);
 });
 
-test('the sidebar\'s top row is the same card', async () => {
+test('the sidebar\'s top row is flat on the rail, in the same 36px box', async () => {
   await openTask('t8');
   const search = within(screen.getByRole('navigation', { name: 'Threads' })).getByRole('searchbox', { name: 'Search threads' });
-  expect(search.closest('header > div')!.className).toContain('shadow-raised');
+  const box = search.closest('header > div')!;
+  expect(box.className).toContain('h-9');
+  expect(box.className).not.toMatch(/shadow-|bg-raised/);
 });
 
 test('on a phone the state is also a glyph after the title', async () => {

@@ -1533,6 +1533,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
 	branch, noGit := readBranch(m.ctx, canonical)
+	defaultBranch := readDefaultBranch(m.ctx, canonical)
 	var link *string
 	if detected, ok := detectBranchLink(m.ctx, canonical); ok {
 		link = &detected
@@ -1554,7 +1555,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit, BranchLink: link, linkTried: true}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit, DefaultBranch: defaultBranch, BranchLink: link, linkTried: true}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {

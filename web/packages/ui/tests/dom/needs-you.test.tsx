@@ -122,7 +122,16 @@ describe('the Task list', () => {
     expect(tip).not.toContain('feat/web-project-defaults-and-sidebar-revamp');
   });
 
-  test('every Task row in every group is a card; the open one is tinted instead', async () => {
+  test('a Thread on its Project’s default branch leaves the branch to its tip', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    // notes-site is on main, its origin's default; unified-agent-manager's folder is off its default (the rows above).
+    const onDefault = document.querySelector<HTMLElement>('[data-task-row="t17"] button[data-nav]')!;
+    expect(within(onDefault).queryByText('main')).toBeNull();
+    expect(await tipOf(user, onDefault)).toContain('main');
+  });
+
+  test('every Task row in every group is flat on the rail; only the open one is tinted', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     await user.click(row('t17').getByRole('button', { name: /Set up the dependency lockfile/ }));
@@ -132,11 +141,11 @@ describe('the Task list', () => {
       expect(rows.length).toBeGreaterThan(0);
       for (const el of rows) {
         const card = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
-        expect(el.classList.contains('lift')).toBe(true);
-        expect(card.classList.contains('shadow-raised')).toBe(true);
+        expect(el.classList.contains('lift')).toBe(false);
+        expect(card.className).not.toMatch(/shadow-|ring-|bg-raised/);
         const selected = card.getAttribute('aria-current') === 'true';
-        expect(card.classList.contains(selected ? 'bg-tint-selected' : 'bg-raised')).toBe(true);
-        expect(card.classList.contains(selected ? 'bg-raised' : 'bg-tint-selected')).toBe(false);
+        expect(card.classList.contains('bg-tint-selected')).toBe(selected);
+        expect(card.classList.contains('group-hover/row:bg-tint-hover')).toBe(!selected);
       }
     }
     expect(document.querySelector('[data-task-row="t17"] button[data-nav]')!.getAttribute('aria-current')).toBe('true');
