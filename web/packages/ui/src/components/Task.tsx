@@ -13,10 +13,9 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { BAR_ROW, barCard, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, STATE_TONE, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
+import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, StateMark, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
-import { Chip } from './ui/chip';
 import { PHONE } from './ui/dialog';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
@@ -163,8 +162,8 @@ function headerState(session: SessionSummary, state: SessionState, failures: str
   let icon: ReactNode;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
-  // Working is a still dot: the one moving mark in the pane is the strip's live line.
-  if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="size-1.5 rounded-full bg-ink" />;
+  // Working is a still dot in its tone: the one moving mark in the pane is the strip's live line.
+  if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="mx-1 size-1.5 rounded-full bg-accent" />;
   if (state === 'working' && session.budget?.wrapping_up) {
     detail = 'Wrapping up: budget reached, tools are denied and the agent is writing a handoff';
   } else if (stop) {
@@ -269,17 +268,17 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
 
   return (
     <header ref={header} className={BAR_ROW}>
-      <div role="group" aria-label={`State: ${word}`} className={barCard(readOnly(session) ? undefined : STATE_TONE[state])}>
+      <div role="group" aria-label={`State: ${word}`} className={BAR_BOX}>
         {leading}
         <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
           {session.spawned_by && <ParentCrumb id={session.spawned_by} name={spawnerName} badge={spawnerBadge} phone={phone} />}
           {project && <ProjectBadge badge={project.badge} />}
           {renaming ? (
-            <InlineName initial={session.name} label="Thread name" className="h-8 max-w-md text-ui font-medium" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+            <InlineName initial={session.name} label="Thread name" className="h-8 max-w-md text-title" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
           ) : (
             <h1
               ref={titleText}
-              className="min-w-0 truncate text-ui font-medium text-ink"
+              className="min-w-0 truncate text-title text-ink"
               title={name || undefined}
               onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
             >
@@ -287,11 +286,13 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
             </h1>
           )}
           <InstanceName />
+          {/* The state, in the Thread list's label (StateLabel). A phone keeps the glyph alone, and a Settled Thread says so in its composer row, so the squeezed title keeps the room. */}
           {readOnly(session) ? (
-            // On a phone a Settled Task says so in its composer note, so the squeezed title keeps the room.
-            <Chip fill="outline" className={session.stage === 'settled' ? 'max-sm:hidden' : undefined}>{stageLabel(session)}</Chip>
+            <StateLabel status={session.stage === 'settled' ? 'Settled' : 'Archived'} className={session.stage === 'settled' ? 'ml-1 max-sm:hidden' : 'ml-1'} />
+          ) : phone ? (
+            <StateMark state={state} text={shown.word} icon={shown.icon} title={shown.detail} className="shrink-0" />
           ) : (
-            phone && <StateMark state={state} text={shown.word} icon={shown.icon} title={shown.detail} className="shrink-0" />
+            <StateLabel status={STATE_LABELS[state] as StatusWord} text={shown.word} icon={shown.icon} title={shown.detail} className="ml-1" />
           )}
           {/* A Task action in flight is words: nothing in the header turns. */}
           {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
@@ -1215,10 +1216,10 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className={BAR_ROW}>
-        <div className={barCard()}>
+        <div className={BAR_BOX}>
           {leading}
           <ProjectBadge badge={project.badge} />
-          <h1 className="min-w-0 truncate text-ui font-medium text-ink">New thread</h1>
+          <h1 className="min-w-0 truncate text-title text-ink">New thread</h1>
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">

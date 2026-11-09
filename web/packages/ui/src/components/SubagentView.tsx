@@ -1,9 +1,9 @@
 import { ArrowLeft, ChevronRight, Ellipsis, Square, Workflow } from 'lucide-react';
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
-import { taskName, type Badge, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { taskName, type Badge, type SessionDetail, type Subagent } from '../api';
 import { awaitsUser } from '../lib/transcript';
 import { subagentName as agentName } from '../lib/subagents';
-import { BAR_ROW, barCard, ProjectBadge, STATE_LABELS, STATE_TONE, useMedia, type Tone } from './common';
+import { BAR_ROW, BAR_BOX, ProjectBadge, STATE_LABELS, useMedia } from './common';
 import { AgentTranscriptView, NOT_STOPPING, STATUS_LABEL, StopSubagent, SubagentMark, Took, useActions, useScope } from './Subagents';
 import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
@@ -11,7 +11,6 @@ import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
 /** A subagent's state as the bar's still fill (DESIGN.md subagent view): running blue, failed red, done green; the rest neutral. */
-const TONE: Partial<Record<SubagentStatus, Tone>> = { running: 'accent', failed: 'error', completed: 'success' };
 
 /** The subagents that spawned `s`, outermost first. */
 function spawners(s: Subagent, all: readonly Subagent[]): Subagent[] {
@@ -66,7 +65,7 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
   ];
   return (
     <header className={BAR_ROW}>
-      <div role="group" aria-label={`State: ${word}`} className={barCard(ask ? STATE_TONE.awaiting_permission : TONE[s.status])}>
+      <div role="group" aria-label={`State: ${word}`} className={BAR_BOX}>
         {/* A phone gives the drawer's toggle to ←: the Thread it returns to has it. */}
         {!phone && leading}
         <Tip label={`Back to ${name} · Esc`}>
@@ -112,6 +111,9 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
         </nav>
         {!phone && (
           <span className="flex shrink-0 items-center gap-2 pr-1 text-caption text-muted">
+            {/* Its state in a word: the mark and the word the strip's sheet uses. */}
+            <span className="flex items-center gap-1"><span className="flex size-4 items-center justify-center"><SubagentMark status={s.status} /></span>{word}</span>
+            <span aria-hidden="true" className="text-faint">·</span>
             {s.type && <><span>{s.type}</span><span aria-hidden="true" className="text-faint">·</span></>}
             <Took subagent={s} className="text-caption text-muted" />
           </span>

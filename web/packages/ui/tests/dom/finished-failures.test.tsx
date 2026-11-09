@@ -1,5 +1,5 @@
 // A finished turn whose own record failed (mock t-chart, its outcome or reply changed) stays Finished: what it found is no state.
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import * as data from '../../src/mock/data';
 import { openTask } from './render';
@@ -22,7 +22,7 @@ test('failed tests in the outcome stay Finished', async () => {
   await openTask('t-chart');
   const state = await screen.findByRole('group', { name: 'State: Finished' });
   expect(state.hasAttribute('title')).toBe(false);
-  expect(state.className).toContain('before:bg-success');
+  expect(within(state).getByText('Finished').querySelector('svg')!.getAttribute('class')).toContain('text-success');
   await waitFor(() => expect(row().textContent).toMatch(/Review|Finished/));
   expect(row().textContent).not.toContain('Tests fail');
 });
@@ -35,20 +35,21 @@ test('a reply claim the turn\'s record contradicts leaves the Thread Finished', 
     t.items.splice(t.items.indexOf(reply), 0, { id: 'red-tests', kind: 'tool', time: reply.time, tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./...' }), exit_code: 1, output: 'FAIL' } });
   });
   await openTask('t-chart');
-  expect((await screen.findByRole('group', { name: 'State: Finished' })).className).toContain('before:bg-success');
+  expect(within(await screen.findByRole('group', { name: 'State: Finished' })).getByText('Finished')).toBeTruthy();
 });
 
 test('failed commands alone are no state: the turn stays Finished, green', async () => {
   withChart((t) => { t.outcome = 'Charted the commits; 2 commands failed'; });
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
-  expect(bar().className).toContain('before:bg-success');
+  expect(within(bar()).getByText('Finished').querySelector('svg')!.getAttribute('class')).toContain('text-success');
   expect(row().textContent).not.toContain('failed');
 });
 
-test('a clean finished turn fills the header green, with no state word in it', async () => {
+test('a clean finished turn says Finished in the header, green on its glyph alone', async () => {
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
-  expect(bar().className).toContain('before:bg-success');
-  expect(bar().textContent).not.toContain('Finished');
+  const label = within(bar()).getByText('Finished');
+  expect(label.className).toContain('text-muted');
+  expect(label.querySelector('svg')!.getAttribute('class')).toContain('text-success');
 });

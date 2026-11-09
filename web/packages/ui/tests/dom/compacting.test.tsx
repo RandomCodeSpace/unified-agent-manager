@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { StatusLine, statusLine } from '../../src/components/StatusLine';
 import { StateMark } from '../../src/components/common';
@@ -25,10 +25,10 @@ test('a Task compacting mid-turn says so once, on the strip\'s live line: not at
   const log = await screen.findByRole('log');
   expect(log.textContent).not.toContain('Compacting the conversation');
   expect(log.textContent).not.toContain('Thinking…');
-  // The header keeps Working, its blue fill.
+  // The header keeps Working, in blue.
   const header = screen.getByRole('group', { name: /^State: / });
   expect(header.getAttribute('aria-label')).toBe('State: Working');
-  expect(header.className).toContain('before:bg-accent');
+  expect(within(header).getByText('Working').className).toContain('text-accent');
   expect(header.textContent).not.toContain('Compacting');
 });
 
