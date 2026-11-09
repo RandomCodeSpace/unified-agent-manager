@@ -62,16 +62,17 @@ func TestCountsOfTheCommonTestSummaries(t *testing.T) {
 		"ok  \texample.com/a\t0.01s\nok  \texample.com/b\t0.02s\n":                                      "2 packages ok",
 		"--- FAIL: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/calc\t0.003s\nFAIL\n<shellId: 0 completed>": "1 package failed, 1 test failed",
 		"Tests:       1 failed, 12 passed, 13 total":                                                    "12 passed, 1 failed",
-		" Tests  14 passed (14)":                         "14 passed",
-		"===== 3 passed in 0.12s =====":                  "3 passed",
-		"test result: ok. 4 passed; 0 failed; 0 ignored": "4 passed",
-		"# tests 5\n# pass 5\n# fail 0":                  "5 passed",
-		"....\n4 passed in 0.01s\n":                      "4 passed",
-		"F...\n1 failed, 3 passed in 0.03s":              "3 passed, 1 failed",
-		"1 failed, 3 passed, 2 warnings in 0.12s":        "3 passed, 1 failed",
-		"3 passed, 1 error in 0.10s":                     "3 passed, 1 failed",
-		"120 passed in 75.12s (0:01:15)":                 "120 passed",
-		"==== 1 failed, 3 passed in 0.03s ====":          "3 passed, 1 failed",
+		" Tests  14 passed (14)":                                 "14 passed",
+		"===== 3 passed in 0.12s =====":                          "3 passed",
+		"test result: ok. 4 passed; 0 failed; 0 ignored":         "4 passed",
+		"# tests 5\n# pass 5\n# fail 0":                          "5 passed",
+		"....\n4 passed in 0.01s\n":                              "4 passed",
+		"F...\n1 failed, 3 passed in 0.03s":                      "3 passed, 1 failed",
+		"1 failed, 3 passed, 2 warnings in 0.12s":                "3 passed, 1 failed",
+		"3 passed, 1 error in 0.10s":                             "3 passed, 1 failed",
+		"120 passed in 75.12s (0:01:15)":                         "120 passed",
+		"==== 1 failed, 3 passed in 0.03s ====":                  "3 passed, 1 failed",
+		"4 passed in 0.01s\n.F..\n1 failed, 3 passed in 0.02s\n": "7 passed, 1 failed",
 	} {
 		if got := countsOf(output); got == nil || got.label != want {
 			t.Errorf("%q: counts = %+v, want %q", output, got, want)
@@ -169,6 +170,10 @@ func TestCheckOutcomesFollowTheReportedStatus(t *testing.T) {
 		{"python3 -m pytest -q 2>&1 | tail -5", "3 passed, 1 error in 0.10s\n", 0, outcomeFail, ""},
 		{"python3 -m pytest -q 2>&1 | tail -5", "/usr/bin/python3: No module named pytest\n", 0, outcomeUnclear, "piped"},
 		{"python3 -m pytest -q 2>&1 | tail -5", "4 passed in 0.01s" + truncatedMarker, 0, outcomeUnclear, "piped"},
+		// A failing summary after a passing one fails the run.
+		{"python3 -m pytest -q 2>&1 | tail -9", "4 passed in 0.01s\n1 failed, 3 passed in 0.02s\n", 0, outcomeFail, ""},
+		// Two runs behind one pipe: the first one's summary may have been cut.
+		{"(python3 -m pytest -q a; python3 -m pytest -q b) 2>&1 | tail -1", "4 passed in 0.01s\n", 0, outcomeUnclear, "piped"},
 		{"npx jest 2>&1 | tail -3", "Tests:       12 passed, 12 total\n", 0, outcomeUnclear, "piped"},
 		{"go test -run 'TestA|TestB' ./...", goFAIL, 1, outcomeFail, ""},
 		{"go build ./... && go test ./...", goFAIL, 1, outcomeFail, ""},

@@ -368,6 +368,17 @@ func passFail(passed, failed int) *testCounts {
 	return &testCounts{passed: passed, failed: failed, label: label}
 }
 
+// testRuns counts the test checks a command line runs.
+func testRuns(runs []checkRun) int {
+	n := 0
+	for _, r := range runs {
+		if r.kind == checkTest {
+			n++
+		}
+	}
+	return n
+}
+
 // countsOf reads the counts of Go, Jest, Vitest, pytest, cargo and TAP
 // (node --test) outputs; nil when nothing is recognisable.
 func countsOf(output string) *testCounts {
@@ -380,9 +391,20 @@ func countsOf(output string) *testCounts {
 	if m := jsTestsRE.FindStringSubmatch(output); m != nil && countedRE.MatchString(m[1]) {
 		return passFail(firstOf(passedRE, m[1]), firstOf(failedRE, m[1]))
 	}
-	if m := pytestRE.FindStringSubmatch(output); m != nil && (countedRE.MatchString(m[1]) || pytestErrorRE.MatchString(m[1])) {
+	// Every pytest summary in the output counts, so a failing run is never
+	// hidden behind an earlier passing one.
+	passed, failed, found := 0, 0, false
+	for _, m := range pytestRE.FindAllStringSubmatch(output, -1) {
+		if !countedRE.MatchString(m[1]) && !pytestErrorRE.MatchString(m[1]) {
+			continue
+		}
+		found = true
 		// Collection errors fail the run like failed tests.
-		c := passFail(firstOf(passedRE, m[1]), firstOf(failedRE, m[1])+firstOf(pytestErrorRE, m[1]))
+		passed += firstOf(passedRE, m[1])
+		failed += firstOf(failedRE, m[1]) + firstOf(pytestErrorRE, m[1])
+	}
+	if found {
+		c := passFail(passed, failed)
 		c.whole = true
 		return c
 	}
@@ -450,7 +472,8 @@ func (a activity) result(run checkRun) (outcome, note string) {
 		switch {
 		case counts != nil && counts.failed > 0:
 			return outcomeFail, ""
-		case counts != nil && counts.whole && counts.passed > 0 && !a.partial:
+		// One test run on the line: a second one's summary could have been cut by the pipe.
+		case counts != nil && counts.whole && counts.passed > 0 && !a.partial && testRuns(a.checks) == 1:
 			return outcomePass, "piped"
 		}
 		return outcomeUnclear, "piped"
