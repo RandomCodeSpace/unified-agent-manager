@@ -203,11 +203,11 @@ export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: 
 }
 
 /**
- * A Thread's place under the composer once it exists. In its own worktree: one read-only run, `Worktree branch`, the
- * path in a tooltip (its folder is named for the branch, so the row leaves it out). In the Project folder: the branch
+ * A Thread's place on the composer's control row once it exists. In its own worktree: one read-only run, `Worktree branch`, the
+ * whole branch and the path in a tooltip (its folder is named for the branch, so the row leaves it out). In the Project folder: the branch
  * dropdown alone, which switches the folder at once under the same rule as a draft (the Thread itself must have
  * finished too); read-only text when the Thread is settled or archived, or the service cannot switch. A draft on a
- * service without places shows its branch. It shrinks only once the phase's detail beside it has given way (Task).
+ * service without places shows its branch. The row caps its width (Composer), so the whole name is also in its tip or title.
  */
 export function PlaceFoot({ session, project }: Readonly<{ session: SessionSummary; project: Project | undefined }>) {
   const api = useApi();
@@ -222,7 +222,7 @@ export function PlaceFoot({ session, project }: Readonly<{ session: SessionSumma
     return (
       <div data-place="" className="flex min-w-0 items-center">
         {/* Read-only: it only shows the path, on hover, focus or a press. */}
-        <Tip openOnClick label={<span className="break-all">{worktree.path}</span>}>
+        <Tip openOnClick label={<span className="break-all">{branch}<span className="block text-on-primary/70">{worktree.path}</span></span>}>
           <button type="button" aria-label={`Worktree, branch ${branch}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
             <FolderGit2 aria-hidden="true" className="text-muted" />
             <span className="shrink-0 text-muted">Worktree</span>
@@ -232,7 +232,7 @@ export function PlaceFoot({ session, project }: Readonly<{ session: SessionSumma
       </div>
     );
   }
-  const branchText = <span className={TEXT}><GitBranch aria-hidden="true" className="text-muted" /><span className="truncate font-medium text-ink">{branch}</span></span>;
+  const branchText = <span className={TEXT} title={branch}><GitBranch aria-hidden="true" className="text-muted" /><span className="truncate font-medium text-ink">{branch}</span></span>;
   if (!session.id) return <div data-place="" className="flex min-w-0 items-center">{branchText}</div>;
   const switchable = api.supports(SWITCH_CAPABILITY) && !readOnly(session);
   const pick = async (p: Pick) => {

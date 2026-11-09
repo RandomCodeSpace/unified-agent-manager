@@ -422,9 +422,9 @@ describe('task lifecycle', () => {
     // Its folder's counts do not decide: Settle asks the service, whose refusal asks first.
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle' }));
     await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
-    expect(await screen.findByText('Settled.')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Reopen' })).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Reopen' }));
-    await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reopen' })).toBeNull());
   });
 
   test('archive asks first, then the task is read-only; delete removes it', async () => {
@@ -433,7 +433,7 @@ describe('task lifecycle', () => {
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Archive' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Archive this thread?' });
     await user.click(within(confirm).getByRole('button', { name: 'Archive thread' }));
-    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Delete' }));
     const del = await screen.findByRole('alertdialog', { name: /Delete “Bump dependencies”\?/ });
     await user.click(within(del).getByRole('button', { name: 'Delete thread' }));

@@ -155,14 +155,14 @@ describe('a draft Thread', () => {
 });
 
 describe('a started Thread', () => {
-  test('in its own worktree: worktree and branch as plain text, the folder that repeats the branch left out, the path on hover', async () => {
+  test('in its own worktree: worktree and branch as plain text, the folder that repeats the branch left out, the whole branch and the path on hover', async () => {
     const { user } = await openTask('t15');
     const wt = screen.getByRole('button', { name: 'Worktree, branch uam/remove-unused-exports' });
     expect(wt.textContent).toBe('Worktreeuam/remove-unused-exports');
     expect(wt.parentElement!.textContent).toBe(wt.textContent);
     expect(screen.queryByRole('button', { name: /^Branch / })).toBeNull();
     await user.hover(wt);
-    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBe('/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports'));
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBe('uam/remove-unused-exports/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports'));
   });
 
   test('in the Project folder: the branch alone, and a switch that waits for the folder', async () => {

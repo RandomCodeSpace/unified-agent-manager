@@ -331,12 +331,17 @@ describe('settings in the toolbar', () => {
     expect(screen.getByRole('button', { name: 'Stop autopilot' })).toBeTruthy();
   });
 
-  test('a read-only task explains why nothing can change', async () => {
+  test('a read-only task is one row: its state, why nothing can change, and its model and mode as text, not pickers', async () => {
     renderApp('#task=t12');
-    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
-    // The model picker replaces its skeleton once /api/meta answers, which can be after the snapshot.
-    expect((await screen.findByRole('button', { name: /^Model: Auto\. This thread is read-only\./ })).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('button', { name: /^Permissions and execution: Safe\. This thread is read-only\./ })).toBeTruthy();
+    expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
+    // The values replace the skeleton once /api/meta answers, which can be after the snapshot.
+    const values = await screen.findByRole('button', { name: 'Model: Auto. Effort and context size: Default. Permissions and execution: Safe. This thread is read-only.' });
+    expect(values.textContent).toBe('Auto · Default · Safe');
+    const row = values.closest('[data-fold]')!;
+    expect(row.textContent).toMatch(/^ArchivedThis thread is read-only\./);
+    expect(within(row as HTMLElement).queryByRole('button', { name: 'Reopen' })).toBeNull();
+    for (const id of ['composer-model', 'composer-effort-context', 'composer-mode', 'composer-text']) expect(document.getElementById(id)).toBeNull();
+    expect(row.querySelector('[aria-disabled="true"], :disabled')).toBeNull();
   });
 
   test("while the catalogs load, the pickers' slot keeps their height: one bar with the Loading line over it", async () => {
@@ -580,11 +585,21 @@ describe('composer menus and notices', () => {
     expect(screen.getByRole('button', { name: /^Attach files/ }).getAttribute('aria-label')).not.toMatch(/\.$/);
   });
 
-  test('a settled task reopens from the notice in its composer', async () => {
+  test('a settled task is one row with Reopen, working Tools and no disabled pickers; Reopen brings the text field back, focused', async () => {
     const { user } = renderApp('#task=t11');
-    expect(await screen.findByText('Settled.')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Reopen' }));
-    await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
+    const reopen = await screen.findByRole('button', { name: 'Reopen' });
+    const row = reopen.closest('[data-fold]') as HTMLElement;
+    expect(row.textContent).toMatch(/^SettledReopen/);
+    // The model and mode are text; Tools is the live control, and the branch sits on the same row.
+    expect((await within(row).findByRole('button', { name: /^Model: Claude Haiku 4\.5\. .*This thread is read-only\.$/ })).textContent).toBe('Claude Haiku 4.5 · Default · 200K · Safe');
+    for (const id of ['composer-model', 'composer-effort-context', 'composer-mode', 'composer-text']) expect(document.getElementById(id)).toBeNull();
+    expect(row.querySelector('[aria-disabled="true"], :disabled')).toBeNull();
+    expect(row.querySelector('[data-composer-foot] [data-place]')).not.toBeNull();
+    await user.click(within(row).getByRole('button', { name: /^Tools/ }));
+    expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await user.click(reopen);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reopen' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(composer()));
   });
 });

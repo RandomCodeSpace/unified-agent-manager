@@ -944,6 +944,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       stage: 'settled',
       settled_at: ago(60 * 47),
       settled_by: 'auto',
+      // Its Tools stay live while settled (DESIGN.md Composer).
+      capabilities: { ...CAPS, usage: true },
+      context: { used: 31_000, limit: 200_000 },
       created_at: ago(60 * 50),
       updated_at: ago(60 * 47),
       items: [

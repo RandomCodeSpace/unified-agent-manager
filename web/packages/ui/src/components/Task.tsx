@@ -29,7 +29,6 @@ import { SubagentScope } from './Subagents';
 import { SubagentBar, SubagentView } from './SubagentView';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
-import { TimeSplitSummary } from './TimeSplit';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { HandoffCard, InterruptedCard } from './Handoff';
 import { DrawingsProvider } from './Drawing';
@@ -225,7 +224,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
   return <ExternalLink />;
 }
 
-/** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
+/** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
 const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
@@ -1115,7 +1114,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here leaves the side panels open: the next message or command about them is typed here. */}
-        <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
+        <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-3 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
             <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} onKept={setKeptTodos} />
@@ -1137,15 +1136,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </div>
           )}
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} seed={seed} />
-          <ComposerFoot>
-            <PlaceFoot session={session} project={project} />
-            {/* At the right, an item of this row (the group is `contents`): the time split. What the turn waits on now is the strip's live line. */}
-            <span className="contents">
-              <span aria-hidden="true" className="ml-auto" />
-              <TimeSplitSummary session={session} />
-            </span>
-          </ComposerFoot>
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} seed={seed} project={project} />
         </div>
       </div>
 
@@ -1167,10 +1158,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   );
 }
 
-/**
- * The row under the composer (DESIGN.md "Row under the composer"): Files and where the Thread runs (PlacePicker), then
- * what its turn waits on now (ModelPhase) and the time split (TimeSplit) as blocks.
- */
+/** The row under a new Thread's composer: where the Thread will run (PlacePicker). A Thread's branch and time split are on the composer's control row. */
 function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
   return <div data-composer-foot="" className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
 }

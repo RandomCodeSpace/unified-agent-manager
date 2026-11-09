@@ -272,10 +272,10 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle' }));
   await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
-  await screen.findByText('Settled.');
+  await screen.findByRole('button', { name: 'Reopen' });
   await user.click(screen.getByRole('button', { name: 'Thread actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
-  await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Reopen' })).toBeNull());
   // A shared folder's counts do not decide: the refused settle, the forced settle and the reopen, all on the owner.
   expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner, owner]);
 });

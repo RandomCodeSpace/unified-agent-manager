@@ -1,9 +1,9 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { useApi } from '../ApiContext';
-import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Lock, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Lock, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, taskName, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type Submission, type TaskSettings, type ThreadPlace } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, taskName, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type Project, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -19,6 +19,8 @@ import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
+import { PlaceFoot } from './PlacePicker';
+import { TimeSplitSummary } from './TimeSplit';
 import { DrawingChips } from './Drawing';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
@@ -343,11 +345,13 @@ interface ComposerProps {
   onThread?: () => void;
   /** Text to add to the draft, e.g. an interrupted card's Run again; a new object adds it again. Never sent by itself. */
   seed?: { text: string } | null;
+  /** The Thread's Project: with it, the branch and the time split sit on the control row, left of the actions. */
+  project?: Project;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread || a.seed !== b.seed) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread || a.seed !== b.seed || a.project !== b.project) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -391,7 +395,7 @@ const BUDGET_REACHED = 'budget_reached';
 /** Why a subagent's model and effort cannot change. */
 const SPAWNED = 'Set when the Thread spawned it; a subagent cannot change it.';
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread, seed = null }: Readonly<ComposerProps>) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread, seed = null, project }: Readonly<ComposerProps>) {
   const api = useApi();
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
@@ -434,6 +438,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   if (stopping && !live) setStopping(false);
   // A subagent takes no messages: everything the Thread's composer changes is locked while one is shown.
   const locked = readOnly(session) || !!subagent;
+  // A settled or archived Thread's composer is one row (DESIGN.md Composer): no text field, no pickers.
+  const settledRow = readOnly(session) && !subagent;
   const last = outcome && (!session.last_submission || outcome.time >= session.last_submission.time) ? outcome : session.last_submission;
   // A longer output goes to the side panel when it arrives; the strip keeps confirmations and choices.
   const stripResult = last?.status === 'accepted' && !dismissedResultIds.includes(last.request_id) ? last.command_result : null;
@@ -1378,7 +1384,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   );
   /** Why effort and context cannot change now, or that this model has nothing to change. */
   function describeTuningReason(): string {
-    if (locked) return 'This thread is read-only.';
     if (busy) return 'Wait for the current action to finish.';
     return 'Model default.';
   }
@@ -1484,7 +1489,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       className={cn(
         // The composer keeps its normal surface and shadow while typing.
         'relative isolate flex flex-col rounded-lg bg-raised shadow-float',
-        locked && 'bg-surface',
+        subagent && 'bg-surface',
       )}
       onSubmit={(e) => {
         e.preventDefault();
@@ -1569,18 +1574,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </span>
         </p>
       )}
-      {!subagent && (locked || resendable || budgetWarning || atBudget || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
+      {!subagent && (resendable || (!locked && (budgetWarning || atBudget)) || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
-          {locked && session.stage === 'settled' && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Note>Settled.</Note>
-              <Button size="sm" variant="secondary" loading={!!taskActions.busy[session.id]} onClick={reopen}>
-                <ArchiveRestore />
-                Reopen
-              </Button>
-            </div>
-          )}
-          {locked && session.stage !== 'settled' && <Note>Archived. This thread is read-only.</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
               Your last submission may have changed the provider state. Check the conversation and settings before retrying; it will not be resent automatically.
@@ -1709,6 +1704,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
 
+      {!settledRow && <>
       <label className="sr-only" htmlFor="composer-text">
         {answering ? 'Your answer' : 'Message'}
       </label>
@@ -1739,13 +1735,31 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       />
       {suggestion && <SuggestionGhost text={suggestion} onUse={takeSuggestion} />}
       </div>
+      </>}
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
           context, permissions and execution pickers fold into a More menu; a narrow row folds its labels in priority order
           (lib/toolbarFold), the model's last. The actions are glyphs, named for screen readers and in their tooltips;
           while a turn runs they stay on the row and wrap under it only when the pickers cannot keep their touch targets
-          beside them. */}
-      <div ref={toolbar} data-fold="" className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+          beside them. The branch and the time split sit left of the actions (owner, 2026-11-09, revamp mock 2).
+          A settled or archived Thread has this row alone, 44px (revamp mock 1): its state, Reopen, the model and mode
+          as text, then Tools, the branch and the time split. */}
+      <div ref={toolbar} data-fold="" className={cn('flex items-center data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', settledRow ? 'min-h-11 gap-1.5 pr-3 pl-3.5 data-[fold~=wrap]:py-1.5' : 'gap-0.5 px-2 pt-1 pb-2', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+        {settledRow && (
+          <>
+            <span className="mr-1.5 flex shrink-0 items-center gap-1.5 text-ui font-medium text-ink">
+              <Archive aria-hidden="true" className="size-3.5 text-muted" />
+              {session.stage === 'settled' ? 'Settled' : 'Archived'}
+            </span>
+            {session.stage === 'settled' ? (
+              <Button size="sm" variant="secondary" loading={!!taskActions.busy[session.id]} onClick={reopen}>
+                <ArchiveRestore />
+                Reopen
+              </Button>
+            ) : <span className="text-caption text-muted">This thread is read-only.</span>}
+            <span className="flex-1" />
+          </>
+        )}
         {!locked && (
           <>
             <input
@@ -1793,6 +1807,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </div>
         ) : (
           <>
+        {settledRow ? (
+          // Values, not controls: text in `muted`, the whole of it in the tip and the name.
+          <Tip openOnClick label={<>Model: {modelLabel}{routed && <span className="block text-on-primary/70">Latest turn ran on {routed}</span>}<span className="block">Effort and context size: {tuningLabel}</span><span className="block">Permissions and execution: {runLabel}</span><span className="block text-on-primary/70">This thread is read-only.</span></>}>
+            <button type="button" aria-label={`Model: ${modelLabel}. Effort and context size: ${tuningLabel}. Permissions and execution: ${runLabel}. This thread is read-only.`} className="flex h-7 min-w-0 cursor-default items-center rounded-sm text-caption text-muted">
+              <span data-squeeze="" className="truncate">{modelLabel} · {tuningLabel} · {runLabel}</span>
+            </button>
+          </Tip>
+        ) : (
         <Picker
           id="composer-model"
           icon={<ModelIcon model={subagent ? subagent.model ?? '' : selection.model} fallback={<Cpu aria-hidden="true" className="text-faint" />} />}
@@ -1809,11 +1831,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           disabled={settingsLocked}
           // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.
           className="pointer-coarse:min-w-11 max-sm:max-w-max max-sm:grow max-sm:basis-11"
-          reason={subagent ? SPAWNED : locked ? 'This thread is read-only.' : undefined}
+          reason={subagent ? SPAWNED : undefined}
           hint={routed && !subagent ? `Latest turn ran on ${routed}` : undefined}
           lock={!!subagent}
           onChange={(v) => void settings({ model: v })}
         />
+        )}
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
         <ComposerTools
           ref={tools}
@@ -1825,8 +1848,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           onStyle={subagent ? undefined : chooseStyle}
           styleReason={newTask ? undefined : 'Fixed when the Thread started.'}
         />
-        <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
-        {subagent ? (
+        {!settledRow && <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />}
+        {!settledRow && (subagent ? (
           <Tip label={<>{`Effort: ${effortLabel(subagent.effort)}`}<span className="block text-on-primary/70">{SPAWNED}</span></>}>
             <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort: ${effortLabel(subagent.effort)}. Locked. ${SPAWNED}`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
@@ -1836,7 +1859,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </Tip>
         ) : settingsLocked || fixedTuning ? (
           <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>
-            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className={cn('text-muted max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')}>
+            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className="text-muted max-sm:hidden in-data-[fold~=more]:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
               <span className="in-data-[fold~=tuning]:hidden">{tuningLabel}</span>
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
@@ -1853,7 +1876,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Tip>
             <Menu.Content side="top" align="start" className={PHONE_PICKER}>{tuningItems}</Menu.Content>
           </Menu.Root>
-        )}
+        ))}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
         {subagent ? (
@@ -1865,15 +1888,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               <Lock aria-hidden="true" className="!size-3 text-faint" />
             </Button>
           </Tip>
-        ) : locked ? (
-          <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">This thread is read-only.</span></>}>
-            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This thread is read-only.`} className="text-muted max-sm:hidden">
-              {runIcon}
-              {runFace}
-              <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-            </Button>
-          </Tip>
-        ) : (
+        ) : !settledRow && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label={<>{`Permissions and execution: ${runLabel}${objectiveSuffix}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
               <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className={cn('max-sm:hidden in-data-[fold~=more]:hidden', risk.tone)} />}>
@@ -1920,7 +1935,15 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        {/* The branch and the time split ride with them; once the row has wrapped, the branch's name gives way. */}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:min-w-0 in-data-[fold~=wrap]:shrink">
+        {project && !newTask && (
+          <span data-composer-foot="" className="flex min-w-0 items-center gap-1 empty:hidden *:data-place:max-w-48">
+            <PlaceFoot session={session} project={project} />
+            <TimeSplitSummary session={session} />
+          </span>
+        )}
+        <span className="flex shrink-0 items-center gap-0.5">
         {/* Saving a setting is words: the Task's state glyph is the one ring. */}
         {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
         {/* The /btw mode cue, drawn with the text that names it: Send's icon alone does not say it asks aside. */}
@@ -1984,6 +2007,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Button>
           </Tip>
         )}
+        </span>
         </span>
       </div>
       {busy && busy !== 'settings' && (
