@@ -81,7 +81,7 @@ test('a reply\'s whole bold name or inline-code id of one of its subagents opens
   const state = data.seed();
   const t8 = state.tasks.find((t) => t.id === 't8')!;
   const reply = t8.items.find((i) => i.id === 'i2')!;
-  reply.text += '\n\n**Run the accessibility linter** stopped and **Run the accessibility linter again** waits; `a4` is done. **Verify store callers** and **Check contrast of the theme tokens** are running.';
+  reply.text += '\n\n**Run the accessibility linter** stopped and **Run the accessibility linter again** waits; `a4` is done. **Verify store callers** and **Check contrast of the theme tokens** are running. Log: [**Verify store callers**](https://example.com/log).';
   // Two of the reply's subagents share a name: it names neither.
   t8.subagents!.find((s) => s.id === 'a1')!.name = 'Check contrast of the theme tokens';
   vi.spyOn(data, 'seed').mockReturnValue(state);
@@ -93,6 +93,8 @@ test('a reply\'s whole bold name or inline-code id of one of its subagents opens
   });
   const links = within(turn).getAllByRole('button', { name: /^Open subagent / });
   expect(links.map((b) => b.getAttribute('aria-label'))).toEqual(['Open subagent Run the accessibility linter', 'Open subagent Check the heading order', 'Open subagent Verify store callers']);
+  // A name inside a link stays text: no button inside a link.
+  expect(within(turn).getByRole('link', { name: 'Verify store callers' }).querySelector('button')).toBeNull();
   // The reply's own emphasis stays inside: bold as bold, code as code.
   expect(links[0].querySelector('strong')?.textContent).toBe('Run the accessibility linter');
   expect(links[1].querySelector('code')?.textContent).toBe('a4');

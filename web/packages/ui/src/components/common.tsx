@@ -816,9 +816,11 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   // A bare name opens the one file it means.
   const file = named && resolved ? { ...named, path: resolved } : named;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
-  if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
+  if (temporary) return <TempFileAction file={temporary}><SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider></TempFileAction>;
   if (href && gitlab && parseGitLabUrl(href, gitlab.origin)) return <GitLabLink href={href} words={nodeText(node).trim()} />;
   const target = linkTarget(api, href, file, sessionId, exists);
+  // A subagent's name inside a link stays text: a button inside a link is not valid.
+  const inner = <SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider>;
   let link: ReactNode;
   if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
   else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
@@ -826,8 +828,8 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
       event.preventDefault();
       preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, path: file.path, frameable: true }, event.currentTarget);
     }
-  }}>{children}</a>;
-  else link = children;
+  }}>{inner}</a>;
+  else link = inner;
   return localPath(href) ? <span key={named?.path} data-file-reference={eligible ? named?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
