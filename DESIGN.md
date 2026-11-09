@@ -1254,7 +1254,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   A JSON `valueFormatter` cannot be a function: a `{value}` template becomes one, anything else is dropped.
   Table rows are 28px for one line (owner, 2026-11-09, revamp mock 2): cells pad `3px 10px` on a 21px line, a wrapped cell grows by 21px lines, and a reply's table has the same rows while it streams.
   The head row is `caption` in `muted` (weight 500) over a `hairline-strong` rule, so the figures lead.
-  Markdown and chart tables give each column one 20px header button (the `icon-sm` hit area: 32px, 44px on a coarse pointer, without taking width) that opens Sort ascending, Sort descending, Original order and a contains filter; its glyph is `faint` until hovered, open, sorted or filtered, then `ink`, and it shows the sort direction, or a washed filter glyph while filtering.
+  Markdown and chart tables give each column one 20px header button (the `icon-sm` hit area: 32px, 44px on a coarse pointer, without taking width) that opens Sort ascending, Sort descending, Original order and a contains filter; its glyph is `faint` at rest, `ink` while hovered or open, and `accent` once the column is sorted or filtered, and it shows the sort direction, or a washed filter glyph while filtering.
   A table's header buttons, like a chart's series toggles, are one tab stop: arrow keys, Home and End move along.
   Sorting is numeric when every value reads as a number, including a sign, a leading currency symbol, thousands separators and a trailing percent; otherwise text sorts in natural order.
   A table's region is named by the heading or bold line directly above it, else by its first three column names.

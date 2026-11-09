@@ -129,7 +129,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
                   <span className="min-w-0">{column.heading ?? column.name}</span>
                   {/* One small control per column: 20px so the head row stays 28px, with the `icon-sm` hit area (32px, 44px on a coarse pointer) without taking width. */}
                   <Popover.Root open={menu === index} onOpenChange={open => setMenu(open ? index : null)}>
-                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn('size-5 rounded-xs after:-inset-1.5 pointer-coarse:after:-inset-3', selected || filter ? 'text-ink' : 'text-faint', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
+                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn('size-5 rounded-xs after:-inset-1.5 pointer-coarse:after:-inset-3', selected || filter ? 'text-accent' : 'text-faint', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
                     <Popover.Content side="bottom" align="end" className="max-w-72">
                       <Popover.Title>{column.name}</Popover.Title>
                       <div className="flex flex-col">
