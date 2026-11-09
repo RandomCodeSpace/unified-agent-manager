@@ -9,7 +9,7 @@ import { MOTION_NOTICE, motionNoticeDue } from '../lib/motion';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
-import { BADGE_TEXT, BAR_ROW, barCard, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { BADGE_TEXT, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { lineCountsText } from '../lib/cost';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
@@ -384,7 +384,9 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
   const status = taskStatus(session, unread);
   const { icon: StatusIcon, tone: statusTone } = unread && status.label === 'Finished' ? UNREAD_FINISHED : STATUS_MARKS[status.label];
   const changed = session.diff?.files ?? 0;
-  const branch = taskBranch(session, project);
+  // On the row only off the Project's default branch (the tip always names it); a default git cannot tell (no origin, an older server) draws it.
+  const own = taskBranch(session, project);
+  const branch = own === project?.default_branch ? undefined : own;
   return (
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
@@ -405,7 +407,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
       </span>
       <span className="flex w-full min-w-0 items-baseline gap-1.5">
         <TaskTitle session={session} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-        {branch && <span className="min-w-0 max-w-20 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{branch}</span></span>}
+        {branch && <span className="min-w-0 max-w-28 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{branch}</span></span>}
         <time dateTime={session.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(session.updated_at)}</time>
         {machine && <InstanceBadge id={machine.id} label={machine.label} />}
       </span>
@@ -521,7 +523,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   // A machine linked to another Copilot account keeps its rows, faded; opening one shows why it is blocked.
   const unavailable = machine?.status.status === 'account-mismatch';
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A Task card on the rail: `raised` with the soft ring, the open one `tint-selected`; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
+  // A Thread row is flat on the rail, a 46px tile on a 48px pitch: `tint-hover` under the pointer (anywhere on the row, its Settle included), the open one `tint-selected`.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -532,8 +534,8 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
     );
   } else {
     rowClass = cn(
-      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised in-data-[theme=dark]:ring-1 in-data-[theme=dark]:ring-faint transition-[background-color] duration-100 focus-visible:-outline-offset-2',
-      selected ? 'bg-tint-selected' : 'bg-raised',
+      'flex min-h-11.5 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 text-left text-caption transition-[background-color] duration-100 focus-visible:-outline-offset-2',
+      selected ? 'bg-tint-selected' : 'group-hover/row:bg-tint-hover',
       readOnly(s) && !selected && 'text-muted',
       unavailable && !selected && 'opacity-60',
       weight,
@@ -544,12 +546,12 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
     <div
       ref={rowRef}
       data-task-row={rowKey}
-      className={compact ? undefined : 'lift group/row rounded-md'}
+      className={compact ? undefined : 'group/row relative'}
     >
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
-        // py-1: the name line and the 28px input fit the card's 56px, so the rows below stay put.
-        <div className={cn(rowClass, !compact && 'py-1')}>
+        // gap-0: the name line and the 28px input fit the row's 46px, so the rows below stay put.
+        <div className={cn(rowClass, !compact && 'gap-0')}>
           {!compact && <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption">{project.name}</span></span>}
           <InlineName initial={s.name} onSave={(v) => { endRename(); void a.rename(s.id, v); }} onCancel={() => { endRename(); a.cancelRename(); }} className="h-7 w-full" label="Thread name" />
         </div>
@@ -599,8 +601,9 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
             data-settle=""
             aria-label={`Settle ${taskName(s) || 'New thread'}`}
             className={cn(
-              'pointer-events-none absolute top-1.5 right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-has-focus-visible/row:pointer-events-auto group-has-focus-visible/row:opacity-100 pointer-coarse:after:inset-0 [&_svg]:size-3.5',
-              selected ? 'bg-tint-selected' : 'bg-raised',
+              'pointer-events-none absolute top-px right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-has-focus-visible/row:pointer-events-auto group-has-focus-visible/row:opacity-100 pointer-coarse:after:inset-0 [&_svg]:size-3.5',
+              // One step over the row's own tint, so its hover still reads.
+              selected ? 'bg-tint-selected' : 'not-aria-disabled:hover:bg-tint-selected',
             )}
             onClick={() => settle.onSelect()}
           >
@@ -899,7 +902,7 @@ export const Sidebar = memo(function Sidebar({
   let body: ReactNode;
   let shelvesBody: ReactNode = null;
   if (!loaded) {
-    body = <Skeleton label="Loading threads…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />;
+    body = <Skeleton label="Loading threads…" rows={5} className="gap-0.5" rowClassName="h-11.5 w-full rounded-md" />;
   } else if (!anyProject) {
     body = (
       <div className="flex flex-col items-start gap-3 px-2 pt-6">
@@ -922,7 +925,7 @@ export const Sidebar = memo(function Sidebar({
             </Button>
           </div>
         )}
-        <ul className="flex flex-col gap-1 animate-fade-in">{rows.slice(0, mountedRows).map((r) => renderRow(r))}</ul>
+        <ul className="flex flex-col gap-0.5 animate-fade-in">{rows.slice(0, mountedRows).map((r) => renderRow(r))}</ul>
         {/* The index is this server's own: a connected instance's Threads are not searched there. */}
         {!here?.id && <ConversationHits query={query} sessions={sessions} />}
       </>
@@ -930,7 +933,7 @@ export const Sidebar = memo(function Sidebar({
   } else {
     body = (
       <>
-        <ul aria-label="Unsettled threads" className="flex flex-col gap-1 animate-fade-in">
+        <ul aria-label="Unsettled threads" className="flex flex-col gap-0.5 animate-fade-in">
           {unsettled.slice(0, mountedRows).map((r) => renderRow(r))}
         </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active threads.</p>}
@@ -946,9 +949,9 @@ export const Sidebar = memo(function Sidebar({
 
   return (
     <nav aria-label="Threads" className="flex h-full min-h-0 flex-col bg-rail text-body">
-      {/* The same card bar as the Thread header (common BAR_ROW), so the two top rows line up. */}
+      {/* Flat on the rail, in the same 44px row and 36px box as the Thread header's bar (common BAR_ROW), so the two top rows line up. */}
       <header className={cn(BAR_ROW, 'max-sm:h-auto max-sm:py-1')}>
-        <div className={barCard(undefined, 'gap-0.5 max-sm:h-auto max-sm:flex-wrap max-sm:py-1')}>
+        <div className="flex h-9 min-w-0 flex-1 items-center gap-0.5 pr-1 pl-1.5 max-sm:h-auto max-sm:flex-wrap max-sm:py-1">
           <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} count={count} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
           {/* Search uses the spare header width, or its own full row on a phone. */}
           <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">

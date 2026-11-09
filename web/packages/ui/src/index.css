@@ -446,7 +446,7 @@
   .turn-outcome-rule:not(:has(~ [data-outcome] > *, ~ [data-no-record] > *)) {
     display: none;
   }
-  /* The sidebar's seam: the rail colour step and a fading rule at its right edge. */
+  /* The sidebar's seam: the rail colour step and a full-height hairline at its right edge. */
   .rail-edge::after {
     content: '';
     position: absolute;
@@ -455,7 +455,7 @@
     bottom: 0;
     width: 1px;
     pointer-events: none;
-    background: linear-gradient(to bottom, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+    background: var(--color-hairline);
   }
 
   /* Hover lift: the element rises 1px (transform) while a pre-drawn float shadow on its pseudo-element

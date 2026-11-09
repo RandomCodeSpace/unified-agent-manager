@@ -1099,6 +1099,13 @@ read), so a transient failure never hides a view. The web client then shows a
 warning in place of Changes and Files. A change of `no_git` also sends the
 `project` frame.
 
+`Project` also gains `default_branch` (2026-11-09), read with `branch`: the
+default branch of the directory's origin as its local refs record it
+(`refs/remotes/origin/HEAD`), never the network and never a guess from a
+name. It is omitted without an origin and when git cannot tell. The web
+client draws a Thread row's branch only when it differs; a change also sends
+the `project` frame.
+
 ## Listening beyond loopback
 
 - Date: 2026-09-24 (decided in #174)
