@@ -2,6 +2,7 @@ import { ArrowLeft, ChevronRight, Ellipsis, Square, Workflow } from 'lucide-reac
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { taskName, type Badge, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { awaitsUser } from '../lib/transcript';
+import { subagentName as agentName } from '../lib/subagents';
 import { BAR_ROW, barCard, ProjectBadge, STATE_LABELS, STATE_TONE, useMedia, type Tone } from './common';
 import { AgentTranscriptView, NOT_STOPPING, STATUS_LABEL, StopSubagent, SubagentMark, Took, useActions, useScope } from './Subagents';
 import { Button } from './ui/button';
@@ -25,7 +26,6 @@ function spawners(s: Subagent, all: readonly Subagent[]): Subagent[] {
 }
 
 const threadName = (session: SessionDetail) => taskName(session) || 'this thread';
-const agentName = (s: Subagent) => s.name || 'Subagent';
 /** One glyph for every subagent level, in the trail's 16px identity box. */
 const AgentGlyph = () => <Workflow aria-hidden="true" className="size-4 shrink-0 text-muted" />;
 const SEP = <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-faint" />;

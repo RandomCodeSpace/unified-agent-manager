@@ -51,6 +51,8 @@ type compactTestCounts struct {
 }
 type compactSubagent struct {
 	agentapi.Subagent
+	// Label is the Utility model's short name for it; Name stays the agent's.
+	Label         string `json:"label,omitempty"`
 	Preview       string `json:"preview"`
 	ResultSummary string `json:"result_summary"`
 }
@@ -272,7 +274,7 @@ func (s *webSession) compactSubagent(sa agentapi.Subagent) compactSubagent {
 	if preview == "" {
 		preview = s.subagentTails[sa.ID].preview
 	}
-	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result)}
+	return compactSubagent{Subagent: sa, Label: s.subagentLabels[sa.ID], Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result)}
 }
 
 // subagentResult is the result text of one item: a subagent's own assistant

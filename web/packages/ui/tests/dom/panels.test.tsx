@@ -375,6 +375,23 @@ describe('subagents', () => {
     expect(index.getByRole('button', { name: 'Check contrast of the theme tokens, running: Needs answer' })).toBeTruthy();
     vi.restoreAllMocks();
   });
+  test('a Utility name leads the row with the agent\'s own after it; the footer says where names come from', async () => {
+    const state = mockData.seed();
+    const t8 = state.tasks.find((t) => t.id === 't8')!;
+    t8.subagents = t8.subagents.map((x) => (x.id === 'a3' ? { ...x, label: 'Accessibility lint' } : x));
+    vi.spyOn(mockData, 'seed').mockReturnValue(state);
+    const { user } = await openTask('t8');
+    const index = await openSubagentIndex(user);
+    const row = index.getByRole('button', { name: /^Accessibility lint \(Run the accessibility linter\), / });
+    expect(row.textContent).toContain('Accessibility lintRun the accessibility linter');
+    // Without a label the row keeps the agent's own name alone.
+    expect(index.getByRole('button', { name: /^Check contrast of the theme tokens, / })).toBeTruthy();
+    expect(index.getByText('Names from each prompt, Utility model')).toBeTruthy();
+    const search = index.getByRole('searchbox', { name: 'Search subagents' });
+    await user.type(search, 'accessibility lint');
+    expect(index.getAllByRole('button', { name: /\), |, (running|completed|failed|stopped|idle)/ })).toEqual([row]);
+    vi.restoreAllMocks();
+  });
   test('one subagent reads "1 subagent"', async () => {
     const state = mockData.seed();
     const t8 = state.tasks.find((t) => t.id === 't8')!;

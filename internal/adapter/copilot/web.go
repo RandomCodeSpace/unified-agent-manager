@@ -46,6 +46,8 @@ const (
 	maxToolText     = 64 << 10
 	maxErrorText    = 512
 	maxIntention    = 300
+	// subagentPromptBytes bounds the prompt a subagent's Utility name reads.
+	subagentPromptBytes = 2 << 10
 	// Read-only history retains at most webReadBytes encoded events from
 	// webReadPages newest pages. Older pages are drained to release the snapshot.
 	webReadEvents = 1000
@@ -4931,12 +4933,13 @@ type subagentLog struct {
 	byID   map[string]*agentapi.Subagent
 	byCall map[string]string          // spawning tool call ID -> agent ID
 	asked  map[string]string          // spawning tool call ID -> the call's description
+	prompt map[string]string          // spawning tool call ID -> the start of the call's prompt, until its start
 	tools  map[string]map[string]bool // agent ID -> tool call IDs counted live
 	order  []string
 }
 
 func newSubagentLog() *subagentLog {
-	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}, asked: map[string]string{}, tools: map[string]map[string]bool{}}
+	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}, asked: map[string]string{}, prompt: map[string]string{}, tools: map[string]map[string]bool{}}
 }
 
 // noteCall keeps what a task call asked its subagent to do, in the call's own
@@ -4949,6 +4952,9 @@ func (l *subagentLog) noteCall(d *rpc.ToolExecutionStartData) {
 	args, _ := d.Arguments.(map[string]any)
 	if text, _ := args["description"].(string); strings.TrimSpace(text) != "" {
 		l.asked[d.ToolCallID] = displaytext.Sanitize(strings.TrimSpace(text))
+	}
+	if text, _ := args["prompt"].(string); strings.TrimSpace(text) != "" {
+		l.prompt[d.ToolCallID] = clip(displaytext.Sanitize(strings.TrimSpace(text)), subagentPromptBytes)
 	}
 }
 
@@ -4982,7 +4988,11 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 			sa.Model = *d.Model
 		}
 		l.byCall[d.ToolCallID] = agentID
-		return sa.Snapshot(), true
+		out := sa.Snapshot()
+		// Only the start carries the prompt: it feeds the Utility name once.
+		out.Prompt = l.prompt[d.ToolCallID]
+		delete(l.prompt, d.ToolCallID)
+		return out, true
 	case *rpc.SubagentConfiguredData:
 		if agentID == "" {
 			return agentapi.Subagent{}, false

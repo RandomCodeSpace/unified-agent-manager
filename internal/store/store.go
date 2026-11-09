@@ -564,6 +564,9 @@ type WebState struct {
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
 	Suggestions *WebSuggestions `json:"suggestions,omitempty"`
+	// SubagentLabels are the Utility model's short names of the Thread's
+	// subagents, by agent ID.
+	SubagentLabels map[string]string `json:"subagent_labels,omitempty"`
 	// UnseenEnd marks a Task that failed or was interrupted while no page
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
@@ -695,6 +698,7 @@ var knownWebStateFields = map[string]struct{}{
 	"rewind":              {},
 	"outcome":             {},
 	"suggestions":         {},
+	"subagent_labels":     {},
 	"unseen_end":          {},
 	"interrupted_at":      {},
 	"stop_reason":         {},

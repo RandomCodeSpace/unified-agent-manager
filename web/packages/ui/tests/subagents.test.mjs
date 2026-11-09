@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, totalTokens } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, subagentName, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -94,6 +94,12 @@ test('the filter reads name and summary; the index filters by status', () => {
   assert.equal(matches(agent('a', 'c'), 'go vet: undefined: pageCursor', 'PAGECURSOR'), true);
   assert.equal(matches(agent('a', 'c'), 'nothing', 'store'), false);
   assert.equal(matches(agent('a', 'c'), 'nothing', '  '), true);
+  // The Utility name and the agent's own both match.
+  const named = agent('a', 'c', 'completed', { name: 'inventory-bug-review', label: 'Inventory bug review' });
+  assert.equal(matches(named, '', 'bug review'), true);
+  assert.equal(matches(named, '', 'bug-review'), true);
+  assert.equal(subagentName(named), 'Inventory bug review');
+  assert.equal(subagentName(agent('a', 'c', 'completed', { name: 'inventory-bug-review' })), 'inventory-bug-review');
   assert.equal(inFilter(agent('a', 'c', 'idle'), 'done'), true);
   assert.equal(inFilter(agent('a', 'c', 'cancelled'), 'done'), false);
   assert.equal(inFilter(agent('a', 'c', 'cancelled'), 'all'), true);

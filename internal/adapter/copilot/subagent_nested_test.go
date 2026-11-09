@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -81,5 +82,18 @@ func TestSubagentCountsTokensAndToolCalls(t *testing.T) {
 	sa, ok := l.apply(agentEv("s3", "a", &rpc.SubagentCompletedData{ToolCallID: "c", Cancelled: option(true), TotalTokens: option[int64](900), TotalToolCalls: option[int64](3)}))
 	if !ok || sa.Tokens != 900 || sa.ToolCalls != 3 || sa.Status != agentapi.SubagentCompleted {
 		t.Fatalf("later end = %v, %+v", ok, sa)
+	}
+}
+
+// The start hands its spawning call's prompt, bounded, to the naming job once.
+func TestSubagentLogHandsThePromptOnce(t *testing.T) {
+	l := newSubagentLog()
+	l.noteCall(&rpc.ToolExecutionStartData{ToolCallID: "call-a", ToolName: taskTool, Arguments: map[string]any{"description": "Review", "prompt": "  check the inventory " + strings.Repeat("x", 3000)}})
+	sa, _ := l.apply(agentEv("s1", "a", &rpc.SubagentStartedData{ToolCallID: "call-a", AgentName: "research"}))
+	if !strings.HasPrefix(sa.Prompt, "check the inventory") || len(sa.Prompt) != subagentPromptBytes || sa.Description != "Review" {
+		t.Fatalf("start = %q (%d bytes), %q", sa.Prompt[:20], len(sa.Prompt), sa.Description)
+	}
+	if done, _ := l.apply(agentEv("s2", "a", &rpc.SubagentCompletedData{ToolCallID: "call-a", AgentName: "research"})); done.Prompt != "" || l.byID["a"].Prompt != "" || len(l.prompt) != 0 {
+		t.Fatalf("prompt kept: %q", done.Prompt)
 	}
 }
