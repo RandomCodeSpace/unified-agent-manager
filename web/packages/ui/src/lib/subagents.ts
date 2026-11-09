@@ -126,6 +126,8 @@ export interface Replies {
   ofCall: ReadonlyMap<string, Reply>;
   /** Each subagent's identity tone: its call's place in its reply, while that reply has at most five calls. */
   tones: ReadonlyMap<string, IdentityTone>;
+  /** Each reply's turn number by its key: its user message's place among the Thread's, from 1; none for "start". */
+  turns: ReadonlyMap<string, number>;
 }
 
 /**
@@ -139,11 +141,13 @@ export function replyIndex(index: readonly OutlineItem[], subagents: readonly Su
   const byKey = new Map<string, Reply>();
   const ofCall = new Map<string, Reply>();
   const tones = new Map<string, IdentityTone>();
+  const turns = new Map<string, number>();
   let reply: Reply | undefined;
   const open = (key: string, time?: string) => {
     reply = { key, time, calls: [], subagents: [] };
     list.push(reply);
     byKey.set(key, reply);
+    if (key !== 'start') turns.set(key, turns.size + 1);
   };
   for (const item of index) {
     if (item.kind === 'user' && !item.delivery) {
@@ -171,7 +175,7 @@ export function replyIndex(index: readonly OutlineItem[], subagents: readonly Su
     if (r.calls.length > IDENTITY_LIMIT) continue;
     for (const s of r.subagents) tones.set(s.id, IDENTITY_TONES[r.calls.indexOf(s.parent_tool_call_id!) % IDENTITY_TONES.length]);
   }
-  return { list, byKey, ofCall, tones };
+  return { list, byKey, ofCall, tones, turns };
 }
 
 /**
@@ -188,23 +192,61 @@ export function namedSubagent(text: string, subagents: readonly Subagent[], code
   return one(subagents.filter((s) => s.id === t || (t.length === 8 && s.id.startsWith(t))));
 }
 
+/** A subagent an earlier reply spawned that ran again in a later one (DESIGN.md subagent reference row). */
+export interface FollowUp {
+  subagent: Subagent;
+  /** The turn number of the reply that spawned it; none before the first message. */
+  turn?: number;
+  /** Its latest run that started in the later reply. */
+  run: Run;
+}
+
+/**
+ * Each reply's follow-ups, by its key: a run after a subagent's first belongs to the reply whose span
+ * (its user message's time to the next one's) holds the run's start. Runs in the spawning reply, runs
+ * without a recorded start and runs before the first message belong to none; several runs in one
+ * reply make one follow-up, carrying the latest of them.
+ */
+export function followUps(replies: Replies): ReadonlyMap<string, FollowUp[]> {
+  const times = replies.list.map((r) => ms(r.time));
+  const out = new Map<string, FollowUp[]>();
+  replies.list.forEach((spawn, from) => {
+    for (const subagent of spawn.subagents) {
+      const latest = new Map<string, Run>();
+      for (const run of subagent.runs?.slice(1) ?? []) {
+        const start = ms(run.started_at);
+        let i = times.length - 1;
+        while (i > from && !(times[i] <= start)) i--;
+        if (i > from) latest.set(replies.list[i].key, run);
+      }
+      for (const [key, run] of latest) out.set(key, [...(out.get(key) ?? []), { subagent, turn: replies.turns.get(spawn.key), run }]);
+    }
+  });
+  return out;
+}
+
 export interface LiveSubagent {
   subagent: Subagent;
   /** Spawned by an earlier reply: still running from it, or running again. */
   earlier: boolean;
+  /** Spawned by an earlier reply and run again since: it shows as a reference row, never as a moved row. */
+  ref?: FollowUp;
 }
 
 /**
- * The live rows' set: the subagents the latest reply spawned and every running one an earlier
- * reply spawned. Empty once none of them runs and no row of the card is open (`keep`, which
- * stays in the set while it is open even after it has stopped).
+ * The live rows' set: the subagents the latest reply spawned, its follow-ups (`follow`, lib `followUps`)
+ * and every running one an earlier reply spawned, a resumed one as the reference of its newest run.
+ * Empty once none of them runs and no row of the card is open (`keep`, which stays in the set while
+ * it is open even after it has stopped).
  */
-export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[], keep?: string): LiveSubagent[] {
+export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[], keep?: string, follow: ReadonlyMap<string, FollowUp[]> = new Map()): LiveSubagent[] {
   const mine = latest?.subagents ?? [];
   const own = new Set(mine.map((s) => s.id));
+  const refs = new Map((latest ? follow.get(latest.key) ?? [] : []).map((f) => [f.subagent.id, f]));
+  const newest = new Map([...follow.values()].flat().filter((f) => f.run === f.subagent.runs?.at(-1)).map((f) => [f.subagent.id, f]));
   const set: LiveSubagent[] = [
     ...mine.map((subagent) => ({ subagent, earlier: false })),
-    ...subagents.filter((s) => !own.has(s.id) && (s.status === 'running' || s.id === keep)).map((subagent) => ({ subagent, earlier: true })),
+    ...subagents.filter((s) => !own.has(s.id) && (refs.has(s.id) || s.status === 'running' || s.id === keep)).map((subagent) => ({ subagent, earlier: true, ref: refs.get(subagent.id) ?? newest.get(subagent.id) })),
   ];
   return set.some((x) => x.subagent.status === 'running' || x.subagent.id === keep) ? set : [];
 }
@@ -314,6 +356,8 @@ export interface IndexGroup {
   /** When the message was sent, when known. */
   time?: string;
   subagents: Subagent[];
+  /** Subagents earlier messages spawned that ran again in this reply (lib `followUps`). */
+  refs: FollowUp[];
 }
 
 /**
@@ -322,8 +366,9 @@ export interface IndexGroup {
  * identity index, which outlives history pages); the message text comes from `items` when that
  * message is loaded. A subagent another one spawned goes with its top-level ancestor. Subagents
  * whose call is not placed (older ones paged in from the record) form the last group, keyed "".
+ * A reply's follow-ups (`follow`) join its group, which they open when it spawned none.
  */
-export function indexGroups(index: readonly OutlineItem[], items: readonly Item[], subagents: readonly Subagent[]): IndexGroup[] {
+export function indexGroups(index: readonly OutlineItem[], items: readonly Item[], subagents: readonly Subagent[], follow: ReadonlyMap<string, FollowUp[]> = new Map()): IndexGroup[] {
   const replyOf = new Map<string, OutlineItem | null>();
   const position = new Map<string, number>();
   let user: OutlineItem | null = null;
@@ -335,21 +380,27 @@ export function indexGroups(index: readonly OutlineItem[], items: readonly Item[
   // A loaded message's own text, else the outline's first line.
   const texts = new Map([...index, ...items].filter((i) => i.kind === 'user').map((i) => [i.id, i.text ?? '']));
   const groups = new Map<string, IndexGroup & { at: number }>();
+  const group = (key: string, message: OutlineItem | null, known: boolean) => {
+    let g = groups.get(key);
+    if (!g) {
+      const text = message ? firstLineOf(texts.get(message.id) ?? '') : '';
+      g = { key, text, time: message?.time, subagents: [], refs: [], at: message ? position.get(message.id)! : known ? -1 : -Infinity };
+      groups.set(key, g);
+    }
+    return g;
+  };
   // One another subagent spawned is placed by its top-level ancestor's call.
   const call = new Map(subagents.map((s) => [s.id, mainCall(s, subagents) ?? '']));
   const placed = [...subagents].sort((a, b) => (position.get(call.get(a.id)!) ?? Infinity) - (position.get(call.get(b.id)!) ?? Infinity));
   for (const s of placed) {
     const parent = call.get(s.id)!;
     const known = replyOf.has(parent);
-    const message = known ? replyOf.get(parent) : null;
-    const key = known ? message?.id ?? 'start' : '';
-    let group = groups.get(key);
-    if (!group) {
-      const text = message ? firstLineOf(texts.get(message.id) ?? '') : '';
-      group = { key, text, time: message?.time, subagents: [], at: message ? position.get(message.id)! : known ? -1 : -Infinity };
-      groups.set(key, group);
-    }
-    group.subagents.push(s);
+    const message = known ? replyOf.get(parent) ?? null : null;
+    group(known ? message?.id ?? 'start' : '', message, known).subagents.push(s);
+  }
+  for (const [key, refs] of follow) {
+    const message = replyOf.get(key);
+    if (message?.id === key) group(key, message, true).refs.push(...refs);
   }
   return [...groups.values()].sort((a, b) => b.at - a.at).map(({ at: _at, ...g }) => g);
 }

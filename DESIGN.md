@@ -1264,7 +1264,8 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   A subagent another subagent spawned has its call in that subagent's transcript, so it joins its top-level ancestor's reply: in the chip's count and the sheet's list.
   Which calls belong to which reply comes from the Thread's outline (the server's list of every user message and subagent call it holds, `outline`, with the identity index `history_index` for what this browser loaded since), never from the window on screen or the live tail, so a long reply is counted whole and a subagent finds its reply before that reply's history page is loaded.
   A subagent may run more than once (`runs`: spawned, then resumed by the agent or by a follow-up); without runs, everything below reads as if it ran once.
-  Turn numbers never appear: a cross reference is a clock time with ↑ or ↓, or the user message quoted.
+  A turn's number is its user message's place among the Thread's, from 1; only the sheet's groups and the reference rows say it ("Turn 3", "from turn 1").
+  Any other cross reference is a clock time with ↑ or ↓, or the user message quoted.
 - **Subagent identity:** while its reply has at most five `task` calls (loaded or not), each subagent gets a tone by its call's order: `badge-violet`, `badge-pink`, `badge-cyan`, `badge-amber`, `badge-teal` (never red, green or blue, which are states).
   It shows as a 6px dot before the name; the name always stands beside it.
   A reply with more draws all of its subagents neutral.
@@ -1279,6 +1280,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   While the live rows show every subagent of a reply, that reply's chip waits: the live rows carry the same chip, and the reply's comes back when they leave.
 - **Subagent row:** one plain line, the same in the live rows and the sheet's list, read like a tool row: 28px (44px on a coarse pointer), `caption`: the state glyph (a still `accent` dot while it runs, a `success` check, an `error` cross, the idle glyph, a `faint` dash), the identity dot, the name (`body`, truncated, at most 45% of the row when a caption follows), the caption (what it is doing now while it runs, the first line of its result once done, its error in `error` when failed, "Stopped" when stopped and nothing else is known; `muted`, truncated, its tooltip the whole), how long it took and its tokens ("174K"), both `meta` `tabular-nums` `muted` in fixed slots so the columns line up; while it runs the time so far ticks in `accent`.
   On a phone the caption takes a second line under the name (`meta`).
+  A subagent that ran more than once carries "3 runs" before its time (`meta` `accent` on `accent-wash`, a pill that never truncates; "50+ runs" once the record dropped some), and its time and tokens are its totals.
   The name is the Utility model's 2–3 word name from its prompt ("Inventory bug review") when one came, then the agent's own name in mono `code-sm` `muted` (`inventory-bug-review`).
   Without that name (no Utility model, the day's limit spent, a late or invalid answer) the agent's own name is the name, alone.
   One spawned by another sits under it, indented 18px behind a `CornerDownRight`.
@@ -1286,9 +1288,16 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   The row is one button named "name, state: caption" ("Utility name (own name), state: caption" with a Utility name); a press opens that subagent in the Conversation pane (see Subagent view).
   Hovering opens nothing: there is no peek, no context menu and no "…": Stop and the way back to where it was spawned are on the subagent view's bar.
   In the live rows it carries its `task` call's id, so a `locate` lands on it.
+- **Subagent reference row:** a subagent stays in the reply that spawned it; a later reply in which it ran again points back to it instead of moving it.
+  It reads "↪ Follow-up to ‹dot name› · from turn 1" (`caption` `muted`, the name `link`, a 2px `hairline-strong` rule on its left), then the run's own time: the step dots and its clock ticking in `accent` while it runs.
+  Per-run tokens are not recorded, so it shows none.
+  A run belongs to the reply whose span (its user message's time to the next one's) holds the run's start; a run without a recorded start or before the first message points nowhere, and several runs in one reply make one reference row, the latest run's.
+  A press shows the original: in the sheet the list scrolls to its row in its first reply's group (lifting the reply filter or the group's cap that hides it), flashes it and focuses it; in the live rows it locates where the subagent was spawned, as the subagent view's ← does.
 - **Live subagents:** while a subagent runs, the live rows sit at the conversation's foot, after the last reply and before the working line, in both densities; only in the main transcript, and only while the window reaches the live tail.
   No card and no head line of their own: the reply's chip, then its plain rows in one column (42rem at most), running families first, then failed, done and stopped, each in spawn order; 50 rows, then "Show 50 more".
-  They hold the latest reply's subagents and any running subagent an earlier reply spawned (the chip then opens the whole list).
+  They hold the latest reply's subagents, its reference rows (first), and any running subagent an earlier reply spawned (the chip then opens the whole list).
+  A running subagent that was resumed shows as the reference row of its newest run, never as its row; one still on its first run keeps its row.
+  The chip counts the rows alone and is left out while there are only reference rows.
   Once none of them runs they go, and come back at their first page.
   A subagent failing is said once, politely (`role="status"`, "Subagent <name> failed.").
 - **Subagent sheet:** the index of the Thread's subagents: the strip's sheet (see Status line, Strip sheet) on its **Subagents** tab, one box of fixed place and size whichever chip or strip button opened it.
@@ -1299,7 +1308,8 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   A running subagent whose request waits on the owner reads "Needs permission: <tool>" or "Needs answer" in `warning` as its caption, instead of its step.
   - **List:** a search box (Utility name, own name or caption), status chips with counts of what the search finds (All, then Running in `accent`, Failed in `error`, Done, Stopped `muted`, only those with any or the one chosen; `aria-pressed`), and, when opened from a reply's chip, "From 11:18 AM ×" at the row's end (`tint-well`), which lifts the filter.
     ArrowDown from the search enters the rows and the arrows move between them; ↵ opens one.
-    Then the subagents grouped by the user message that started their reply, newest first: the message's first line quoted and truncated, its time, "48 · 2 failed · 15 running" (of what the search and filter find) and **Jump** (scrolls the conversation to that reply and closes the sheet), then their rows, families running first as in the live rows.
+    Then the subagents grouped by the user message that started their reply, newest first: its turn number ("Turn 3", `eyebrow` `muted`), the message's first line quoted and truncated, its time, "48 · 2 failed · 15 running" (of what the search and filter find) and **Jump** (scrolls the conversation to that reply and closes the sheet), then its reference rows, then their rows, families running first as in the live rows.
+    A reply whose only subagent work was a follow-up gets a group of its reference rows, without a count.
     The newest message shows all its rows; older ones show three, then "19 more · Show all 22" (caps defer, never hide).
     Subagents with no call, or whose call is not in the held history, group under "Earlier in the conversation"; "Show older subagents" reads the next page from the provider's record.
     The keycap foot reads "Esc close · ↑ ↓ move · ↵ open", and at its end "Names from each prompt, Utility model" while a listed name came from the Utility model.
