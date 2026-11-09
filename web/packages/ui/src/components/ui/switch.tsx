@@ -4,7 +4,7 @@ import { cn } from '../../lib/cn';
 /**
  * A 32×18 on/off switch on Base UI (DESIGN.md `switch`): an inset `faint` track (an inner
  * shadow, `accent` when on) under a floating `raised` thumb that slides on its transform
- * (`fast`; still under Motion: Match system). `sm` and `xs` corners rather than a pill. On a
+ * (the spring; still under Motion: Match system). `sm` and `xs` corners rather than a pill. On a
  * coarse pointer an invisible 44px hit area surrounds it, so the control itself never grows.
  */
 export function Switch({
@@ -35,7 +35,7 @@ export function Switch({
         className,
       )}
     >
-      <BaseSwitch.Thumb className="size-3.5 rounded-xs bg-raised shadow-[0_1px_2px_rgba(20,28,45,0.25),0_0_0_1px_rgba(20,28,45,0.06)] transition-transform duration-100 ease-app data-checked:translate-x-3.5" />
+      <BaseSwitch.Thumb className="size-3.5 rounded-xs bg-raised shadow-[0_1px_2px_rgba(20,28,45,0.25),0_0_0_1px_rgba(20,28,45,0.06)] transition-transform duration-(--spring-fast) ease-spring data-checked:translate-x-3.5" />
     </BaseSwitch.Root>
   );
 }

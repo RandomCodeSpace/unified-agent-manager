@@ -197,6 +197,14 @@ export function StateLabel({ status, unread = false, text = status, icon, title,
   const { icon: Icon, tone, rung } = STATUS_MARKS[status];
   const fresh = unread && status === 'Finished';
   const glyph = icon ?? (fresh ? <Eye aria-hidden="true" className="size-3.5 shrink-0 text-badge-teal" /> : <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', tone)} />);
+  // The glyph springs in when the state changes in place, never when the label first appears: lists and Thread switches stay immediate.
+  const shown = `${status}:${fresh}`;
+  const [prev, setPrev] = useState(shown);
+  const [swapped, setSwapped] = useState(false);
+  if (shown !== prev) {
+    setPrev(shown);
+    setSwapped(true);
+  }
   return (
     <span
       title={title}
@@ -209,7 +217,7 @@ export function StateLabel({ status, unread = false, text = status, icon, title,
         className,
       )}
     >
-      {glyph}
+      <span key={shown} className={cn('flex shrink-0', swapped && 'animate-glyph-in')}>{glyph}</span>
       {text}
     </span>
   );
