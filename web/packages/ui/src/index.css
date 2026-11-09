@@ -285,8 +285,9 @@
     --color-badge-violet: #b39cff;
     --color-badge-pink: #f08cc4;
     --elevation-raised: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.5);
-    --elevation-float: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 20px rgba(0, 0, 0, 0.6);
-    --elevation-modal: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 20px 48px rgba(0, 0, 0, 0.7);
+    /* What floats also takes a still 1px top highlight, so it reads as lit from above and not only outlined. */
+    --elevation-float: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 20px rgba(0, 0, 0, 0.6);
+    --elevation-modal: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.12), 0 20px 48px rgba(0, 0, 0, 0.7);
     --elevation-well: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
     --elevation-focus: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.5);
     --elevation-focus-float: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 10px 28px rgba(0, 0, 0, 0.6);
