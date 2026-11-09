@@ -743,6 +743,7 @@ Thread rows 46px on a 48px pitch, Settled rows 32px (44 on coarse pointers), she
 Every level is ink (`rgba(17, 17, 17, α)`) in two layers: a 1px ring at 5–6% that makes the edge read crisp without a drawn border, and one soft shadow.
 The tokens are `--shadow-*` in `index.css` (`shadow-raised`, `shadow-float`, `shadow-modal`, `shadow-well`, `shadow-focus`, `shadow-focus-float`), each pointing at an `--elevation-*` property with one value per scheme.
 Shadows do not show on black, so in Dark each level's ring is white (7–16%) over a black shadow.
+In Dark the Floating and Modal levels also carry a still 1px top highlight inside the ring (`inset 0 1px 0` white at 6%; owner, 2026-11-09, revamp mock 4), so a float reads as lit from above instead of only outlined; Light is unchanged and nothing animates it.
 
 | Level | Treatment | Shadow | Use |
 |---|---|---|---|
