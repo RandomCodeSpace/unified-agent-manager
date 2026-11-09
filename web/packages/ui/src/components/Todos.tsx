@@ -283,7 +283,7 @@ function TodoGraph({ rows, links, now, group }: Readonly<{ rows: readonly Todo[]
 }
 
 /** What a reader shows: the rows the meter draws, the counts, the facts line, the sections, the rows in the list's own order the rails need when some wait on others (`rows`), the row the work is at (`now`, the live list), the foot's words, each row's subagent name, and the strip's blocks a phone's sheet repeats on top (it covers the strip). The history reader swaps the head's `glyph` and its `right`-hand words, and stamps each row. With the Thread's kept records (`history`) and its `timings`, the rows group by the turn that added them. */
-export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; /** Where the graph puts a row: the turn tag and the subagent box. */ group?: (todo: Todo) => TodoGroup; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode; history?: TodoHistory | null; timings?: readonly TurnTiming[] }
+export interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; rows?: readonly Todo[]; /** Where the graph puts a row: the turn tag and the subagent box. */ group?: (todo: Todo) => TodoGroup; now?: string; foot: string; name: (todo: Todo) => string | undefined; blocks?: ReactNode; glyph?: LucideIcon; right?: ReactNode; stamp?: (todo: Todo) => ReactNode; history?: TodoHistory | null; timings?: readonly TurnTiming[]; /** The kept records are still being read: the list waits for them, so it opens grouped once instead of by stage first. */ pending?: boolean }
 
 /** One stage's section; Done shows its newest `DONE_ROWS` rows until "Show all". */
 function StageSection({ section, row }: Readonly<{ section: TodoSection; row: (todo: Todo) => ReactNode }>) {
@@ -476,8 +476,8 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
       </PanelHead>
       <div ref={body} className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {sheet && parts.blocks}
-        {rails && parts.rows && graph && <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />}
-        {turnList ? (
+        {!parts.pending && rails && parts.rows && graph && <TodoGraph rows={parts.rows} links={rails.links} now={parts.now} group={parts.group} />}
+        {parts.pending ? null : turnList ? (
           rails ? (
             <Rails rows={railRows!} links={rails.links} lanes={rails.lanes} focus={focus}>
               <div className="flex flex-col gap-3">{turnList}</div>

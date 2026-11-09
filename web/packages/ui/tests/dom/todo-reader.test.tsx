@@ -1,7 +1,9 @@
 // The todo reader in the app (DESIGN.md Strip sheet and todo reader): rows grouped by the turn that added them, a row's detail, the way to the turn.
 import { screen, waitFor, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { renderApp } from './render';
+
+afterEach(() => vi.restoreAllMocks());
 
 const openReader = async () => {
   const { user } = renderApp('#task=t8');
@@ -28,6 +30,24 @@ test('the live reader groups the rows by the turn that added them, newest first,
   expect(second.getByText('1 done · 1 open · 1 blocked')).toBeTruthy();
   expect(second.getByText('“Fixing the markup”')).toBeTruthy();
   expect(first.getAllByRole('listitem').map((li) => li.getAttribute('data-row'))).toEqual(['alt', 'summary', 'plan']);
+});
+
+test('the list waits for the kept records, so it opens by turn without showing the stages first', async () => {
+  const { user } = renderApp('#task=t8');
+  // The mock service installs fetch with the app; the history read waits on it.
+  const original = globalThis.fetch;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    if (String(input instanceof Request ? input.url : input).endsWith('/todos/history')) await held;
+    return original(input, init);
+  });
+  await user.click(await screen.findByRole('button', { name: /^Todo .*Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  expect(within(reader).queryAllByRole('region')).toHaveLength(0);
+  expect(within(reader).queryAllByRole('listitem')).toHaveLength(0);
+  release();
+  await waitFor(() => expect(within(reader).getAllByRole('region')[0].getAttribute('aria-label')).toMatch(/^Turn 4 · /));
 });
 
 test('a row opens its detail: what it waits on and unblocks, each opening its own row, its history and the subagent', async () => {

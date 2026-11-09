@@ -336,6 +336,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
     blocks: <Blocks items={todoBlocks(tally)} className="self-start" />,
     history: records,
     timings: session.turn_timings,
+    pending: !kept,
   } : null;
   const ledgerParts: ReaderParts = {
     todos: [],
