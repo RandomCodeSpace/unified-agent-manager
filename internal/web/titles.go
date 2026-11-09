@@ -39,17 +39,30 @@ func (m *Manager) titlerLocked(name string) agentapi.Titler {
 }
 
 // utilityModelLocked returns the provider's Utility model, the model UAM
-// uses for its own small AI jobs: the one Settings name, else the cheapest
-// priced model; "" when Settings opt the provider out or none is priced.
+// uses for its own small AI jobs: the one Settings name while it can be
+// used, else the cheapest priced model; "" when Settings opt the provider
+// out or none is usable or priced.
 func (m *Manager) utilityModelLocked(provider string) string {
-	switch model := m.settings.TitleModel[provider]; model {
-	case store.WebTitleModelNone:
+	switch model := m.settings.TitleModel[provider]; {
+	case model == store.WebTitleModelNone:
 		return ""
-	case "":
-		return m.cheapestModelLocked(provider)
-	default:
+	// Until the provider lists its models, the Settings choice is trusted: a
+	// Thread's job must not fall to its own model while the list loads.
+	case model != "" && (len(m.infos[provider].Models) == 0 || m.modelLocked(provider, model).ID != "") && m.configurationModelKeyPresentLocked(model):
 		return model
+	default:
+		return m.cheapestModelLocked(provider)
 	}
+}
+
+// threadUtilityModelLocked returns the Utility model for a job of s: the
+// provider's Utility model, else s's own model as the last option; "" when
+// Settings opt the provider out.
+func (m *Manager) threadUtilityModelLocked(s *webSession) string {
+	if m.settings.TitleModel[s.provider] == store.WebTitleModelNone {
+		return ""
+	}
+	return cmp.Or(m.utilityModelLocked(s.provider), s.model)
 }
 
 // cheapestModelLocked returns the provider's cheapest priced model, or ""
@@ -111,9 +124,9 @@ const maxTitleImages = 3
 // than a fallback, no user item and no submission the provider may have
 // taken, and while its provider titles Tasks.
 //
-// A Utility model set in Settings titles it; unset, the cheapest priced
-// model does, and only that one: a background job never spends the Task's
-// own model. A message
+// The Utility model set in Settings titles it while it can be used; else
+// the cheapest priced model does; the Thread's own model titles it only
+// when neither resolves. A message
 // with no text goes with its images to a model that accepts them; otherwise
 // the job waits for the first turn to end and titles from the agent's reply.
 func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload) *titlePlan {
@@ -121,20 +134,11 @@ func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload
 	if in.command != "" || text == "" && len(uploads) == 0 && len(in.files) == 0 || s.title != "" && !s.titleFallback || !s.untitledFirstLocked() || m.titlerLocked(s.provider) == nil {
 		return nil
 	}
-	var models []titleCandidate
-	switch setting := m.settings.TitleModel[s.provider]; setting {
-	case store.WebTitleModelNone:
-		return nil
-	case "":
-		if cheapest := m.cheapestModelLocked(s.provider); cheapest != "" {
-			models = append(models, titleCandidate{model: cheapest})
-		}
-	default:
-		models = append(models, titleCandidate{model: setting})
-	}
-	if len(models) == 0 {
+	model := m.threadUtilityModelLocked(s)
+	if model == "" {
 		return nil
 	}
+	models := []titleCandidate{{model: model}}
 	plan := &titlePlan{text: in.text, renames: s.renames}
 	if text != "" {
 		plan.models = models

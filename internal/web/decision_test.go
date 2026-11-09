@@ -350,3 +350,83 @@ func TestDecisionCancellationBeforeInference(t *testing.T) {
 		})
 	}
 }
+
+// The Utility model is the Settings model while it can be used, else the
+// cheapest priced model, else the Thread's own model for a Thread's job;
+// None opts out and a job with no Thread has nothing to run on.
+func TestUtilityModelResolution(t *testing.T) {
+	priced := []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6), {ID: "free"}, {ID: "byom/x"}}
+	thread := &webSession{provider: "fake", model: "own"}
+	for name, tc := range map[string]struct {
+		models  []agentapi.Model
+		setting string
+		hidden  []string
+		s       *webSession
+		want    string
+	}{
+		"settings usable":             {priced, "dear", nil, thread, "dear"},
+		"settings hidden stays":       {priced, "dear", []string{"dear"}, thread, "dear"},
+		"settings no longer listed":   {priced, "gone", nil, thread, "cheap"},
+		"settings custom without key": {priced, "byom/x", nil, thread, "cheap"},
+		"unset takes cheapest":        {priced, "", nil, thread, "cheap"},
+		"none priced, Thread job":     {selectionModels(), "", nil, thread, "own"},
+		"none priced, no Thread":      {selectionModels(), "", nil, nil, ""},
+		"settings unusable, Thread":   {selectionModels(), "gone", nil, thread, "own"},
+		"none opts out":               {priced, "none", nil, thread, ""},
+		"list not loaded yet":         {nil, "dear", nil, thread, "dear"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, _ := assistManager(t, openTestStore(t), newAssistProvider())
+			m.mu.Lock()
+			info := m.infos["fake"]
+			info.Models = tc.models
+			m.infos["fake"] = info
+			m.settings.TitleModel = map[string]string{"fake": tc.setting}
+			m.settings.HiddenModels = map[string][]string{"fake": tc.hidden}
+			m.settings.CustomModels = []CustomModel{{Name: "byom", ModelID: "x", APIKeyEnv: "UAM_TEST_UNSET_KEY"}}
+			_, model, err := m.startUtilityLocked(tc.s)
+			m.mu.Unlock()
+			if err == nil {
+				m.titles.Done()
+			}
+			if tc.want == "" {
+				if !errors.Is(err, errUtilityUnavailable) {
+					t.Fatalf("model = %+v, err = %v; want unavailable", model, err)
+				}
+				return
+			}
+			if err != nil || model != (UtilityModel{Provider: "fake", Model: tc.want}) {
+				t.Fatalf("model = %+v, err = %v; want %s", model, err, tc.want)
+			}
+		})
+	}
+}
+
+// With no Utility model and no priced model, a Thread's decision runs on
+// the Thread's own model; one with no Thread is not run.
+func TestDecisionFallsBackToTheThreadModel(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": ""}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Decide(context.Background(), decisionFixture()); !errors.Is(err, errUtilityUnavailable) {
+		t.Fatalf("decision with no Thread = %v", err)
+	}
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
+	input := decisionFixture()
+	input.TaskID = sum.ID
+	if got, err := m.Decide(context.Background(), input); err != nil || !got.Abstained {
+		t.Fatalf("Thread decision = %+v, %v", got, err)
+	}
+	if reqs := prov.UtilityRequests(); len(reqs) != 1 || reqs[0].Model != "b" {
+		t.Fatalf("Utility requests = %+v", reqs)
+	}
+	if c := m.UtilityLog(0, 10).Calls[0]; c.Model != "b" || c.TaskID != sum.ID {
+		t.Fatalf("logged call = %+v", c)
+	}
+}

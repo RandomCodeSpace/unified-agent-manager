@@ -738,3 +738,21 @@ func TestCheapestModelTitlesWithoutAUtilityModel(t *testing.T) {
 		t.Fatalf("past the limit: %d new requests, %d calls", n-before, len(m.UtilityLog(0, utilityPage).Calls))
 	}
 }
+
+// With no Utility model and no priced model, the Thread's own model titles
+// it.
+func TestThreadModelTitlesWithoutAPricedModel(t *testing.T) {
+	m, prov, project := mediaTitleManager(t, []agentapi.Model{{ID: "a"}, {ID: "b"}})
+	prov.SetTitleHook(func(_ context.Context, req agentapi.TitleRequest) (string, error) {
+		return "Title by " + req.Model, nil
+	})
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustSubmit(t, m, sum.ID, "Fix the login form", mustUUID(t), ModeSend, SubmissionAccepted)
+	waitUntil(t, "the Thread model's title", func() bool { return summaryOf(t, m, sum.ID).Title == "Title by b" })
+	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Model != "b" || c.TaskID != sum.ID {
+		t.Fatalf("logged call = %+v", c)
+	}
+}

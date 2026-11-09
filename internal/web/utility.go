@@ -93,9 +93,18 @@ func (m *Manager) utilityProviderLocked() (runner agentapi.UtilityRunner, model 
 
 // startUtilityLocked claims the Utility provider for one job, counted in
 // titles so Shutdown waits for it to delete its conversation; the caller
-// calls titles.Done when it ends. The caller holds mu.
-func (m *Manager) startUtilityLocked() (agentapi.UtilityRunner, UtilityModel, error) {
+// calls titles.Done when it ends. A job of Thread s, when s is not nil,
+// runs on s's own model when no provider has a Utility model. The caller
+// holds mu.
+func (m *Manager) startUtilityLocked(s *webSession) (agentapi.UtilityRunner, UtilityModel, error) {
 	runner, model, ok := m.utilityProviderLocked()
+	if !ok && s != nil {
+		var isRunner bool
+		runner, isRunner = m.providers[s.provider].(agentapi.UtilityRunner)
+		info := m.infos[s.provider]
+		model = UtilityModel{Provider: s.provider, Model: m.threadUtilityModelLocked(s)}
+		ok = isRunner && info.Available && info.Capabilities.HostTools && model.Model != ""
+	}
 	switch {
 	case m.closed:
 		return nil, model, errShuttingDown

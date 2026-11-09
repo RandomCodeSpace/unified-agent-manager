@@ -114,7 +114,8 @@ func parseDecision(reply string, options []DecisionOption) (DecisionResult, erro
 	return DecisionResult{}, ErrInvalidDecision
 }
 
-// Decide makes one tool-free call to the configured Utility model, with no
+// Decide makes one tool-free call to the Utility model, or to the Thread's
+// own model when TaskID names one and no Utility model resolves, with no
 // retry or fallback model. It shares Utility slots, budget and logging,
 // and bounds queueing plus inference to assistTimeout (or the caller's deadline).
 // Provider cleanup may extend beyond that deadline. Empty evidence is an input
@@ -128,9 +129,10 @@ func (m *Manager) Decide(ctx context.Context, input DecisionRequest) (DecisionRe
 		return DecisionResult{}, err
 	}
 	m.mu.Lock()
-	runner, model, err := m.startUtilityLocked()
+	s := m.sessions[input.TaskID]
+	runner, model, err := m.startUtilityLocked(s)
 	call := UtilityCall{Provider: model.Provider, Model: model.Model}
-	if s := m.sessions[input.TaskID]; s != nil {
+	if s != nil {
 		call.TaskID, call.ProjectID = s.id, s.projectID
 	}
 	m.mu.Unlock()
