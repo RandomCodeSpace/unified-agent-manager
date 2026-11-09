@@ -244,6 +244,8 @@ test('a reply that opens with **Result:** sets its gist apart; the same label la
 });
 
 test('a # title with three or more ## sections gets a section index; a click brings the section into view', async () => {
+  // A reply taller than the window: a section starts out of view, so the index earns its place.
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('md') ? 2000 : 0; });
   const scrolled: string[] = [];
   vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) { scrolled.push(this.textContent ?? ''); });
   const text = '**Result:** shipped.\n\n# Release `v0.21.12`\n\n## Changes\n\nA.\n\n```md\n## Not a section\n```\n\n## Verification\n\nB.\n\n## Open items\n\nC.';
@@ -266,6 +268,8 @@ test('a # title with three or more ## sections gets a section index; a click bri
 });
 
 test('three or more ## sections without a # title get the index at the reply top; a repeated name finds its own heading', async () => {
+  // A reply taller than the window: a section starts out of view, so the index earns its place.
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('md') ? 2000 : 0; });
   const scrolled: HTMLElement[] = [];
   vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) { scrolled.push(this); });
   const { container } = render(<Markdown text={'Intro.\n\n## Checks\n\nA.\n\n## Notes\n\nB.\n\n## Checks\n\nC.'} />);
@@ -279,6 +283,23 @@ test('three or more ## sections without a # title get the index at the reply top
   expect(scrolled.at(-1)).toBe(headings[2]);
   await userEvent.click(buttons[0]);
   expect(scrolled.at(-1)).toBe(headings[0]);
+  vi.restoreAllMocks();
+});
+
+test('a reply that fits its pane gets no index and its title stays a plain heading; an index click flashes the heading', async () => {
+  vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+  let height = 300;
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('md') ? height : 0; });
+  const text = '# Diff\n\n## What changed\n\nA.\n\n## Why it matters\n\nB.\n\n## Next step\n\nC.';
+  const short = render(<Markdown text={text} />);
+  expect(screen.queryByRole('list', { name: 'Sections' })).toBeNull();
+  expect(short.container.querySelector('.md-outline')).toBeNull();
+  expect(short.container.querySelector('h1')?.textContent).toBe('Diff');
+  short.unmount();
+  height = 2000;
+  const { container } = render(<Markdown text={text} />);
+  await userEvent.click(within(screen.getByRole('list', { name: 'Sections' })).getByRole('button', { name: /Why it matters/ }));
+  expect([...container.querySelectorAll('h2.animate-flash')].map((h) => h.textContent)).toEqual(['Why it matters']);
   vi.restoreAllMocks();
 });
 
