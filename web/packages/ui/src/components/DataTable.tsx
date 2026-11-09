@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, Filter, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { barColumns, cellStatus, magnitude, statusColumns, type CellStatus } from '../lib/table-visual';
+import { barColumns, cellStatus, magnitude, rowsBelow, statusColumns, type CellStatus } from '../lib/table-visual';
 import { VisualBoundary } from './VisualBoundary';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -91,12 +91,32 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
   }, [rows, sort, active]);
   const start = Math.min(page, Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1)) * PAGE_SIZE;
   const paginated = visible.length > PAGE_SIZE;
+  const shown = visible.slice(start, start + PAGE_SIZE);
   const order = (next: typeof sort) => { setSort(next); setPage(0); setMenu(null); };
+  const region = useRef<HTMLElement>(null);
+  const [more, setMore] = useState(0);
+  // Count the rows past the region's visible bottom on scroll and on any resize of the region or its table (sort, filter, page, fonts).
+  useEffect(() => {
+    const element = region.current;
+    if (!element) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const bottom = element.getBoundingClientRect().top + element.clientTop + element.clientHeight;
+      setMore(rowsBelow(element, bottom, [...element.querySelectorAll(':scope > table > tbody > tr')].map(row => row.getBoundingClientRect().top)));
+    };
+    const schedule = () => { frame ||= requestAnimationFrame(measure); };
+    measure();
+    element.addEventListener('scroll', schedule, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    for (const target of [element, element.firstElementChild]) if (target) observer?.observe(target);
+    return () => { cancelAnimationFrame(frame); element.removeEventListener('scroll', schedule); observer?.disconnect(); };
+  }, []);
   return (
     <div ref={named} className="my-2.5 min-w-0 max-w-full">
       {/* Long cells wrap; a table wider than the message (its headings do not break inside a word) scrolls sideways in this box, never the page. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled scroll region accepts keyboard scrolling. */}
-      <section aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal] pointer-coarse:max-h-none">
+      <section aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} ref={region} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal] pointer-coarse:max-h-none">
         <table className="data-table w-full">
           <thead><tr onKeyDown={roving.onKeyDown}>{columns.map((column, index) => {
             const selected = sort?.column === index;
@@ -125,7 +145,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
               </th>
             );
           })}</tr></thead>
-          <tbody>{visible.slice(start, start + PAGE_SIZE).map(row => <tr key={row.id}>{columns.map((column, index) => {
+          <tbody>{shown.map(row => <tr key={row.id}>{columns.map((column, index) => {
             const Cell = rowHeaders && index === 0 ? 'th' : 'td';
             const status = statuses?.[index] ? cellStatus(row.values[index]) : null;
             if (status) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={alignment(column.align)}><StatusLabel status={status} text={String(row.values[index])} /></Cell>;
@@ -143,6 +163,15 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           })}</tr>)}</tbody>
         </table>
         {visible.length === 0 && <p className="px-2 py-4 text-center text-caption text-muted">No matching rows</p>}
+        {/* Pinned over the last visible row (its negative margin adds no scroll height); it stays put when a wide table scrolls sideways. */}
+        {more > 0 && <button type="button" className="sticky bottom-0 left-0 -mt-7.5 flex h-7.5 w-full items-center justify-center gap-1.5 border-t border-hairline-strong bg-surface text-caption" onClick={() => {
+          // Focus stays in the table when the bar goes away at the end.
+          region.current?.focus({ preventScroll: true });
+          region.current?.scrollTo({ top: region.current.scrollHeight });
+        }}>
+          <span><span className="sr-only">Scroll to the end: </span><span className="text-ink">{more} more {more === 1 ? 'row' : 'rows'}</span><span className="text-muted"> · {shown.length} total</span></span>
+          <ArrowDown aria-hidden="true" className="size-3.5 text-accent" />
+        </button>}
       </section>
       {(active.length > 0 || paginated) && <div className="flex items-center gap-2 pt-1 text-caption text-muted">
         <span role="status">{paginated ? `${start + 1}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length} rows` : `${visible.length} of ${rows.length} rows`}{paginated && active.length > 0 ? ` (${rows.length} total)` : ''}</span>
