@@ -1154,7 +1154,12 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   Then the GitLab items the turn touched, one chip each with no "GitLab" label (the kind's glyph, the reference in 600, then its state as blocks: the state word in its tone, an open merge request's pipeline as a glyph and "pipeline" in the pipeline's tone, "stale" while GitLab rate limits reads), each opening the item in the GitLab side panel (a modified click opens GitLab).
   Then the turn's asides chip.
   Every outcome is a button or a link with a 24px row and a taller hit area under a coarse pointer.
-  **Receipts** under a reply stay silent unless the turn's own record proves one of its claims wrong (a command it says passed that exited non-zero, a test run it says passed that failed): a claim the record does not show (a result restated from an earlier turn, a file not touched this turn) is not a contradiction and draws nothing.
+  **Receipts** under a reply stamp in red only the claims the turn's own record proves wrong (a command it says passed that exited non-zero, a test run it says passed that failed); red stamps stay the only loud signal.
+  A claim the record does not show (a result restated from an earlier turn, a file not touched this turn) is not a contradiction.
+  Such claims share one closed `caption` `muted` line under the red stamps, or alone: a `faint` dashed circle, "1 claim has no record in this turn" or "3 claims have no record in this turn", and a chevron, as a disclosure button.
+  Open, it lists each claim (mono for paths and commands), then " · " and the record's note in `muted`; a row with a call to show (a file viewed, not changed) locates it.
+  The line counts only a path the reply says it changed, a command the reply says it ran and a test claim; a command the reply only names is not counted.
+  It shows only once every stamp has settled (no test output still being read, the subagents' work judged), so it never flickers in and out, and it says "no record in this turn", never "false" or "not verified".
 - **GitLab in prose (owner, 2026-10-18):** where the Thread's GitLab project is known, a link to one of its items is the item's name with GitLab's mark before it (Tabler `brand-gitlab`, on Lucide's grid and stroke), never a bare address: the reply's own words, or for a bare address "MR !72", "Pipeline #2283401", "Issue #14", "Job #5", "Epic &3".
   "MR !72", "merge request !72", a bare "!72" and "pipeline #123" in the text link the same way; code and links to other projects stay as written.
   A name right before a link to the same item that reads as its address or its name ("MR !36: <its address>") is left out, so the item shows once (owner, 2026-10-26).

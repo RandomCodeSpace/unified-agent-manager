@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bySubagents, claimsOf, receipts, settle, lastTurnContradicted } from '../src/lib/receipts.ts';
+import { bySubagents, claimsOf, noRecord, receipts, settle, lastTurnContradicted } from '../src/lib/receipts.ts';
 
 const at = (s) => `2026-10-09T10:00:${String(s).padStart(2, '0')}Z`;
 const call = (id, name, input, extra = {}, s = 1) => ({ id, kind: 'tool', time: at(s), tool: { name, status: 'completed', input: JSON.stringify(input), ...extra } });
@@ -146,6 +146,13 @@ test('a test run whose output the page has not loaded waits for it, then settles
   assert.equal(receipts('tests pass', [{ ...bash('b1', 'npx vitest run', 0, { output: 'part' }), clipped: true }])[0].verdict, 'pending');
   assert.equal(receipts('tests pass', [bash('b1', 'go test ./...', 0, { has_output: true, tests: { passed: 4, failed: 0 } })])[0].verdict, 'verified');
   assert.equal(receipts('tests pass', [bash('b1', 'go test ./...', 1, { has_output: true })])[0].verdict, 'contradicted');
+});
+test('the no-record list holds an edited path, a command the reply says it ran and a test claim, never a command it only names', () => {
+  const stamps = receipts('I ran `npm test` and updated `inventory.py`; `ls` shows 5 entries. All tests pass.', []);
+  assert.deepEqual(stamps.filter((s) => s.kind === 'command').map((s) => [s.claim, s.ran]), [['npm test', true], ['ls', false]]);
+  assert.deepEqual(noRecord(stamps).map((s) => s.claim), ['npm test', 'inventory.py', 'All tests pass']);
+  // What the record shows, or contradicts, is not listed.
+  assert.deepEqual(noRecord(receipts('Ran `npm test`.', [bash('b1', 'npm test', 1)])), []);
 });
 
 test('subagent calls and running calls are not evidence', () => {

@@ -41,10 +41,33 @@ describe('receipts', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Show 3 more' }));
     expect(stampTexts()).toHaveLength(15);
     expect(screen.queryByRole('button', { name: /more$/ })).toBeNull();
-    // Every run passed, or none ran this turn (an earlier turn's work, restated): nothing at all.
+    // Every run passed: nothing at all. None ran this turn (an earlier turn's work, restated): no red stamp, only the quiet line.
     rerender(<Receipts stamps={receipts(text, runs(0))} />);
     expect(container.innerHTML).toBe('');
     rerender(<Receipts stamps={receipts(text, [])} />);
-    expect(container.innerHTML).toBe('');
+    expect(screen.queryByRole('list', { name: 'Receipts' })).toBeNull();
+    expect(screen.getByRole('button', { name: '15 claims have no record in this turn' })).toBeTruthy();
+  });
+
+  test('claims the record does not show sit behind one closed line under the red stamps, which stay as they were', async () => {
+    const text = 'I ran `make build` and `npm test` and updated `inventory.py`; `ls` lists 5 entries.';
+    render(<Receipts stamps={receipts(text, [bash('b1', 'make build', { exit_code: 2, status: 'failed' })])} />);
+    expect(stampTexts()).toEqual(['make buildexit 2']);
+    const line = screen.getByRole('button', { name: '2 claims have no record in this turn' });
+    expect(line.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('list', { name: 'Claims with no record in this turn' })).toBeNull();
+    await userEvent.click(line);
+    expect(line.getAttribute('aria-expanded')).toBe('true');
+    const rows = within(screen.getByRole('list', { name: 'Claims with no record in this turn' })).getAllByRole('listitem').map((li) => li.textContent);
+    // `ls` is only named, not said to have run: not listed.
+    expect(rows).toEqual(['npm test· not run this turn', 'inventory.py· not changed this turn']);
+  });
+
+  test('the line waits until no stamp is pending', async () => {
+    const held = bash('b2', 'go test ./... 2>&1 | tail -3', { input: undefined, display_arg: 'go test ./... 2>&1 | tail -3', has_output: true }, { compact: { has_text: false, has_reasoning: false } });
+    bodies.set('b2', bash('b2', 'go test ./... 2>&1 | tail -3', { output: 'ok  \tpkg\t0.2s' }));
+    render(<Receipts stamps={receipts('Updated `inventory.py`; all tests pass.', [held])} />);
+    expect(screen.queryByRole('button', { name: /no record/ })).toBeNull();
+    expect(await screen.findByRole('button', { name: '1 claim has no record in this turn' })).toBeTruthy();
   });
 });

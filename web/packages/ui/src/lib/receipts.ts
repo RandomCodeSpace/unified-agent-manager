@@ -25,6 +25,8 @@ export interface Stamp {
   by?: { agentId: string; name: string };
   /** Unseen in the main agent's calls: the turn's `task` calls whose subagents' calls `bySubagents` judges it against. */
   subagentCalls?: string[];
+  /** A command claim's: the reply says it ran the command, rather than naming or suggesting it. */
+  ran?: boolean;
 }
 
 /** Stamps shown at first; the rest wait behind "Show N more" rather than crowd the reply. */
@@ -316,12 +318,15 @@ export function receipts(text: string, items: readonly Item[]): Stamp[] {
   const claims = claimsOf(text);
   if (!claims.length) return [];
   const record = recordOf(items);
-  return claims.map(({ kind, claim }) => {
-    const stamp = judge(kind, claim, record);
+  return claims.map(({ kind, claim, ran }) => {
+    const stamp = ran === undefined ? judge(kind, claim, record) : { ...judge(kind, claim, record), ran };
     // Unseen in the main agent's calls: its subagents' may show it, unless its own test run already answers (unclearly).
     return record.subagents.length && stamp.verdict === 'unseen' && !(kind === 'tests' && stamp.itemId) ? { ...stamp, subagentCalls: record.subagents } : stamp;
   });
 }
+
+/** The unseen claims the reply says it made: a changed path, a command it says it ran, a test claim; a command it only names is not one. */
+export const noRecord = (stamps: readonly Stamp[]): Stamp[] => stamps.filter((s) => s.verdict === 'unseen' && (s.kind !== 'command' || s.ran));
 
 /** One claim against a record. */
 function judge(kind: Stamp['kind'], claim: string, record: Record): Stamp {
