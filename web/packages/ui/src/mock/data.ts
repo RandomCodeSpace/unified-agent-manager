@@ -1363,6 +1363,11 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         items,
         subagents,
         agentItems,
+        turn_timings: [
+          { id: 'tt-d1', user_item_id: 'd1', started_at: ago(60), ended_at: ago(50), state: 'completed', input_tokens: 52_000, output_tokens: 2_400, generation_ms: 48_000 },
+          { id: 'tt-d4', user_item_id: 'd4', started_at: ago(40), ended_at: ago(30), state: 'completed', input_tokens: 61_000, output_tokens: 2_900, generation_ms: 52_000 },
+          { id: 'tt-d6', user_item_id: 'd6', started_at: ago(10), ended_at: ago(8), state: 'completed', input_tokens: 64_000, output_tokens: 1_100, generation_ms: 21_000 },
+        ],
       });
     })(),
   );

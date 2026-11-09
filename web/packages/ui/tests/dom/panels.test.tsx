@@ -265,8 +265,8 @@ describe('subagents', () => {
     const index = await openSubagentIndex(user);
     const group = within(index.getByRole('region', { name: /^“Audit templates\/post\.html for accessibility problems/ }));
     expect(group.getByRole('button', { name: /^Jump to the subagents of/ })).toBeTruthy();
-    // Its turn number stands before the message, for the reference rows' "from turn N".
-    expect(group.getByText('Turn 1')).toBeTruthy();
+    // Its turn number stands before the message, for the reference rows' "from turn N": the todo reader's number for the same turn.
+    expect(group.getByText('Turn 4')).toBeTruthy();
     // Chips only for the states some subagent is in: none stopped here.
     expect(index.getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Running 3', 'Failed 1', 'Done 1']);
     await user.click(index.getByRole('button', { name: 'Failed 1' }));

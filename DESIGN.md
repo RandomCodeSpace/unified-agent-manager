@@ -1264,7 +1264,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   A subagent another subagent spawned has its call in that subagent's transcript, so it joins its top-level ancestor's reply: in the chip's count and the sheet's list.
   Which calls belong to which reply comes from the Thread's outline (the server's list of every user message and subagent call it holds, `outline`, with the identity index `history_index` for what this browser loaded since), never from the window on screen or the live tail, so a long reply is counted whole and a subagent finds its reply before that reply's history page is loaded.
   A subagent may run more than once (`runs`: spawned, then resumed by the agent or by a follow-up); without runs, everything below reads as if it ran once.
-  A turn's number is its user message's place among the Thread's, from 1; only the sheet's groups and the reference rows say it ("Turn 3", "from turn 1").
+  A turn's number is its place among the Thread's turn timings, from 1, as the todo reader numbers turns; only the sheet's groups, the reference rows and the todo reader say it ("Turn 3", "from turn 1").
   Any other cross reference is a clock time with ↑ or ↓, or the user message quoted.
 - **Subagent identity:** while its reply has at most five `task` calls (loaded or not), each subagent gets a tone by its call's order: `badge-violet`, `badge-pink`, `badge-cyan`, `badge-amber`, `badge-teal` (never red, green or blue, which are states).
   It shows as a 6px dot before the name; the name always stands beside it.

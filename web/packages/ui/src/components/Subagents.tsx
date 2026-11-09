@@ -274,7 +274,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const messages = useKept(held.filter((item) => item.kind === 'user'));
   const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id))));
   const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
-  const replies = useMemo(() => replyIndex(outline, session.subagents), [outline, session.subagents]);
+  const replies = useMemo(() => replyIndex(outline, session.subagents, session.turn_timings), [outline, session.subagents, session.turn_timings]);
   const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);
   const { id, provider, workdir, interactions, stage, state } = session;
   const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);

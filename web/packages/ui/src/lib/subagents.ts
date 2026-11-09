@@ -1,4 +1,4 @@
-import type { Item, OutlineItem, Subagent, SubagentStatus } from '../api';
+import type { Item, OutlineItem, Subagent, SubagentStatus, TurnTiming } from '../api';
 import { duration, toolKind } from './transcript.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
@@ -126,7 +126,7 @@ export interface Replies {
   ofCall: ReadonlyMap<string, Reply>;
   /** Each subagent's identity tone: its call's place in its reply, while that reply has at most five calls. */
   tones: ReadonlyMap<string, IdentityTone>;
-  /** Each reply's turn number by its key: its user message's place among the Thread's, from 1; none for "start". */
+  /** Each reply's turn number by its key: its turn's place in the Thread's turn timings, from 1, as the todo reader numbers turns; none without a timing. */
   turns: ReadonlyMap<string, number>;
 }
 
@@ -135,19 +135,18 @@ export interface Replies {
  * there is none), with the `task` calls and loaded subagents of each. Membership comes from here,
  * never from the window on screen or the live tail, so a long reply is counted whole.
  */
-export function replyIndex(index: readonly OutlineItem[], subagents: readonly Subagent[]): Replies {
+export function replyIndex(index: readonly OutlineItem[], subagents: readonly Subagent[], timings: readonly TurnTiming[] = []): Replies {
   const byParent = parentMap(subagents);
   const list: Reply[] = [];
   const byKey = new Map<string, Reply>();
   const ofCall = new Map<string, Reply>();
   const tones = new Map<string, IdentityTone>();
-  const turns = new Map<string, number>();
+  const turns = new Map(timings.flatMap((t, i) => (t.user_item_id ? [[t.user_item_id, i + 1] as const] : [])));
   let reply: Reply | undefined;
   const open = (key: string, time?: string) => {
     reply = { key, time, calls: [], subagents: [] };
     list.push(reply);
     byKey.set(key, reply);
-    if (key !== 'start') turns.set(key, turns.size + 1);
   };
   for (const item of index) {
     if (item.kind === 'user' && !item.delivery) {

@@ -208,7 +208,10 @@ test('a later run belongs to the reply whose span holds its start; the spawn run
     agent('a0', 'c0', 'completed', { runs: [run(0, 'spawn'), run(12, 'user')] }),
     agent('a3', 'c3', 'completed', { runs: [run(21, 'spawn')] }),
   ];
-  const replies = replyIndex(index, subagents);
+  // Turns are numbered as the todo reader numbers them, by the turn timings: a turn no message started still counts.
+  const timings = [{ id: 't1', user_item_id: 'u1' }, { id: 'tx', user_item_id: '' }, { id: 't2', user_item_id: 'u2' }, { id: 't3', user_item_id: 'u3' }];
+  assert.deepEqual([...replyIndex(index, subagents, timings).turns].filter(([k]) => k), [['u1', 1], ['u2', 3], ['u3', 4]]);
+  const replies = replyIndex(index, subagents, timings.filter((t) => t.user_item_id));
   assert.deepEqual([...replies.turns], [['u1', 1], ['u2', 2], ['u3', 3]]);
   const follow = followUps(replies);
   assert.deepEqual([...follow].map(([key, refs]) => [key, refs.map((f) => [f.subagent.id, f.turn, f.run.started_at, f.run.status])]), [
@@ -225,7 +228,8 @@ test('a resumed running subagent stays a reference in the live rows, never a mov
   const resumed = agent('back', 'c1', 'running', { runs: [{ started_at: at(1), ended_at: at(3), status: 'completed', trigger: 'spawn' }, { started_at: at(22), status: 'running', trigger: 'user' }] });
   const between = agent('mid', 'c2', 'running', { runs: [{ started_at: at(2), ended_at: at(4), status: 'completed', trigger: 'spawn' }, { started_at: at(11), status: 'running', trigger: 'agent' }] });
   const subagents = [resumed, between, agent('long', 'c0', 'running'), agent('new', 'c3', 'completed')];
-  const replies = replyIndex(index, subagents);
+  const timings = ['u1', 'u2', 'u3'].map((u) => ({ id: `t-${u}`, user_item_id: u }));
+  const replies = replyIndex(index, subagents, timings);
   const set = liveSet(replies.list.at(-1), subagents, undefined, followUps(replies));
   assert.deepEqual(set.map((x) => [x.subagent.id, x.earlier, x.ref?.turn, x.ref?.run.started_at]), [
     ['new', false, undefined, undefined],
