@@ -1165,6 +1165,8 @@ export interface Subagent {
   /** The subagent that spawned this one, when not the main agent: `parent_tool_call_id` is then in that subagent's transcript. */
   parent_agent_id?: string;
   name: string;
+  /** The Utility model's 2–3 word name from its prompt; `name` stays the agent's own. */
+  label?: string;
   description?: string;
   /** The kind of agent the provider spawned (Copilot's agent name: explore, task, general-purpose); absent when it reports none. */
   type?: string;

@@ -11,7 +11,7 @@ import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
 import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
-import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
+import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -484,7 +484,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
   const caption = useScope((d) => rowSummary(d.summaries, s, d.task.interactions)) ?? '';
   if (!actions) return null;
-  const name = s.name || 'Subagent';
+  const name = subagentName(s);
   const text = caption || (s.status === 'cancelled' ? 'Stopped' : '');
   const parentId = s.parent_tool_call_id;
   return (
@@ -494,7 +494,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         type="button"
         data-subagent-toggle=""
         data-index-row=""
-        aria-label={`${name}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
+        aria-label={`${name}${s.label && s.name ? ` (${s.name})` : ''}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
         aria-haspopup={onOpen ? 'dialog' : undefined}
         aria-expanded={onOpen ? open : undefined}
         className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-tint-selected')}
@@ -505,7 +505,10 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
           <SubagentMark status={s.status} />
         </span>
         {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
-        <span className={cn('min-w-0 truncate', tone && BADGE_TEXT[tone], text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
+        <span className={cn('min-w-0 truncate', tone && BADGE_TEXT[tone], text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>
+          {name}
+          {s.label && s.name && <span translate="no" className="ml-1.5 font-mono text-code-sm text-muted">{s.name}</span>}
+        </span>
         {text && (
           <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', s.status === 'failed' ? 'text-error' : needsYou(text) ? 'text-warning' : 'text-muted')} title={onOpen ? undefined : text}>
             {text}
@@ -550,7 +553,7 @@ export function LiveSubagents() {
   if (failedNow !== failedSeen) {
     const fresh = set.find((x) => x.subagent.status === 'failed' && !failedSeen.split(',').includes(x.subagent.id));
     setFailedSeen(failedNow);
-    if (fresh) setAnnounced(`Subagent ${fresh.subagent.name || 'Subagent'} failed.`);
+    if (fresh) setAnnounced(`Subagent ${subagentName(fresh.subagent)} failed.`);
   }
   // The set left: it comes back at its first page.
   if (!set.length && limit !== PAGE_ROWS) setLimit(PAGE_ROWS);
@@ -755,6 +758,7 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
           <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
           <span className="flex items-center gap-1.5"><Key>↑</Key><Key>↓</Key>move</span>
           <span className="flex items-center gap-1.5"><Key>↵</Key>open</span>
+          {shown.some((g) => g.matched.some((s) => s.label)) && <span className="ml-auto">Names from each prompt, Utility model</span>}
         </PanelFoot>
       )}
     </>
@@ -791,7 +795,7 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
     if (!sheet) heading.current?.focus();
   }, [sheet]);
   if (!actions || !task) return null;
-  const name = s.name || 'Subagent';
+  const name = subagentName(s);
   const result = (reads && item?.tool?.output) || s.result_summary || (finished ? caption : '');
   let outcome: ReactNode;
   if (s.status === 'failed') outcome = <p className="text-ui text-error">{s.error || 'Failed.'}</p>;

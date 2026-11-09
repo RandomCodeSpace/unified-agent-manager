@@ -1562,6 +1562,9 @@ type Subagent struct {
 	// Result is the start of the output its parent tool call recorded, when
 	// a read record has it but not that tool call's item.
 	Result string `json:"-"`
+	// Prompt is the start of what its spawning call asked it, on the start
+	// event only, when the provider reports it.
+	Prompt string `json:"-"`
 }
 
 // SubagentRun is one period of work of a subagent. Status is the status

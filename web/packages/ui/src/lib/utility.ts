@@ -12,6 +12,7 @@ const PURPOSES: Record<string, string> = {
   'configuration-draft': 'Configuration draft',
   'mr-description': 'Merge request description',
   'memory-notes': 'Memory notes',
+  'subagent-label': 'Subagent name',
   'decision-suggest-reply': 'Suggested replies',
   // Made only by older versions; their calls stay in the 30-day log.
   'suggest-replies': 'Suggested replies',

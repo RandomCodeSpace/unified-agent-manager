@@ -314,7 +314,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
       </Tip>
     </Appear>
   );
-  const names = new Map(session.subagents.map((s) => [s.id, s.name]));
+  const names = new Map(session.subagents.map((s) => [s.id, s.label || s.name]));
   // The ledger: every row the turns kept, the live list (this page's, when known) as its newest state.
   const records = kept?.data ? { ...kept.data, live: known ?? kept.data.live } : null;
   const ledger = records ? todoLedger(records, session.turn_timings) : [];

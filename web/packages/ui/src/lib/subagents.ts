@@ -288,10 +288,13 @@ export function families(subagents: readonly Subagent[], ranked = true): Family[
 /** The tokens the subagents used, as far as they are known. */
 export const totalTokens = (subagents: readonly Subagent[]) => subagents.reduce((n, s) => n + (s.tokens ?? 0), 0);
 
-/** Whether a subagent's name or one-line summary holds `query`, case-insensitively; an empty query holds everything. */
+/** What a subagent is called: its Utility name, else its own. */
+export const subagentName = (s: Subagent) => s.label || s.name || 'Subagent';
+
+/** Whether a subagent's name, Utility name or one-line summary holds `query`, case-insensitively; an empty query holds everything. */
 export function matches(s: Subagent, summary: string, query: string): boolean {
   const q = query.trim().toLowerCase();
-  return !q || s.name.toLowerCase().includes(q) || summary.toLowerCase().includes(q);
+  return !q || s.name.toLowerCase().includes(q) || !!s.label?.toLowerCase().includes(q) || summary.toLowerCase().includes(q);
 }
 
 export type IndexFilter = 'all' | 'running' | 'failed' | 'done' | 'stopped';

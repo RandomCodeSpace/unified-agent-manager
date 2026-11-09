@@ -867,6 +867,7 @@ func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
 	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
 	in.ParentAgentID = clampText(in.ParentAgentID, maxLabelText)
 	in.Result = boundedResultSummary(in.Result)
+	in.Prompt = "" // read once by its naming job, never kept
 	in.Runs = agentapi.CapSubagentRuns(in.Runs)
 	// A retry is news only while it runs.
 	if in.Retry != nil && in.Status == agentapi.SubagentRunning {

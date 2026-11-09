@@ -1584,7 +1584,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Subagents**: when the agent delegates work to a subagent, the reply that
   started it gets a chip on its turn line ("3 subagents · 1.2M tokens · 2
   done · 1 running") that opens the reply's subagents as one-line rows: state,
-  name, duration and tokens, a failed one with its error under it. A subagent
+  name, duration and tokens, a failed one with its error under it. A new
+  subagent gets a 2–3 word name from its prompt by one Utility call
+  (`subagent-label` in the Utility log; the first 2 KB of the prompt, kept in
+  memory only); the row shows it with the agent's own name after it, saved
+  with the Thread (`subagent_labels`). Without a Utility model, past the
+  day's limit, or with an answer that is not 1–3 words of letters, digits,
+  hyphens and apostrophes in sentence case (28 characters at most), the
+  agent's own name stays. A subagent
   that another subagent spawned sits indented under it. While subagents run,
   the same rows sit at the foot of the conversation with the total tokens.
   Tokens are what Copilot reports for the subagent, shown as K, M or B; while it runs the count grows, and when it ends Copilot's
