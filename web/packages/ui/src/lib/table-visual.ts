@@ -100,3 +100,9 @@ export function statusColumns(columns: readonly { name: string }[], rows: readon
     return cells.length >= 2 && cells.every(v => cellStatus(v) !== null);
   });
 }
+
+/** Rows below a scroll region's visible bottom (`tops` and `bottom` in the same coordinates); 0 unless it still has more to scroll down to. */
+export function rowsBelow(region: Readonly<{ scrollTop: number; scrollHeight: number; clientHeight: number }>, bottom: number, tops: readonly number[]): number {
+  if (region.scrollHeight - region.clientHeight - region.scrollTop <= 1) return 0;
+  return tops.filter(top => top >= bottom).length;
+}

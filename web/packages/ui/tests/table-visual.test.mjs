@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { barColumns, cellStatus, magnitude, numeric, statusColumns } from '../src/lib/table-visual.ts';
+import { barColumns, cellStatus, magnitude, numeric, rowsBelow, statusColumns } from '../src/lib/table-visual.ts';
 
 // A table as MarkdownTable builds it: column names and each row's cell text.
 const table = (names, ...rows) => [names.map(name => ({ name })), rows.map(values => ({ values }))];
@@ -80,4 +80,13 @@ test('status columns: every non-empty cell, two or more, is a status word or mar
   assert.deepEqual(statusColumns(...table(['Breaking?'], ['yes'], ['no'])), [false]);
   assert.deepEqual(statusColumns(...table(['Result'], ['pass'])), [false]);
   assert.deepEqual(['pass', ' FAILED ', '✓', '⚠️', 'skipped', 'maybe'].map(cellStatus), ['ok', 'fail', 'ok', 'warn', 'skip', null]);
+});
+
+test('rowsBelow counts rows starting at or past the visible bottom, and none at the end or without overflow', () => {
+  const tops = [0, 30, 60, 90, 120];
+  assert.equal(rowsBelow({ scrollTop: 0, scrollHeight: 150, clientHeight: 90 }, 90, tops), 2);
+  assert.equal(rowsBelow({ scrollTop: 0, scrollHeight: 150, clientHeight: 89 }, 89, tops), 2);
+  // Scrolled to within a pixel of the end, or not overflowing at all.
+  assert.equal(rowsBelow({ scrollTop: 59.5, scrollHeight: 150, clientHeight: 90 }, 90, tops.map(top => top - 59.5)), 0);
+  assert.equal(rowsBelow({ scrollTop: 0, scrollHeight: 90, clientHeight: 90 }, 90, tops), 0);
 });

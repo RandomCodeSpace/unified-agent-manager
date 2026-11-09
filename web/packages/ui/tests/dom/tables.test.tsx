@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { Markdown } from '../../src/components/common';
@@ -145,4 +145,46 @@ test('a table is named by the heading above it, and its header controls are one 
   await user.tab();
   // The next stop is the other table's region, not this table's second control.
   expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Table: Tool, Tokens' }));
+});
+
+test('an overflowing table pins a bar naming the rows below its visible bottom, which scrolls to the end', async () => {
+  const user = userEvent.setup();
+  // happy-dom has no layout: the region shows 300px of a 360px table whose rows are 30px apart, below a 30px header.
+  let scrollTop = 0;
+  const geometry: Record<string, PropertyDescriptor> = {
+    scrollHeight: { get() { return this.tagName === 'SECTION' ? 360 : 0; } },
+    clientHeight: { get() { return this.tagName === 'SECTION' ? 300 : 0; } },
+    scrollTop: { get() { return this.tagName === 'SECTION' ? scrollTop : 0; } },
+  };
+  const saved = Object.keys(geometry).map(key => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)] as const);
+  for (const [key, descriptor] of Object.entries(geometry)) Object.defineProperty(HTMLElement.prototype, key, { configurable: true, ...descriptor });
+  const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const index = this.tagName === 'TR' && this.parentElement?.tagName === 'TBODY' ? [...this.parentElement.children].indexOf(this) : -1;
+    return { top: (index + 1) * 30 - scrollTop } as DOMRect;
+  });
+  const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo').mockImplementation(() => {});
+  try {
+    const rows = Array.from({ length: 11 }, (_, index) => `| row ${index + 1} | ${index} |`).join('\n');
+    const { unmount } = render(<Markdown text={`| Name | Count |\n| --- | ---: |\n${rows}`} />);
+    const region = screen.getByRole('region', { name: 'Table: Name, Count' });
+    // Rows 10 and 11 start at 300px and 330px: at or below the visible bottom.
+    const bar = within(region).getByRole('button', { name: 'Scroll to the end: 2 more rows · 11 total' });
+    expect(bar.textContent).toBe('Scroll to the end: 2 more rows · 11 total');
+    await user.click(bar);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 360 });
+    expect(document.activeElement).toBe(region);
+    scrollTop = 60;
+    region.dispatchEvent(new Event('scroll'));
+    await waitFor(() => expect(within(region).queryByRole('button', { name: /^Scroll to the end/ })).toBeNull());
+    unmount();
+    // A table that fits has no bar.
+    scrollTop = 0;
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return this.tagName === 'SECTION' ? 300 : 0; } });
+    render(<Markdown text={`| Name | Count |\n| --- | ---: |\n${rows}`} />);
+    expect(screen.queryByRole('button', { name: /^Scroll to the end/ })).toBeNull();
+  } finally {
+    rect.mockRestore();
+    scrollTo.mockRestore();
+    for (const [key, descriptor] of saved) if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
+  }
 });

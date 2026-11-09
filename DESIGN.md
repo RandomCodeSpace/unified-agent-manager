@@ -1250,6 +1250,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   Sorting is numeric when every value reads as a number, including a sign, a leading currency symbol, thousands separators and a trailing percent; otherwise text sorts in natural order.
   A table's region is named by the heading or bold line directly above it, else by its first three column names.
   Counts show only while filtering or paging, and on a coarse pointer a table has no height cap of its own, so there is no nested vertical scroller.
+  A table taller than its region pins a `surface` bar with a `hairline-strong` top edge over its last visible row ("4 more rows · 40 total" and an `accent` down arrow) while rows start below the visible bottom; it is a button that scrolls to the end, hidden at the end or when nothing overflows.
   Completed tables render at most 100 rows per page and operate on the complete local dataset; streaming tables stay plain until complete.
   Rendering starts from deterministic layouts with animation off, while zooming and panning change only the view.
 - **Subagents:** they live in the conversation, prominent only while in use; there is no subagent panel: a chip and plain rows in the conversation, and one sheet off the strip.
