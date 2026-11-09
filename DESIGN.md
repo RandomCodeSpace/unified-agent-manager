@@ -18,9 +18,9 @@ colors:
   hairline-strong: "#c7c7c7"
   primary: "#111111"
   on-primary: "#ffffff"
-  accent: "#2f5fd0"
+  accent: "#0265c0"
   on-accent: "#ffffff"
-  accent-wash: "#e3eafb"
+  accent-wash: "#e2eefe"
   focus: "#111111"
   selection: "#d9d9d9"
   attention: "#ad3a0b"
@@ -50,7 +50,7 @@ colors:
   badge-green: "#21763e"
   badge-teal: "#107469"
   badge-cyan: "#0d6f88"
-  badge-blue: "#3a5ec4"
+  badge-blue: "#0265c0"
   badge-violet: "#6b4fc2"
   badge-pink: "#ad3479"
 
@@ -564,9 +564,11 @@ The ViewTransition was removed later; Thread switches render at once.
 ### Theme
 Two schemes on one token set.
 **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, a blue accent, colour on labels only (state and identity).
-**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, a light blue accent (#86a6ff), no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
+**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, a light blue accent (#50a0ff), no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
 Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them).
 Semantic status colors retain their meaning in both.
+The blue is azure (owner, 2026-11-09, revamp mock 5 B: OKLCH hue 254), one value for `accent`, `link` and `badge-blue`.
+In Dark the signal tones (`success` #70e093, `warning` #f0bb3b, `attention` #fe8f5b, `error` #ff847d) share one chroma (OKLCH 0.15) inside lightness 0.75–0.82, so none glares and none sits back; a new dark tone keeps both.
 The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`).
 It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas.
 Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
@@ -611,10 +613,10 @@ Everywhere else separation is spacing, a surface step or an elevation level.
 | Role | Value | Use |
 |---|---|---|
 | `primary` / `on-primary` | #111111 / #ffffff | Primary button and tooltip fill. There is no coloured primary button. |
-| `accent` / `on-accent` | #2f5fd0 / #ffffff (dark #86a6ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
-| `link` | #3a5ec4 (dark #86a6ff) | Web links in prose (owner, 2026-10-18: links and file references must read apart from the text and from each other) |
+| `accent` / `on-accent` | #0265c0 / #ffffff (dark #50a0ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
+| `link` | #0265c0 (dark #50a0ff) | Web links in prose, the same blue as `accent` and `badge-blue` (owner, 2026-11-09: one blue; owner, 2026-10-18: links and file references must read apart from the text and from each other) |
 | `file-link` | #0f6c62 (dark #4fd1bf) | A resolved file reference in prose: the file chip's name and glyph, on its `tint-well` chip |
-| `accent-wash` | #e3eafb (dark #1a2340) | Locate flash in the transcript, the Settled shelf header's flash |
+| `accent-wash` | #e2eefe (dark #0f2239) | Locate flash in the transcript, the Settled shelf header's flash |
 | `attention` / `attention-wash` | #ad3a0b / #fbe5d6 | "Needs you": permission and question states, the Needs permission / Needs answer row words, the chip on a pending card, the yolo mode icon |
 | `success` / `success-wash` | #137739 / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
 | `warning` / `warning-wash` | #8f5d00 / #fbefc6 | Interrupted state, reconnecting banner, context meter at ≥90% |
@@ -640,7 +642,7 @@ They appear in sidebar Thread metadata (where the Project name beside the badge 
 | `badge-green` | #21763e | 5.64 | 5.17 | 5.40 |
 | `badge-teal` | #107469 | 5.64 | 5.17 | 5.40 |
 | `badge-cyan` | #0d6f88 | 5.76 | 5.28 | 5.52 |
-| `badge-blue` | #3a5ec4 | 5.87 | 5.38 | 5.62 |
+| `badge-blue` | #0265c0 | 5.79 | 5.31 | 5.55 |
 | `badge-violet` | #6b4fc2 | 5.96 | 5.47 | 5.71 |
 | `badge-pink` | #ad3479 | 5.93 | 5.43 | 5.68 |
 
