@@ -1142,12 +1142,15 @@ const OutlineContext = createContext<Outline | null>(null);
 
 const hastText = (node: HastNode | HastNode['children'][number]): string => node.type === 'text' ? node.value : 'children' in node ? node.children.map(hastText).join('') : '';
 
-/** An outline's numbered section index; a click brings the section into view (a repeated name finds its own heading). */
+/** An outline's numbered section index; a click brings the section into view and flashes its heading (a repeated name finds its own heading). */
 function OutlineIndex({ sections }: Readonly<{ sections: string[] }>) {
   const show = (target: HTMLElement, i: number) => {
     const nth = sections.slice(0, i).filter((s) => s === sections[i]).length;
-    const named = [...(target.closest('.md')?.querySelectorAll('h2') ?? [])].filter((h) => h.textContent?.trim() === sections[i]);
-    named[nth]?.scrollIntoView({ block: 'start' });
+    const heading = [...(target.closest('.md')?.querySelectorAll('h2') ?? [])].filter((h) => h.textContent?.trim() === sections[i])[nth];
+    if (!heading) return;
+    heading.scrollIntoView({ block: 'start' });
+    heading.classList.add('animate-flash');
+    window.setTimeout(() => heading.classList.remove('animate-flash'), 1400);
   };
   return (
     <ol aria-label="Sections">
@@ -1268,6 +1271,14 @@ const mdComponents: Components = {
   },
 };
 
+/** The nearest ancestor that scrolls vertically: the pane a reply is read in. */
+function scrollPane(element: HTMLElement): HTMLElement | null {
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) return parent;
+  }
+  return null;
+}
+
 /**
  * Markdown for untrusted provider text: no raw HTML by default, safe links only, images by path served
  * from the Task's directory (`SessionContext`) and no image from another origin. Completed
@@ -1283,10 +1294,34 @@ export function Markdown({ text, streaming = false, breaks = false, tally = true
   const fileDemand = useFileDemand(text);
   // The outline needs the whole reply (a streamed one renders in blocks), and waits for it to finish like other rich blocks.
   const outline = useMemo(() => streaming ? null : outlineOf(text), [text, streaming]);
+  const root = useRef<HTMLDivElement | null>(null);
+  const attach = useCallback((element: HTMLDivElement | null) => {
+    root.current = element;
+    return fileDemand(element);
+  }, [fileDemand]);
+  // The index earns its space only when a section starts out of view: the reply, less the index, is taller than its pane.
+  const [tall, setTall] = useState(false);
+  useEffect(() => {
+    const element = root.current;
+    if (!outline || !element) return;
+    const pane = scrollPane(element);
+    const measure = () => {
+      const box = element.querySelector<HTMLElement>('.md-outline');
+      const index = box ? box.offsetHeight - (box.querySelector('h1')?.offsetHeight ?? 0) : 0;
+      setTall(element.offsetHeight - index > (pane?.clientHeight ?? window.innerHeight));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    if (pane) observer.observe(pane);
+    return () => observer.disconnect();
+  }, [outline]);
+  const shown = tall ? outline : null;
   return (
-    <OutlineContext.Provider value={outline}>
-      <div ref={fileDemand} className={cn('md', className)} onPointerOver={echoOver} onPointerLeave={echoLeave}>
-        {outline && outline.title === null && <div className="md-outline"><OutlineIndex sections={outline.sections} /></div>}
+    <OutlineContext.Provider value={shown}>
+      <div ref={attach} className={cn('md', className)} onPointerOver={echoOver} onPointerLeave={echoLeave}>
+        {shown && shown.title === null && <div className="md-outline"><OutlineIndex sections={shown.sections} /></div>}
         {blocks.map((block, i) => (
           <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} tally={tally} rehypePlugins={rehypePlugins} />
         ))}
