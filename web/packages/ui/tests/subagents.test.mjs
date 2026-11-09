@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, subagentName, totalTokens } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, followUps, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, subagentName, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -196,4 +196,62 @@ test('a reply\'s span names a subagent only as its whole exact name, unique in t
   assert.equal(namedSubagent('28329f', all, true), undefined);
   assert.equal(namedSubagent('d1', all, true), twins[0]);
   assert.equal(namedSubagent('Reviewer', all, true), undefined);
+});
+
+test('a later run belongs to the reply whose span holds its start; the spawn run, an unrecorded start and one before the first message point nowhere', () => {
+  const index = [call('c0', 0), user('u1', 1), call('c1', 2), user('u2', 10), user('u3', 20), call('c3', 21)];
+  const run = (m, trigger = 'agent', status = 'completed') => ({ started_at: m === undefined ? undefined : at(m), status, trigger });
+  const subagents = [
+    // Spawned in turn 1, run again in turn 1 (stays), twice in turn 3 (one reference, the latest run), once without a start.
+    agent('a1', 'c1', 'running', { runs: [run(2, 'spawn'), run(5), run(21, 'user'), run(undefined), run(25, 'agent', 'running')] }),
+    // Before the first message: its later run points to turn 2 without a turn of its own.
+    agent('a0', 'c0', 'completed', { runs: [run(0, 'spawn'), run(12, 'user')] }),
+    agent('a3', 'c3', 'completed', { runs: [run(21, 'spawn')] }),
+  ];
+  // Turns are numbered as the todo reader numbers them, by the turn timings: a turn no message started still counts.
+  const timings = [{ id: 't1', user_item_id: 'u1' }, { id: 'tx', user_item_id: '' }, { id: 't2', user_item_id: 'u2' }, { id: 't3', user_item_id: 'u3' }];
+  assert.deepEqual([...replyIndex(index, subagents, timings).turns].filter(([k]) => k), [['u1', 1], ['u2', 3], ['u3', 4]]);
+  const replies = replyIndex(index, subagents, timings.filter((t) => t.user_item_id));
+  assert.deepEqual([...replies.turns], [['u1', 1], ['u2', 2], ['u3', 3]]);
+  const follow = followUps(replies);
+  assert.deepEqual([...follow].map(([key, refs]) => [key, refs.map((f) => [f.subagent.id, f.turn, f.run.started_at, f.run.status])]), [
+    ['u2', [['a0', undefined, at(12), 'completed']]],
+    ['u3', [['a1', 1, at(25), 'running']]],
+  ]);
+  // A run before the first message, with only a reply after it, still lands nowhere.
+  const early = [agent('b', 'c1', 'completed', { runs: [run(2, 'spawn'), run(0)] })];
+  assert.equal(followUps(replyIndex(index, early)).size, 0);
+});
+
+test('a resumed running subagent stays a reference in the live rows, never a moved row; one still running from its spawn keeps its row', () => {
+  const index = [user('u1', 0), call('c1', 1), call('c2', 2), call('c0', 3), user('u2', 10), user('u3', 20), call('c3', 21)];
+  const resumed = agent('back', 'c1', 'running', { runs: [{ started_at: at(1), ended_at: at(3), status: 'completed', trigger: 'spawn' }, { started_at: at(22), status: 'running', trigger: 'user' }] });
+  const between = agent('mid', 'c2', 'running', { runs: [{ started_at: at(2), ended_at: at(4), status: 'completed', trigger: 'spawn' }, { started_at: at(11), status: 'running', trigger: 'agent' }] });
+  const subagents = [resumed, between, agent('long', 'c0', 'running'), agent('new', 'c3', 'completed')];
+  const timings = ['u1', 'u2', 'u3'].map((u) => ({ id: `t-${u}`, user_item_id: u }));
+  const replies = replyIndex(index, subagents, timings);
+  const set = liveSet(replies.list.at(-1), subagents, undefined, followUps(replies));
+  assert.deepEqual(set.map((x) => [x.subagent.id, x.earlier, x.ref?.turn, x.ref?.run.started_at]), [
+    ['new', false, undefined, undefined],
+    ['back', true, 1, at(22)],
+    ['mid', true, 1, at(11)],
+    ['long', true, undefined, undefined],
+  ]);
+  // Its run in the latest reply ended: still that reply's reference while another works.
+  const done = { ...resumed, status: 'completed', runs: [resumed.runs[0], { ...resumed.runs[1], ended_at: at(23), status: 'completed' }] };
+  const after = [done, agent('new', 'c3', 'running')];
+  const r2 = replyIndex(index, after);
+  assert.deepEqual(liveSet(r2.list.at(-1), after, undefined, followUps(r2)).map((x) => [x.subagent.id, !!x.ref]), [['new', false], ['back', true]]);
+});
+
+test('a reply\'s follow-ups join its index group, and open one for a reply that spawned none', () => {
+  const index = [user('u1', 0), call('c1', 1), user('u2', 10), user('u3', 20), call('c3', 21)];
+  const items = [user('u2', 10, 'Ask the reviewer again.')];
+  const subagents = [agent('a1', 'c1', 'completed', { runs: [{ started_at: at(1), status: 'completed', trigger: 'spawn' }, { started_at: at(11), status: 'completed', trigger: 'user' }, { started_at: at(22), status: 'completed', trigger: 'agent' }] }), agent('a3', 'c3')];
+  const groups = indexGroups(index, items, subagents, followUps(replyIndex(index, subagents)));
+  assert.deepEqual(groups.map((g) => [g.key, g.text, g.subagents.map((s) => s.id), g.refs.map((f) => f.subagent.id)]), [
+    ['u3', 'Message u3', ['a3'], ['a1']],
+    ['u2', 'Ask the reviewer again.', [], ['a1']],
+    ['u1', 'Message u1', ['a1'], []],
+  ]);
 });

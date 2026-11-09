@@ -11,7 +11,7 @@ import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
 import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
-import { IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
+import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, countParts, countSubagents, families, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -178,6 +178,8 @@ interface ScopeData {
   /** The user messages held, for the list's quotes. */
   messages: readonly Item[];
   replies: Replies;
+  /** Each reply's follow-ups (lib/subagents `followUps`). */
+  follow: ReadonlyMap<string, FollowUp[]>;
   /** The live set; empty while nothing is at work. */
   live: LiveSubagent[];
   liveIds: ReadonlySet<string>;
@@ -272,16 +274,18 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const messages = useKept(held.filter((item) => item.kind === 'user'));
   const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id))));
   const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
-  const replies = useMemo(() => replyIndex(outline, session.subagents), [outline, session.subagents]);
+  const replies = useMemo(() => replyIndex(outline, session.subagents, session.turn_timings), [outline, session.subagents, session.turn_timings]);
   const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);
   const { id, provider, workdir, interactions, stage, state } = session;
   const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);
-  const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents), [replies, session.subagents]);
-  const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
+  const follow = useMemo(() => followUps(replies), [replies]);
+  const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, undefined, follow), [replies, session.subagents, follow]);
+  // A reference row is not the subagent's row: its reply's chip stays.
+  const liveIds = useMemo(() => new Set(live.flatMap((x) => (x.ref ? [] : [x.subagent.id]))), [live]);
   const confirming = stopConfirm.target !== null;
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, live, liveIds, stops, sheet, confirming, seek],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, liveIds, stops, sheet, confirming, seek }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, liveIds, stops, sheet, confirming, seek],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
@@ -418,8 +422,8 @@ function useNow(on: boolean): number {
   return now;
 }
 
-/** How long it took, or, while it runs, how long it has been running (in `accent`). */
-export function Took({ subagent: s, className }: Readonly<{ subagent: Subagent; className?: string }>) {
+/** How long it (a subagent or one of its runs) took, or, while it runs, how long it has been running (in `accent`). */
+export function Took({ subagent: s, className }: Readonly<{ subagent: Pick<Subagent, 'status' | 'started_at' | 'ended_at'>; className?: string }>) {
   const running = s.status === 'running';
   const now = useNow(running && !!s.started_at);
   let text = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
@@ -487,14 +491,15 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const name = subagentName(s);
   const text = caption || (s.status === 'cancelled' ? 'Stopped' : '');
   const parentId = s.parent_tool_call_id;
+  const runs = (s.runs?.length ?? 0) > 1 ? `${s.runs!.length}${s.runs!.length >= RUNS_KEPT ? '+' : ''} runs` : '';
   return (
     // `--depth` indents the row 18px a level; its notes start under its name, 24px further in.
-    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className="flex flex-col" style={{ '--depth': depth } as CSSProperties}>
+    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row={s.id} className="flex flex-col" style={{ '--depth': depth } as CSSProperties}>
       <button
         type="button"
         data-subagent-toggle=""
         data-index-row=""
-        aria-label={`${name}${s.label && s.name ? ` (${s.name})` : ''}, ${STATUS_WORD[s.status]}${text ? `: ${text}` : ''}`}
+        aria-label={`${name}${s.label && s.name ? ` (${s.name})` : ''}, ${STATUS_WORD[s.status]}${runs ? `, ${runs}` : ''}${text ? `: ${text}` : ''}`}
         aria-haspopup={onOpen ? 'dialog' : undefined}
         aria-expanded={onOpen ? open : undefined}
         className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-tint-selected')}
@@ -514,6 +519,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
             {text}
           </span>
         )}
+        {runs && <span className="flex-none rounded-full bg-accent-wash px-1.5 text-meta font-medium whitespace-nowrap text-accent">{runs}</span>}
         <Took subagent={s} className="w-14 text-right" />
         <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? <Num value={s.tokens} /> : ''}</span>
       </button>
@@ -526,6 +532,34 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
     </div>
   );
 });
+
+/**
+ * A later reply's pointer to a subagent an earlier one spawned that ran again in it (DESIGN.md
+ * subagent reference row): "↪ Follow-up to ‹name› · from turn 1", the run's state while it runs
+ * and the run's own time. The subagent stays in its first reply; a press shows its row there (`onShow`).
+ */
+function FollowUpRow({ f, onShow }: Readonly<{ f: FollowUp; onShow: (f: FollowUp) => void }>) {
+  const name = subagentName(f.subagent);
+  const from = f.turn ? `from turn ${f.turn}` : '';
+  return (
+    <button
+      type="button"
+      data-index-row=""
+      aria-label={`Follow-up to ${name}${from ? `, ${from}` : ''}, ${STATUS_WORD[f.run.status]}: show where it started`}
+      className="ml-1 flex min-h-7 w-[calc(100%-var(--spacing))] items-center gap-1.5 rounded-r-sm border-l-2 border-hairline-strong py-0.5 pr-1.5 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 pointer-coarse:min-h-11"
+      onClick={() => onShow(f)}
+    >
+      <span aria-hidden="true" className="shrink-0">↪</span>
+      <span className="shrink-0">Follow-up to</span>
+      <SubagentTag id={f.subagent.id} name={name} still className="font-medium text-link" />
+      {from && <span className="shrink-0 whitespace-nowrap">· {from}</span>}
+      <span className="flex-1" />
+      {f.run.status === 'running' && <StepDots />}
+      <Took subagent={f.run} className="w-14 text-right" />
+      <span aria-hidden="true" className="w-10 shrink-0" />
+    </button>
+  );
+}
 
 /** Whether two messages say the same once spacing is ignored. */
 function sameText(a: string, b: string): boolean {
@@ -544,8 +578,9 @@ const NO_LIVE: LiveSubagent[] = [];
 export function LiveSubagents() {
   const set = useScope((d) => d.live) ?? NO_LIVE;
   const replies = useScope((d) => d.replies);
+  const actions = useActions();
   const [limit, setLimit] = useState(PAGE_ROWS);
-  const rows = useMemo(() => families(set.map((x) => x.subagent)).flatMap((f) => f.rows), [set]);
+  const rows = useMemo(() => families(set.flatMap((x) => (x.ref ? [] : [x.subagent]))).flatMap((f) => f.rows), [set]);
   // Failures said aloud: the ones seen failed already, and the last sentence.
   const failedNow = set.filter((x) => x.subagent.status === 'failed').map((x) => x.subagent.id).join(',');
   const [failedSeen, setFailedSeen] = useState(failedNow);
@@ -563,17 +598,25 @@ export function LiveSubagents() {
     </p>
   );
   if (!set.length || !replies) return status;
-  const subagents = set.map((x) => x.subagent);
+  const subagents = set.flatMap((x) => (x.ref ? [] : [x.subagent]));
+  const refs = set.flatMap((x) => (x.ref ? [x.ref] : []));
   // Only the latest reply's: the chip opens its list; with earlier ones running too, the whole list.
-  const latest = set.some((x) => x.earlier) ? undefined : replies.list.at(-1);
+  const latest = set.some((x) => x.earlier && !x.ref) ? undefined : replies.list.at(-1);
   return (
     <>
       {status}
       <section aria-label="Subagents at work" className="flex flex-col gap-1">
-        <div className="flex px-2">
-          <SubagentChip subagents={subagents} calls={latest?.calls.length ?? subagents.length} tones={replies.tones} reply={latest?.key} />
-        </div>
+        {subagents.length > 0 && (
+          <div className="flex px-2">
+            <SubagentChip subagents={subagents} calls={latest?.calls.length ?? subagents.length} tones={replies.tones} reply={latest?.key} />
+          </div>
+        )}
         <ul className="flex max-w-2xl flex-col">
+          {refs.map((f) => (
+            <li key={`ref-${f.subagent.id}`}>
+              <FollowUpRow f={f} onShow={(x) => x.subagent.parent_tool_call_id && actions?.locate(x.subagent.parent_tool_call_id)} />
+            </li>
+          ))}
           {rows.slice(0, limit).map(({ subagent, depth }) => (
             <li key={subagent.id}>
               <SubagentRow subagent={subagent} tone={replies.tones.get(subagent.id)} depth={depth} anchor />
@@ -628,6 +671,8 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const messages = useScope((d) => d.messages);
   const summaries = useScope((d) => d.summaries);
   const tones = useScope((d) => d.replies.tones);
+  const turns = useScope((d) => d.replies.turns);
+  const follow = useScope((d) => d.follow);
   const interactions = useScope((d) => d.task.interactions);
   const confirming = useScope((d) => d.confirming);
   const [query, setQuery] = useState('');
@@ -642,8 +687,8 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
     const sheet = phone ? null : row.closest<HTMLElement>('[data-popup]');
     setPeek({ id: s.id, row, sheet: sheet && sheet.getBoundingClientRect().left >= READER_ROOM ? sheet : null, open: true });
   }, [phone]);
-  const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
-  if (!taskId || !subagents || !summaries || !tones || !actions || !interactions) return null;
+  const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents, follow) : []), [outline, messages, subagents, follow]);
+  if (!taskId || !subagents || !summaries || !tones || !turns || !actions || !interactions) return null;
   const peeked = peek && subagents.find((s) => s.id === peek.id);
   const inline = !!(peek && peeked && !peek.sheet);
   // Back from the reader in the list's place: the list returns and its row takes the focus.
@@ -654,8 +699,9 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   };
   const pool = reply === null ? groups : groups.filter((g) => g.key === reply);
   const all = pool.flatMap((g) => g.subagents);
+  const hit = (s: Subagent) => !query || matches(s, rowSummary(summaries, s, interactions), query);
   // The chips and the groups count what the search finds.
-  const found = new Set(query ? all.filter((s) => matches(s, rowSummary(summaries, s, interactions), query)) : all);
+  const found = new Set(all.filter(hit));
   const c = countSubagents([...found]);
   const counts: Record<IndexFilter, number> = { all: c.total, running: c.running, failed: c.failed, done: c.done, stopped: c.stopped };
   const shown = pool
@@ -663,11 +709,28 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
       const matched = g.subagents.filter((s) => inFilter(s, filter) && found.has(s));
       // Each under the one that spawned it, running first, as in the conversation.
       const rows = families(matched).flatMap((f) => f.rows);
-      return rows.length ? [{ ...g, matched, rows }] : [];
+      const refs = g.refs.filter((f) => inFilter(f.subagent, filter) && hit(f.subagent));
+      return rows.length || refs.length ? [{ ...g, matched, rows, refs }] : [];
     })
     // Caps defer: the newest message shown (after the search and filters) shows all its rows, older ones three until "Show all".
     .map((g, at) => ({ ...g, cap: reply !== null || at === 0 || g.rows.length <= GROUP_ROWS + 1 || expanded.has(g.key) ? g.rows.length : GROUP_ROWS }));
   const from = reply === null ? undefined : groups.find((g) => g.key === reply);
+  // A reference row shows the subagent's own row in its first reply's group, lifting what hides it there, and flashes it.
+  const showOriginal = (f: FollowUp) => {
+    const home = groups.find((g) => g.subagents.includes(f.subagent));
+    if (!home) return;
+    flushSync(() => {
+      if (reply !== null && reply !== home.key) setReply(null);
+      setExpanded((e) => new Set([...e, home.key]));
+    });
+    const view = list.current;
+    const row = view?.querySelector<HTMLElement>(`[data-subagent-row="${CSS.escape(f.subagent.id)}"]`);
+    if (!view || !row) return;
+    view.scrollTo({ top: view.scrollTop + row.getBoundingClientRect().top - view.getBoundingClientRect().top - view.clientHeight / 4 });
+    row.classList.add('animate-flash');
+    window.setTimeout(() => row.classList.remove('animate-flash'), 1400);
+    row.querySelector<HTMLElement>('[data-subagent-toggle]')?.focus({ preventScroll: true });
+  };
   // ArrowDown from the search box enters the rows; the arrows move between them, ArrowUp from the first goes back.
   const rowButtons = () => [...(list.current?.querySelectorAll<HTMLElement>('[data-index-row]') ?? [])];
   const onArrow = (e: ReactKeyboardEvent) => {
@@ -716,13 +779,16 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
             return (
               <section key={g.key} aria-label={title} className="flex flex-col py-0.5">
                 <div className="flex h-8 items-center gap-2 px-2">
+                  {turns.has(g.key) && <span className="shrink-0 text-eyebrow whitespace-nowrap text-muted uppercase">Turn {turns.get(g.key)}</span>}
                   <span className="min-w-0 truncate text-ui text-ink" title={g.text || undefined}>{title}</span>
                   {g.time && <span className="shrink-0 text-meta tabular-nums text-muted">{clock(g.time)}</span>}
                   <span className="flex-1" />
                   {/* "48 · 2 failed · 15 running": what still needs a look, so the message keeps the room. */}
-                  <span className="shrink-0 text-meta whitespace-nowrap tabular-nums text-muted">
-                    <Counts c={{ ...countSubagents(g.matched), done: 0, stopped: 0 }} lead={`${g.matched.length}`} />
-                  </span>
+                  {g.matched.length > 0 && (
+                    <span className="shrink-0 text-meta whitespace-nowrap tabular-nums text-muted">
+                      <Counts c={{ ...countSubagents(g.matched), done: 0, stopped: 0 }} lead={`${g.matched.length}`} />
+                    </span>
+                  )}
                   {g.key && (
                     <Button variant="link" aria-label={`Jump to the subagents of ${title}`} onClick={() => actions.jumpToReply(g.key)}>
                       Jump
@@ -730,6 +796,11 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                   )}
                 </div>
                 <ul className="flex flex-col">
+                  {g.refs.map((f) => (
+                    <li key={`ref-${f.subagent.id}`}>
+                      <FollowUpRow f={f} onShow={showOriginal} />
+                    </li>
+                  ))}
                   {g.rows.slice(0, g.cap).map(({ subagent: s, depth }) => (
                     <li key={s.id}>
                       <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} onOpen={openPeek} open={peek?.open === true && peek.id === s.id} />
@@ -863,7 +934,7 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
   );
 }
 
-/** A group's head in the list: the message quoted, never a turn number. */
+/** A group's title in the list: the message quoted (its turn number stands before it). */
 function indexTitle(key: string, text: string): string {
   if (!key) return 'Earlier in the conversation';
   if (key === 'start') return 'Before the first message';

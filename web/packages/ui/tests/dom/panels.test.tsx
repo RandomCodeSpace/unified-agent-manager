@@ -265,7 +265,8 @@ describe('subagents', () => {
     const index = await openSubagentIndex(user);
     const group = within(index.getByRole('region', { name: /^“Audit templates\/post\.html for accessibility problems/ }));
     expect(group.getByRole('button', { name: /^Jump to the subagents of/ })).toBeTruthy();
-    expect(index.queryByText(/Turn \d/)).toBeNull();
+    // Its turn number stands before the message, for the reference rows' "from turn N": the todo reader's number for the same turn.
+    expect(group.getByText('Turn 4')).toBeTruthy();
     // Chips only for the states some subagent is in: none stopped here.
     expect(index.getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Running 3', 'Failed 1', 'Done 1']);
     await user.click(index.getByRole('button', { name: 'Failed 1' }));
@@ -372,7 +373,7 @@ describe('subagents', () => {
     const { user } = await openTask('t8');
     const index = await openSubagentIndex(user);
     expect(index.getByRole('button', { name: 'Survey templates for missing alt text and labels, running: Needs permission: Run shell command' })).toBeTruthy();
-    expect(index.getByRole('button', { name: 'Check contrast of the theme tokens, running: Needs answer' })).toBeTruthy();
+    expect(index.getByRole('button', { name: 'Check contrast of the theme tokens, running, 2 runs: Needs answer' })).toBeTruthy();
     vi.restoreAllMocks();
   });
   test('a Utility name leads the row with the agent\'s own after it; the footer says where names come from', async () => {
@@ -564,7 +565,8 @@ describe('subagents', () => {
 
   test('a subagent with several runs counts them in its read-only Tools, scoped to it, and lists them under Agent', async () => {
     const { user } = await openTask('t22');
-    await user.click(live().getByRole('button', { name: /^Audit package internal\/store, running/ }));
+    await user.click((await openSubagentIndex(user)).getByRole('button', { name: /^Audit package internal\/store, running/ }));
+    await asConversation(user);
     await view('Audit package internal/store');
     await user.click(screen.getByRole('button', { name: 'Tools for this subagent, read only' }));
     const tools = within(await screen.findByRole('dialog', { name: 'Tools' }));
@@ -653,11 +655,40 @@ describe('subagents', () => {
   });
   test('the live rows list every subagent at work, running then failed first, with their tokens', async () => {
     await openTask('t22');
-    expect(live().getByRole('button', { name: /^8 subagents · [\d.]+M tokens/ })).toBeTruthy();
+    expect(live().getByRole('button', { name: /^7 subagents · [\d.]+M tokens/ })).toBeTruthy();
     const rows = live().getAllByRole('button', { name: /^Audit package .*, (failed|running|completed|stopped)/ }).map((b) => b.getAttribute('aria-label') ?? '');
-    expect(rows).toHaveLength(8);
-    expect(rows.slice(0, 4).every((name) => /, running/.test(name))).toBe(true);
-    expect(rows[4]).toMatch(/^Audit package cmd\/tool15, failed/);
+    expect(rows).toHaveLength(7);
+    expect(rows.slice(0, 3).every((name) => /, running/.test(name))).toBe(true);
+    expect(rows[3]).toMatch(/^Audit package cmd\/tool15, failed/);
+  });
+
+  test('a subagent run again in the latest reply is a reference row there, running on its own clock; a press lands on the reply that spawned it', async () => {
+    const { user } = await openTask('t22');
+    const ref = live().getByRole('button', { name: 'Follow-up to Audit package internal/store, from turn 1, running: show where it started' });
+    expect(ref.textContent).toMatch(/^↪Follow-up toAudit package internal\/store· from turn 1\d+m \d+s$/);
+    // Not a moved row: turn 1 keeps its chip, which holds it.
+    const chip = log().getByRole('button', { name: /^12 subagents · [\d.]+M tokens · 11 done · 1 running/ });
+    await user.click(ref);
+    await waitFor(() => expect(flashed()).toBe(chip));
+  });
+
+  test('the sheet lists a reused subagent once, in its first turn, with its runs; each later turn points back to it', async () => {
+    const { user } = await openTask('t22');
+    const index = await openSubagentIndex(user);
+    const first = within(index.getByRole('region', { name: /^“Audit every Go and TS package/ }));
+    const original = first.getByRole('button', { name: /^Audit package internal\/store, running, 3 runs/ });
+    expect(original.textContent).toContain('3 runs');
+    expect(index.getAllByRole('button', { name: /^Audit package internal\/store, / })).toHaveLength(1);
+    // Run 2 came during turn 2, run 3 runs in turn 3: a reference row in each, never the row itself.
+    for (const turn of [/^“Yes, run the rest/, /^“Retry the failed ones/]) {
+      expect(within(index.getByRole('region', { name: turn })).getByRole('button', { name: /^Follow-up to Audit package internal\/store, from turn 1, / })).toBeTruthy();
+    }
+    const latest = within(index.getByRole('region', { name: /^“Retry the failed ones/ }));
+    await user.click(latest.getByRole('button', { name: /^Follow-up to Audit package internal\/store/ }));
+    // The sheet stays: the original row flashes and takes the focus.
+    expect(flashed()).toBe(original.closest('[data-subagent-row]'));
+    expect(document.activeElement).toBe(original);
+    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
   });
 
   test('a running subagent\'s row says what it is doing now, not what it was asked', async () => {
