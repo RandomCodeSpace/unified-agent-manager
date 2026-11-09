@@ -373,6 +373,7 @@ func TestUtilityModelResolution(t *testing.T) {
 		"none priced, no Thread":      {selectionModels(), "", nil, nil, ""},
 		"settings unusable, Thread":   {selectionModels(), "gone", nil, thread, "own"},
 		"none opts out":               {priced, "none", nil, thread, ""},
+		"list not loaded yet":         {nil, "dear", nil, thread, "dear"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, _ := assistManager(t, openTestStore(t), newAssistProvider())

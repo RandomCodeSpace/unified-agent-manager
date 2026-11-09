@@ -46,7 +46,9 @@ func (m *Manager) utilityModelLocked(provider string) string {
 	switch model := m.settings.TitleModel[provider]; {
 	case model == store.WebTitleModelNone:
 		return ""
-	case model != "" && m.modelLocked(provider, model).ID != "" && m.configurationModelKeyPresentLocked(model):
+	// Until the provider lists its models, the Settings choice is trusted: a
+	// Thread's job must not fall to its own model while the list loads.
+	case model != "" && (len(m.infos[provider].Models) == 0 || m.modelLocked(provider, model).ID != "") && m.configurationModelKeyPresentLocked(model):
 		return model
 	default:
 		return m.cheapestModelLocked(provider)
