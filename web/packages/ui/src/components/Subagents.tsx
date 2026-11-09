@@ -334,6 +334,27 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
 
 // Identity tones as whole class names, so Tailwind sees them.
 export const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
+/**
+ * A subagent wherever uam names it (DESIGN.md Transcript, "A subagent by name"): its identity dot and its
+ * name (`children`, else `name`). Where the Thread can show it, a button that opens it in the
+ * Conversation pane; `still` inside another control, never a button.
+ */
+export function SubagentTag({ id, name, still = false, className, children }: Readonly<{ id: string; name: string; still?: boolean; className?: string; children?: ReactNode }>) {
+  const tone = useSubagentReplies()?.tones.get(id);
+  const show = useActions()?.show;
+  const body = (
+    <>
+      <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', tone ? DOT[tone] : 'bg-faint')} />
+      {children ?? <span className="truncate">{name}</span>}
+    </>
+  );
+  if (still || !show) return <span className={cn('inline-flex min-w-0 items-center gap-1', className)}>{body}</span>;
+  return (
+    <button type="button" aria-label={`Open subagent ${name}`} onClick={() => show(id)} className={cn("relative -mx-0.5 inline-flex min-w-0 items-center gap-1 rounded-sm px-0.5 transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover pointer-coarse:after:-inset-y-3", className)}>
+      {body}
+    </button>
+  );
+}
 export const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
 const STATUS_WORD: Record<SubagentStatus, string> = { running: 'running', idle: 'idle', completed: 'completed', failed: 'failed', cancelled: 'stopped' };
 export const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };

@@ -28,6 +28,8 @@ const KEYS: Record<string, string[]> = {
   skill: ['skill', 'name'],
   store_memory: ['fact'],
   ask_user: ['question'],
+  read_agent: ['agent_id'],
+  write_agent: ['agent_id'],
 };
 const GENERIC = ['command', 'cmd', 'url', 'path', 'file_path', 'filePath', 'pattern', 'query', 'skill', 'name', 'description', 'question', 'prompt', 'fact', 'intent'];
 
@@ -955,6 +957,16 @@ export interface StepWords {
   intent?: boolean;
   /** Runs of the same key fold into one step. */
   fold?: 'read' | 'search' | 'edit' | 'command';
+  /** The subagent an agent tool's call acts on, named after `label`: "Read result · ‹name›". */
+  agent?: Subagent;
+}
+
+/** The tools that act on one subagent by its `agent_id`, and what their step says before its name. */
+const AGENT_TOOLS: Record<string, string> = { read_agent: 'Read result', write_agent: 'Messaged' };
+
+/** The subagent id an agent tool's call names (`read_agent`, `write_agent`: its `agent_id`, the row's argument in either view), else ''. */
+export function agentIdOf(tool: ToolCall | undefined): string {
+  return tool && AGENT_TOOLS[tool.name.toLowerCase()] ? toolLabel(tool).arg : '';
 }
 
 const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
@@ -967,14 +979,17 @@ export function firstErrorLine(output: string | undefined): string {
   return oneLine(lines.find((l) => /error|fail|panic|denied|not found|:\d+(?::\d+)?:/i.test(l)) ?? lines[0] ?? '');
 }
 
-/** A tool call as a step: its glyph, its label in plain words and its result words. `live`: the provider still holds the turn. */
-export function callWords(item: Item, live: boolean, approvals?: Interaction[]): StepWords {
+/**
+ * A tool call as a step: its glyph, its label in plain words and its result words. `live`: the provider still holds the turn.
+ * `agent`: the Thread's subagent an agent tool's call names (`agentIdOf`); only an exact id match names it.
+ */
+export function callWords(item: Item, live: boolean, approvals?: Interaction[], agent?: Subagent): StepWords {
   const t = item.tool;
   const { name, arg } = toolLabel(t);
   const n = name.toLowerCase();
   const running = live && openCall(t?.status);
   const words = (icon: StepIcon, label: string, fold?: StepWords['fold']) => ({ icon, label, fold });
-  let w: ReturnType<typeof words>;
+  let w: ReturnType<typeof words> & { agent?: Subagent };
   if (COMMAND_TOOLS.has(n)) w = words('command', `${running ? 'Running' : 'Ran'} ${arg || name}`, 'command');
   else if (READ_TOOLS.has(n)) w = IMAGE_FILE.test(arg) ? words('image', `Viewed ${baseName(arg)}`) : words('read', `${n === 'list' ? 'Listed' : 'Read'} ${baseName(arg) || name}`, 'read');
   else if (n === 'create') w = words('create', `Created ${baseName(arg) || name}`);
@@ -990,6 +1005,7 @@ export function callWords(item: Item, live: boolean, approvals?: Interaction[]):
   else if (n === 'skill') w = words('skill', `Loaded skill ${arg}`);
   else if (n === 'report_intent') return { icon: 'intent', label: arg || 'Intent', result: [], tone: 'muted', intent: true };
   else if (n === 'task') w = words('subagent', arg || 'Subagent');
+  else if (agent && AGENT_TOOLS[n] && agent.id === agentIdOf(t)) w = { ...words('subagent', AGENT_TOOLS[n]), agent };
   else if (n === ASK_TOOL) w = words('question', arg || 'Asked a question');
   else w = words('tool', arg ? `${name} · ${arg}` : name);
   const result: StepWords['result'] = [];

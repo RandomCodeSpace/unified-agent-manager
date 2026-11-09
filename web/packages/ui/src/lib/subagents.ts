@@ -174,6 +174,20 @@ export function replyIndex(index: readonly OutlineItem[], subagents: readonly Su
   return { list, byKey, ofCall, tones };
 }
 
+/**
+ * The one subagent of a reply that a whole bold or inline-code span of it names (DESIGN.md Transcript):
+ * its exact name, shared by no other of them; in code also its full id or the id's first 8 characters.
+ * Never a name inside more words.
+ */
+export function namedSubagent(text: string, subagents: readonly Subagent[], code: boolean): Subagent | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  const one = (hits: readonly Subagent[]) => (hits.length === 1 ? hits[0] : undefined);
+  const named = subagents.filter((s) => s.name === t);
+  if (named.length || !code) return one(named);
+  return one(subagents.filter((s) => s.id === t || (t.length === 8 && s.id.startsWith(t))));
+}
+
 export interface LiveSubagent {
   subagent: Subagent;
   /** Spawned by an earlier reply: still running from it, or running again. */

@@ -569,6 +569,16 @@ export const ItemContext = createContext<{ id: string; text: string } | null>(nu
 export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus> }
 export const ReplyContext = createContext<ReplyTools>({});
 
+/** In a reply, the subagent its turn spawned that a whole bold (`code` false) or inline code span names, drawn as a link to it; null when it names none. */
+export const SubagentLinkContext = createContext<((text: string, code: boolean) => ReactNode) | null>(null);
+
+/** Bold text that is exactly one of the turn's subagents' names opens it. */
+function MdStrong({ children }: Readonly<{ children?: ReactNode }>) {
+  const text = textOf(children);
+  const link = useContext(SubagentLinkContext);
+  return (text !== null && link?.(text, false)) || <strong>{children}</strong>;
+}
+
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
 export const SessionContext = createContext<string | undefined>(undefined);
 
@@ -841,6 +851,8 @@ function InlineCode({ text, className }: Readonly<{ text: string; className?: st
   const target = resolved ?? file?.path;
   const url = api.supports('files-v1') && sessionId && target ? api.viewFileUrl(sessionId, target) : undefined;
   const temporary = !streaming && sessionId && preview && text.startsWith('/') ? tempFile(text.split('/').map(encodeURIComponent).join('/'), workdir, tempRoots) : null;
+  const subagent = useContext(SubagentLinkContext)?.(text, true);
+  if (subagent) return subagent;
   if (temporary) return <TempFileAction file={temporary} />;
   const code = <code className={className}>{text}</code>;
   if (!file) return code;
@@ -1222,6 +1234,7 @@ const mdComponents: Components = {
   li: MdItem,
   p: MdParagraph,
   h1: MdTitle,
+  strong: MdStrong,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, parentMap, replyIndex, runLines, totalTokens } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -173,4 +173,21 @@ test('a list draws families: each subagent then the ones it spawned, running fam
   // Unranked, they nest the same way but keep spawn order.
   assert.deepEqual(families(list, false).map((f) => f.head.id), ['stop1', 'done1', 'outer', 'run1', 'orphan']);
   assert.equal(totalTokens([agent('a', 'c', 'completed', { tokens: 1200 }), agent('b', 'c'), agent('d', 'c', 'running', { tokens: 800 })]), 2000);
+});
+
+test('a reply\'s span names a subagent only as its whole exact name, unique in the reply, or in code its id or the id\'s first 8 characters', () => {
+  const lister = { id: '28329ff5-1111-4222-8333-444455556666', name: 'Quick lister', status: 'completed' };
+  const twins = [{ id: 'd1', name: 'Reviewer', status: 'completed' }, { id: 'd2', name: 'Reviewer', status: 'completed' }];
+  const all = [lister, ...twins];
+  assert.equal(namedSubagent('Quick lister', all, false), lister);
+  assert.equal(namedSubagent('Quick lister', all, true), lister);
+  // More words, another case or a shared name: plain.
+  for (const text of ['Quick lister.', 'the Quick lister', 'quick lister', 'Reviewer', '']) assert.equal(namedSubagent(text, all, false), undefined, text);
+  // An id only in code: the full one or its 8-character prefix, never a shorter one.
+  assert.equal(namedSubagent('28329ff5', all, true), lister);
+  assert.equal(namedSubagent(lister.id, all, true), lister);
+  assert.equal(namedSubagent('28329ff5', all, false), undefined);
+  assert.equal(namedSubagent('28329f', all, true), undefined);
+  assert.equal(namedSubagent('d1', all, true), twins[0]);
+  assert.equal(namedSubagent('Reviewer', all, true), undefined);
 });
