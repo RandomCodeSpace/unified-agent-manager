@@ -127,9 +127,9 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
               <th key={index} scope="col" aria-sort={selected ? sort.descending ? 'descending' : 'ascending' : 'none'} className={alignment(column.align)}>
                 <div className={cn('flex items-center gap-1.5', column.align === 'right' && 'justify-end')}>
                   <span className="min-w-0">{column.heading ?? column.name}</span>
-                  {/* One small control per column; its hit area grows to 44px on a coarse pointer without taking width. */}
+                  {/* One small control per column: 20px so the head row stays 28px, with the `icon-sm` hit area (32px, 44px on a coarse pointer) without taking width. */}
                   <Popover.Root open={menu === index} onOpenChange={open => setMenu(open ? index : null)}>
-                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn(selected || filter ? 'text-accent' : 'text-muted', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
+                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn('size-5 rounded-xs after:-inset-1.5 pointer-coarse:after:-inset-3', selected || filter ? 'text-ink' : 'text-faint', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
                     <Popover.Content side="bottom" align="end" className="max-w-72">
                       <Popover.Title>{column.name}</Popover.Title>
                       <div className="flex flex-col">
@@ -153,18 +153,18 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
             const n = max ? magnitude(row.values[index]) : null;
             if (!max || !n) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
             // The bar runs on a slim track just under the number, never behind it (so it cannot read as a selection): below its line
-            // (the cell's top padding is 5px), at most 9rem wide, from the side the column is aligned to. The figure stays on one line.
+            // (the cell's top padding is 3px, and it ends a pixel above the row's rule), at most 9rem wide, from the side the column is aligned to. The figure stays on one line.
             const pct = (n / max) * 100;
             const end = column.align === 'right';
             return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn('relative whitespace-nowrap', alignment(column.align), 'tabular-nums')}>
               {row.cells[index]}
-              <svg aria-hidden="true" className={cn('pointer-events-none absolute top-[calc(1lh+5px)] h-0.75 w-[min(calc(100%-1.25rem),9rem)] rounded-full bg-accent-wash', end ? 'right-2.5' : 'left-2.5')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" className="fill-accent/50" /></svg>
+              <svg aria-hidden="true" className={cn('pointer-events-none absolute top-[calc(1lh+2px)] h-0.75 w-[min(calc(100%-1.25rem),9rem)] rounded-full bg-accent-wash', end ? 'right-2.5' : 'left-2.5')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" className="fill-accent/50" /></svg>
             </Cell>;
           })}</tr>)}</tbody>
         </table>
         {visible.length === 0 && <p className="px-2 py-4 text-center text-caption text-muted">No matching rows</p>}
         {/* Pinned over the last visible row (its negative margin adds no scroll height); it stays put when a wide table scrolls sideways. */}
-        {more > 0 && <button type="button" className="sticky bottom-0 left-0 -mt-7.5 flex h-7.5 w-full items-center justify-center gap-1.5 border-t border-hairline-strong bg-surface text-caption" onClick={() => {
+        {more > 0 && <button type="button" className="sticky bottom-0 left-0 -mt-7 flex h-7 w-full items-center justify-center gap-1.5 border-t border-hairline-strong bg-surface text-caption" onClick={() => {
           // Focus stays in the table when the bar goes away at the end.
           region.current?.focus({ preventScroll: true });
           region.current?.scrollTo({ top: region.current.scrollHeight });
