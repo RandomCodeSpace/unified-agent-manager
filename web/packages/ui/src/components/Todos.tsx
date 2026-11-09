@@ -18,7 +18,7 @@ import { loadTodoGraph, todoMermaid, type TodoGroup } from '../lib/todoGraph';
 import { DONE_ROWS, METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoLinks, todoWord, turnTodoName, type TodoLink, type TodoSection } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
-import { DOT as IDENTITY_DOT, useSubagentReplies } from './Subagents';
+import { SubagentTag } from './Subagents';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
@@ -52,14 +52,14 @@ function TodoMark({ status, className }: Readonly<{ status: TodoStatus; classNam
   return <Glyph aria-hidden="true" className={cn('size-3.5 shrink-0', TONE[status].text, className)} strokeWidth={status === 'done' ? 2.5 : undefined} />;
 }
 
-/** The subagent that first wrote a row: its identity dot, as on its row, and its name. */
+/** The subagent that first wrote a row: its identity dot, as on its row, and its name; a button that shows it once its name is known. */
 function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean }>) {
-  const tone = useSubagentReplies()?.tones.get(id);
   return (
-    <span className="flex h-5 max-w-36 shrink-0 items-center gap-1 text-caption text-muted">
-      <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', tone ? IDENTITY_DOT[tone] : 'bg-faint')} />
+    <span className="flex h-5 max-w-36 shrink-0 items-center text-caption text-muted">
       <span className="sr-only">, by </span>
-      <span className={quiet ? 'sr-only' : 'truncate'}>{name || 'subagent'}</span>
+      <SubagentTag id={id} name={name || 'subagent'} still={!name} className="max-w-full">
+        {quiet ? <span className="sr-only">{name}</span> : undefined}
+      </SubagentTag>
     </span>
   );
 }

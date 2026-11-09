@@ -59,6 +59,7 @@ var toolArgumentKeys = map[string][]string{
 	"web_fetch": {"url"}, "webfetch": {"url"}, "fetch": {"url"},
 	"view": {"path", "file_path", "filePath"}, "read": {"path", "file_path", "filePath"}, "create": {"path", "file_path", "filePath"}, "edit": {"path", "file_path", "filePath"}, "write": {"path", "file_path", "filePath"}, "list": {"path"},
 	"grep": {"pattern", "query"}, "glob": {"pattern"}, "task": {"description", "name", "agent_type"}, "skill": {"skill", "name"}, "store_memory": {"fact"}, "ask_user": {"question"},
+	"read_agent": {"agent_id"}, "write_agent": {"agent_id"},
 }
 var genericArgumentKeys = []string{"command", "cmd", "url", "path", "file_path", "filePath", "pattern", "query", "skill", "name", "description", "question", "prompt", "fact", "intent"}
 

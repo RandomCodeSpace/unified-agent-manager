@@ -10,19 +10,19 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { formatCount, lineCountsText } from '../lib/cost';
-import { approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
-import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
+import { namedSubagent, parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { receipts, type Stamp } from '../lib/receipts';
 import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
 import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
-import { LiveSubagents, SubagentChip, useLiveSubagentIds, useSubagentReplies } from './Subagents';
+import { LiveSubagents, SubagentChip, SubagentTag, useLiveSubagentIds, useScope, useSubagentReplies } from './Subagents';
 import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
@@ -96,6 +96,21 @@ type BranchReply = (userItemId: string, anchor: HTMLElement | null) => void;
 
 const NO_SUBAGENTS: Subagent[] = [];
 const NO_TONES: ReadonlyMap<string, IdentityTone> = new Map();
+
+/** Per reply's subagent list, the link its bold and inline code spans draw for the one subagent they name (`namedSubagent`); kept so a streamed token re-renders none of them. */
+const linkers = new WeakMap<readonly Subagent[], (text: string, code: boolean) => ReactNode>();
+function subagentLinker(subagents: readonly Subagent[]) {
+  if (!subagents.length) return null;
+  let linker = linkers.get(subagents);
+  if (!linker) {
+    linker = (text, code) => {
+      const s = namedSubagent(text, subagents, code);
+      return s ? <SubagentTag id={s.id} name={s.name}>{code ? <code>{text}</code> : <strong>{text}</strong>}</SubagentTag> : null;
+    };
+    linkers.set(subagents, linker);
+  }
+  return linker;
+}
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
 function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
@@ -204,7 +219,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     out.push(
       <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
         {runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} replyKey={userItemId ?? 'start'} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null}
-        {renderCompact(group, gctx, product, own)}
+        <SubagentLinkContext.Provider value={subagentLinker(spawned)}>{renderCompact(group, gctx, product, own)}</SubagentLinkContext.Provider>
       </div>,
     );
     group = [];
@@ -481,7 +496,7 @@ function StepFrame({ at, icon, iconClass, edge, dur, under, children, ref, ...re
 }
 
 /** A step's words as its button: the step, then its result words (`muted`, failures `error`, a person's decision `attention`); a phone puts the result under the step. */
-function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef, className }: Readonly<{ label: string; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement>; className?: string }>) {
+function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef, className }: Readonly<{ label: ReactNode; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement>; className?: string }>) {
   return (
     <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className={cn("-mx-1.5 flex min-h-6 w-[calc(100%+0.75rem)] min-w-0 items-center gap-x-1 rounded-sm px-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11", className)}>
       <span className="flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
@@ -596,7 +611,9 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
   const context = useLazyContextMenu();
   const t = item.tool;
   const running = live && isActive(t?.status);
-  const words = callWords(full ?? item, live, approvals);
+  const agentId = agentIdOf(t);
+  const agent = useScope((d) => (agentId ? d.subagents.find((s) => s.id === agentId) : undefined));
+  const words = callWords(full ?? item, live, approvals, agent);
   const Icon = STEP_ICONS[words.icon];
   const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
   const took = running ? null : itemTook(item);
@@ -617,7 +634,7 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
       )}
     </>
   );
-  const button = <StepButton buttonRef={actions.anchor} className="pr-7 pointer-coarse:pr-11" label={words.label} result={words.result} open={open} onClick={toggle} intent={words.intent} ink={running} title={title} lead={nested ? <Icon aria-hidden="true" className={cn('size-3 shrink-0', words.tone === 'error' ? 'text-error' : 'text-faint')} /> : undefined} />;
+  const button = <StepButton buttonRef={actions.anchor} className="pr-7 pointer-coarse:pr-11" label={words.agent ? <>{words.label} · <SubagentTag id={words.agent.id} name={words.agent.name} still /></> : words.label} result={words.result} open={open} onClick={toggle} intent={words.intent} ink={running} title={title} lead={nested ? <Icon aria-hidden="true" className={cn('size-3 shrink-0', words.tone === 'error' ? 'text-error' : 'text-faint')} /> : undefined} />;
   const menu = (
     <>
       <Menu.Root modal={false}>

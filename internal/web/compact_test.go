@@ -74,6 +74,10 @@ func TestCompactProjectionPreservesDisplayAndSemanticContent(t *testing.T) {
 	if it.Tool.Input != string(input) || it.Text != "hidden diagnostic" {
 		t.Fatal("projection mutated retained body")
 	}
+	// An agent tool's row names its subagent by id, whatever order the input's fields came in.
+	if got := projectItem(agentapi.Item{Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "write_agent", Input: `{"message":"Also check Python","agent_id":"c175474e"}`, Status: agentapi.ToolCompleted}}); got.Tool.DisplayArg != "c175474e" {
+		t.Fatalf("write_agent display_arg = %q", got.Tool.DisplayArg)
+	}
 	ask := projectItem(agentapi.Item{Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: `{"question":"Choose?","choices":["A","B"]}`, Output: "A", Status: agentapi.ToolCompleted}})
 	if ask.Tool.Input == "" || ask.Tool.Output != "A" {
 		t.Fatal("recorded question/answer lost")

@@ -569,6 +569,16 @@ export const ItemContext = createContext<{ id: string; text: string } | null>(nu
 export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus> }
 export const ReplyContext = createContext<ReplyTools>({});
 
+/** In a reply, the subagent its turn spawned that a whole bold (`code` false) or inline code span names, drawn as a link to it; null when it names none. */
+export const SubagentLinkContext = createContext<((text: string, code: boolean) => ReactNode) | null>(null);
+
+/** Bold text that is exactly one of the turn's subagents' names opens it. */
+function MdStrong({ children }: Readonly<{ children?: ReactNode }>) {
+  const text = textOf(children);
+  const link = useContext(SubagentLinkContext);
+  return (text !== null && link?.(text, false)) || <strong>{children}</strong>;
+}
+
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
 export const SessionContext = createContext<string | undefined>(undefined);
 
@@ -806,9 +816,11 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   // A bare name opens the one file it means.
   const file = named && resolved ? { ...named, path: resolved } : named;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
-  if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
+  if (temporary) return <TempFileAction file={temporary}><SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider></TempFileAction>;
   if (href && gitlab && parseGitLabUrl(href, gitlab.origin)) return <GitLabLink href={href} words={nodeText(node).trim()} />;
   const target = linkTarget(api, href, file, sessionId, exists);
+  // A subagent's name inside a link stays text: a button inside a link is not valid.
+  const inner = <SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider>;
   let link: ReactNode;
   if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
   else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
@@ -816,8 +828,8 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
       event.preventDefault();
       preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, path: file.path, frameable: true }, event.currentTarget);
     }
-  }}>{children}</a>;
-  else link = children;
+  }}>{inner}</a>;
+  else link = inner;
   return localPath(href) ? <span key={named?.path} data-file-reference={eligible ? named?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
@@ -841,6 +853,8 @@ function InlineCode({ text, className }: Readonly<{ text: string; className?: st
   const target = resolved ?? file?.path;
   const url = api.supports('files-v1') && sessionId && target ? api.viewFileUrl(sessionId, target) : undefined;
   const temporary = !streaming && sessionId && preview && text.startsWith('/') ? tempFile(text.split('/').map(encodeURIComponent).join('/'), workdir, tempRoots) : null;
+  const subagent = useContext(SubagentLinkContext)?.(text, true);
+  if (subagent) return subagent;
   if (temporary) return <TempFileAction file={temporary} />;
   const code = <code className={className}>{text}</code>;
   if (!file) return code;
@@ -1222,6 +1236,7 @@ const mdComponents: Components = {
   li: MdItem,
   p: MdParagraph,
   h1: MdTitle,
+  strong: MdStrong,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);

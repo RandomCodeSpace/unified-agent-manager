@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { callWords, changedFiles, currentStep, firstErrorLine, foldLabel, itemTook, promoted, scratchPlan, summarizeTurn, timelineRows, toolKind } from '../src/lib/transcript.ts';
+import { agentIdOf, callWords, changedFiles, currentStep, firstErrorLine, foldLabel, itemTook, promoted, scratchPlan, summarizeTurn, timelineRows, toolKind } from '../src/lib/transcript.ts';
 import { DECLINED_OUTPUT } from '../src/lib/transcript.ts';
 
 const at = (s) => `2026-09-25T10:00:${String(s).padStart(2, '0')}Z`;
@@ -221,4 +221,22 @@ test("the Task's scratch plan, by its exact path, is not a changed file of the t
   assert.equal(scratchPlan(undefined, '/w'), undefined);
   assert.equal(scratchPlan('/w/plan.md', '/w')('./plan.md'), true);
   assert.equal(scratchPlan('/w/plan.md', '/w')('docs/plan.md'), false);
+});
+
+test('an agent tool\'s step names the subagent its agent_id matches exactly, else keeps the tool and the id', () => {
+  const id = 'c175474e-5fca-492b-b6b8-c4433b665ebf';
+  const sub = { id, name: 'Quick lister', status: 'completed' };
+  const read = call('r1', tool('read_agent', JSON.stringify({ wait: true, agent_id: id })));
+  assert.equal(agentIdOf(read.tool), id);
+  // The compact view keeps no input: the server's argument is the id.
+  assert.equal(agentIdOf({ name: 'read_agent', status: 'completed', display_arg: id }), id);
+  const known = callWords(read, false, undefined, sub);
+  assert.deepEqual([known.icon, known.label, known.agent], ['subagent', 'Read result', sub]);
+  assert.deepEqual([callWords(call('w1', tool('write_agent', JSON.stringify({ message: 'Also Python', agent_id: id }))), false, undefined, sub).label], ['Messaged']);
+  // Unknown or another subagent's id: today's label, the tool and its id.
+  for (const other of [undefined, { ...sub, id: 'c175474e' }]) {
+    const w = callWords(read, false, undefined, other);
+    assert.deepEqual([w.label, w.agent], [`read_agent · ${id}`, undefined]);
+  }
+  assert.equal(agentIdOf(tool('bash', JSON.stringify({ agent_id: id }))), '');
 });
