@@ -1002,7 +1002,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           ]}
         />
       </Row>
-      <Row id="todo-graph" label="Todo dependencies" help="How a todo list whose steps wait on others is drawn: rails beside the list, which keep every row in place, or a flowchart of the steps.">
+      <Row id="todo-graph" label="Todo dependencies" help="How a todo list whose steps wait on others is drawn: rails beside the list, which keep every row in place, or a board of the turns that added the steps and the agents that wrote them.">
         <Segmented
           aria-labelledby="todo-graph-label"
           aria-describedby="todo-graph-help"
@@ -1013,7 +1013,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           }}
           items={[
             { value: 'rails', label: 'Rails' },
-            { value: 'graph', label: 'Graph' },
+            { value: 'graph', label: 'Board' },
           ]}
         />
       </Row>

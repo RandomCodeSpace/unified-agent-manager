@@ -8,10 +8,6 @@ import { shownState } from '../../src/lib/tasks';
 
 afterEach(() => vi.useRealTimers());
 
-// The todo graph renders in the sandboxed diagram frame, which a DOM test has none of.
-const renderDiagram = vi.hoisted(() => vi.fn<(source: string) => Promise<{ svg: string; width: number; height: number }>>(async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg"/>', width: 400, height: 300 })));
-vi.mock('../../src/lib/diagram', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../src/lib/diagram')>()), renderDiagram }));
-
 const start = Date.parse('2026-09-28T12:00:00Z');
 const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: new Date(start).toISOString() } as TurnTiming;
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
@@ -312,45 +308,40 @@ test('Done shows its newest rows first and only the newest few until Show all', 
   expect(section.getAllByRole('listitem')).toHaveLength(10);
 });
 
-test('with the Graph setting the reader draws the dependencies as a flowchart: turn tags from the kept records, a subagent\'s box, the rows still a list for screen readers', async () => {
+test('with the Board setting the reader draws the rows on a board: turns across from the kept records, agents down, a card opening its row', async () => {
   localStorage.setItem('uam.todoGraph', 'graph');
-  const user = userEvent.setup();
-  const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'] }, { depends_on: ['c'] }]);
-  const turns: TodoHistory['turns'] = [{ timing_id: 'turn', ended_at: new Date(start).toISOString(), todos: [todos[0], todos[1]], counts: {} }];
-  const todoHistory = vi.fn(async () => ({ live: listOf(todos), turns }));
-  render(draw(withTodos(listOf(todos)), { todoHistory }));
-  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
-  const reader = await screen.findByRole('dialog', { name: 'Todo' });
-  // The graph needs the turns that added the rows: opening reads the kept records.
-  expect(todoHistory).toHaveBeenCalledTimes(1);
-  await waitFor(() => expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy());
-  await waitFor(() => expect(renderDiagram.mock.calls.at(-1)?.[0]).toContain('T1 · Plan the pages'));
-  const source = renderDiagram.mock.calls.at(-1)![0];
-  expect(source).toContain('flowchart TB');
-  expect(source).toMatch(/subgraph g0\["Index page writer"\]\n {4}direction TB\n {4}n1\["◉ T1 · Build the index page"\]:::now/);
-  expect(source).toContain('n2["◉ Build the about page"]');
-  // No rails, no sections: the rows are a list only screen readers reach.
-  expect(reader.querySelectorAll('svg[aria-hidden] > g')).toHaveLength(0);
-  expect(within(reader).queryAllByRole('region')).toEqual([]);
-  expect(reader.querySelector('ul.sr-only')!.textContent).toContain('Sign in to the registryNo token on this machine, Blocked, waits on Build the about page');
-});
-
-test('a graph that cannot be drawn says so, and one that cannot be redrawn keeps the last drawing', async () => {
-  localStorage.setItem('uam.todoGraph', 'graph');
-  const user = userEvent.setup();
-  renderDiagram.mockRejectedValueOnce(new Error('parse error'));
-  const todos = rows([{}, { depends_on: ['a'] }]);
-  const withApi = (todos: Todo[]) => draw(withTodos(listOf(todos)), { todoHistory: async () => ({ live: null, turns: [] }) });
-  const view = render(withApi(todos));
-  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
-  const reader = await screen.findByRole('dialog', { name: 'Todo' });
-  await waitFor(() => expect(within(reader).getByText('The graph could not be drawn')).toBeTruthy());
-  view.rerender(withApi(rows([{}, { depends_on: ['a'] }, { depends_on: ['a'] }])));
-  await waitFor(() => expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy());
-  renderDiagram.mockRejectedValueOnce(new Error('parse error'));
-  view.rerender(withApi(rows([{ status: 'in_progress' }, { depends_on: ['a'] }, { depends_on: ['a'] }])));
-  await waitFor(() => expect(within(reader).getByText('The graph could not be redrawn; this is the last one')).toBeTruthy());
-  expect(reader.querySelector('img[src^="data:image/svg+xml"]')).toBeTruthy();
+  try {
+    const user = userEvent.setup();
+    const first = { id: 'turn-0', user_item_id: 'u0', state: 'completed', started_at: new Date(start - 600_000).toISOString(), ended_at: new Date(start - 300_000).toISOString() } as TurnTiming;
+    const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'] }, { depends_on: ['c'] }]);
+    const turns: TodoHistory['turns'] = [{ timing_id: 'turn-0', ended_at: first.ended_at!, intent: 'Planning the pages', todos: [todos[0], todos[1]], counts: {} }];
+    const todoHistory = vi.fn(async () => ({ live: listOf(todos), turns }));
+    render(draw(withTodos(listOf(todos), 'Working on the site', { turn_timings: [first, timing] }), { todoHistory }));
+    await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+    const reader = await screen.findByRole('dialog', { name: 'Todo' });
+    expect(todoHistory).toHaveBeenCalledTimes(1);
+    const board = await within(reader).findByRole('group', { name: 'Todo board' });
+    await waitFor(() => expect(within(board).getByText(`Turn 1 · ${clock(first.started_at)}`)).toBeTruthy());
+    expect(within(board).getByText('“Planning the pages”')).toBeTruthy();
+    expect(within(board).getByText(`Turn 2 · ${clock(timing.started_at)}`)).toBeTruthy();
+    // The grid in reading order after the arrows and the corner: the turn heads, then per lane its name and one cell per turn.
+    const cells = [...board.children].slice(2).map((c) => [...c.querySelectorAll('[data-card]')].map((card) => card.getAttribute('data-card')).join(',') || c.textContent);
+    expect(cells).toEqual([`Turn 1 · ${clock(first.started_at)}“Planning the pages”`, `Turn 2 · ${clock(timing.started_at)}`, 'Main agent', 'a', 'c,d', 'Index page writersubagent', 'b', '']);
+    expect(within(reader).getByText('2 turns · 4 links')).toBeTruthy();
+    // No rails, no sections; each card names what it waits on.
+    expect(within(reader).queryAllByRole('region')).toEqual([]);
+    const card = within(board).getByRole('button', { name: /^Sign in to the registry/ });
+    expect(card.textContent).toContain(', Blocked, waits on Build the about page');
+    expect(card.className).toContain('border-warning');
+    await user.click(card);
+    expect(card.getAttribute('aria-expanded')).toBe('true');
+    expect([...reader.querySelectorAll('dt')].map((dt) => dt.textContent)).toEqual(['Waits on', 'Unblocks', 'History']);
+    // A link in the detail picks that card.
+    await user.click(within(reader.querySelector('dd')!).getByRole('button', { name: /^Build the about page/ }));
+    expect(within(board).getByRole('button', { name: /^Build the about page/ }).getAttribute('aria-expanded')).toBe('true');
+  } finally {
+    localStorage.removeItem('uam.todoGraph');
+  }
 });
 
 test('a phone gets the list as a sheet that repeats the blocks, with a close button and no key hints', async () => {
