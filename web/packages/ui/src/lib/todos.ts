@@ -178,6 +178,81 @@ export function ledgerSections(rows: readonly LedgerRow[]): TodoSection[] {
   return stageSections([...rows].sort((a, b) => when(b) - when(a)).map((r) => r.todo));
 }
 
+/** The turn that added a row: its 1-based number among the Thread's timings (none without timings), its timing and the record uam kept for it. */
+export interface TurnOrigin { key: string; turn?: number; timing?: TurnTiming; record?: TurnTodos }
+
+/**
+ * Each row's turn of origin, from recorded data only: the first record holding its id; a row no
+ * record holds yet belongs to the latest turn (the running one, which has no record until it ends).
+ */
+export function todoOrigins(history: TodoHistory, timings: readonly TurnTiming[]): (id: string) => TurnOrigin {
+  const of = (timing?: TurnTiming, record?: TurnTodos): TurnOrigin => {
+    const i = timing ? timings.indexOf(timing) : -1;
+    return { key: timing?.id ?? record?.timing_id ?? '', turn: i >= 0 ? i + 1 : undefined, timing, record: record ?? history.turns.find((r) => r.timing_id === timing?.id) };
+  };
+  const first = new Map<string, TurnOrigin>();
+  for (const rec of history.turns) {
+    const origin = of(timings.find((t) => t.id === rec.timing_id), rec);
+    for (const t of rec.todos) if (!first.has(t.id)) first.set(t.id, origin);
+  }
+  const latest = of(timings.at(-1));
+  return (id) => first.get(id) ?? latest;
+}
+
+/** One turn's section of a reader: the rows it added, in the order given, its tallies, and `folded` when all are done. */
+export interface TurnSection extends TurnOrigin { todos: Todo[]; done: number; open: number; blocked: number; folded: boolean }
+
+/** `rows` grouped by the turn that added each (`origin`), newest turn first, each keeping the rows' order. */
+export function turnSections(rows: readonly Todo[], origin: (id: string) => TurnOrigin): TurnSection[] {
+  const sections = new Map<string, TurnSection>();
+  for (const t of rows) {
+    const o = origin(t.id);
+    const s = sections.get(o.key) ?? { ...o, todos: [], done: 0, open: 0, blocked: 0, folded: false };
+    s.todos.push(t);
+    if (t.status === 'done') s.done++;
+    else if (t.status === 'blocked') s.blocked++;
+    else s.open++;
+    sections.set(o.key, s);
+  }
+  for (const s of sections.values()) s.folded = s.done === s.todos.length;
+  // A record whose timing is no longer held is older than every held turn; rows with no timing at all are the newest.
+  const rank = (s: TurnSection) => s.turn ?? (s.record ? 0 : Infinity);
+  return [...sections.values()].sort((a, b) => rank(b) - rank(a));
+}
+
+/** A turn section's tally: "1 done · 2 open · 1 blocked", stages with rows only. */
+export const turnTally = (s: Pick<TurnSection, 'done' | 'open' | 'blocked'>) => [s.done ? `${s.done} done` : '', s.open ? `${s.open} open` : '', s.blocked ? `${s.blocked} blocked` : ''].filter(Boolean).join(' · ');
+
+/** The first line of a prompt, or undefined for none. */
+export const firstLine = (text?: string) => text?.trim().split('\n', 1)[0].trim() || undefined;
+
+/** One step of a row's history: what happened ("added", "in progress", "blocked", "done", "reopened", "to do") and when, as far as the records say. */
+export interface RowStep { word: string; at?: string }
+
+/** A row's detail: the rows it waits on and the rows waiting on it (both among `rows`), and its history from the turn records, then the live list. */
+export interface RowDetail { waits: Todo[]; unblocks: Todo[]; history: RowStep[] }
+
+export function todoDetail(todo: Todo, rows: readonly Todo[], history?: TodoHistory | null): RowDetail {
+  const byId = new Map(rows.map((t) => [t.id, t]));
+  const waits = (todo.depends_on ?? []).flatMap((id) => (id !== todo.id && byId.has(id) ? [byId.get(id)!] : []));
+  const unblocks = rows.filter((t) => t.id !== todo.id && t.depends_on?.includes(todo.id));
+  const steps: RowStep[] = [];
+  let was: TodoStatus | undefined;
+  const take = (t: Todo | undefined, at?: string) => {
+    if (!t || t.status === was) return;
+    const word = t.status === 'pending' ? (was === undefined ? 'added' : was === 'done' ? 'reopened' : 'to do') : STAMP[t.status];
+    steps.push({ word, at });
+    was = t.status;
+  };
+  for (const rec of history?.turns ?? []) {
+    const t = rec.todos.find((r) => r.id === todo.id);
+    take(t, t?.changed_at ?? rec.ended_at);
+  }
+  const live = history?.live?.known ? history.live.todos.find((t) => t.id === todo.id) : undefined;
+  take(live ?? todo, (live ?? todo).changed_at);
+  return { waits, unblocks, history: steps };
+}
+
 /** One dependency drawn beside the list: from the row waited on to the row that waits (indexes in the list), on its lane (0 beside the rows), as a `loop` (both rows wait on each other, through any rows), a `wait` (a blocked row waits on an open one) or a plain `link`. */
 export interface TodoLink { from: number; to: number; lane: number; kind: 'loop' | 'wait' | 'link' }
 
