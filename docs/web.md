@@ -1996,14 +1996,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   including Thread titles, completed subagent result lines and suggested
   replies. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
-  its first name). With no entry, UAM uses the provider's cheapest priced
+  its first name). With no entry, or when the chosen model can no longer be
+  used (no longer listed, or a custom model without its key), UAM
+  uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
   lists with input and output prices, leaving out `auto` and models hidden
   in Settings, the lowest input plus output price per token wins, then the
   lower input price, then the lower ID. `/api/meta` gives it per provider
-  as `cheapest_model`, omitted when no model is priced; then those jobs
-  are not run. There is no fallback: when the cheapest model's call
-  fails, the Thread's own model is not asked and the Thread keeps its first
+  as `cheapest_model`, omitted when no model is priced. When neither
+  resolves, a job that belongs to a Thread (its title, suggested replies,
+  memory notes, merge request description) runs on the Thread's own model,
+  and any other job is not run. A failed call is not retried on another
+  model: when the title call fails, the Thread keeps its first
   message as the title. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so a Thread keeps its

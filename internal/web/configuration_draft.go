@@ -274,7 +274,7 @@ func (m *Manager) DraftConfiguration(ctx context.Context, projectID, kind, brief
 		return ConfigurationDraft{}, newError(http.StatusForbidden, "creating agents, skills or hooks requires Settings → UAM and access → Terminal on")
 	}
 	models := m.configurationAgentModelsLocked()
-	runner, model, err := m.startUtilityLocked()
+	runner, model, err := m.startUtilityLocked(nil)
 	available := err == nil && m.modelLocked(model.Provider, model.Model).ID != "" && m.configurationModelKeyPresentLocked(model.Model)
 	m.mu.Unlock()
 	if err != nil && !errors.Is(err, errUtilityUnavailable) {

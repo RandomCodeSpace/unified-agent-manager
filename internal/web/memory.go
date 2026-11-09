@@ -133,7 +133,7 @@ func (m *Manager) kickMemoryNotesLocked(s *webSession) {
 	if len(items) == 0 {
 		return
 	}
-	runner, model, err := m.startUtilityLocked()
+	runner, model, err := m.startUtilityLocked(s)
 	if err != nil {
 		return // Without a Utility model the pin holds uam's own records alone.
 	}

@@ -102,7 +102,7 @@ function Unsupported({ what }: Readonly<{ what: string }>) {
   return <Note role="status">{name} does not offer {what} to connected instances. Update UAM on {name} to manage it here.</Note>;
 }
 
-const UTILITY_HELP = "The model UAM uses to title new threads, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, only the cheapest model is asked; a thread's own model never is. None keeps provider titles and result excerpts without utility AI calls.";
+const UTILITY_HELP = "The model UAM uses to title new threads, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, or when the chosen model can no longer be used, the cheapest model is asked; a thread's own model is asked only when no model is priced. None keeps provider titles and result excerpts without utility AI calls.";
 
 /** The Utility model menu of one provider: Cheapest (the default), None, then its visible models with their prices. */
 function UtilitySelect({ provider: p, settings, saving, describedBy, onSave }: Readonly<{ provider: ProviderInfo; settings: Settings; saving: boolean; describedBy: string; onSave: (patch: Partial<Settings>) => void }>) {
