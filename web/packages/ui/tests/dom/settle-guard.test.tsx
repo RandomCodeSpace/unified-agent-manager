@@ -119,7 +119,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(stage).not.toHaveBeenCalled();
     expect(within(within(dialog).getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]);
     await user.click(within(dialog).getByRole('button', { name: 'Archive anyway' }));
-    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
     expect(stage.mock.calls).toEqual([['t3', 'archive', { force: true }]]);
   });
 
@@ -148,7 +148,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(within(dialog).queryByRole('button', { name: 'Open Changes' })).toBeNull();
     expect(measured).toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Archive anyway' }));
-    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 

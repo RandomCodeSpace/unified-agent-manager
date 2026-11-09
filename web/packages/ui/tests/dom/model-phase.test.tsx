@@ -182,11 +182,12 @@ describe('the live line at the strip', () => {
     expect([liveClock(0), liveClock(41_999), liveClock(64_000), liveClock(605_000), liveClock(3_729_000), liveClock(-5)]).toEqual(['0s', '41s', '1m 04s', '10m 05s', '1h 02m', '0s']);
   });
 
-  test('the footer under the composer has no phase block any more: the branch, then the time split', async () => {
+  test('the branch, then the time split, sit on the composer\'s control row with no phase block', async () => {
     await openTask('t1');
     await waitFor(() => expect(document.querySelector('[data-composer-foot] [aria-label^="Time in this Thread"]')).not.toBeNull());
     expect(document.querySelector('[data-phase]')).toBeNull();
     const foot = document.querySelector('[data-composer-foot]')!;
+    expect(foot.closest('form [data-fold]')).not.toBeNull();
     expect(foot.textContent).not.toContain('Current branch');
     expect(foot.textContent).not.toContain('Local');
     expect(foot.textContent).not.toContain('Files');

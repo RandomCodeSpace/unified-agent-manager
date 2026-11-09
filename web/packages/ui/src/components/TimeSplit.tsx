@@ -59,7 +59,7 @@ function sentence(split: TimeSplit): string {
 }
 
 /**
- * The split at the end of the row under the composer, as two blocks: `Cpu` model and `Terminal` local, their shares
+ * The split on the composer's control row, left of the actions, as two blocks: `Cpu` model and `Terminal` local, their shares
  * while the Thread works and their times once it is idle (only local's time where model time is not recorded). A
  * phase shown before it sits at its left. The whole sentence is its tip and its name. Absent until something is recorded.
  */

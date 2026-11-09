@@ -33,7 +33,7 @@ describe('Settings → Archived', () => {
     await user.click(list.getByRole('button', { name: /Node 24.*archived/ }));
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Pin GitHub Actions to Node 24'));
     expect(window.location.hash).toBe('#task=t12');
-    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
+    expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
   });
 
   test('a row\'s menu holds the Task actions; Delete confirms, then the row leaves', async () => {
@@ -62,7 +62,7 @@ describe('Settings → Archived', () => {
     const side = await sidebar();
     const task = await side.findByRole('button', { name: /Finished.*Pin GitHub Actions to Node 24/ });
     expect(within(task).getByText('Finished')).toBeTruthy();
-    expect(screen.queryByText('Archived. This thread is read-only.')).toBeNull();
+    expect(screen.queryByText('This thread is read-only.')).toBeNull();
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveProperty('disabled', false);
     expect(mock.received).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));

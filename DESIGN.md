@@ -579,7 +579,7 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 |---|---|---|
 | `rail` | #f5f5f5 | Sidebar and drawer floor |
 | `canvas` | #fafafa | Main pane: header, transcript, panels, login, empty states; the loading veil at 70% |
-| `surface` | #f2f2f2 | Hover step on raised controls; read-only composer |
+| `surface` | #f2f2f2 | Hover step on raised controls; a subagent's read-only composer |
 | `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs |
 | `sunken` | #ededed | Wells: code blocks, thinking body, inline code, meter track |
 | `bubble-user` | #efefef | User message bubble |
@@ -1352,10 +1352,14 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
 The floating control plane: `raised`, `lg`, the `float` shadow, detached from the pane's foot by the gutters (16px below) and overlapping the transcript's last 40px, which fades out beneath it (the dock's gradient); the transcript's 48px bottom scroll padding clears it, so a row focused near the foot scrolls out from under the fade.
 The composer keeps its normal shadow and fill on focus; the caret shows where typing goes.
 One surface: the textarea (`chat`, `field-sizing: content`, 56px to 40dvh, to 30% of the visible height while the on-screen keyboard is open) above one control row.
-From left: **Attach**, then the pickers; at the right the actions, with the primary button always last so Stop and the other action rise in beside it and nothing else moves.
+From left: **Attach**, then the pickers; at the right the branch and the time split (below), then the actions, with the primary button always last so Stop and the other action rise in beside it and nothing else moves.
 A Send that cannot act now is `aria-disabled`, not `disabled`, so hover and focus still show its tooltip saying why ("Type a message or attach a file first.").
-A settled Thread's composer reads "Settled." with a secondary `sm` **Reopen** beside it, the Thread menu's action; once reopened the textarea takes focus.
-When the row runs short (side panels open beside the sidebar), it folds in a fixed order, the least important first, each fold keeping the ones before it (`lib/toolbarFold`): Permissions and execution drops the execution word ("Safe"); Effort and context becomes its glyph; Permissions and execution becomes its glyph; both move into the **More** menu; the Model picker becomes its glyph, and so does Tools; and only then do the actions wrap under the row.
+A settled or archived Thread's composer is that row alone, 44px on `raised` with the float shadow (owner, 2026-11-09, revamp mock 1): no textarea and no pickers.
+From left: `Archive` in `muted` and "Settled" (`ui` 500, `ink`) with a secondary `sm` **Reopen** beside it, the Thread menu's action (an archived Thread reads "Archived" and, in `caption` `muted`, "This thread is read-only."); at the right the model, effort and context, and permissions and execution as one line of `caption` `muted` text ("Claude Haiku 4.5 · Default · 200K · Safe"; values, not controls: its tip and its name list each with its label, the model the latest turn was routed to, and that the Thread is read-only), the live **Tools** button, a hairline, the background tasks, the branch and the time split.
+Its warnings (uncertain, rejected, errors), a command's result, the queue and kept attachments stand above the row when there are any.
+Once reopened the textarea is back and takes focus.
+On a narrow row the text truncates, then the row folds as below and wraps; nothing overflows at 390px.
+When the row runs short (side panels open beside the sidebar), it folds in a fixed order, the least important first, each fold keeping the ones before it (`lib/toolbarFold`): Permissions and execution drops the execution word ("Safe"); Effort and context becomes its glyph; Permissions and execution becomes its glyph; both move into the **More** menu; the Model picker becomes its glyph, and so does Tools; and only then do the actions, the branch and the time split with them, wrap under the row, where the branch's name truncates before anything overflows.
 A folded control keeps its accessible name and its tooltip leads with the value ("Model: GPT-5 mini").
 The Model's name may truncate, but only once the other pickers have moved into More and never below 48px (about five letters); it folds to the glyph instead, so no label shows as one letter.
 The row refolds when its width or contents change, by one attribute on the row, without rendering the composer.
@@ -1372,7 +1376,7 @@ The textarea's accessible description carries it; the visible copy is `aria-hidd
   The combined menu has two named sections; unsupported choices show their reason.
   Model/effort/context changes stay disabled during a turn.
   Permissions can change during a turn.
-  Read-only values remain visible and cannot change.
+  A subagent's values remain visible and cannot change; a settled or archived Thread's are text on its one row (above).
 - **Tools:** one `subtle` `sm` button after Model for the Thread's context, usage and custom agent, in place of a control each: the context ring (below; `SlidersHorizontal` in `faint` until a limit is reported), "Tools" and a `ChevronDown`.
   Its accessible name carries the context ("Tools.
   Context 84.3K of 200K tokens · 42%") and its tooltip lists its tools.
@@ -1397,13 +1401,13 @@ The textarea's accessible description carries it; the visible copy is `aria-hidd
   It stays on a phone, where the row still fits.
 - **Project strip:** lives in the Thread header (branch, then the Changes opener with its count, or the no-Git warning in place of Changes and Files); the composer carries none.
   The Changes opener remains available on read-only Threads, and closing Changes returns focus to it.
-- **Row under the composer** (`ComposerFoot`, 32px, outside the composer's surface; it never spins): every fact once, in the blocks language of the status strip.
-  At the left, where the Thread runs: in the Project folder the branch dropdown alone (`GitBranch`, the name in `ink`, `ChevronDown` in `faint`; it opens the branch menu, plain text when the Thread cannot switch), in its own worktree "Worktree" in `muted` and the branch in `ink` behind `FolderGit2`, read-only, the path on its tip (the folder, named for the branch, is left out).
+- **Branch and time split** (on the control row, left of the actions, 28px; they never spin; owner, 2026-11-09, revamp mock 2: the 32px row under the composer is gone and the composer sits 12px above the pane's edge): every fact once, in the blocks language of the status strip.
+  First, where the Thread runs: in the Project folder the branch dropdown alone (`GitBranch`, the name in `ink`, `ChevronDown` in `faint`; it opens the branch menu, plain text when the Thread cannot switch), in its own worktree "Worktree" in `muted` and the branch in `ink` behind `FolderGit2`, read-only, the whole branch and the path on its tip (the folder, named for the branch, is left out).
   No "Current branch" label.
-  A draft offers a segmented **Project folder | New worktree** (`Folder`, `FolderGit2`) before the branch dropdown.
+  A draft offers a segmented **Project folder | New worktree** (`Folder`, `FolderGit2`) before the branch dropdown, in a 32px row under its composer (`ComposerFoot`), outside the composer's surface.
   What the turn waits on now is not here: it is the status strip's live line (owner, 2026-10-21, r13 A).
-  At the right, the time split as two blocks, `Cpu` model and `Terminal` local: their shares while the Thread works, their times once it is idle (local alone where model time is not recorded); its tip, and its name, is the whole sentence with the waiting left out.
-  When the row runs short the branch truncates; the blocks never shrink; nothing overflows at 390px.
+  Then the time split as two blocks, `Cpu` model and `Terminal` local: their shares while the Thread works, their times once it is idle (local alone where model time is not recorded); its tip, and its name, is the whole sentence with the waiting left out.
+  The branch's name is capped at 192px with its picker (plain text carries the whole name in its `title`); the blocks never shrink; when the control row has wrapped the name truncates further, so nothing overflows at 390px.
 - **Actions** at right: while a turn runs, **Stop** (a round ink button like Send, square glyph; red is for errors and destructive confirmations, never a control at rest), then one primary split pill of two `icon-md` halves (44px on a coarse pointer) joined by a 1px `on-primary` rule: a glyph with no visible text, named (`aria-label`) and drawn for what Enter does (the setting: **Send now** (steer) by default with `ArrowUp`, the same arrow as Send, since it goes at once; or **After this turn** (queue) with `ListEnd`, the waiting strip's glyph, since that is where it lands), and a `ChevronDown` half ("More send options") that opens a menu above it holding the other action, in words, with its shortcut; on a phone it stays on the toolbar's row, wrapping under it only when the row cannot hold every 44px target.
   Otherwise **Send** (round primary, `ArrowUp`).
   Every action is a glyph; its name is for screen readers and its tooltip, which says what it does and carries the shortcuts: Enter does the named action, Ctrl+Enter (⌘+Enter on a Mac) the other, Shift+Enter adds a line.
@@ -1425,7 +1429,7 @@ The textarea's accessible description carries it; the visible copy is `aria-hidd
   Sending: the typed text is the answer, else the chosen options.
   A 409 or 410, on Answer or on Decline, shows the card's wording as a `warn` note here.
   A question arriving on a desktop focuses the composer when nothing else holds focus, never on a touch screen.
-- Notices (read-only, uncertain, rejected, errors) sit in a strip above the textarea, separated by spacing alone; the queue is a disclosure strip with numbered rows, a per-row cancel, Resume and Clear.
+- Notices (uncertain, rejected, errors) sit in a strip above the textarea (above the one row of a settled or archived Thread), separated by spacing alone; the queue is a disclosure strip with numbered rows, a per-row cancel, Resume and Clear.
 - **Inline pickers:** typing `/` or `$` as the first character or `@` at the start or after whitespace opens a level-2 listbox above the textarea, full width on phone and 440px from `sm` up, max height min(300px, 40dvh).
   Rows are 30px (44px on touch); the highlighted row is `hairline` under `ink`, its secondary text a step darker (`muted` to `body`, `faint` to `muted`) so it stays readable there; `/` groups rows under Commands and Skills, `$` offers only Skills, and `@` lists files and folders in `caption`.
   Focus never leaves the textarea, which drives the list through `aria-activedescendant`: Up and Down move, Enter or Tab picks, Escape dismisses.
