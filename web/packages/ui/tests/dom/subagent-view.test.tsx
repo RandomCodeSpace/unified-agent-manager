@@ -106,6 +106,7 @@ test('a todo row\'s subagent is a button that shows it', async () => {
   const { user } = renderApp('#task=t8');
   await user.click(await screen.findByRole('button', { name: /^Todo .*Show the list$/ }));
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  await within(reader).findByRole('region', { name: /^Turn 4/ });
   await user.click(within(reader).getByRole('button', { name: 'Open subagent Run the accessibility linter' }));
   await waitFor(() => expect(window.location.hash).toBe('#task=t8&agent=a3'));
 });

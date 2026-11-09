@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { KEPT_SNAPSHOTS, MAX_LANES, METER_ROWS, keepSnapshot, ledgerSections, ledgerStamp, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoLedger, todoLine, todoLinks, todoSections, todoSentence, todoTally, todoWord, turnTodoName } from '../src/lib/todos.ts';
+import { KEPT_SNAPSHOTS, MAX_LANES, METER_ROWS, firstLine, keepSnapshot, ledgerSections, ledgerStamp, recallSnapshot, snapshotFacts, snapshotSections, tallyWords, todoCue, todoDetail, todoLedger, todoLine, todoLinks, todoOrigins, todoSections, todoSentence, todoTally, todoWord, turnSections, turnTally, turnTodoName } from '../src/lib/todos.ts';
 
 const row = (id, status, extra = {}) => ({ id, title: `Row ${id}`, status, ...extra });
 const view = (todos, extra = {}) => {
@@ -223,4 +223,49 @@ test('the ledger counts a row seen done in one turn and open in a later one as r
   assert.equal(ledger.get('a'), 2);
   assert.equal(ledger.get('b'), 3);
   assert.equal(todoLedger({ live: null, turns: [rec('t1', [row('c', 'done')])] })[0].todo.reopened, undefined);
+});
+
+test('a row\'s turn of origin is the first record holding it; a row no record holds is the latest turn\'s', () => {
+  const timings = [{ id: 't1', started_at: '2026-01-01T10:00:00Z' }, { id: 't2', started_at: '2026-01-01T11:00:00Z' }, { id: 't3', started_at: '2026-01-01T12:00:00Z' }];
+  const history = {
+    live: null,
+    turns: [
+      { timing_id: 't1', ended_at: '2026-01-01T10:30:00Z', todos: [row('a', 'done'), row('b', 'pending')], counts: {} },
+      { timing_id: 't2', ended_at: '2026-01-01T11:30:00Z', todos: [row('b', 'in_progress'), row('c', 'blocked')], counts: {} },
+    ],
+  };
+  const origin = todoOrigins(history, timings);
+  assert.deepEqual(['a', 'b', 'c', 'new'].map((id) => [origin(id).key, origin(id).turn]), [['t1', 1], ['t1', 1], ['t2', 2], ['t3', 3]]);
+  assert.equal(origin('c').record, history.turns[1]);
+  // Grouped newest turn first, the rows' order kept, tallies counted, a turn all done folded.
+  const sections = turnSections([row('b', 'in_progress'), row('c', 'blocked'), row('new', 'pending'), row('a', 'done')], origin);
+  assert.deepEqual(sections.map((s) => [s.key, s.todos.map((t) => t.id), turnTally(s), s.folded]), [
+    ['t3', ['new'], '1 open', false],
+    ['t2', ['c'], '1 blocked', false],
+    ['t1', ['b', 'a'], '1 done · 1 open', false],
+  ]);
+  assert.equal(turnSections([row('a', 'done')], origin)[0].folded, true);
+  // No timings: the rows a record holds sort after the latest, which has no number.
+  const bare = todoOrigins(history, []);
+  assert.deepEqual(turnSections([row('a', 'done'), row('new', 'pending')], bare).map((s) => [s.key, s.turn]), [['', undefined], ['t1', undefined]]);
+});
+
+test('a row\'s detail: the rows it waits on and unblocks, and its history from the records then the live list', () => {
+  const rows = [row('a', 'done'), row('b', 'blocked', { depends_on: ['a', 'gone', 'b'] }), row('c', 'pending', { depends_on: ['b'] })];
+  const history = {
+    live: { known: true, touched: true, todos: [{ ...rows[1], changed_at: 'T4' }], counts: {} },
+    turns: [
+      { timing_id: 't1', ended_at: 'T1', todos: [row('b', 'pending')], counts: {} },
+      { timing_id: 't2', ended_at: 'T2', todos: [row('b', 'done', { changed_at: 'T1b' })], counts: {} },
+      { timing_id: 't3', ended_at: 'T3', todos: [row('b', 'pending')], counts: {} },
+    ],
+  };
+  const detail = todoDetail(rows[1], rows, history);
+  assert.deepEqual(detail.waits.map((t) => t.id), ['a']);
+  assert.deepEqual(detail.unblocks.map((t) => t.id), ['c']);
+  assert.deepEqual(detail.history, [{ word: 'added', at: 'T1' }, { word: 'done', at: 'T1b' }, { word: 'reopened', at: 'T3' }, { word: 'blocked', at: 'T4' }]);
+  // Without records, the row's own state.
+  assert.deepEqual(todoDetail(rows[2], rows).history, [{ word: 'added', at: undefined }]);
+  assert.equal(firstLine('  Review the edge cases\nwith two reviewers'), 'Review the edge cases');
+  assert.equal(firstLine(' \n'), undefined);
 });

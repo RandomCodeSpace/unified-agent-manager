@@ -17,8 +17,15 @@ const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: n
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
 const objective = { id: 1, objective: 'Notes', status: 'paused' as const, turn_count: 6, credits_used: 300, credit_limit: 300 };
 
-function draw(session: SessionDetail, { working = session.state === 'working', since = undefined as string | undefined, onJump = () => {}, connected = true, jump = false } = {}) {
-  return <StatusLine line={statusLine(session, working, !!session.compacting, connected)} session={session} since={since} hidden={false} jump={jump} onJump={onJump} />;
+/** The kept records, unread unless a test gives them: the readers keep their sections by stage then. */
+const unread = () => Promise.reject(new Error('offline'));
+
+function draw(session: SessionDetail, { working = session.state === 'working', since = undefined as string | undefined, onJump = () => {}, connected = true, jump = false, todoHistory = unread as (id: string, signal?: AbortSignal) => Promise<TodoHistory> } = {}) {
+  return (
+    <ApiContext.Provider value={{ ...api, todoHistory }}>
+      <StatusLine line={statusLine(session, working, !!session.compacting, connected)} session={session} since={since} hidden={false} jump={jump} onJump={onJump} />
+    </ApiContext.Provider>
+  );
 }
 
 /** The progress line's sentence, as a screen reader hears it, or null with no line. */
@@ -311,7 +318,7 @@ test('with the Graph setting the reader draws the dependencies as a flowchart: t
   const todos = rows([{}, { depends_on: ['a'] }, { depends_on: ['a', 'd'] }, { depends_on: ['c'] }]);
   const turns: TodoHistory['turns'] = [{ timing_id: 'turn', ended_at: new Date(start).toISOString(), todos: [todos[0], todos[1]], counts: {} }];
   const todoHistory = vi.fn(async () => ({ live: listOf(todos), turns }));
-  render(<ApiContext.Provider value={{ ...api, todoHistory }}>{draw(withTodos(listOf(todos)))}</ApiContext.Provider>);
+  render(draw(withTodos(listOf(todos)), { todoHistory }));
   await user.click(screen.getByRole('button', { name: /Show the list$/ }));
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
   // The graph needs the turns that added the rows: opening reads the kept records.
@@ -333,7 +340,7 @@ test('a graph that cannot be drawn says so, and one that cannot be redrawn keeps
   const user = userEvent.setup();
   renderDiagram.mockRejectedValueOnce(new Error('parse error'));
   const todos = rows([{}, { depends_on: ['a'] }]);
-  const withApi = (todos: Todo[]) => <ApiContext.Provider value={{ ...api, todoHistory: async () => ({ live: null, turns: [] }) }}>{draw(withTodos(listOf(todos)))}</ApiContext.Provider>;
+  const withApi = (todos: Todo[]) => draw(withTodos(listOf(todos)), { todoHistory: async () => ({ live: null, turns: [] }) });
   const view = render(withApi(todos));
   await user.click(screen.getByRole('button', { name: /Show the list$/ }));
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
@@ -480,7 +487,7 @@ test('a closed Thread shows the last list uam kept; the history button opens the
   };
   const todoHistory = vi.fn(async () => history);
   const closed = task({ state: 'completed', turn_timings: [t1, t2, { id: 'turn-3', user_item_id: 'u3', state: 'completed', started_at: at(20), ended_at: at(10) } as TurnTiming], turn_activity: { todos: { known: false, touched: false, todos: [], counts: {} } } });
-  render(<ApiContext.Provider value={{ ...api, todoHistory }}>{draw(closed)}</ApiContext.Provider>);
+  render(draw(closed, { todoHistory }));
   // With no conversation open the list is not known: the strip reads the last one uam kept, once.
   await screen.findByRole('button', { name: 'Todo 1 of 3 done, 1 in progress, 1 blocked. Show the list' });
   expect(todoHistory).toHaveBeenCalledWith('t', expect.any(AbortSignal));
@@ -496,14 +503,25 @@ test('a closed Thread shows the last list uam kept; the history button opens the
   expect(todoHistory).toHaveBeenCalledTimes(2);
   expect(await within(reader).findByText('4 rows · 2 turns')).toBeTruthy();
   expect(within(reader).getByText('Every row the agents kept, with when it changed; rows they removed stay here')).toBeTruthy();
-  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'Done']);
-  // Each row's stamp under it: its state, when, which turn; newest change first in a section; a row the live list lacks says so.
+  // Sections by the turn that added each row, newest first, each with its tally; rows by stage in a section.
+  const regions = within(reader).getAllByRole('region');
+  expect(regions.map((r) => r.getAttribute('aria-label'))).toEqual([`Turn 2 · ${clock(at(40))}`, `Turn 1 · ${clock(at(60))}`]);
+  expect(within(regions[0]).getByText('1 done · 1 blocked')).toBeTruthy();
+  expect(within(regions[1]).getByText('1 done · 1 open')).toBeTruthy();
+  // Each row's stamp under it: its state, when, which turn; newest change first in a stage; a row the live list lacks says so.
   expect(within(reader).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-    `Build the index pagein progress since ${clock(at(35))} · turn 2, by Index page writer, In progress`,
     `Sign in to the registryNo token on this machineblocked ${clock(at(33))} · turn 2, Blocked`,
     `Write the READMEdone ${clock(at(34))} · turn 2 · removed from the list since, Done`,
+    `Build the index pagein progress since ${clock(at(35))} · turn 2, by Index page writer, In progress`,
     `Plan the pagesdone ${clock(at(55))} · turn 1, Done`,
   ]);
+  // A row's title opens its detail: its history from the records, one row at a time.
+  const index = within(reader).getByRole('button', { name: /^Build the index page/ });
+  await user.click(index);
+  expect(index.getAttribute('aria-expanded')).toBe('true');
+  expect(index.closest('li')!.querySelector('dd')!.textContent).toBe(`added ${clock(at(50))} · in progress ${clock(at(35))}`);
+  await user.click(within(reader).getByRole('button', { name: /^Plan the pages/ }));
+  expect(index.getAttribute('aria-expanded')).toBe('false');
   expect(within(reader).getByText('· removed from the list since').className).toContain('text-muted');
   expect(within(reader).getByText('Kept by uam when each turn ended')).toBeTruthy();
   expect(within(reader).getByText('Esc')).toBeTruthy();
@@ -515,4 +533,28 @@ test('a closed Thread shows the last list uam kept; the history button opens the
   todoHistory.mockRejectedValueOnce(new Error('the service is away'));
   await user.click(button);
   expect(await screen.findByText('the service is away')).toBeTruthy();
+});
+
+test('with the kept records the live reader groups rows by the turn that added them; a turn all done folds to one line that opens', async () => {
+  const user = userEvent.setup();
+  const first = { id: 'turn-1', user_item_id: 'u0', state: 'completed', started_at: at(30), ended_at: at(20), todo: { done: 1, total: 1 } } as TurnTiming;
+  const todos = rows();
+  const todoHistory = vi.fn(async (): Promise<TodoHistory> => ({ live: null, turns: [{ timing_id: 'turn-1', ended_at: at(20), intent: 'Planning the pages', todos: [todos[0]], counts: {} }] }));
+  render(draw(withTodos(listOf(todos), 'Working on the site', { turn_timings: [first, timing] }), { todoHistory }));
+  await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  await waitFor(() => expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual([`Turn 2 · ${clock(timing.started_at)}`, `Turn 1 · ${clock(first.started_at)}`]));
+  expect(reader.querySelector('p.pl-6')!.textContent).toBe('2 turns');
+  // The running turn's rows: no record holds them yet.
+  const latest = within(reader).getAllByRole('region')[0];
+  expect(within(latest).getByText('2 open · 1 blocked')).toBeTruthy();
+  expect(within(latest).getAllByRole('listitem').map((li) => li.getAttribute('data-row'))).toEqual(['b', 'c', 'd']);
+  // Turn 1 is all done: one line with its tally and the record's intent, its rows hidden until it opens.
+  const folded = within(reader).getByRole('button', { name: /^Turn 1/ });
+  expect(folded.getAttribute('aria-expanded')).toBe('false');
+  expect(folded.textContent).toBe(`Turn 1 · ${clock(first.started_at)}1 done“Planning the pages”`);
+  expect(within(reader).queryByText('Plan the pages')).toBeNull();
+  await user.click(folded);
+  expect(folded.getAttribute('aria-expanded')).toBe('true');
+  expect(within(reader).getByText('Plan the pages')).toBeTruthy();
 });

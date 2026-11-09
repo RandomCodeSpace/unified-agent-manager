@@ -22,7 +22,6 @@ import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
-import { loadTodoGraph } from '../lib/todoGraph';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
 import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './common';
@@ -317,7 +316,8 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   );
   const names = new Map(session.subagents.map((s) => [s.id, s.name]));
   // The ledger: every row the turns kept, the live list (this page's, when known) as its newest state.
-  const ledger = kept?.data ? todoLedger({ ...kept.data, live: known ?? kept.data.live }, session.turn_timings) : [];
+  const records = kept?.data ? { ...kept.data, live: known ?? kept.data.live } : null;
+  const ledger = records ? todoLedger(records, session.turn_timings) : [];
   const byId = new Map(ledger.map((r) => [r.todo.id, r]));
   const lastTurn = turns.at(-1);
   const parts: ReaderParts | null = view && tally ? {
@@ -334,6 +334,9 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
     foot: 'Read only · to change it, ask in the chat',
     name: (t) => names.get(t.agent_id ?? ''),
     blocks: <Blocks items={todoBlocks(tally)} className="self-start" />,
+    history: records,
+    timings: session.turn_timings,
+    pending: !kept,
   } : null;
   const ledgerParts: ReaderParts = {
     todos: [],
@@ -345,6 +348,8 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
     rows: ledger.map((r) => r.todo),
     group: (t) => ({ turn: byId.get(t.id)?.added, agent: byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? '') }),
     foot: 'Kept by uam when each turn ended',
+    history: records,
+    timings: session.turn_timings,
     name: (t) => byId.get(t.id)?.todo.agent ?? names.get(t.agent_id ?? ''),
     stamp: (t) => {
       const r = byId.get(t.id);
@@ -369,8 +374,8 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
               type="button"
               onClick={(e) => {
                 setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
-                // The graph tags each row with the turn that added it, which only the kept records say.
-                if (loadTodoGraph() === 'graph') read(session.id);
+                // The reader groups the rows by the turn that added each, which only the kept records say.
+                read(session.id);
               }}
               aria-haspopup="dialog"
               aria-expanded={todoReader?.open === true}
