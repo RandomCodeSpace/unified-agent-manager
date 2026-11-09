@@ -27,7 +27,7 @@ test('a numeric column draws one bar under each nonzero number; a year column an
   expect(rect.getAttribute('x')).toBe('0%');
   // On a slim track below the number's line, not behind its digits, where near-equal values read as a stuck selection.
   expect(svg.previousSibling?.textContent).toBe('48,210');
-  expect(svg.getAttribute('class')).toMatch(/(^| )top-\[calc\(1lh\+5px\)\] h-0\.75 .*bg-accent-wash/);
+  expect(svg.getAttribute('class')).toMatch(/(^| )top-\[calc\(1lh\+2px\)\] h-0\.75 .*bg-accent-wash/);
   expect(svg.closest('td')!.className).toContain('whitespace-nowrap');
   expect(rect.getAttribute('class')).toBe('fill-accent/50');
   expect(view.getByRole('cell', { name: '48,210' })).toBeTruthy();
