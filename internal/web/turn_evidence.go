@@ -319,6 +319,11 @@ type testCounts struct {
 	passed, failed int
 	// label is "2 packages ok", "14 passed, 1 failed".
 	label string
+	// whole is set when one summary line counts the whole run, failures
+	// included (pytest's final line), so a pipe that keeps that line still
+	// reports the run. Go, cargo, Jest, Vitest and TAP split their counts
+	// over lines a tail or grep can drop.
+	whole bool
 }
 
 var (
@@ -329,7 +334,8 @@ var (
 	countedRE     = regexp.MustCompile(`\d+ (?:passed|failed)`)
 	passedRE      = regexp.MustCompile(`(\d+) passed`)
 	failedRE      = regexp.MustCompile(`(\d+) failed`)
-	pytestRE      = regexp.MustCompile(`(?m)^=+ (.*\b(?:passed|failed)\b.*) in [\d.]+s(?: \([^)]*\))? =+$`)
+	pytestRE      = regexp.MustCompile(`(?m)^(?:=+ )?((?:\d+ [a-z]+, )*\d+ [a-z]+) in [\d.]+s(?: \(\d+:\d{2}:\d{2}\))?(?: =+)?$`)
+	pytestErrorRE = regexp.MustCompile(`(\d+) errors?\b`)
 	tapPassRE     = regexp.MustCompile(`(?m)^# pass (\d+)`)
 	tapFailRE     = regexp.MustCompile(`(?m)^# fail (\d+)`)
 	goOKRE        = regexp.MustCompile(`(?m)^ok[ \t]+\S+`)
@@ -359,7 +365,18 @@ func passFail(passed, failed int) *testCounts {
 	if failed > 0 {
 		label += fmt.Sprintf(", %d failed", failed)
 	}
-	return &testCounts{passed, failed, label}
+	return &testCounts{passed: passed, failed: failed, label: label}
+}
+
+// testRuns counts the test checks a command line runs.
+func testRuns(runs []checkRun) int {
+	n := 0
+	for _, r := range runs {
+		if r.kind == checkTest {
+			n++
+		}
+	}
+	return n
 }
 
 // countsOf reads the counts of Go, Jest, Vitest, pytest, cargo and TAP
@@ -374,8 +391,22 @@ func countsOf(output string) *testCounts {
 	if m := jsTestsRE.FindStringSubmatch(output); m != nil && countedRE.MatchString(m[1]) {
 		return passFail(firstOf(passedRE, m[1]), firstOf(failedRE, m[1]))
 	}
-	if m := pytestRE.FindStringSubmatch(output); m != nil {
-		return passFail(firstOf(passedRE, m[1]), firstOf(failedRE, m[1]))
+	// Every pytest summary in the output counts, so a failing run is never
+	// hidden behind an earlier passing one.
+	passed, failed, found := 0, 0, false
+	for _, m := range pytestRE.FindAllStringSubmatch(output, -1) {
+		if !countedRE.MatchString(m[1]) && !pytestErrorRE.MatchString(m[1]) {
+			continue
+		}
+		found = true
+		// Collection errors fail the run like failed tests.
+		passed += firstOf(passedRE, m[1])
+		failed += firstOf(failedRE, m[1]) + firstOf(pytestErrorRE, m[1])
+	}
+	if found {
+		c := passFail(passed, failed)
+		c.whole = true
+		return c
 	}
 	if tapPassRE.MatchString(output) {
 		return passFail(sumOf(tapPassRE, output), sumOf(tapFailRE, output))
@@ -395,7 +426,7 @@ func countsOf(output string) *testCounts {
 	if failedTests > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s failed", failedTests, plural(failedTests, "test", "tests")))
 	}
-	return &testCounts{ok, failedPkgs + failedTests, strings.Join(parts, ", ")}
+	return &testCounts{passed: ok, failed: failedPkgs + failedTests, label: strings.Join(parts, ", ")}
 }
 
 // Check outcomes.
@@ -438,8 +469,12 @@ func (a activity) result(run checkRun) (outcome, note string) {
 		}
 		return outcomeUnclear, "a later command may have failed"
 	case statusPiped:
-		if counts != nil && counts.failed > 0 {
+		switch {
+		case counts != nil && counts.failed > 0:
 			return outcomeFail, ""
+		// One test run on the line: a second one's summary could have been cut by the pipe.
+		case counts != nil && counts.whole && counts.passed > 0 && !a.partial && testRuns(a.checks) == 1:
+			return outcomePass, "piped"
 		}
 		return outcomeUnclear, "piped"
 	}
@@ -916,7 +951,11 @@ func (f turnFacts) judgeClaims(workdir string) []EvidenceClaim {
 				if c.Exit != nil && c.Note == "" {
 					how = fmt.Sprintf("exit %d", *c.Exit)
 				}
-				backs = append(backs, oneLine(c.Command, maxDetailCommand)+" · "+how)
+				detail := oneLine(c.Command, maxDetailCommand)
+				if topic == checkTest && c.Counts != "" {
+					detail += " · " + c.Counts
+				}
+				backs = append(backs, detail+" · "+how)
 			}
 		}
 		if reason != "" {

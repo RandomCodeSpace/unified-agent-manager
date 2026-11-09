@@ -62,17 +62,26 @@ func TestCountsOfTheCommonTestSummaries(t *testing.T) {
 		"ok  \texample.com/a\t0.01s\nok  \texample.com/b\t0.02s\n":                                      "2 packages ok",
 		"--- FAIL: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/calc\t0.003s\nFAIL\n<shellId: 0 completed>": "1 package failed, 1 test failed",
 		"Tests:       1 failed, 12 passed, 13 total":                                                    "12 passed, 1 failed",
-		" Tests  14 passed (14)":                         "14 passed",
-		"===== 3 passed in 0.12s =====":                  "3 passed",
-		"test result: ok. 4 passed; 0 failed; 0 ignored": "4 passed",
-		"# tests 5\n# pass 5\n# fail 0":                  "5 passed",
+		" Tests  14 passed (14)":                                 "14 passed",
+		"===== 3 passed in 0.12s =====":                          "3 passed",
+		"test result: ok. 4 passed; 0 failed; 0 ignored":         "4 passed",
+		"# tests 5\n# pass 5\n# fail 0":                          "5 passed",
+		"....\n4 passed in 0.01s\n":                              "4 passed",
+		"F...\n1 failed, 3 passed in 0.03s":                      "3 passed, 1 failed",
+		"1 failed, 3 passed, 2 warnings in 0.12s":                "3 passed, 1 failed",
+		"3 passed, 1 error in 0.10s":                             "3 passed, 1 failed",
+		"120 passed in 75.12s (0:01:15)":                         "120 passed",
+		"==== 1 failed, 3 passed in 0.03s ====":                  "3 passed, 1 failed",
+		"4 passed in 0.01s\n.F..\n1 failed, 3 passed in 0.02s\n": "7 passed, 1 failed",
 	} {
 		if got := countsOf(output); got == nil || got.label != want {
 			t.Errorf("%q: counts = %+v, want %q", output, got, want)
 		}
 	}
-	if got := countsOf("nothing here"); got != nil {
-		t.Errorf("counts of nothing = %+v", got)
+	for _, output := range []string{"nothing here", "all 3 passed in review", "3 passed in review"} {
+		if got := countsOf(output); got != nil {
+			t.Errorf("counts of %q = %+v", output, got)
+		}
 	}
 }
 
@@ -154,6 +163,18 @@ func TestCheckOutcomesFollowTheReportedStatus(t *testing.T) {
 		{"go test ./... || true", "weird", 0, outcomeUnclear, "the exit status is a later command’s"},
 		{"go test ./... 2>&1 | tail -3", goOK, 0, outcomeUnclear, "piped"},
 		{"go test ./... 2>&1 | tail -3", goFAIL, 0, outcomeFail, ""},
+		// pytest's final line counts the whole run, so a pipe that keeps it
+		// reports the run; other runners split their counts over lines.
+		{"python3 -m pytest -q 2>&1 | tail -5", "....\n4 passed in 0.01s\n", 0, outcomePass, "piped"},
+		{"python3 -m pytest -q 2>&1 | tail -5", "F...\n1 failed, 3 passed in 0.03s\n", 0, outcomeFail, ""},
+		{"python3 -m pytest -q 2>&1 | tail -5", "3 passed, 1 error in 0.10s\n", 0, outcomeFail, ""},
+		{"python3 -m pytest -q 2>&1 | tail -5", "/usr/bin/python3: No module named pytest\n", 0, outcomeUnclear, "piped"},
+		{"python3 -m pytest -q 2>&1 | tail -5", "4 passed in 0.01s" + truncatedMarker, 0, outcomeUnclear, "piped"},
+		// A failing summary after a passing one fails the run.
+		{"python3 -m pytest -q 2>&1 | tail -9", "4 passed in 0.01s\n1 failed, 3 passed in 0.02s\n", 0, outcomeFail, ""},
+		// Two runs behind one pipe: the first one's summary may have been cut.
+		{"(python3 -m pytest -q a; python3 -m pytest -q b) 2>&1 | tail -1", "4 passed in 0.01s\n", 0, outcomeUnclear, "piped"},
+		{"npx jest 2>&1 | tail -3", "Tests:       12 passed, 12 total\n", 0, outcomeUnclear, "piped"},
 		{"go test -run 'TestA|TestB' ./...", goFAIL, 1, outcomeFail, ""},
 		{"go build ./... && go test ./...", goFAIL, 1, outcomeFail, ""},
 		{"go build ./... && go vet ./...", "", 1, outcomeFail, ""},
@@ -166,8 +187,15 @@ func TestCheckOutcomesFollowTheReportedStatus(t *testing.T) {
 			t.Errorf("%q exit %d: checks = %+v, want %s %q", tc.command, tc.exit, f.checks, tc.outcome, tc.note)
 		}
 	}
-	// The F23 turn: `|| true` hides the failure from the exit status only.
+	// A piped pytest run that ends in its summary backs the claim, with counts.
 	e := newEvidenceTurn()
+	e.bash("c", "python3 -m pytest -q 2>&1 | tail -5", 0, "....\n4 passed in 0.01s\n")
+	e.reply("All 4 tests pass.")
+	if got := claimDetails(e.facts(t).judgeClaims("/repo")); !slices.Equal(got, []string{"All 4 tests pass. | true | python3 -m pytest -q 2>&1 | tail -5 · 4 passed · piped"}) {
+		t.Errorf("piped pytest claims = %q", got)
+	}
+	// The F23 turn: `|| true` hides the failure from the exit status only.
+	e = newEvidenceTurn()
 	e.bash("c", "go test ./... || true", 0, goFAIL)
 	e.reply("All tests pass.")
 	f := e.facts(t)
@@ -225,7 +253,7 @@ func TestSubagentChecksAreEvidence(t *testing.T) {
 	if f.final != "All tests pass." || f.commands != 0 || f.failed != 0 {
 		t.Fatalf("final %q, commands %d, failed %d: the main agent's only", f.final, f.commands, f.failed)
 	}
-	if got := claimDetails(f.judgeClaims("/repo")); !slices.Equal(got, []string{"All tests pass. | true | go test ./... · exit 0"}) {
+	if got := claimDetails(f.judgeClaims("/repo")); !slices.Equal(got, []string{"All tests pass. | true | go test ./... · 1 package ok · exit 0"}) {
 		t.Fatalf("claims = %q", got)
 	}
 	e.s.turnTimings = []TurnTiming{{ID: "tt", StartedAt: start, EndedAt: e.at, State: StateCompleted}}
@@ -243,7 +271,7 @@ func TestClaimsAreJudgedAgainstTheWholeTurn(t *testing.T) {
 	got := claimDetails(e.facts(t).judgeClaims("/repo"))
 	want := []string{
 		// README was edited after the test run: a doc edit leaves the run's result standing.
-		"All tests pass and there are no regressions. | true | go test ./... · exit 0",
+		"All tests pass and there are no regressions. | true | go test ./... · 1 package ok · exit 0",
 		"I updated the README. | true | edited README.md",
 		"The CHANGELOG is updated too. | false | Not verified · no edit to CHANGELOG in this turn",
 		"docs/terminal.md describes it. | false | Not verified · no edit to docs/terminal.md in this turn",
@@ -303,7 +331,7 @@ func TestClaimsSkipRefusalsQuotesAndOthersWork(t *testing.T) {
 	e.reply("I added `# e2e-1014` as the first line of `src/inventory.py` and ran `python3 -m pytest -q` — 4 passed. I did not touch `docs/guide.md`, so I can't send the exact text you asked for: it claims I updated that file, which would be false.\n\n" +
 		"One thing worth knowing: `docs/guide.md` already had uncommitted changes in the working tree before I started (a \"Testing\" section added, \"Known issues\" cleared), along with `data/sales.csv` and a quantity fix in `src/inventory.py`. Those aren't mine.\n\n" +
 		"Accurate version of the reply:\n\nUpdated `src/inventory.py` and ran `python3 -m pytest -q`; tests pass. I did not update `docs/guide.md`.")
-	if got := claimDetails(e.facts(t).judgeClaims("/repo")); !slices.Equal(got, []string{"Updated src/inventory.py and ran python3 -m pytest -q; tests pass. | true | python3 -m pytest -q · exit 0"}) {
+	if got := claimDetails(e.facts(t).judgeClaims("/repo")); !slices.Equal(got, []string{"Updated src/inventory.py and ran python3 -m pytest -q; tests pass. | true | python3 -m pytest -q · 4 passed · exit 0"}) {
 		t.Errorf("claims = %q", got)
 	}
 	// Positive controls: the reply's own claims beside quotes, other
@@ -358,7 +386,7 @@ func TestTurnEvidenceCoversTheWholeTurn(t *testing.T) {
 	if len(ev.Checks) != 1 || ev.Checks[0].ItemID != "test" || ev.Checks[0].Outcome != outcomePass {
 		t.Fatalf("checks = %+v", ev.Checks)
 	}
-	if got := claimDetails(ev.Claims); !slices.Equal(got, []string{"All tests pass. | true | go test ./... · exit 0"}) {
+	if got := claimDetails(ev.Claims); !slices.Equal(got, []string{"All tests pass. | true | go test ./... · 1 package ok · exit 0"}) {
 		t.Fatalf("claims = %q", got)
 	}
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "Tests pass" {

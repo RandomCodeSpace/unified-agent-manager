@@ -2221,8 +2221,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     only when it is that check's: a check followed by `;`, `||`, `&` or
     another line (`go test ./... || true`) passes or fails by its output's
     counts alone, and one piped into another without `pipefail`
-    (`go test ./... | tail`, whose output may be cut) only fails by them;
-    otherwise its result is unclear. A check followed by `&&` passed when
+    (`go test ./... | tail`, whose output may be cut) only fails by them,
+    except a pytest run, which also passes when its output keeps pytest's
+    own summary line (`4 passed in 0.01s`), since that line counts the
+    whole run; otherwise its result is unclear. A check followed by `&&` passed when
     the line exited 0. A quoted `|` is no pipe. **Show output** opens the
     command's whole output beside the conversation.
   - **Claims**: each sentence of the turn's final message that says tests,
