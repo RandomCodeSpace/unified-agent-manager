@@ -44,7 +44,7 @@ const modules = {
   '../lib/receipts': receiptsLib,
   '../lib/gitlabRefs': gitlabRefsLib,
   './GitLabStrip': { GitLabItemsContext: React.createContext(null), TurnStrip: () => null },
-  './Receipts': { Receipts: ({ stamps }) => React.createElement('ul', { 'aria-label': 'Receipts' }, stamps.map((st) => React.createElement('li', { key: `${st.kind}:${st.claim}` }, `${st.verdict} ${st.claim}`))) },
+  './Receipts': { NoRecordSlot: React.createContext(null), Receipts: ({ stamps }) => React.createElement('ul', { 'aria-label': 'Receipts' }, stamps.map((st) => React.createElement('li', { key: `${st.kind}:${st.claim}` }, `${st.verdict} ${st.claim}`))) },
   // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.
   './Subagents': {
     SubagentChip: ({ subagents, calls, tones, reply }) => React.createElement('button', { 'data-reply-key': reply, 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')} OF ${calls}`),
@@ -63,6 +63,8 @@ const modules = {
   './Todos': { TurnTodo: () => null },
   './StatusLine': { todoBlocks: () => [] },
   '../lib/todos': { todoTally: () => ({ done: 0, total: 0, stages: [], open: 0 }) },
+  // Process notes have their own DOM tests; here every reply stays whole.
+  '../lib/richMarkdown': { proseOnly: () => false },
   './TurnWaybill': { TurnWaybill: () => null },
   './VisualBoundary': { VisualBoundary: ({ children }) => children },
   './Plan': { PlanNotice: () => null },

@@ -462,6 +462,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const atBottom = useRef(true);
   const log = useRef<HTMLDivElement>(null);
   const lastScrollTop = useRef(0);
+  const lastScrollHeight = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
   // A landed page moves the view the other way (its rows are anchored), which is not the reader
@@ -928,7 +929,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   function onScroll() {
     const el = scroller.current;
     if (!el) return;
-    const upwards = el.scrollTop < lastScrollTop.current;
+    // Content that got shorter lowers the bottom and the position with it (an ended turn's outcome joining its head, its
+    // earlier replies becoming notes, the working foot folding away): that is not the reader scrolling up.
+    const shorter = el.scrollHeight < lastScrollHeight.current;
+    lastScrollHeight.current = el.scrollHeight;
+    const upwards = el.scrollTop < lastScrollTop.current && !shorter;
     lastScrollTop.current = el.scrollTop;
     lastScrollAt.current = performance.now();
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
@@ -1043,7 +1048,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
             {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
             {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-            <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-4 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+            <div ref={log} className="flex w-full flex-col gap-4 px-3 pt-4 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
               {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
               {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
               {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
@@ -1052,7 +1057,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
               {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
               {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
-              <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
+              <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-4">
               <Transcript
                 sessionId={session.id}
                 planVersion={session.plan_version}
@@ -1089,7 +1094,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
               <ThreadMessages session={session} />
               {cards.map((i) => (
-                <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
+                <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-4" inner="pt-4" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                   <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
                 </Collapse>
               ))}

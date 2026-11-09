@@ -757,10 +757,14 @@ describe('turn card', () => {
   test("the turn's card holds one Changed total chip, never a file's name, with copy and the turn's actions; its counts leave the files to the chip", () => {
     const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ ...ended, changes: { status: 'available', event_id: 'ev', files: 2, additions: 52, deletions: 3 } }]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} onOpenAllChanges={vi.fn()} />);
     const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
-    // In the flow, always in view and wrapping: never over the next message or past the edge.
+    // On the head once the turn has ended, after its counts: in the flow, always in view, and the head wraps, so never over the next message or past the edge.
     const row = bar.querySelector('[data-outcome]') as HTMLElement;
-    expect(row.className).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
-    expect(row.className).toContain('flex-wrap');
+    const head = headOf(view.getByText('Fixed both.'));
+    expect(row.parentElement).toBe(head);
+    expect(`${head.className} ${row.className}`).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
+    expect(head.className).toContain('flex-wrap');
+    expect(within(head).getByRole('button', { name: /activity of this turn/ }).compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(row).getByRole('button', { name: /^Changed/ })).toBeTruthy();
     expect(within(bar).getAllByRole('button', { name: /^Changed/ }).map((b) => b.getAttribute('aria-label'))).toEqual(['Changed 2 files +52 −3']);
     // The counts were only "2 files changed": they stay, the one way to the steps.
     expect(within(headOf(view.getByText('Fixed both.'))).getByRole('button', { name: /activity of this turn/ }).textContent).toContain('2 files changed');
@@ -814,10 +818,103 @@ describe('turn card', () => {
     const card = view.container.querySelector('[data-history-anchor^="turn-head-"]')!.parentElement as HTMLElement;
     expect(within(card).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
     expect(within(card).queryByRole('button', { name: 'Copy message' })).toBeNull();
+    // While it runs the chip keeps its row under the head: the head holds no outcome and no slot for one.
+    const running = card.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
+    expect(within(running).queryByRole('button', { name: /^Changed/ })).toBeNull();
+    expect(running.querySelector('[data-outcome], [data-no-record]')).toBeNull();
+    expect(card.querySelector('[data-outcome]')!.className).toContain('flex-wrap');
     view.rerender(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
     const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
     expect(within(headOf(view.getByText('Fixed both.'))).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter(Boolean)).toEqual(['940 tokens, 235 tok/s', 'Copy message']);
     expect(bar.querySelector('[data-outcome]')!.childElementCount).toBe(0);
+  });
+
+  test("an ended turn's todo count and its reply's \"no record\" line stand on its head; a contradicted claim stays beside the reply", async () => {
+    const user = userEvent.setup();
+    const failed: Item = { id: 'b1', kind: 'tool', time: at(5), ended_at: at(6), tool: { name: 'bash', status: 'failed', input: JSON.stringify({ command: 'make build' }), exit_code: 2, output: 'FAIL' } };
+    const reply: Item = { id: 'a1', kind: 'assistant', time: at(8), text: 'I ran `make build` and `npm test`. Fixed both.' };
+    const draw = (timing: TurnTiming, working: boolean) => <Transcript sessionId="s" items={[items[0], failed, reply]} turnTimings={[timing]} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" />;
+    const view = render(draw({ ...ended, todo: { done: 1, total: 2, pending: 1, open: 1 } }, false));
+    const head = headOf(view.getByText(/Fixed both/));
+    expect(within(head).getByRole('button', { name: /^Todo at the end of this turn/ })).toBeTruthy();
+    // `npm test` did not run this turn: the neutral line, a disclosure on the head whose claims take a line of their own in it.
+    const line = await within(head).findByRole('button', { name: '1 claim has no record in this turn' });
+    expect(line.getAttribute('aria-expanded')).toBe('false');
+    await user.click(line);
+    const claims = within(head).getByRole('list', { name: 'Claims with no record in this turn' });
+    expect(claims.textContent).toContain('npm test');
+    expect(claims.className).toContain('basis-full');
+    // `make build` exited 2: its red stamp is under the reply, not on the head.
+    const stamps = view.getByRole('list', { name: 'Receipts' });
+    expect(stamps.textContent).toContain('make build');
+    expect(head.contains(stamps)).toBe(false);
+    expect(view.getByText(/Fixed both/).closest('[data-history-anchor="a1"]')!.contains(stamps)).toBe(true);
+    // Still running: no claim is judged, and nothing of an outcome is on the head.
+    view.rerender(draw({ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }, true));
+    expect(view.queryByRole('button', { name: /no record in this turn/ })).toBeNull();
+    expect(headOf(view.getByText(/Fixed both/)).querySelector('[data-outcome], [data-no-record]')).toBeNull();
+  });
+
+  describe('process notes', () => {
+    const say = (id: string, s: number, text: string): Item => ({ id, kind: 'assistant', time: at(s), text });
+    const talk: Item[] = [
+      items[0],
+      say('n1', 1, 'I will start with `secret-a.go` and [the guide](https://example.com/guide).'),
+      edit('e1', 2, '/w/internal/secret-a.go'),
+      say('n2', 4, 'Confirmed the bug.\n\nFixing it now:'),
+      say('n3', 5, 'Two things are left:\n\n- the test\n- the docs'),
+      say('n4', 6, 'Checked the other file too.'),
+      say('n5', 8, 'Fixed both.'),
+    ];
+    const draw = (timing: TurnTiming, working: boolean) => <Transcript sessionId="s" items={talk} turnTimings={[timing]} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" />;
+    const noteOf = (view: ReturnType<typeof render>, text: string | RegExp) => view.getByText(text).closest('[data-note]');
+
+    test("an ended turn's earlier replies of prose alone read as notes on a rail; one with a list and the last reply stay whole", () => {
+      const view = render(draw(ended, false));
+      // Each run of notes shares one rail: the reply with a list between them stands whole and splits the runs.
+      const runs = [...view.container.querySelectorAll('[data-notes]')];
+      expect(runs.map((run) => [...run.querySelectorAll('[data-note]')].map((note) => note.getAttribute('data-history-anchor')))).toEqual([['n1', 'n2'], ['n4']]);
+      expect(runs[0].className).toContain('before:fade-rule-y');
+      // 13px and `muted`, never `faint`, under the words.
+      const note = noteOf(view, /Confirmed the bug/)!;
+      expect(note.className).toContain('text-ui');
+      expect(note.className).toContain('text-muted');
+      expect(note.className).not.toMatch(/text-faint|text-chat/);
+      // Nothing of a note is folded away: both paragraphs, its code span and its link are there to read and use.
+      expect(within(note as HTMLElement).getByText('Fixing it now:')).toBeTruthy();
+      expect(within(noteOf(view, /I will start with/) as HTMLElement).getByText('secret-a.go').tagName).toBe('CODE');
+      expect(within(noteOf(view, /I will start with/) as HTMLElement).getByRole('link', { name: 'the guide' }).getAttribute('href')).toBe('https://example.com/guide');
+      const list = view.getByText('Two things are left:').closest('[data-history-anchor="n3"]')!;
+      expect(list.hasAttribute('data-note')).toBe(false);
+      expect(list.className).toContain('text-chat');
+      expect(list.closest('[data-notes]')).toBeNull();
+      const last = view.getByText('Fixed both.').closest('[data-history-anchor="n5"]')!;
+      expect(last.hasAttribute('data-note')).toBe(false);
+      expect(last.className).toContain('text-chat');
+    });
+
+    test('while the turn runs every reply keeps its size; the notes come only once it has ended', () => {
+      const view = render(draw({ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }, true));
+      expect(view.container.querySelector('[data-note], [data-notes]')).toBeNull();
+      expect(view.getByText('Checked the other file too.').closest('[data-history-anchor="n4"]')!.className).toContain('text-chat');
+      view.rerender(draw(ended, false));
+      expect(view.container.querySelectorAll('[data-note]')).toHaveLength(3);
+    });
+
+    test.each([
+      ['a table', '| a | b |\n| - | - |\n| 1 | 2 |'],
+      ['a code block', 'Run this:\n\n```sh\nmake test\n```'],
+      ['a heading', '## Plan\n\nFix the test.'],
+      ['a chart', '```chart\n{"type":"bar"}\n```'],
+      ['a diagram', '```mermaid\ngraph TD; A-->B;\n```'],
+      ['a quote', '> Note that it fails.'],
+      ['an image', 'See ![the page](shot.png) here.'],
+      ['facts', '**Status:** fixed\n**Tests:** 4 passed'],
+    ])('an earlier reply with %s keeps its full treatment', (_, text) => {
+      const view = render(<Transcript sessionId="s" items={[items[0], say('n1', 1, text), say('n2', 2, 'Looking further.'), say('n5', 8, 'Fixed both.')]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+      expect([...view.container.querySelectorAll('[data-note]')].map((note) => note.getAttribute('data-history-anchor'))).toEqual(['n2']);
+      expect(view.container.querySelector('[data-history-anchor="n1"]')!.className).toContain('text-chat');
+    });
   });
 
   test("an ended turn's head splits its time: the model's own, its tool calls' and the time it waited on the user", () => {

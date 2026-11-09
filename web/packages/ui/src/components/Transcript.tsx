@@ -1,9 +1,10 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FilePen, FilePlus, Files, FileText, FolderSearch, GitBranch, Globe, Image as ImageIcon, MessageCircleQuestion, Minus, Pencil, Plug, RotateCcw, Search, ShieldQuestionMark, Signpost, Terminal, Workflow, X, type LucideIcon } from 'lucide-react';
-import { Fragment, Suspense, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
+import { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnPeer, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
+import { proseOnly } from '../lib/richMarkdown';
 import { isChartCall } from '../lib/chart';
 import { localHints } from '../lib/fileReferences';
 import { usePreview } from '../lib/previewContext';
@@ -16,7 +17,7 @@ import { namedSubagent, parentMap, replyIndex, type IdentityTone } from '../lib/
 import { receipts, type Stamp } from '../lib/receipts';
 import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
 import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
-import { Receipts } from './Receipts';
+import { NoRecordSlot, Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, WorkdirContext, clockTime, dateTime } from './common';
@@ -161,7 +162,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   // A turn's asides chip sits in its reply's foot once it ended with one, else in its message's foot.
-  const replied = new Set(ctx.replyEnd ? [...ctx.replyEnd.values()].map((end) => end.turn) : []);
+  // The reply that ends each ended turn, by the turn's key: known from the index, also while that reply is outside the window.
+  const replied = new Map(ctx.replyEnd ? [...ctx.replyEnd].map(([reply, end]) => [end.turn, reply]) : []);
   const out: ReactNode[] = [];
   let group: Entry[] = [];
   let showedWorking = false;
@@ -217,10 +219,11 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // they show (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
     const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
     out.push(
-      <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-        {runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} replyKey={userItemId ?? 'start'} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null}
-        <SubagentLinkContext.Provider value={subagentLinker(spawned)}>{renderCompact(group, gctx, product, own)}</SubagentLinkContext.Provider>
-      </div>,
+      <TurnShell key={`turn-${id}`} replyKey={userItemId ?? 'start'} head={
+        runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} replyKey={userItemId ?? 'start'} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null
+      }>
+        <SubagentLinkContext.Provider value={subagentLinker(spawned)}>{renderCompact(group, gctx, product, own, userItemId && replied.get(userItemId))}</SubagentLinkContext.Provider>
+      </TurnShell>,
     );
     group = [];
   };
@@ -258,41 +261,84 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
  * call's row. Every other call, failed ones included, is in the turn line and its timeline; a
  * subagent's call is on the reply's subagent chip.
  */
-function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean): ReactNode[] {
+function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean, /** The reply that ends the turn, once it has ended. */ final?: string): ReactNode[] {
   const out: ReactNode[] = [];
+  // Process notes (DESIGN.md process notes): an ended turn's replies before the one that ends it, when they are prose alone,
+  // read quieter on one rail, each run of them together. Only an ended turn has any, so nothing changes size while it streams.
+  let notes: ReactNode[] = [];
+  let firstNote = '';
+  const push = (node: ReactNode) => {
+    if (notes.length) out.push(<div key={`notes-${firstNote}`} data-notes="" className={NOTES}>{notes}</div>);
+    notes = [];
+    if (node) out.push(node);
+  };
   for (const entry of entries) {
     // A pending request is the action card under the transcript; it is not drawn twice.
     if (entry.interaction?.state === 'pending' || !promoted(entry, { live: ctx.live, approvals: ctx.approvals }, own)) continue;
     if (entry.interaction) {
       const ix = entry.interaction;
-      out.push(<QuestionBlock key={ix.id} id={ix.id} asked={questionOf(undefined, ix, ctx.live)!} className={ctx.arrival(ix.id)} />);
+      push(<QuestionBlock key={ix.id} id={ix.id} asked={questionOf(undefined, ix, ctx.live)!} className={ctx.arrival(ix.id)} />);
       continue;
     }
     const item = entry.item;
     if (item.kind === 'user') {
-      out.push(<UserBubble key={item.id} item={item} sessionId={ctx.sessionId} className={ctx.arrival(item.id)} />);
+      push(<UserBubble key={item.id} item={item} sessionId={ctx.sessionId} className={ctx.arrival(item.id)} />);
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />);
+      if (final && item.id !== final && isNote(item)) {
+        if (notes.length === 0) firstNote = item.id;
+        // No arrival class: the reply was on screen whole a moment ago, so it must not rise in again as a note.
+        notes.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={false} note />);
+        continue;
+      }
+      push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
     if (node) {
-      out.push(node);
+      push(node);
       continue;
     }
     const asked = askedOn(item, ctx.approvals, ctx.live);
-    if (asked && asked.outcome !== 'pending') out.push(<QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} />);
-    else out.push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />);
+    if (asked && asked.outcome !== 'pending') push(<QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} />);
+    else push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />);
   }
+  push(null);
   return out;
+}
+
+/** Each reply's verdict, kept while its text is unchanged: the parse runs once per reply. */
+const proseOf = new WeakMap<Item, { text: string; prose: boolean }>();
+/** Whether a main-agent reply held whole is prose alone (`proseOnly`). */
+function isNote(item: Item): boolean {
+  if (item.kind !== 'assistant' || item.agent_id || item.clipped || !item.text) return false;
+  let held = proseOf.get(item);
+  if (held?.text !== item.text) proseOf.set(item, (held = { text: item.text, prose: proseOnly(item.text) }));
+  return held.prose;
+}
+
+/** A run of process notes: 4px apart on a fading rail, 10px from the head above and the reply below. */
+const NOTES = "relative mt-0.5 -mb-0.5 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']";
+
+/** Where the turn's head puts its slot for the reply's "no record" line (`NoRecordSlot`). */
+const NoRecordSlotRef = createContext<((slot: HTMLElement | null) => void) | undefined>(undefined);
+
+/** One turn: its head, then what stands in the answer, which reaches the head's slot for the "no record" line (Receipts). */
+function TurnShell({ replyKey, head, children }: Readonly<{ replyKey: string; head: ReactNode; children: ReactNode }>) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  return (
+    <div data-reply={replyKey} className="flex flex-col gap-3">
+      <NoRecordSlotRef.Provider value={setSlot}>{head}</NoRecordSlotRef.Provider>
+      <NoRecordSlot.Provider value={slot}>{children}</NoRecordSlot.Provider>
+    </div>
+  );
 }
 
 /** The turn line (DESIGN.md turn card): its head on top, its steps under the head while open; flat on the page, no panel. */
 const CARD = 'flex flex-col';
 /** The card's head row: the turn's facts, then its counts at the end; it wraps on a narrow screen. */
-const HEAD = 'flex min-h-9 flex-wrap items-center gap-x-2 gap-y-0.5 py-1.5 text-ui tabular-nums text-muted';
+const HEAD = 'flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-ui tabular-nums text-muted';
 
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
@@ -371,6 +417,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   const [opened, setOpened] = useState(open);
   const card = useRef<HTMLDivElement>(null);
   const outcome = useTurnOutcome({ reply, end, edits, gitlab, replyActions: ctx.replyActions, anchor: card });
+  const noRecord = useContext(NoRecordSlotRef);
   const failures = summary.parts.filter((p) => p.tone === 'error');
   // The change chip states the files changed, with their lines: the counts leave them out then, unless nothing else would open the steps.
   const others = summary.parts.filter((p) => p.tone !== 'error' && !(outcome.changed && p.kind === 'changed'));
@@ -393,7 +440,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   // A failure says what broke beside its count; the whole line is its tooltip.
   const facts = [...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
   return (
-    <div ref={card} id={domId} className={CARD}>
+    <div ref={card} id={domId} className={cn(CARD, '-mb-1')}>
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
         {dotted(facts)}
         {facts.length > 0 && counts.length + failures.length > 0 && <span aria-hidden="true" className="text-faint">·</span>}
@@ -420,9 +467,17 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           </button>
         )}
         {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
+        {/* Ended, the turn's outcome joins its head after the counts; the reply's "no record" line (Receipts) lands in the slot. */}
+        {!working && (
+          <>
+            <span aria-hidden="true" className="turn-outcome-rule max-sm:hidden" />
+            <span data-outcome="" className="contents">{outcome.chips}</span>
+            <span ref={noRecord} data-no-record="" className="contents" />
+          </>
+        )}
         {outcome.actions && <span className="ml-auto">{outcome.actions}</span>}
       </div>
-      <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>
+      {working && <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>}
       {outcome.reader}
       {opened && (
         <Collapse open={open} appear>
@@ -910,7 +965,7 @@ function WorkingTail({ working, turnId, current }: Readonly<{ working: boolean; 
   if (current && roomFor !== turnId) setRoomFor(turnId);
   if (!mounted) return null;
   return (
-    <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
+    <Collapse open={working} appear onClosed={onClosed} className="-mt-4" inner="pt-3">
       <div className={cn(roomFor === turnId && 'min-h-6 pointer-coarse:min-h-11')}>{current}</div>
     </Collapse>
   );
@@ -970,7 +1025,7 @@ const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries
  */
 function TurnStatus({ working = false, timing, empty = false }: Readonly<{ working?: boolean; timing?: TurnTiming; /** The turn ended without a reply, a thought or a call: say so after its duration. */ empty?: boolean }>) {
   const elapsed = working ? null : completedDuration(timing);
-  if (!working && !elapsed) return <div className="min-h-9" title={durationTitle(null)} />;
+  if (!working && !elapsed) return <div className="min-h-7" title={durationTitle(null)} />;
   return (
     <div className={CARD}>
       <div className={HEAD} title={working ? undefined : durationTitle(elapsed)}>
@@ -995,7 +1050,7 @@ function Copyable({ text, read, label, className, side = 'right', at, foot = tru
       {children}
       {/* A message's foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || asides) && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] -mt-1 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || asides) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
@@ -1121,7 +1176,7 @@ function PeerCaption({ peer }: Readonly<{ peer: TurnPeer }>) {
 }
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string; peer?: TurnPeer }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** A process note: an ended turn's earlier reply of prose alone. */ note?: boolean; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string; peer?: TurnPeer }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
@@ -1131,7 +1186,7 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }
   const width = 'max-w-[min(88%,720px)] max-sm:max-w-[88%]';
   const bubble = (
     // A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text.
-    <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
+    <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-1.5 text-chat text-ink', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
       {peer ? <PeerCaption peer={peer} /> : <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>}
       {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
       {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
@@ -1156,11 +1211,11 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, stamps }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, stamps, note }: MessageParts) {
   // A reply has no foot: the turn card's head copies the reply that ends the turn, and any reply copies from its right-click menu.
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
-      <div data-history-anchor={item.id} className="text-chat text-body">
+      <div data-history-anchor={item.id} data-note={note ? '' : undefined} className={note ? 'text-ui text-muted [&_:not(a)>code]:text-body [&_p:not(:last-child)]:mb-1' : 'text-chat text-body'}>
         {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
@@ -1707,7 +1762,7 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, className, stamps }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, className, stamps, note }: { /** Drawn as a process note (DESIGN.md process notes). */ note?: boolean; item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
@@ -1717,7 +1772,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
       if (item.kind === 'notice' && UAM_NOTES.test(item.text ?? '')) return <UamNotes text={item.text ?? ''} className={className} />;
       if (item.kind === 'notice' && RESUME_WARNING.test(item.text ?? '')) return <ResumeWarning text={item.text ?? ''} className={className} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps, note }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':
@@ -1775,7 +1830,7 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
 /** A subagent's own transcript in the Conversation pane: the same rows, blocks, bubbles and sizes as a Thread's, with its own requests. */
 export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live }: Readonly<{ sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean }>) {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} />
     </div>
   );

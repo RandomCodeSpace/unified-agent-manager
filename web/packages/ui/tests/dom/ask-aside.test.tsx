@@ -33,9 +33,9 @@ async function dismiss(user: User, name = TASK) {
 
 /** The asides chips in reply and message feet, with the transcript item each foot belongs to. */
 function chips() {
-  // A message's foot names its message; a turn card's chip, the turn's last reply.
+  // A message's foot names its message; a turn card's chip (on the head once the turn has ended), the turn's last reply.
   const reply = (chip: Element) => [...(chip.closest('[data-reply]')?.querySelectorAll('[data-history-anchor]:not([data-history-anchor^="turn-head-"])') ?? [])].at(-1);
-  return screen.queryAllByRole('button', { name: /in this turn/ }).map((chip) => ({ chip, item: (chip.closest('[data-history-anchor]') ?? chip.closest('.group\\/copy')?.querySelector('[data-history-anchor]') ?? reply(chip))?.getAttribute('data-history-anchor') }));
+  return screen.queryAllByRole('button', { name: /in this turn/ }).map((chip) => ({ chip, item: (chip.closest('[data-history-anchor]:not([data-history-anchor^="turn-head-"])') ?? chip.closest('.group\\/copy')?.querySelector('[data-history-anchor]') ?? reply(chip))?.getAttribute('data-history-anchor') }));
 }
 
 describe('/btw', () => {

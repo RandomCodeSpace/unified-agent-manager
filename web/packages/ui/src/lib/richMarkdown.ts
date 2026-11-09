@@ -3,6 +3,9 @@
 // stored reply, Copy and the model's history keep the Markdown as written; only the view differs.
 // A shape that does not match exactly renders as ordinary Markdown.
 
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import { looksLikePath } from './markdown';
 
 interface MdNode {
@@ -518,6 +521,20 @@ export function remarkRich(options: { first?: boolean; tally?: boolean } = {}) {
     paragraphs(tree);
     heads(tree);
   };
+}
+
+// A reply's text parsed as its view parses it: the same grammar, then the rich rules.
+const parsed = unified().use(remarkParse).use(remarkGfm).use(remarkRich).freeze();
+const hasImage = (node: MdNode): boolean => node.type === 'image' || node.type === 'imageReference' || !!node.children?.some(hasImage);
+
+/**
+ * Whether a reply is prose alone (DESIGN.md process notes): every block of its parsed Markdown is a plain
+ * paragraph. A heading, list, table, code block (a chart's or a diagram's fence is one), quote, rule, image
+ * or any block the rich rules reshape (facts, a lead, a tally) makes it more than prose; so does no text.
+ */
+export function proseOnly(text: string): boolean {
+  const tree = parsed.runSync(parsed.parse(text)) as MdNode;
+  return !!tree.children?.length && tree.children.every((node) => node.type === 'paragraph' && !node.data && !hasImage(node));
 }
 
 /** One command of a shell fence and the output lines under it. */
