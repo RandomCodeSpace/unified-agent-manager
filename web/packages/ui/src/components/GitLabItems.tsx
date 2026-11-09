@@ -123,7 +123,7 @@ function WorkItemView({ gl, r, item, onOpen }: Readonly<{ gl: GitLabItems; r: Gi
     <>
       <Head title={w?.title ?? item?.title ?? itemLabel(r, item, true)} state={<StateChip state={w?.state ?? item?.state} />}
         facts={w && <>{KIND_WORD[w.kind] ?? 'Work item'} {refText(r)}{w.created_at && <> · opened {dateTime(w.created_at)}</>}{w.author && <> by {w.author.name || w.author.username}</>}{w.parent && <> · in {parent
-          ? <button type="button" className="inline-flex h-5 items-center gap-1 rounded-xs bg-tint-well px-1.5 align-middle text-caption text-ink hover:bg-sunken" onClick={() => onOpen(parent)}>{refText(parent)} {w.parent.title}</button>
+          ? <button type="button" className="inline-flex h-5 items-center gap-1 rounded-sm bg-tint-well px-1.5 align-middle text-caption text-ink hover:bg-sunken" onClick={() => onOpen(parent)}>{refText(parent)} {w.parent.title}</button>
           : <span className="text-body">{w.parent.title}</span>}</>}</>} />
       {error && <Note tone="error" role="alert">{error}</Note>}
       {!w && !error && <Skeleton label="Loading the work item…" rows={3} />}

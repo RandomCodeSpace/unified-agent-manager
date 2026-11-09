@@ -198,7 +198,7 @@ test('native plan progress labels only the approved current touched list, and op
 });
 
 /** The blocks on the strip, as their glyph-less words: "1 done", "2 in progress"… in order. */
-const blocks = (root: HTMLElement) => [...root.querySelectorAll('[title]')].map((b) => `${b.getAttribute('title')} ${b.className.match(/text-(accent|warning|muted|success|error)/)?.[1]} ${b.querySelector('svg') ? 'glyph' : 'no glyph'}`);
+const blocks = (root: HTMLElement) => [...root.querySelectorAll('[title]')].map((b) => `${b.getAttribute('title')} ${(b as HTMLElement).dataset.tone} ${b.querySelector('svg') ? 'glyph' : 'no glyph'}`);
 
 test('the todo list is stage blocks with their glyph and number and "1 of 4", then Now on the progress line; no meter, no counts in words, no made-up verb', () => {
   vi.useFakeTimers();
@@ -222,7 +222,7 @@ test('the todo list is stage blocks with their glyph and number and "1 of 4", th
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
   // A row to do adds its block.
   view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])))));
-  expect(blocks(screen.getByRole('button'))).toEqual(['1 done success glyph', '1 in progress accent glyph', '1 blocked warning glyph', '1 to do muted glyph']);
+  expect(blocks(screen.getByRole('button'))).toEqual(['1 done success glyph', '1 in progress accent glyph', '1 blocked warning glyph', '1 to do none glyph']);
   // No row in progress: the agent's words take Now's place.
   view.rerender(draw(withTodos(listOf(rows([{}, { status: 'pending' }, { status: 'pending' }]), { now: undefined }))));
   expect(screen.getByText('Working on the site', { ignore: '.sr-only' })).toBeTruthy();
