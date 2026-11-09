@@ -11,26 +11,33 @@ afterEach(() => vi.restoreAllMocks());
 const bar = () => screen.getByRole('group', { name: /^State: / });
 
 test.each([
-  ['t8', 'Working', 'before:bg-accent'],
-  ['t2', 'Needs answer', 'before:bg-warning'],
-  ['t5', 'Interrupted', 'before:bg-warning'],
-  ['t4', 'Error', 'before:bg-error'],
-  ['t-chart', 'Finished', 'before:bg-success'],
-])('%s edges the header card for %s', async (id, word, edge) => {
+  ['t8', 'Working', 'text-accent'],
+  ['t2', 'Needs answer', 'bg-attention-wash'],
+  ['t5', 'Interrupted', 'text-warning'],
+  ['t4', 'Error', 'text-error'],
+  ['t-chart', 'Finished', 'text-muted'],
+])('%s says %s beside the title, on a flat bar', async (id, word, tone) => {
   await openTask(id);
   expect(bar().getAttribute('aria-label')).toBe(`State: ${word}`);
-  expect(bar().className).toContain(edge);
-  expect(within(bar()).queryByText(word)).toBeNull();
+  expect(bar().className).not.toMatch(/before:bg-|shadow-|bg-raised/);
+  expect(within(bar()).getByText(word).className).toContain(tone);
 });
 
-test('an idle Thread\'s header card stays neutral', async () => {
+test('only a state that waits on the owner is a filled tag; a finished one colours its glyph alone', async () => {
+  await openTask('t-chart');
+  const finished = within(bar()).getByText('Finished');
+  expect(finished.className).not.toMatch(/bg-/);
+  expect(finished.querySelector('svg')!.getAttribute('class')).toContain('text-success');
+});
+
+test('an idle Thread\'s header label has no colour', async () => {
   const state = data.seed();
   state.tasks.find((t) => t.id === 't-chart')!.state = 'idle';
   vi.spyOn(data, 'seed').mockReturnValue(state);
   await openTask('t-chart');
   expect(bar().getAttribute('aria-label')).toBe('State: Idle');
-  expect(bar().className).toContain('bg-raised');
-  expect(bar().className).not.toMatch(/before:bg-/);
+  expect(within(bar()).getByText('Idle').className).toContain('text-muted');
+  expect(within(bar()).getByText('Idle').querySelector('svg')!.getAttribute('class')).toContain('text-faint');
 });
 
 test('the sidebar\'s top row is flat on the rail, in the same 36px box', async () => {

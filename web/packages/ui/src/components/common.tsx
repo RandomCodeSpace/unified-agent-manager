@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Ban, Circle, CircleAlert, CircleDot, CircleHelp, Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { Archive, Ban, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, Check, CircleDashed, Clock, Copy, CornerDownLeft, ExternalLink, Eye, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, ShieldQuestionMark, SkipForward, Square, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -80,14 +80,11 @@ const TONE_BG: Record<Tone, string> = {
 };
 
 /**
- * The top bars (DESIGN.md Thread header, Sidebar): the 44px row keeps its box, and inside it a solid lifted card
- * (no blur) 4px from its top and bottom, so the sidebar's and the Thread's top rows line up.
+ * The top bars (DESIGN.md Thread header, Sidebar): the 44px row keeps its box, and inside it a 36px box flat on its
+ * ground, 4px from the row's top and bottom, so the sidebar's and the Thread's top rows line up.
  */
 export const BAR_ROW = 'relative z-10 flex h-header shrink-0 items-center px-1.5 sm:px-2';
-const BAR_CARD = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md bg-raised pr-1 pl-1.5 shadow-raised';
-/** A state's still edge on the bar card, a 3px stripe at its left in the tone: in motion, needs you, broken, done; any other tone stays neutral. */
-const BAR_EDGE: Partial<Record<Tone, string>> = { accent: 'before:bg-accent', warning: 'before:bg-warning', error: 'before:bg-error', success: 'before:bg-success' };
-export const barCard = (tone?: Tone, className?: string) => cn(BAR_CARD, tone && BAR_EDGE[tone] && cn("relative overflow-hidden before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:content-['']", BAR_EDGE[tone]), className);
+export const BAR_BOX = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 pr-1 pl-1.5';
 
 export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was not resumed or resent.';
 
@@ -174,6 +171,48 @@ export function WorkingMark({ className }: Readonly<{ className?: string }>) {
 /** Model work on the strip's live line: a 7px ink dot that breathes (opacity and scale only); still under reduced motion. */
 export function BreathingDot() {
   return <span aria-hidden="true" className="inline-block size-[7px] shrink-0 animate-breathe rounded-full bg-ink motion-reduce:animate-none" />;
+}
+
+/**
+ * A Thread's state in a word (DESIGN.md State labels), by how much it asks of the owner: `now` waits on them and is the
+ * one filled tag, in `attention` like the request's own chip and the Needs you count; `live` and `bad` colour the glyph and the word; `done` colours only the glyph; `off` has no colour.
+ */
+const STATUS_MARKS = {
+  'Needs answer': { icon: MessageCircleQuestion, tone: 'text-attention', rung: 'now' },
+  'Needs permission': { icon: ShieldQuestionMark, tone: 'text-attention', rung: 'now' },
+  Starting: { icon: WorkingMark, tone: 'text-accent', rung: 'live' },
+  Working: { icon: WorkingMark, tone: 'text-accent', rung: 'live' },
+  Finished: { icon: CircleCheck, tone: 'text-success', rung: 'done' },
+  Error: { icon: TriangleAlert, tone: 'text-error', rung: 'bad' },
+  Interrupted: { icon: Pause, tone: 'text-warning', rung: 'bad' },
+  Stopped: { icon: Square, tone: 'text-faint', rung: 'off' },
+  Idle: { icon: Clock, tone: 'text-faint', rung: 'off' },
+  Settled: { icon: CircleCheck, tone: 'text-faint', rung: 'off' },
+  Archived: { icon: Archive, tone: 'text-faint', rung: 'off' },
+} as const;
+export type StatusWord = keyof typeof STATUS_MARKS;
+
+/** The state label of a Thread row and of the Thread header. An unread Finished keeps the word and takes its own glyph and `ink`. */
+export function StateLabel({ status, unread = false, text = status, icon, title, className }: Readonly<{ status: StatusWord; unread?: boolean; /** The word in place of the state's ("Stopped: credit limit"). */ text?: string; /** The glyph in place of the state's. */ icon?: ReactNode; title?: string; className?: string }>) {
+  const { icon: Icon, tone, rung } = STATUS_MARKS[status];
+  const fresh = unread && status === 'Finished';
+  const glyph = icon ?? (fresh ? <Eye aria-hidden="true" className="size-3.5 shrink-0 text-badge-teal" /> : <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', tone)} />);
+  return (
+    <span
+      title={title}
+      className={cn(
+        'flex shrink-0 items-center gap-1 text-caption font-normal whitespace-nowrap',
+        // -my-0.5: the 20px tag takes a text line's room, so a row with one keeps its two lines where every row has them.
+        rung === 'now' && '-my-0.5 h-5 rounded-sm bg-attention-wash px-1.5 font-medium text-attention',
+        (rung === 'live' || rung === 'bad') && tone,
+        (rung === 'done' || rung === 'off') && (fresh ? 'font-medium text-ink' : 'text-muted'),
+        className,
+      )}
+    >
+      {glyph}
+      {text}
+    </span>
+  );
 }
 
 function StateGlyph({ state }: Readonly<{ state: SessionState }>) {

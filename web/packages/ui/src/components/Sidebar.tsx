@@ -1,5 +1,5 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
-import { Archive, ChevronRight, CircleCheck, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Pause, RefreshCw, Settings as SettingsIcon, Search, ShieldQuestionMark, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { ChevronRight, CircleCheck, Clock, FilePen, CloudOff, FolderPlus, GitBranch, RefreshCw, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
 import { createContext, memo, startTransition, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, readOnly, taskName, type Project, type SearchResults, type SessionSummary } from '../api';
 import { useApi } from '../ApiContext';
@@ -9,7 +9,7 @@ import { MOTION_NOTICE, motionNoticeDue } from '../lib/motion';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
-import { BADGE_TEXT, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { BADGE_TEXT, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, StateLabel, TaskTitle, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { lineCountsText } from '../lib/cost';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
@@ -363,26 +363,9 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
   );
 }
 
-const STATUS_MARKS = {
-  'Needs answer': { icon: MessageCircleQuestion, tone: 'text-warning' },
-  'Needs permission': { icon: ShieldQuestionMark, tone: 'text-warning' },
-  Starting: { icon: WorkingMark, tone: 'text-accent' },
-  Working: { icon: WorkingMark, tone: 'text-accent' },
-  Finished: { icon: CircleCheck, tone: 'text-success' },
-  Error: { icon: TriangleAlert, tone: 'text-error' },
-  Interrupted: { icon: Pause, tone: 'text-warning' },
-  Stopped: { icon: Square, tone: 'text-muted' },
-  Idle: { icon: Clock, tone: 'text-muted' },
-  Settled: { icon: CircleCheck, tone: 'text-muted' },
-  Archived: { icon: Archive, tone: 'text-muted' },
-};
-/** An unread Finished row keeps its own mark: the label is Finished either way. */
-const UNREAD_FINISHED = { icon: Eye, tone: 'text-badge-teal' };
-
 /** Shared task presentation; owner-specific actions stay with each caller. */
 export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
-  const { icon: StatusIcon, tone: statusTone } = unread && status.label === 'Finished' ? UNREAD_FINISHED : STATUS_MARKS[status.label];
   const changed = session.diff?.files ?? 0;
   // On the row only off the Project's default branch (the tip always names it); a default git cannot tell (no origin, an older server) draws it.
   const own = taskBranch(session, project);
@@ -400,10 +383,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
           </span>
         )}
         <span className="flex-1" />
-        <span className={cn('flex shrink-0 items-center justify-end gap-1 font-normal', statusTone, settleable && 'min-w-14 group-hover/row:opacity-0 group-has-focus-visible/row:opacity-0')}>
-          <StatusIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          {status.label}
-        </span>
+        <StateLabel status={status.label} unread={unread} className={cn('justify-end', settleable && 'min-w-14 group-hover/row:opacity-0 group-has-focus-visible/row:opacity-0')} />
       </span>
       <span className="flex w-full min-w-0 items-baseline gap-1.5">
         <TaskTitle session={session} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />

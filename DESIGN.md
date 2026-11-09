@@ -666,8 +666,8 @@ The scale is the `--text-*` theme in `index.css`; Tailwind's default sizes are r
 | Token (utility) | Size | Weight | Line | Use |
 |---|---|---|---|---|
 | `display-md` | 20px | 600 | 1.3 | Empty-state and login headings |
-| `display-sm` | 17px | 600 | 1.35 | Thread title in the header, dialog titles |
-| `title` | 14px | 600 | 1.4 | Card titles, panel titles, dialog section headings, the wordmark |
+| `display-sm` | 17px | 600 | 1.35 | Dialog titles |
+| `title` | 14px | 600 | 1.4 | The Thread title in the header, card titles, panel titles, dialog section headings, the wordmark |
 | `ui` (+ `font-medium`) | 13px | 500 | 1.4 | Buttons, selected and needs-you rows, project names, pickers |
 | `ui` | 13px | 400 | 1.4 | Rows at rest, menu items, meta lines, form controls |
 | `chat` / `chat-lg` | 14px / 16px | 400 | 1.7 / 1.6 | Conversation prose at 14px; composer input uses 16px on phones to prevent iOS input zoom; on iOS every other field is 16px for the same reason |
@@ -820,7 +820,13 @@ The tab title, the app badge and the sidebar toggle (a filled `attention` count 
 **Thread row (46px on a 48px pitch).**
 Every row in every group is flat on `rail` (owner, 2026-11-09, revamp mock 3): no card, no shadow and no ring in either theme, a 46px tile with `md` radius, 2px apart, so a hovered row beside the open one stays a separate tile.
 Hover tints the tile `tint-hover` (`fast`, no lift), its Settle button included; the open Thread's tile is `tint-selected`, with its name in semibold; an unread or Needs you row sets its name in medium `ink`.
-Two lines: first the 16px Project badge, visible Project name, and a short status label with a 14px icon in `caption` and its tone: "Needs answer" or "Needs permission" (`warning`, amber), "Finished" (`success`, green; an unread one an eye in `badge-teal`), "Error" (`error`, red), "Interrupted" (`warning`), "Starting" or "Working" (`accent`), and "Idle" or "Stopped" (`muted`).
+Two lines: first the 16px Project badge, visible Project name, and the state label.
+**State labels** (owner, 2026-11-09, revamp mock 5 L2, the urgency ladder; `StateLabel` in common.tsx, the same on a row and in the Thread header): a 14px glyph and the word in `caption`, coloured by how much the state asks of the owner.
+"Needs answer" and "Needs permission" are the one filled tag: `attention` on `attention-wash`, 20px, `sm` radius, medium, the colour of the request's own chip and of the Needs you count.
+"Starting", "Working", "Error" and "Interrupted" colour the glyph and the word (`accent`, `error`, `warning`).
+"Finished" colours only its glyph (`success`) and sets the word in `muted`; an unread one takes an eye in `badge-teal` and the word in medium `ink`.
+"Idle", "Stopped", "Settled" and "Archived" have no colour: a `faint` glyph and a `muted` word.
+A new state takes one of these four rungs; nothing else on a row or a header is filled.
 These are the only Thread states (owner, 2026-10-25: more create confusion): a phase of the work (compacting, wrapping up at a budget), what a finished turn found (tests fail, commands failed, a claim contradicted) and why a Thread is idle (closed, a branch not started) are the row tip's and the header chip's hover words, never another state.
 The second line holds the Thread title at 13px, the Thread's branch in normal-weight `meta` `muted` (up to 112px) only when it is not the Project's default branch (owner, 2026-11-09, revamp mock 3: a branch on a row means "not the default"), and the relative time of its last change.
 The default is the default branch of the Project's origin as the folder's local refs record it (`default_branch`, never guessed from a name); when git cannot tell (no origin, an older server) the branch is drawn.
@@ -1023,13 +1029,14 @@ Arrow keys move the choice; the group is named by the row label and described by
 Off, the `faint` track is 3:1 against `raised` and the white thumb 3:1 against the track, so the control's boundary and state read without colour alone.
 
 ### Thread header
-44px, its own row above the conversation like the sidebar's top row: no strip, rule or fade of its own; the conversation scrolls in its box below it, which starts 8px under the row, so scrolled content clips 12px under the card, never against it (owner, 2026-10-29); a subagent open in the pane keeps the same gap.
-The row keeps that box and everything sits in one card inside it (`BAR_ROW`/`barCard` in common.tsx, shared with the sidebar's top row; the Thread list scrolls with no scrollbar drawn, so its rows end where that card does): 36px tall, 4px from the row's top and bottom, `raised`, `rounded-md`, `shadow-raised`, no blur.
-**The state is the card's still edge**, a 3px stripe down its left side (clipped by its radius), never a word or a dot on a wide header: working `accent`, Needs permission, Needs answer and Interrupted `warning`, Error `error`, Finished `success`; Idle, Stopped and a read-only Thread have none.
-The tones are `STATE_TONE`'s, so light and dark both follow the theme; nothing animates.
-The card is a group named "State: <word>" (the Thread list's word) for assistive tech; it has no tooltip of its own, so a crumb or button inside shows only its own (owner, 2026-10-29: the fill and edge say the state).
-Left: the drawer toggle (on a narrow screen), then for a Thread another Thread started (`spawned_by`) the trail's first crumb, that Thread's badge and name (`ui`, regular `body`, a button that opens it; "Another thread", plain, once it is gone; a "…" menu holding it on a phone) and a `ChevronRight`; then the Project badge (16px) and the title (`ui` medium `ink`, the crumbs' size, truncating; double-click, the hover pencil, or Rename in the menu edits it in place with the same rules as the row); the conversation no longer opens with a "Started by another thread" note.
-Then `Archived`/`Settled` as an outlined chip when read-only, "Updating…" (`caption` `muted`) while a lifecycle request is in flight, the rename pencil, which keeps its 28px slot and only fades in (opacity) while the title is hovered or it is focused, so nothing beside it moves.
+44px, its own row above the conversation like the sidebar's top row: no strip, rule or fade of its own; the conversation scrolls in its box below it, which starts 8px under the row, so scrolled content clips 12px under the bar, never against it (owner, 2026-10-29); a subagent open in the pane keeps the same gap.
+The row keeps that box and everything sits in one 36px box inside it, 4px from the row's top and bottom, flat on `canvas` like the sidebar's top row on `rail` (`BAR_ROW`/`BAR_BOX` in common.tsx; owner, 2026-11-09, revamp mocks 1 and 2: no card, no shadow, no edge).
+**The state is a label beside the title** (owner, 2026-11-09, which replaces the card's coloured edge of 2026-10-29): the Thread list's state label (see State labels under Thread row), with the header's own detail as its hover words.
+Working is a still `accent` dot and the word, never a ring: the one moving mark in the pane is the strip's live line.
+A phone keeps the glyph alone after the title, and a Settled Thread's label is hidden there, since its composer row says so.
+The box is a group named "State: <word>" (the Thread list's word) for assistive tech.
+Left: the drawer toggle (on a narrow screen), then for a Thread another Thread started (`spawned_by`) the trail's first crumb, that Thread's badge and name (`ui`, regular `body`, a button that opens it; "Another thread", plain, once it is gone; a "…" menu holding it on a phone) and a `ChevronRight`; then the Project badge (16px) and the title (`title`, 14px semibold `ink`, one step over the crumbs and the buttons beside it, truncating; double-click, the hover pencil, or Rename in the menu edits it in place with the same rules as the row); the conversation no longer opens with a "Started by another thread" note.
+Then the state label (`Archived`/`Settled` when read-only), "Updating…" (`caption` `muted`) while a lifecycle request is in flight, the rename pencil, which keeps its 28px slot and only fades in (opacity) while the title is hovered or it is focused, so nothing beside it moves.
 The last turn's outcome is not in the header (owner, 2026-10-29); the row tip keeps it.
 The title's tooltip carries the whole name.
 Right: the project strip, that is the branch (`meta`, `muted`, with the Project folder in its tooltip; hidden below 481px) and **Changes** (`FileDiff` + count, `aria-pressed` while open; label hidden below 481px) and **Files**, then the **branch link** (an `icon-md` ghost link styled like the header buttons, a plain `<a target="_blank" rel="noopener noreferrer">`: GitHub's mark for a github.com address, GitLab's for a GitLab one, `ExternalLink` otherwise; its tooltip and name are "Open <branch> on the web", or "<branch> is not pushed: open <default branch>"; present only when the server sends the Thread's filled link, and folded into the "…" menu with Charts and Terminal on a tight header); where the Project has no Git (not a repository, or git not installed) one `warning` button (`TriangleAlert` + "Not a Git repository" or "Git not installed"; label hidden below 481px) stands in their place and opens a popover with the reason, and a compact turn drops its "Changed n files" line, then **Terminal** (`SquareTerminal`, tooltip "Terminal in <Project>", `aria-pressed` while its panel is open; label hidden below 481px; present while Settings → Terminal is on, with or without Git and on read-only Threads too; see Terminal), then **Activity** (`Activity` + the count of the Thread's thoughts and tool calls, `aria-pressed` while its panel is open; present once there is one; label hidden below 481px), and the **"…"** menu with the same items as the row plus, for an active Thread of a provider that manages MCP servers, **MCP servers…** (`Plug`), which opens the Thread's MCP servers dialog (see Settings view, MCP servers).
@@ -1620,18 +1627,19 @@ Validation rings remain visible.
 ### State marks
 | State | Mark | Row word | Chip |
 |---|---|---|---|
-| working / starting | sidebar row: quiet 14px ring, `accent`, 1s linear rotation; Thread header: a still 6px `ink` dot (the live line on the strip has the pane's one moving mark); still under reduced motion (Motion: Match system) | Working / Starting | "Working" `accent` |
+| working / starting | sidebar row: quiet 14px ring, `accent`, 1s linear rotation; Thread header: a still 6px `accent` dot (the live line on the strip has the pane's one moving mark); still under reduced motion (Motion: Match system) | Working / Starting | "Working" `accent` |
 | wrapping up (working at its budget, `budget.wrapping_up`) | the working mark, unchanged (no second spinner) | Working | "Working" `accent`; its hover says it is wrapping up: tools are denied and the agent is writing a handoff |
-| needs permission / answer | question bubble, `warning` (amber), still | Needs permission / Needs answer | "Needs permission" / "Needs answer" `warning` |
+| needs permission / answer | shield or question bubble, `attention`, still | Needs permission / Needs answer | the filled tag: `attention` on `attention-wash` |
 | compacting | the working mark; the strip's live line says "Compacting the conversation" | Working | "Working" |
-| completed | check, `success` (green); unread sidebar rows use an eye, `badge-teal` | Finished (unread or not) | "Finished" `success`; its hover names what the turn found failed (tests fail, a claim contradicted) |
+| completed | circled check, `success` (green); unread sidebar rows use an eye, `badge-teal` | Finished (unread or not) | "Finished" in `muted` beside the green glyph; its hover names what the turn found failed (tests fail, a claim contradicted) |
 | cancelled | square in sidebar, dash in header (`CircleStop` in `warning` when it was not your Stop), `muted` | Stopped | "Stopped", or "Stopped: credit limit" and the like when it was not your Stop (Status line), `muted` |
 | failed | warning triangle in sidebar, cross in header, `error` | Error | "Error" `error` |
 | interrupted | pause, `warning` | Interrupted | "Interrupted" `warning` |
 | idle | clock in sidebar, dashed circle in header, gray | Idle | "Idle" `muted` |
 | closed | clock in sidebar, hollow dot in header, gray | Idle | "Idle" `muted`; its hover says the conversation is closed, or that a new branch starts with your first message |
 
-Only the attention chip has a fill.
+The Chip column is the state label of a row and of the Thread header (State labels under Thread row); on a wide header the label uses the sidebar's glyphs.
+Only the attention tag has a fill.
 Chrome icons are lucide, 12–16px, at one 1.5 stroke (`LucideProvider` in `UamApp.tsx`; a mark that sets its own heavier stroke keeps it).
 The Copilot provider mark uses its official Primer SVG.
 The working mark is one component (`WorkingMark` in `common.tsx`), and model work has its own, a 7px `ink` dot that breathes (`BreathingDot`, opacity and scale).

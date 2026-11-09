@@ -455,7 +455,7 @@ describe('messages', () => {
     const header = screen.getByRole('group', { name: /^State: / });
     const crumb = within(header).getByRole('button', { name: 'Doctor: add terminal line' });
     expect(within(header).getByRole('heading', { level: 1 }).textContent).toBe('Bump GitHub Actions pins');
-    expect(header.className).toContain('before:bg-error');
+    expect(within(header).getByText('Error').className).toContain('text-error');
     expect(log().queryByText(/Started by another thread/)).toBeNull();
     await user.click(crumb);
     expect(await screen.findByRole('heading', { level: 1, name: 'Doctor: add terminal line' })).toBeTruthy();
