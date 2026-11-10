@@ -373,7 +373,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
   const place: ThreadPlace = noGit ? { mode: 'current' } : chosenPlace;
   let placeHint = 'Each run works in the Project folder, beside the threads open there.';
   if (noGit) placeHint = `${noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}: a run cannot have its own worktree.`;
-  else if (place.mode === 'worktree') placeHint = 'Each run gets its own worktree and branch, removed when its thread settles.';
+  else if (place.mode === 'worktree') placeHint = 'Each run gets its own worktree and branch. Settling its thread removes the worktree and keeps the branch.';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const choices = modelChoices(catalog, settings.hidden_models?.[providerName], model);
