@@ -35,7 +35,7 @@ type Ending = 'restart' | 'close' | Project;
 export interface TerminalHandle { end: (to: Project | null) => void }
 
 /**
- * The terminal dock's content (App.tsx TerminalDock, under the Task view): a shell in the Project
+ * The terminal dock's content (Panes.tsx TerminalDock, under the Task view): a shell in the Project
  * folder. The shell lives as long as its socket: Close and Restart end it; switching Tasks does not. This chunk
  * uses Button and plain markup rather than PanelHeader, Note or Tip: the bundler moves modules that
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
