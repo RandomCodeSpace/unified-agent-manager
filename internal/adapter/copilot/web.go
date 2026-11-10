@@ -349,15 +349,10 @@ func (a sdkSessionAdapter) RespondPermission(ctx context.Context, requestID stri
 	return res.Success, nil
 }
 
-// isRPCError reports whether err carries the SDK's JSON-RPC error response
-// type. The type lives in an internal SDK package, so it is matched by name.
+// isRPCError reports whether err carries the SDK's JSON-RPC error response.
 func isRPCError(err error) bool {
-	for ; err != nil; err = errors.Unwrap(err) {
-		if fmt.Sprintf("%T", err) == "*jsonrpc2.Error" {
-			return true
-		}
-	}
-	return false
+	var rpcErr *copilot.RPCError
+	return errors.As(err, &rpcErr)
 }
 
 // webProvider drives the installed copilot CLI through the Copilot Go SDK. It

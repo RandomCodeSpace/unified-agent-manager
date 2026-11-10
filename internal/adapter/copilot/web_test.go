@@ -3291,3 +3291,15 @@ func TestCapabilitiesDoNotWaitForACLIStart(t *testing.T) {
 		t.Fatal("Capabilities waited for the CLI start")
 	}
 }
+
+func TestIsRPCErrorFindsTheSDKErrorAnywhereInTheChain(t *testing.T) {
+	rpcErr := &copilot.RPCError{Code: -32602, Message: "invalid params"}
+	for _, err := range []error{rpcErr, fmt.Errorf("send: %w", rpcErr), errors.Join(errors.New("detach failed"), rpcErr)} {
+		if !isRPCError(err) {
+			t.Fatalf("isRPCError(%v) = false", err)
+		}
+	}
+	if isRPCError(errors.New("broken pipe")) || isRPCError(nil) {
+		t.Fatal("a transport error read as an RPC error")
+	}
+}
