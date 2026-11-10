@@ -10,6 +10,8 @@ import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
+import { useLayout } from '../lib/layout';
+import { threadTurns } from '../lib/turns';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import { failureWords } from '../lib/failure';
@@ -46,6 +48,10 @@ import { FileReferencesProvider } from './FileReferences';
 import { registerRealWorkdir } from '../lib/markdown';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
+import { ComposerCell } from './notebook/ComposerCell';
+import { InNotebookSlot } from './notebook/LiveCard';
+import { SettingsLine, SettingsLineContext } from './notebook/SettingsLine';
+import { NotebookSlots, useTurnJumpTarget } from './notebook/slots';
 import { Button, buttonVariants } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -147,6 +153,8 @@ interface HeaderProps {
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
   onMcp: (open: boolean) => void;
+  /** Takes the element of the settings line under the title (the notebook layout), which the composer fills. */
+  onSettingsLine: (el: HTMLElement | null) => void;
   /** The Thread that started this one, as the trail's first crumb (`session.spawned_by`): its name, undefined once it is gone, and its Project's badge. */
   spawnerName?: string;
   spawnerBadge?: Badge;
@@ -229,7 +237,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
-const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, onSettingsLine, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -271,6 +279,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
   const word = readOnly(session) ? stageLabel(session) : shown.word;
 
   return (
+    <>
     <header ref={header} className={BAR_ROW}>
       <div role="group" aria-label={`State: ${word}`} className={BAR_BOX}>
         {leading}
@@ -364,6 +373,8 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
         </Menu.Root>
       </div>
     </header>
+    <SettingsLine to={onSettingsLine} />
+    </>
   );
 }, (a, b) => (Object.keys(a) as (keyof HeaderProps)[]).every((key) => a[key] === b[key] || (key === 'session' && SUMMARY_KEYS.every((field) => a.session[field] === b.session[field]))));
 
@@ -883,7 +894,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!turn) return;
     atBottom.current = false;
     await settle(0);
-    land(turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
+    // The notebook layout's cell (notebook/Cell) lands by its own top: its turn line is in the second track, not at its head.
+    land(turn.matches('[data-cell]') ? turn : turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
   }
 
   /**
@@ -1012,6 +1024,17 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
     return () => window.clearTimeout(timer);
   }, []);
+  // The notebook layout (lib/layout): its list of turns scrolls this Thread to one, and the header's settings line takes the composer's settings controls.
+  useTurnJumpTarget((key) => void jumpToReply(key));
+  // Its turns, numbered once (lib/turns) for the cells' gutters and the composer's cell; the Contents column lists the same.
+  const { outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue } = session;
+  const notebook = useLayout() === 'notebook';
+  const { turns, next: nextTurn } = useMemo(
+    // The current layout shows neither, and does not pay for them.
+    () => (notebook ? threadTurns({ outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue, state: session.state }) : { turns: undefined, next: 0 }),
+    [notebook, outline, historyIndex, historyBefore, heldItems, turnTimings, queue, session.state],
+  );
+  const [settingsLine, setSettingsLine] = useState<HTMLElement | null>(null);
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -1024,9 +1047,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <GitLabItemsContext.Provider value={gitlabItems}>
     <ReplyContext.Provider value={replyTools}>
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
+    <NotebookSlots>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} onSettingsLine={setSettingsLine} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && !viewed && (
@@ -1074,6 +1098,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 liveItems={liveItems}
                 historyItemSeq={historyItemSeq}
                 turnTimings={session.turn_timings}
+                turns={turns}
                 interactions={visibleInteractions}
                 subagents={session.subagents}
                 liveCard={!session.history_after}
@@ -1100,11 +1125,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
               {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
               <ThreadMessages session={session} />
-              {cards.map((i) => (
+              {/* In the notebook layout a waiting question or permission is answered in the running turn's cell, when one is on screen. */}
+              <InNotebookSlot name="asks">
+              {(inCell) => cards.map((i) => (
                 <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-4" inner="pt-4" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
-                  <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+                  <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} place={inCell ? 'cell' : undefined} />
                 </Collapse>
               ))}
+              </InNotebookSlot>
               {cutCall && !session.history_after ? (
                 <InterruptedCard lead={INTERRUPTED_TEXT} call={cutCall} onRunAgain={!readOnly(session) && !viewed ? async () => setSeed({ text: await rerunRequest(cutCall, loadCall) }) : undefined} onAskAgain={!readOnly(session) && !viewed ? async () => api.prompt(session.id, await rerunRequest(cutCall, loadCall), newRequestId(), 'send') : undefined} blocked={session.budget?.reached ? 'The budget is reached; raise it in Tools → Usage to ask again.' : ''} />
               ) : session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
@@ -1130,7 +1158,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-3 sm:px-4 md:px-6">
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow on it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} onKept={setKeptTodos} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} hideTodos={!!viewed} error={locateError} jump={jump && strip && !viewed} onJump={jumpToBottom} onKept={setKeptTodos} changed={noGit || !changes?.supported ? undefined : changes.files} onReview={openChanges} />
             <Schedules snapshot={session.schedules} open={session.open} />
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
@@ -1149,7 +1177,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </div>
           )}
+          <SettingsLineContext.Provider value={settingsLine}>
+          <ComposerCell turn={nextTurn}>
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} seed={seed} project={project} />
+          </ComposerCell>
+          </SettingsLineContext.Provider>
         </div>
       </div>
 
@@ -1159,6 +1191,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       <Contained what="This panel" of={!!output}>{outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}</Contained>
       <Contained what="This panel" of={!!preview.selection}>{previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}</Contained>
     </div>
+    </NotebookSlots>
     </DrawingsProvider>
     </ReplyContext.Provider>
     </GitLabItemsContext.Provider>
@@ -1213,6 +1246,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
     ...(filesBase ? { filesBase } : {}),
     send: (first: FirstMessage) => onSend(project.id, placed ? { ...first, place } : first),
   }), [project.id, onSend, placed, place, filesBase]);
+  const [settingsLine, setSettingsLine] = useState<HTMLElement | null>(null);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className={BAR_ROW}>
@@ -1222,14 +1256,19 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
           <h1 className="min-w-0 truncate text-title text-ink">New thread</h1>
         </div>
       </header>
+      <SettingsLine to={setSettingsLine} />
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>
       </div>
       <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
+        <SettingsLineContext.Provider value={settingsLine}>
+        <ComposerCell turn={1}>
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
         <ComposerFoot>{placeable ? <DraftPlaceFoot project={project} place={place} onPlace={setPlace} /> : <PlaceFoot session={session} project={project} />}</ComposerFoot>
+        </ComposerCell>
+        </SettingsLineContext.Provider>
       </div>
     </div>
   );

@@ -132,7 +132,7 @@ function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[
 }
 
 /** Whether any machine on screen has a Project: the rail and the header offer their Project buttons then. */
-function useAnyProject(projects: Project[]): boolean {
+export function useAnyProject(projects: Project[]): boolean {
   const machines = useFederation()?.machines;
   return projects.length > 0 || !!machines?.some((m) => !m.active && m.state.projects.length > 0);
 }
@@ -766,6 +766,8 @@ export const Sidebar = memo(function Sidebar({
   machineActions,
   count = 0,
   progressive = false,
+  contents,
+  listHead,
 }: {
   /** False until the first snapshot: the list is a skeleton, never "No projects yet". */
   loaded: boolean;
@@ -782,6 +784,10 @@ export const Sidebar = memo(function Sidebar({
   count?: number;
   /** Mount the list a batch of rows per frame (the phone's drawer), so no one commit sets up every row. */
   progressive?: boolean;
+  /** The notebook layout's Contents (components/notebook): it stands where the list does while no search is typed, and the header keeps the brand and Search alone. */
+  contents?: ReactNode;
+  /** A row above the list (the notebook layout's way back to its Contents). */
+  listHead?: ReactNode;
 }) {
   const federation = useFederation();
   // With connected instances, every machine's Tasks in one list; the machine on screen is this App's own state.
@@ -835,6 +841,8 @@ export const Sidebar = memo(function Sidebar({
   // row's menu and tip set themselves up as it mounts, and the whole list at once is a long task on a phone. Rows
   // mounted in the closed drawer would all be styled and laid out at once when it first opens. Mounted rows stay.
   const searching = !!query.trim();
+  // A search lists its matches over the Contents: what is typed is looked for in every Thread.
+  const inContents = !!contents && !searching;
   const listed = searching ? rows : unsettled;
   const listShown = actions.sidebarOpen;
   const [mountedRows, setMountedRows] = useState(progressive ? ROW_BATCH : Infinity);
@@ -941,13 +949,15 @@ export const Sidebar = memo(function Sidebar({
             <input ref={search} type="search" aria-label="Search threads" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
           </label>
           {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
-          {anyProject && <FilterButton projects={projects} actions={actions} />}
-          {projects.length > 0 && <RoutinesButton actions={actions} />}
-          <AddProjectButton actions={actions} />
-          {anyProject && <NewTaskButton actions={actions} id="new-task" />}
+          {!inContents && anyProject && <FilterButton projects={projects} actions={actions} />}
+          {!inContents && projects.length > 0 && <RoutinesButton actions={actions} />}
+          {!inContents && <AddProjectButton actions={actions} />}
+          {!inContents && anyProject && <NewTaskButton actions={actions} id="new-task" />}
         </div>
       </header>
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
+      {listHead}
+      {inContents ? <div className="flex min-h-0 flex-1 flex-col">{contents}</div> : (
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them.
       <div ref={list} className="flex min-h-0 flex-1 flex-col" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
           {/* Each row names its machine to assistive technology by reference. */}
@@ -956,6 +966,7 @@ export const Sidebar = memo(function Sidebar({
         </div>
         <OneInstance.Provider value={oneInstance}>{shelvesBody}</OneInstance.Provider>
       </div>
+      )}
 
       {/* Only in the narrow layout's drawer, which covers the main pane's banner; side by side, that banner says it once. */}
       {connection !== 'connected' && (

@@ -158,6 +158,8 @@
 
   --spacing-rail: 384px;
   --spacing-rail-collapsed: 48px;
+  /* The notebook layout's gutter (lib/layout): a turn's number, state and time; the composer's cell keeps the same one. */
+  --spacing-gutter: 6.5rem;
   --spacing-drawer: 300px;
   --spacing-header: 44px;
   --spacing-sheet: 440px;
@@ -1458,5 +1460,43 @@
   }
   .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
     background: color-mix(in srgb, var(--color-ink) 50%, transparent);
+  }
+  /* ── The notebook layout's cell (components/notebook/Cell.tsx) ─────────────────────────────────────
+     All of the notebook layout's CSS is here. Every rule is keyed on the layout (lib/layout) and on a
+     class only the cell carries, so the current layout can match none of it. The composer's cell
+     (notebook/ComposerCell.tsx) carries the cell's and the gutter's class too, so one rule decides both gutters.
+     The cell is a container: from 56rem of its own width its two tracks stand side by side, "said" at
+     58% and "did" at 42%; narrower (beside an open Changes panel, in a 1280 window) "did" goes under
+     "said". Under 30rem, a phone, the gutter leaves and the cell reads like the current layout. No media
+     query and nothing measured in script: the cell's own width decides. */
+  :root[data-layout='notebook'] .nb-cell {
+    container: nb-cell / inline-size;
+  }
+  :root[data-layout='notebook'] .nb-gutter {
+    display: none;
+    flex: none;
+    width: var(--spacing-gutter);
+  }
+  :root[data-layout='notebook'] .nb-tracks {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem 1.5rem;
+  }
+  @container nb-cell (min-width: 30rem) {
+    :root[data-layout='notebook'] .nb-gutter {
+      display: block;
+    }
+  }
+  @container nb-cell (min-width: 56rem) {
+    :root[data-layout='notebook'] .nb-tracks {
+      grid-template-columns: minmax(0, 58fr) minmax(0, 42fr);
+    }
+  }
+  /* A message starts its track, as the cell's input, where the current layout ends the row with it:
+     the row's free room goes after the bubble (the bubble itself is the same component). */
+  :root[data-layout='notebook'] :is(.nb-said, .nb-answer) > [data-history-anchor] > * {
+    margin-inline-end: auto;
   }
 }

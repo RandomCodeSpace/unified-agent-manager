@@ -37,6 +37,9 @@ const modules = {
   './GitLabReviewRequest': { GitLabReviewRequest: () => null, gitLabReviewRequest: () => null },
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
+  // The notebook layout's cells have their own DOM tests; here the layout is the current one.
+  '../lib/layout': { useLayout: () => 'classic' },
+  './notebook/Cell': { Cell: () => null, cellState: () => undefined },
   '../lib/transcript': transcript,
   '../lib/cost': { formatCount: (n) => String(n) },
   '../lib/historyState': history,

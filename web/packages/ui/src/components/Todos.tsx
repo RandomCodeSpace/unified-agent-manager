@@ -53,9 +53,9 @@ function TodoMark({ status, className }: Readonly<{ status: TodoStatus; classNam
 }
 
 /** The subagent that first wrote a row: its identity dot, as on its row, and its name; a button that shows it once its name is known. */
-function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean }>) {
+function AgentTag({ id, name, quiet = false, className }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean; className?: string }>) {
   return (
-    <span className="flex h-5 max-w-36 shrink-0 items-center text-caption text-muted">
+    <span className={cn('flex h-5 max-w-36 shrink-0 items-center text-caption text-muted', className)}>
       <span className="sr-only">, by </span>
       <SubagentTag id={id} name={name || 'subagent'} still={!name} className="max-w-full">
         {quiet ? <span className="sr-only">{name}</span> : undefined}
@@ -67,7 +67,7 @@ function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: str
 const sameWords = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /** One row: its stage's glyph, its title ("now" after the row the work is at, then how many times it was reopened), the blocked reason under it, the ledger's stamp under that, and the subagent that first wrote it. `waits` names the rows it waits on, for those who cannot see the rails. With `onToggle` the title is a button that opens the row's detail (`children`) under it. */
-function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, open = false, onToggle, children, ...li }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean; stamp?: ReactNode; waits?: string; open?: boolean; onToggle?: () => void; children?: ReactNode } & Pick<ComponentProps<'li'>, 'onPointerEnter' | 'onPointerLeave' | 'onPointerDown'>>) {
+function TodoRow({ todo, name, now = false, quietName = false, word = false, stamp, waits, open = false, onToggle, children, ...li }: Readonly<{ todo: Todo; name?: string; now?: boolean; /** A name that repeats the title shows as the dot alone. */ quietName?: boolean; /** The stage as a word in its glyph's place (`TodoRows`). */ word?: boolean; stamp?: ReactNode; waits?: string; open?: boolean; onToggle?: () => void; children?: ReactNode } & Pick<ComponentProps<'li'>, 'onPointerEnter' | 'onPointerLeave' | 'onPointerDown'>>) {
   const words = (
     <>
       <span className={cn('text-ui break-words', todo.status === 'done' ? 'text-muted' : todo.status === 'in_progress' ? 'font-medium text-ink' : 'text-body')}>
@@ -88,9 +88,13 @@ function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, ope
   return (
     <li data-row={todo.id} className="py-1" {...li}>
       <div className="flex min-h-5 items-start gap-2 pointer-coarse:min-h-7">
-        <span className="flex h-5 w-4 shrink-0 items-center justify-center">
-          <TodoMark status={todo.status} />
-        </span>
+        {word ? (
+          <span className={cn('w-18 shrink-0 text-caption leading-5', TONE[todo.status].text)}>{todoWord(todo.status)}</span>
+        ) : (
+          <span className="flex h-5 w-4 shrink-0 items-center justify-center">
+            <TodoMark status={todo.status} />
+          </span>
+        )}
         {onToggle ? (
           <button type="button" aria-expanded={open} onClick={onToggle} className={cn('-mx-1 -my-0.5 flex min-w-0 flex-1 flex-col rounded-sm px-1 py-0.5 text-left transition-colors duration-100 hover:bg-tint-hover', open && 'bg-tint-selected')}>
             {words}
@@ -98,8 +102,9 @@ function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, ope
         ) : (
           <span className="flex min-w-0 flex-1 flex-col">{words}</span>
         )}
-        {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} />}
-        <span className="sr-only">, {todoWord(todo.status)}{waits && `, waits on ${waits}`}</span>
+        {/* In a narrow cell (a phone, where the live card's rows are) the name gives room to the title. */}
+        {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} className={word ? '@max-md:max-w-20' : undefined} />}
+        {!word && <span className="sr-only">, {todoWord(todo.status)}{waits && `, waits on ${waits}`}</span>}
       </div>
       {open && children}
     </li>
@@ -646,6 +651,21 @@ function TodoBody({ parts, sheet, heading, close, title, onClose }: Readonly<{ p
         </PanelFoot>
       )}
     </div>
+  );
+}
+
+/**
+ * The list as plain rows (the notebook layout's live card): each row's stage in a word before its
+ * title, the open stages first, as the reader orders them. Read only; the reader keeps the turns,
+ * the rails and each row's detail.
+ */
+export function TodoRows({ parts }: Readonly<{ parts: ReaderParts }>) {
+  return (
+    <ul>
+      {parts.sections.flatMap((s) => s.todos).map((todo) => (
+        <TodoRow key={todo.id} todo={todo} word now={todo.id === parts.now && todo.status === 'in_progress'} name={todo.agent_id ? parts.name(todo) : undefined} quietName />
+      ))}
+    </ul>
   );
 }
 

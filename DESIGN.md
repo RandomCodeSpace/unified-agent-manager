@@ -709,6 +709,21 @@ While it is open the composer's textarea stops at 30% of that height and scrolls
 Once it closes the page goes back to its top, which iOS can leave scrolled.
 On iOS the drawer's dim starts at the drawer's edge rather than the screen's: iOS paints the status bar in the colour of a full-width fixed element at the top edge, and the dim there turned it grey.
 
+### Interface: Current and Notebook (beta)
+Settings → This browser → **Interface** picks **Current** (the default) or **Notebook (beta)**; the choice is kept per browser (`uam.layout`) and stands on `<html>` as `data-layout="classic|notebook"` (`lib/layout`).
+The two are **one set of components in two arrangements**, never two UIs (owner, 2026-11-10: "Any new feature needs to be added to both the UI").
+**Fork where things stand, never what they are**: a notebook part is the existing component under a wrapper, in a slot, through a portal, or under a CSS rule keyed on `data-layout`; no component is copied, so a feature added to the transcript, the composer, a reader, Changes or Settings is in both without a second edit.
+`tests/dom/layout-parity.test.tsx` holds this: every control the current layout offers on a Thread is offered by the notebook, or is on its short allow-list with the control that reaches it and the reason.
+With the setting on Current the DOM is what it was before the setting existed; every notebook rule in `index.css` is keyed `:root[data-layout='notebook']` on an `nb-*` class.
+Everything in this document describes both unless it says otherwise; the notebook differs only in the following.
+
+- **Cells.** Each turn is a cell (`notebook/Cell`): a **gutter** (`--spacing-gutter`, 6.5rem: the turn's number, its state in a word, its recorded duration, how long ago it ended) and two tracks, **said** (the prompt and the answer) and **did** (the turn head and that turn's work), 58/42 from 56rem of cell width; narrower, "did" goes under "said", and under 30rem the gutter goes. Both are container queries, so an open side panel folds the cells without a measurement.
+- **One numbering.** `lib/turns` `threadTurns` numbers the turns and names each one's state (Done, Running, Asked you, Failed, Stopped, Queued) for the gutter, the list of turns and the composer's "Turn N".
+- **Live card.** While the last turn runs, its "did" track holds one card (`notebook/LiveCard`) in place of the status strip: **Now** (the progress line), **Todos** n of m, **Subagents**, **Changed in this Thread** with Review; each section folds. The strip owns the state and portals the card in; away from the live tail, or while a subagent is viewed, the strip is back. The card never says the Thread waits on you.
+- **A wait is said once.** A waiting question or permission stands at the foot of the running cell's "said" track without its "Needs answer" chip: the gutter says "Asked you". It lives in one element that moves between the cell and its place under the conversation, so a half-typed answer and its focus outlast the cell leaving the loaded history.
+- **Settings line.** Model, Effort and context, Mode, Background, Branch and Time stand under the Thread's title with their labels, moved from the composer's row by portal; the composer is the next cell, with "Turn N" and "next" in its gutter.
+- **Contents.** The sidebar's list is replaced by **This Thread** (its turns; a row scrolls the conversation to that cell), **Also running** (other Threads that work, wait on you, or finished unread, as cards; one that waits is answered in its card, the first two open and the rest behind **Answer here**) and the buttons **All Threads** (the sidebar's own list, with **Back to this Thread**) and **New thread**. A search always lists its matches.
+
 ### Side panels (Changes, Files, Activity)
 From 1280px a panel sits inline to the right of the column and is **resizable**: an 8px handle on its inner edge (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow/min/max`), drag with pointer capture, arrow keys step 16px (64 with Shift), Home/End go to the limits, Enter or double-click resets to the default.
 Width is clamped to 320px … min(880px, main pane − 480) so the chat column keeps at least 480px (the main pane is the viewport less the sidebar, open or collapsed to its rail), and saved per panel in `localStorage` (`uam.panel.changes`, `uam.panel.activity`).
