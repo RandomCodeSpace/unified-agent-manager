@@ -122,7 +122,8 @@ func (m *Manager) settleMerged() {
 //
 //  1. The worktree is on branch, and the branch has moved since it was made
 //     (the oldest entry of its reflog is another commit): a Thread that
-//     never committed has landed nothing.
+//     never committed has landed nothing. Every commit its reflog names is
+//     in the branch's history or in def's: none was reset or rebased away.
 //  2. The branch's commit is an ancestor of def (a merge or fast-forward:
 //     def's history has every commit); or, for a squash or a rebase, the
 //     branch differs from its merge base with def and merging it into def
@@ -139,6 +140,10 @@ func (m *Manager) settleMerged() {
 // unproven reports that 1 held and 2 did not: commits kept for want of a
 // proof. A git failure, a cut-off answer or any other doubt keeps
 // everything.
+// maxMergedMoves bounds the distinct commits of a branch's reflog that
+// mergedTip checks; a longer one is not proved.
+const maxMergedMoves = 1000
+
 func mergedTip(ctx context.Context, path, branch, def string) (tip string, unproven bool) {
 	repo, _, err := openRepo(ctx, path)
 	if err != nil || repo == nil {
@@ -169,6 +174,18 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	moves, code := git("reflog", "show", "--format=%H", ref)
 	if made := moves[strings.LastIndexByte(moves, '\n')+1:]; code != 0 || made == "" || made == tip {
 		return "", false
+	}
+	// Every commit the branch ever held is in its own history or in def's.
+	// One reset or rebased away lives only in the reflog, which goes with the
+	// branch.
+	// shortcut: a rebased branch stays unproven, compare patch IDs if those Threads should settle too.
+	held := strings.Fields(moves)
+	slices.Sort(held)
+	if held = slices.Compact(held); len(held) > maxMergedMoves {
+		return "", true
+	}
+	if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); code != 0 || lost != "" {
+		return "", true
 	}
 	if _, code := git("merge-base", "--is-ancestor", tip, target); code != 0 {
 		if code != 1 {
