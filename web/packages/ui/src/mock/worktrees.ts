@@ -22,7 +22,7 @@ export function worktreesMock(dir: () => string | undefined = () => undefined) {
   ];
   const removed: RemovedWorktree[] = [
     { path: `${ROOT}/unified-agent-manager/drop-vterm-build-tag`, branch: 'uam/drop-vterm-build-tag', project_id: 'p1', thread: 'Drop the vterm build tag from CI', size_bytes: 1.58 * GB, at: ago(140) },
-    { path: `${ROOT}/notes-site/rss-footer-link`, branch: 'uam/rss-footer-link', project_id: 'p3', thread: 'Add an RSS link to the footer', size_bytes: 371 * MB, at: ago(60 * 26) },
+    { path: `${ROOT}/notes-site/rss-footer-link`, branch: 'uam/rss-footer-link', branch_removed: true, project_id: 'p3', thread: 'Add an RSS link to the footer', size_bytes: 371 * MB, at: ago(60 * 26) },
   ];
   return {
     disk,

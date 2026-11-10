@@ -367,6 +367,7 @@ type SessionSummary struct {
 	SettledAt  time.Time `json:"settled_at,omitzero"`
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
 	// SettledBy is "auto" when the Task settled itself after a quiet week,
+	// "merged" when it did once its branch landed on the default branch,
 	// "reviewed" when it settled once the owner saw a reply checked done;
 	// omitted when the owner settled it.
 	SettledBy string `json:"settled_by,omitempty"`

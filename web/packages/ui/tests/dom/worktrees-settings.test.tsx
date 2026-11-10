@@ -26,6 +26,9 @@ describe('Settings → Worktrees', () => {
     expect(rows[3]).toMatch(/412 MB/);
     const removed = within(screen.getByRole('list', { name: 'Removed on settling' }));
     expect(removed.getAllByRole('listitem')[0].textContent).toMatch(/Drop the vterm build tag from CI.*uam\/drop-vterm-build-tag.*1\.6 GB freed/);
+    expect(removed.getAllByRole('listitem')[0].textContent).not.toMatch(/branch removed/);
+    // A Thread settled because its branch was merged: the row says the branch went too.
+    expect(removed.getAllByRole('listitem')[1].textContent).toMatch(/Add an RSS link to the footer.*uam\/rss-footer-link.*merged, branch removed/);
     expect(screen.queryByText(/below 10%/)).toBeNull();
   });
 

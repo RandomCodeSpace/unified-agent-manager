@@ -13,7 +13,7 @@ import { HelpTip } from './ui/tooltip';
 
 const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
 
-const RULE = 'Settling, archiving or deleting a Thread removes its worktree; the branch stays. A worktree with changes not committed is kept until you remove it here. Using the Thread again brings it back from the branch.';
+const RULE = 'Settling, archiving or deleting a Thread removes its worktree; the branch stays. A Thread whose branch is merged into the default branch settles by itself, and that branch is removed too. A worktree with changes not committed is kept until you remove it here. Using the Thread again brings it back.';
 const STAGE = { active: 'Active', settled: 'Settled', archived: 'Archived' } as const;
 const card = 'flex flex-col gap-2 rounded-lg bg-raised p-5 shadow-raised';
 /** While a size is still being measured, the list is read again this often. */
@@ -214,6 +214,7 @@ function RemovedCard({ list }: Readonly<{ list: Worktrees }>) {
               {project && <ProjectBadge badge={project.badge} className="opacity-60" />}
               <span className="min-w-0 flex-1 basis-40 truncate">{r.thread || 'New thread'}</span>
               <span className="min-w-0 truncate font-mono text-code-sm">{r.branch}</span>
+              {r.branch_removed && <span className="shrink-0 text-caption">merged, branch removed</span>}
               {r.size_bytes !== undefined && <span className="shrink-0 text-right text-caption tabular-nums">{sizeText(r.size_bytes)} freed</span>}
               <time dateTime={r.at} title={dateTime(r.at)} className="w-16 shrink-0 text-right text-caption tabular-nums">{timeAgo(r.at)}</time>
             </li>

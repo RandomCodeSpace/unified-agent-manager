@@ -404,7 +404,7 @@ func (s *webSession) queuedUpload(id string) bool {
 	})
 }
 
-// sweepLoop expires unused uploads, settles quiet Tasks, drops idle
+// sweepLoop expires unused uploads, settles merged and quiet Tasks, drops idle
 // read-only transcripts and closes idle conversations while the service
 // runs.
 func (m *Manager) sweepLoop() {
@@ -418,6 +418,9 @@ func (m *Manager) sweepLoop() {
 			return
 		case <-t.C:
 			m.sweepUploads()
+			// Merged work first: its branch goes too, which the quiet-week
+			// settle would keep.
+			m.settleMerged()
 			m.autoSettle()
 		case <-h.C:
 			m.evictHistories()

@@ -525,7 +525,8 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 // the branch continues from what the conversation saw. The source is only
 // read; one with changes inside submodules or nested repositories is
 // refused, as they cannot be carried. A source worktree uam removed, which
-// held no changes, starts the branch from the source's branch. It returns
+// held no changes, starts the branch from the source's branch, or from
+// origin's default branch when that branch went with it (settleMerged). It returns
 // the branch's folder, its place, the commit it starts at and the function
 // that takes them back.
 func (m *Manager) branchWorktree(ctx context.Context, project Project, source store.WebPlace, hint string) (string, *store.WebPlace, string, func(), error) {
@@ -541,6 +542,13 @@ func (m *Manager) branchWorktree(ctx context.Context, project Project, source st
 	_, statErr := os.Stat(source.Worktree)
 	if errors.Is(statErr, fs.ErrNotExist) {
 		dir, rev = repo.top, source.Branch
+		// A branch removed once its work was merged: origin's default
+		// branch holds that work.
+		if !refExists(ctx, repo, "refs/heads/"+source.Branch) {
+			if def := readDefaultBranch(ctx, repo.top); def != "" {
+				rev = "refs/remotes/origin/" + def
+			}
+		}
 	} else if statErr != nil {
 		return "", nil, "", none, newError(http.StatusConflict, "could not read the worktree: %s", shortError(statErr))
 	}

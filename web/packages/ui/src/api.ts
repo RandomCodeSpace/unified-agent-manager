@@ -510,6 +510,8 @@ export interface WorktreeEntry {
 export interface RemovedWorktree {
   path: string;
   branch: string;
+  /** The branch was removed too: its work was merged into the default branch. */
+  branch_removed?: boolean;
   project_id?: string;
   task_id?: string;
   thread?: string;
@@ -971,8 +973,8 @@ export interface SessionSummary {
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;
   archived_at?: string;
-  /** Why the service settled the Task: `auto` after 7 quiet days, `reviewed` once you reviewed it after it was judged done; absent when you settled it, and once reopened. */
-  settled_by?: 'auto' | 'reviewed';
+  /** Why the service settled the Task: `auto` after 7 quiet days, `merged` once its branch was merged into the default branch, `reviewed` once you reviewed it after it was judged done; absent when you settled it, and once reopened. */
+  settled_by?: 'auto' | 'merged' | 'reviewed';
   /** The Task whose agent started this one with uam_create_task; absent otherwise. */
   spawned_by?: string;
   /** The routine whose run started this Task; absent otherwise. */

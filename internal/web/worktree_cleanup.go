@@ -26,7 +26,9 @@ import (
 // Settle, Archive and Delete remove a Thread's worktree and keep its branch;
 // git refuses a worktree with changes, which then stays until the owner
 // removes it in Settings → Worktrees. Using the Thread again recreates it
-// from the branch.
+// from the branch. A Thread settled because its work landed on the default
+// branch (settleMerged) loses its branch too; using it again starts the
+// branch from the default branch.
 const (
 	// removedLogFile keeps the last worktrees removed on settling.
 	removedLogFile = "web-worktrees-removed.json"
@@ -69,15 +71,17 @@ type WorktreeEntry struct {
 }
 
 // RemovedWorktree is a worktree removed on its own when its Thread settled,
-// was archived or deleted.
+// was archived or deleted. BranchRemoved says its branch was deleted with
+// it, its work proven merged.
 type RemovedWorktree struct {
-	Path      string    `json:"path"`
-	Branch    string    `json:"branch"`
-	ProjectID string    `json:"project_id,omitempty"`
-	TaskID    string    `json:"task_id,omitempty"`
-	Thread    string    `json:"thread,omitempty"`
-	SizeBytes int64     `json:"size_bytes,omitempty"`
-	At        time.Time `json:"at"`
+	Path          string    `json:"path"`
+	Branch        string    `json:"branch"`
+	BranchRemoved bool      `json:"branch_removed,omitempty"`
+	ProjectID     string    `json:"project_id,omitempty"`
+	TaskID        string    `json:"task_id,omitempty"`
+	Thread        string    `json:"thread,omitempty"`
+	SizeBytes     int64     `json:"size_bytes,omitempty"`
+	At            time.Time `json:"at"`
 }
 
 // Worktrees answers GET /api/worktrees, biggest first. Root is the folder
@@ -112,6 +116,11 @@ type worktreeState struct {
 	// keep counts the Threads being made in each worktree (Run again);
 	// removal on settling leaves those.
 	keep map[string]int
+	// merged maps a worktree to its branch's commit that settleMerged
+	// proved merged, while that sweep settles; unproven holds the Threads
+	// already counted as kept for want of a proof.
+	merged   map[string]string
+	unproven map[string]bool
 }
 
 // diskInfo reads the filesystem holding dir, or its nearest existing
@@ -451,12 +460,18 @@ func removeWorktree(ctx context.Context, path string, force bool) error {
 }
 
 // kickWorktreeRemoveLocked removes s's worktree in the background, as its
-// Thread settled, was archived or deleted. One with changes is kept.
+// Thread settled, was archived or deleted. One with changes is kept. The
+// branch goes with it only for a Thread the merged-work sweep is settling,
+// while the branch is still at the commit that sweep proved merged.
 func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	if m.closed || s.place == nil || s.place.Worktree == "" {
 		return
 	}
 	path, branch, project, id := s.place.Worktree, s.place.Branch, s.projectID, s.id
+	var merged, dir string
+	if p := m.projects[project]; p != nil && s.stage == StageSettled && s.settledBy == settledByMerged {
+		merged, dir = m.worktrees.merged[path], p.Dir
+	}
 	thread := clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title)), maxNameRunes)
 	size, known := m.worktrees.sizes[path]
 	m.wg.Add(1)
@@ -485,8 +500,34 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 		m.mu.Lock()
 		delete(m.worktrees.sizes, path)
 		m.mu.Unlock()
-		m.logRemoved(RemovedWorktree{Path: path, Branch: branch, ProjectID: project, TaskID: id, Thread: thread, SizeBytes: size.bytes, At: m.now()})
+		gone := merged != "" && removeMergedBranch(m.ctx, dir, branch, merged)
+		if gone {
+			m.count("merged_removed")
+		}
+		m.logRemoved(RemovedWorktree{Path: path, Branch: branch, BranchRemoved: gone, ProjectID: project, TaskID: id, Thread: thread, SizeBytes: size.bytes, At: m.now()})
 	}()
+}
+
+// removeMergedBranch deletes branch, one uam made for a Thread, in the
+// repository at dir while it is still at tip, the commit proven merged
+// (mergedTip), and says whether it did. Only the local branch goes; git
+// refuses one checked out in another worktree.
+func removeMergedBranch(ctx context.Context, dir, branch, tip string) bool {
+	git, err := lookGit()
+	if err != nil || !strings.HasPrefix(branch, branchPrefix) {
+		return false
+	}
+	out, code, _, err := runGit(ctx, git, dir, 4096, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	if at := strings.TrimSpace(string(out)); err != nil || code != 0 || at != tip {
+		log.Info("merged branch kept: it moved or could not be read", "branch", branch)
+		return false
+	}
+	if _, err := runGitWrite(ctx, dir, nil, "branch", "-D", branch); err != nil {
+		log.Info("merged branch kept", "branch", branch, "error", err)
+		return false
+	}
+	log.Info("merged branch removed", "branch", branch, "commit", tip)
+	return true
 }
 
 // kickForkWorktreesRemoveLocked removes in the background the worktrees and
@@ -569,7 +610,9 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 }
 
 // recreateWorktree adds the worktree at path back on branch, in the
-// repository holding dir, when it was removed.
+// repository holding dir, when it was removed. A branch that is gone, as
+// one removed once its work was merged, is made again from origin's default
+// branch, which holds that work.
 func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string) error {
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
@@ -585,7 +628,13 @@ func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string
 	}
 	// A folder deleted by hand is still registered until pruned.
 	_, _ = runGitWrite(ctx, repo.top, nil, "worktree", "prune")
-	if _, err := runGitWrite(ctx, repo.top, nil, "worktree", "add", path, branch); err != nil {
+	args := []string{"worktree", "add", path, branch}
+	if !refExists(ctx, repo, "refs/heads/"+branch) {
+		if def := readDefaultBranch(ctx, repo.top); def != "" {
+			args = []string{"worktree", "add", "--no-track", "-b", branch, path, "refs/remotes/origin/" + def}
+		}
+	}
+	if _, err := runGitWrite(ctx, repo.top, nil, args...); err != nil {
 		return gitFailed("Could not recreate the worktree", err)
 	}
 	log.Info("web thread worktree recreated", "path", path, "branch", branch)
