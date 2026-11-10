@@ -808,6 +808,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
+	// What a killed run left mid-write; only this service writes these files.
+	removeTempFiles(filepath.Dir(m.store.Path()), ".token-usage-", ".worktrees-", ".uam-counts-", ".fetch-fuses-", utilityLogFile+".tmp.")
 	if err := m.loadTokenLedger(); err != nil {
 		return err
 	}
