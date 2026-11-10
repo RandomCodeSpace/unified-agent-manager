@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DiagramError, DiagramQueue, errorReason, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
+import { DiagramError, DiagramQueue, KEPT_DIAGRAMS, errorReason, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
 
 const flow = 'flowchart LR\n  A --> B';
 const theme = { primaryColor: '#f3f2ee' };
@@ -171,6 +171,13 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   await new Promise(setImmediate);
   assert.equal(messages.length, posted + 1);
   assert.equal(messages.at(-1).request.source, 'rendered after the scroll pauses');
+
+  // The cache keeps the most recently used diagrams only.
+  assert.equal(renderDiagram('queued behind stall'), retry, 'a hit counts as a use');
+  for (let i = 1; i < KEPT_DIAGRAMS; i++) void renderDiagram(`filler ${i}`);
+  assert.equal(renderDiagram('queued behind stall'), retry, 'still among the last used');
+  for (let i = 0; i < KEPT_DIAGRAMS; i++) void renderDiagram(`more filler ${i}`);
+  assert.notEqual(renderDiagram('queued behind stall'), retry, 'the least recently used result is dropped');
 });
 
 test('a parse error names its reason, not only the line, in at most 200 characters', () => {
