@@ -15,6 +15,18 @@ async function openOutput(user: User, running: number, task: string, command: st
   return within(await screen.findByRole('region', { name: `Output of ${command}` }));
 }
 
+test('only a shell whose output can be read offers Output; a snapshot without the field keeps it', async () => {
+  const { user } = await openTask('t1');
+  await user.click(screen.getByRole('button', { name: 'Background tasks: 1 running' }));
+  const dialog = within(await screen.findByRole('dialog', { name: 'Background tasks' }));
+  // The mock's lint shell is attached: listed, with no Output.
+  expect(dialog.getByText('Lint the web package')).toBeTruthy();
+  expect(dialog.queryByRole('button', { name: 'Show output of background task: Lint the web package' })).toBeNull();
+  // The other two carry no field, as from an older server.
+  expect(dialog.getByRole('button', { name: 'Show output of background task: Repeat the redraw tests' })).toBeTruthy();
+  expect(dialog.getByRole('button', { name: 'Show output of background task: Serve the docs preview' })).toBeTruthy();
+});
+
 test('a running background command opens to its output, loads more on request, then follows until the panel closes', async () => {
   const { user } = await openTask('t1');
   const fetch = vi.spyOn(window, 'fetch');

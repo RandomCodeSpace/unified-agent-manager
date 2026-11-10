@@ -3667,6 +3667,8 @@ func (c *conversation) applyShellTasksLocked(tasks []rpc.TaskInfo) {
 			ID: shell.ID, Command: clip(displaytext.Sanitize(shell.Command), maxToolText),
 			Description: clip(displaytext.Sanitize(shell.Description), maxErrorText),
 			Status:      string(shell.Status), StartedAt: shell.StartedAt,
+			// The CLI keeps a readable log only for a detached shell.
+			OutputUnreadable: shell.AttachmentMode == rpc.TaskShellInfoAttachmentModeAttached,
 		}
 		if shell.CompletedAt != nil {
 			item.EndedAt = *shell.CompletedAt

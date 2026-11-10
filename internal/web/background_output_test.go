@@ -82,3 +82,27 @@ func TestBackgroundOutputRouteScopesAndBoundsReads(t *testing.T) {
 		t.Fatalf("provider without output=%d %s", w.Code, w.Body)
 	}
 }
+
+// The snapshot tells the client which shells keep no output to read; a
+// readable shell carries no field, as from a server without it.
+func TestBackgroundTasksSnapshotMarksUnreadableOutput(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{Assets: fstest.MapFS{"index.html": {Data: []byte("test")}}})
+	sum, conv := createSession(t, ts.m, ts.prov)
+	conv.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{
+		{ID: "attached", Status: "running", Command: "make test", OutputUnreadable: true},
+		{ID: "detached", Status: "running", Command: "sleep 120"},
+	}}})
+	w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID, "", withCookie(ts))
+	var detail struct {
+		BackgroundTasks struct {
+			Tasks []map[string]any `json:"tasks"`
+		} `json:"background_tasks"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil || w.Code != http.StatusOK || len(detail.BackgroundTasks.Tasks) != 2 {
+		t.Fatalf("detail=%d %s %v", w.Code, w.Body, err)
+	}
+	_, hasField := detail.BackgroundTasks.Tasks[1]["output_unreadable"]
+	if detail.BackgroundTasks.Tasks[0]["output_unreadable"] != true || hasField {
+		t.Fatalf("tasks=%v", detail.BackgroundTasks.Tasks)
+	}
+}

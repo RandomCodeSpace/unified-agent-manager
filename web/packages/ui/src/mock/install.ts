@@ -1429,6 +1429,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
     if ((r = m(/^\/api\/sessions\/([^/]+)\/background-tasks\/([^/]+)\/output$/)) && method === 'GET') {
       const task = find(decodeURIComponent(r[1]))?.background_tasks?.tasks.find((item) => item.id === decodeURIComponent(r![2]));
       if (!task) return fail(404, 'background shell task not found');
+      if (task.output_unreadable) return fail(404, "this command's output is not kept");
       const at = Number(url.searchParams.get('cursor') || 0);
       const text = at < 2 ? Array.from({ length: 40 }, (_, i) => `${task.id} output line ${at * 40 + i + 1}\n`).join('') : '';
       return json(200, { text, cursor: String(Math.min(at + 1, 2)), more: at < 1, done: at >= 1 && task.status !== 'running' });

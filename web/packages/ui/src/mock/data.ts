@@ -533,6 +533,8 @@ export function seed(): MockState {
         tasks: [
           { id: 'bg-watch', description: 'Repeat the redraw tests', command: 'go test ./internal/vterm/... -run Redraw -count=200', status: 'running', started_at: ago(3) },
           { id: 'bg-docs', description: 'Serve the docs preview', command: 'npx vite --host 127.0.0.1 --port 8765 docs', status: 'completed', started_at: ago(8), ended_at: ago(5) },
+          // An attached shell: the provider keeps no output to read, so it has no Output.
+          { id: 'bg-lint', description: 'Lint the web package', command: 'npm run lint', status: 'completed', started_at: ago(10), ended_at: ago(9), output_unreadable: true },
         ],
       },
       queued: 1,
