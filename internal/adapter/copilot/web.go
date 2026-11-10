@@ -3717,6 +3717,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}
 	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
 	c.observeCompactionLocked(ev, agentID)
+	// The main agent went on after an error, so the error did not end the
+	// turn and must not fail it.
+	if agentID == "" && newCompletionEvent && c.turnErr != "" {
+		switch ev.Data.(type) {
+		case *rpc.AssistantTurnStartData, *rpc.AssistantMessageData, *rpc.ToolExecutionStartData:
+			c.turnErr = ""
+		}
+	}
 	c.observePhaseLocked(ev, agentID)
 	if c.observeActivityLocked(ev, agentID) {
 		return
@@ -3868,7 +3876,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 		return
 	case *rpc.SessionErrorData:
-		if agentID == "" {
+		// Between turns it ends no turn and stays the notice below. One that
+		// arrives while a prompt is on its way belongs to that prompt's turn.
+		if agentID == "" && (c.turnRunning || c.sending > 0) {
 			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
 		}
 	case *rpc.SessionCompactionStartData:
