@@ -5,7 +5,7 @@ import { TurnList } from '../../src/components/notebook/TurnList';
 import { TurnJumpProvider, useTurnJumpTarget } from '../../src/components/notebook/slots';
 import { applyLayout } from '../../src/lib/layout';
 import { turnList } from '../../src/lib/turns';
-import { openTask, renderApp } from './render';
+import { openSubagentIndex, openTask, renderApp } from './render';
 
 // The layout is the page's: each test leaves the current one behind.
 afterEach(() => applyLayout('classic'));
@@ -68,6 +68,68 @@ describe('notebook Contents', () => {
     // The open Thread is the column's first section; a finished Thread that was read is in All Threads.
     expect(others.queryByText('Fix re-attach redraw regression')).toBeNull();
     expect(others.queryByText('Sign the release archives')).toBeNull();
+  });
+
+  test('with more than two Threads waiting, the first two show their form and the rest open theirs from "Answer here"', async () => {
+    notebook();
+    applyLayout('notebook');
+    const { user } = await openTask('t1');
+    const others = await section('Also running');
+    const cards = others.getAllByRole('listitem').filter((li) => /Needs (answer|permission)/.test(li.textContent ?? ''));
+    expect(cards.length).toBeGreaterThan(2);
+    for (const card of cards.slice(0, 2)) {
+      expect(await within(card).findByRole('button', { name: /^(Answer|Allow once)$/ })).toBeTruthy();
+      expect(within(card).queryByRole('button', { name: 'Answer here' })).toBeNull();
+    }
+    const third = within(cards[2]);
+    expect(third.queryByRole('button', { name: 'Answer' })).toBeNull();
+    expect(third.getByText('Which package manager should the lockfile and CI use?')).toBeTruthy();
+    await user.click(third.getByRole('button', { name: 'Answer here' }));
+    expect(await third.findByRole('button', { name: 'Answer' })).toBeTruthy();
+    expect(third.queryByRole('button', { name: 'Answer here' })).toBeNull();
+    // The request's card stands flat in the Thread's card, whose row already says "Needs answer".
+    expect(third.getAllByText('Needs answer')).toHaveLength(1);
+  });
+
+  test('the list, the cells and the composer name the turns alike, also in a Thread without turn timings', async () => {
+    notebook();
+    applyLayout('notebook');
+    for (const id of ['t1', 't21', 't2', 't8']) {
+      const view = await openTask(id);
+      const rows = (await section('This Thread')).getAllByRole('listitem').map((row) => ({ number: row.firstElementChild!.firstElementChild!.textContent, word: row.firstElementChild!.lastElementChild!.textContent }));
+      const cells = [...document.querySelectorAll<HTMLElement>('.nb-cell[data-reply]')].map((cell) => ({ number: cell.querySelector('.nb-gutter')!.firstElementChild!.textContent!.replace('Turn ', ''), word: cell.querySelector('[data-cell-state]')?.textContent }));
+      expect(cells.length, id).toBeGreaterThan(0);
+      // Every cell on screen is a row of the list, by number and by word.
+      for (const cell of cells) expect(rows, id).toContainEqual(cell);
+      expect(screen.getByText('next').previousElementSibling!.textContent, id).toBe(`Turn ${rows.length + 1}`);
+      view.unmount();
+    }
+  });
+
+  test('a turn whose message is not held is named by its number', async () => {
+    notebook();
+    applyLayout('notebook');
+    await openTask('t8');
+    const rows = (await section('This Thread')).getAllByRole('button').map((row) => row.textContent);
+    expect(rows[0]).toBe('1Turn 1Done');
+    expect(screen.queryByText(/not loaded/)).toBeNull();
+  });
+
+  test('a turn of the list lands on its cell; the current layout lands on the turn\'s head as before', async () => {
+    notebook();
+    applyLayout('notebook');
+    const view = await openTask('t1');
+    await view.user.click((await section('This Thread')).getAllByRole('button')[0]);
+    await waitFor(() => expect(document.querySelector('.animate-flash')).toBeTruthy());
+    expect(document.querySelector('.animate-flash')!.matches('.nb-cell[data-reply]')).toBe(true);
+    view.unmount();
+    localStorage.setItem('uam.layout', 'classic');
+    applyLayout('classic');
+    const { user } = await openTask('t8');
+    const reader = await openSubagentIndex(user);
+    await user.click((await reader.findAllByRole('button', { name: /^Jump to the subagents of / }))[0]);
+    await waitFor(() => expect(document.querySelector('.animate-flash')).toBeTruthy());
+    expect(document.querySelector('.animate-flash')!.matches('[data-reply] [data-history-anchor^="turn-head-"]')).toBe(true);
   });
 
   test('a card opens its Thread', async () => {

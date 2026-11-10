@@ -259,12 +259,3 @@ export function sidebarTasks(projects: Project[], sessions: SessionSummary[], fi
 
 /** Latest activity first (`updated_at` moves on durable state, item and queue changes, not on viewing), then newest first. */
 export const byActivity = (a: SessionSummary, b: SessionSummary): number => b.updated_at.localeCompare(a.updated_at) || b.created_at.localeCompare(a.created_at);
-
-/**
- * The number the next turn will take: turns are numbered by their place in the Thread's turn timings, from 1
- * (lib/subagents `turns`), and each queued message becomes one. A Thread whose turns have no timings counts its messages.
- */
-export function nextTurn(s: Pick<SessionDetail, 'turn_timings' | 'queued'> & Partial<Pick<SessionDetail, 'history_index' | 'items'>>): number {
-  const messages = (s.history_index ?? s.items ?? []).filter((i) => i.kind === 'user' && !i.agent_id).length;
-  return Math.max(s.turn_timings?.length ?? 0, messages) + (s.queued ?? 0) + 1;
-}

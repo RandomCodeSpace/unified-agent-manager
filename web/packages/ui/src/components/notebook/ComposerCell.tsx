@@ -5,14 +5,14 @@
 import type { ReactNode } from 'react';
 import { useLayout } from '../../lib/layout';
 
-export function ComposerCell({ turn, children }: Readonly<{ /** The number the next turn will take (lib/tasks `nextTurn`). */ turn: number; children: ReactNode }>) {
+export function ComposerCell({ turn, children }: Readonly<{ /** The number the next turn will take (lib/turns `threadTurns`). */ turn: number; children: ReactNode }>) {
   if (useLayout() !== 'notebook') return children;
   return (
-    <div className="flex min-w-0 items-start">
-      {/* A phone has no gutter: the composer keeps the whole row. */}
-      <p className="flex w-gutter shrink-0 flex-col pt-2 max-sm:hidden">
-        <span className="text-title tabular-nums text-ink">Turn {turn}</span>
-        <span className="text-caption text-muted">next</span>
+    // The cells' own container and gutter rule (index.css): this gutter is there exactly when theirs are.
+    <div className="nb-cell flex min-w-0 items-start">
+      <p className="nb-gutter pt-2">
+        <span className="block text-title tabular-nums text-ink">Turn {turn}</span>
+        <span className="block text-caption text-muted">next</span>
       </p>
       <div className="min-w-0 flex-1">{children}</div>
     </div>

@@ -1,11 +1,12 @@
 import type { OutlineItem, SessionDetail, TurnTiming } from '../api';
 import { mergeOutline, replyIndex } from './subagents.ts';
 
-// The open Thread's turns as a list (the notebook layout's Contents column). A turn is what the
-// conversation draws as one: a user message that is not a steer, and the reply up to the next one.
-// Its key is the conversation's own (`data-reply`: the message's id, `start` before the first), and
-// its number is the reply index's (the turn's place in the Thread's turn timings), so the list and
-// the conversation cannot name a turn differently.
+// The open Thread's turns (the notebook layout): the one place that numbers them and says how each
+// stands. The Contents column's list, the cells' gutters and the composer's "Turn N" all read it, so
+// they cannot name a turn differently. A turn is what the conversation draws as one: a user message
+// that is not a steer, and the reply up to the next one. Its key is the conversation's own
+// (`data-reply`: the message's id, `start` before the first), and its number is the reply index's
+// (the turn's place in the Thread's turn timings).
 
 /** How a turn stands, in a word. */
 export type TurnWord = 'Done' | 'Running' | 'Asked you' | 'Failed' | 'Stopped' | 'Queued';
@@ -52,8 +53,8 @@ function word(timing: TurnTiming | undefined, last: boolean, state: Detail['stat
   }
 }
 
-/** The Thread's turns in order, then its queued messages. */
-export function turnList(detail: Detail): Turn[] {
+/** The Thread's turns in order, then its queued messages; `next` is the number the turn after them will take. */
+export function threadTurns(detail: Detail): { turns: Turn[]; next: number } {
   const timings = detail.turn_timings ?? [];
   const index = detail.history_index ?? detail.items;
   // The server's outline holds every message, also of pages not loaded here; the index adds what arrived since.
@@ -69,7 +70,9 @@ export function turnList(detail: Detail): Turn[] {
     const timing = timings[0]?.user_item_id ? undefined : timings[0];
     turns.push({ key: 'start', number: timing ? 1 : number('start'), text: '', word: word(timing, !messages.length, detail.state) });
   }
-  const rows = messages.map((m) => ({ key: m.id, time: Date.parse(m.time), text: firstLine(m.text ?? ''), timing: byMessage.get(m.id) }));
+  // The index names a message without its words; the loaded pages have them.
+  const loaded = new Map(detail.items.map((i) => [i.id, i.text]));
+  const rows = messages.map((m) => ({ key: m.id, time: Date.parse(m.time), text: firstLine(m.text || loaded.get(m.id) || ''), timing: byMessage.get(m.id) }));
   // A turn whose message is not held here (no outline from an older server, and its page not loaded) keeps its row.
   const held = new Set(messages.map((m) => m.id));
   for (const t of timings) if (t.user_item_id && !held.has(t.user_item_id)) rows.push({ key: t.user_item_id, time: Date.parse(t.started_at), text: '', timing: t });
@@ -79,8 +82,11 @@ export function turnList(detail: Detail): Turn[] {
     turns.push({ key: row.key, number: number(row.key), text: row.text, word: word(row.timing, last, detail.state) });
   });
   const ran = timings.length || turns.length;
-  (detail.queue ?? []).forEach((q, i) => {
+  const queue = detail.queue ?? [];
+  queue.forEach((q, i) => {
     turns.push({ key: `queue:${q.request_id}`, number: ran + i + 1, text: firstLine(q.text), word: 'Queued', queued: true });
   });
-  return turns;
+  return { turns, next: ran + queue.length + 1 };
 }
+
+export const turnList = (detail: Detail): Turn[] => threadTurns(detail).turns;

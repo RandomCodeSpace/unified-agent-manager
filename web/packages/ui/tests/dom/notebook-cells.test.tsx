@@ -7,6 +7,7 @@ import type { Interaction, Item, TurnTiming } from '../../src/api';
 import { NotebookSlots, useNotebookSlot } from '../../src/components/notebook/slots';
 import { Transcript } from '../../src/components/Transcript';
 import { applyLayout, type Layout } from '../../src/lib/layout';
+import { threadTurns } from '../../src/lib/turns';
 import { log, openTask } from './render';
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 10, 9, 0, s)).toISOString();
@@ -37,10 +38,13 @@ const timings: TurnTiming[] = [
 
 type Options = { layout?: Layout; items?: Item[]; timings?: TurnTiming[]; identity?: Item[]; live?: boolean; working?: boolean; liveCard?: boolean; agentId?: string; interactions?: Interaction[] };
 
+/** The Thread's turns as the Thread hands them in (Task): numbered and worded once, by lib/turns, from all it holds. */
+const turnsOf = ({ live = true, working = true, ...o }: Options) => threadTurns({ items: o.identity ?? o.items ?? items, turn_timings: o.timings ?? timings, state: working ? 'working' : live ? 'awaiting_answer' : 'completed' }).turns;
+
 function draw({ layout = 'notebook', live = true, working = true, liveCard = true, agentId, interactions = [], ...o }: Options = {}) {
   applyLayout(layout);
   return render(
-    <Transcript sessionId="s" agentId={agentId} items={o.items ?? items} identityItems={o.identity} turnTimings={o.timings ?? timings} interactions={interactions} subagents={[]} live={live} working={working} liveCard={liveCard} provider="copilot" workdir="/w" />,
+    <Transcript sessionId="s" agentId={agentId} items={o.items ?? items} identityItems={o.identity} turnTimings={o.timings ?? timings} turns={turnsOf({ live, working, ...o })} interactions={interactions} subagents={[]} live={live} working={working} liveCard={liveCard} provider="copilot" workdir="/w" />,
   ).container;
 }
 
@@ -73,9 +77,14 @@ describe('the notebook layout', () => {
     const cells = [...root.querySelectorAll<HTMLElement>('.nb-cell')];
     // Nothing else stands beside the cells: the messages and the foot are inside them.
     expect([...root.children]).toEqual(cells);
-    expect(cells.map((cell) => [cell.dataset.reply, cell.dataset.cell])).toEqual([['u1', 'done'], ['u2', 'stopped'], ['u3', 'running']]);
+    expect(cells.map((cell) => [cell.dataset.reply, cell.dataset.cell])).toEqual([['u1', 'Done'], ['u2', 'Stopped'], ['u3', 'Running']]);
     expect(cells.map((cell) => cell.querySelector('.nb-gutter')!.textContent)).toEqual(['Turn 1Done10s3m ago', 'Turn 2Stopped15s2m ago', 'Turn 3Running']);
     expect(cells.map((cell) => cell.querySelector('[data-cell-state]')!.textContent)).toEqual(['Done', 'Stopped', 'Running']);
+  });
+
+  test('a Thread without turn timings still numbers its cells, and says how its last turn stands', () => {
+    const root = draw({ timings: [], live: false, working: false });
+    expect([...root.querySelectorAll<HTMLElement>('.nb-gutter')].map((gutter) => gutter.textContent)).toEqual(['Turn 1', 'Turn 2', 'Turn 3Done']);
   });
 
   test('the message and the answer are in "said", the turn\'s head in "did"', () => {
@@ -101,7 +110,9 @@ describe('the notebook layout', () => {
     // The call in progress stays in the "said" track, under the answer.
     expect(within(track(last, 'said')).getByText('npm test')).toBeTruthy();
     expect(track(last, 'did').textContent).toContain('Working');
-    expect(track(last, 'did').firstElementChild!.getAttribute('data-notebook-slot')).toBe('live');
+    // The turn's own line leads its track; the live card stands under it.
+    expect(track(last, 'did').firstElementChild!.textContent).toContain('Working');
+    expect(track(last, 'did').lastElementChild!.getAttribute('data-notebook-slot')).toBe('live');
     expect(track(last, 'said').lastElementChild!.getAttribute('data-notebook-slot')).toBe('asks');
     expect(root.querySelectorAll('[data-notebook-slot]')).toHaveLength(2);
     cleanup();
@@ -124,13 +135,13 @@ describe('the notebook layout', () => {
       </NotebookSlots>,
     );
     const last = cellOf(container, 'u3');
-    expect(track(last, 'did').firstElementChild!.textContent).toBe('the live card');
+    expect(track(last, 'did').lastElementChild!.textContent).toBe('the live card');
     expect(track(last, 'said').lastElementChild!.textContent).toBe('a question that waits');
   });
 
   test('a turn that waits on the owner reads "Asked you"', () => {
     const root = draw({ live: true, working: false });
-    expect(cellOf(root, 'u3').dataset.cell).toBe('asked');
+    expect(cellOf(root, 'u3').dataset.cell).toBe('Asked you');
     expect(cellOf(root, 'u3').querySelector('[data-cell-state]')!.textContent).toBe('Asked you');
   });
 
@@ -166,7 +177,7 @@ describe('the notebook layout', () => {
     expect(root.lastElementChild).toBe(last);
     expect(track(last, 'said').textContent).toContain('Audit the template and fix what is safe.');
     expect(track(last, 'did').textContent).toContain('Working');
-    expect(last.dataset.cell).toBe('running');
+    expect(last.dataset.cell).toBe('Running');
   });
 
   test('a steer message stays where it is in the answer', () => {
@@ -182,9 +193,10 @@ describe('the notebook layout', () => {
   test('what the scroller and the jumps look rows up by still resolves', () => {
     const root = draw();
     for (const key of ['u1', 'u2', 'u3']) {
-      // Task.tsx jumpToReply: the turn by its reply key, then its head.
+      // Task.tsx jumpToReply: the turn by its reply key; a cell is where it lands (`data-cell`), today's turn by its head.
       const turn = root.querySelector<HTMLElement>(`[data-reply="${CSS.escape(key)}"]`)!;
       expect(turn.classList.contains('nb-cell')).toBe(true);
+      expect(turn.matches('[data-cell]')).toBe(true);
       expect(turn.querySelector('[data-history-anchor^="turn-head-"]')).toBeTruthy();
       // HistoryAnchor.row: the message by its id.
       expect(turn.contains(root.querySelector(`[data-history-anchor="${CSS.escape(key)}"]`))).toBe(true);
@@ -213,8 +225,10 @@ describe('in the app', () => {
     cleanup();
     applyLayout('notebook');
     await openTask('t8');
-    await waitFor(() => expect(document.querySelector('.nb-cell[data-cell="running"]')).toBeTruthy());
-    expect(live()).toBeNull();
+    await waitFor(() => expect(document.querySelector('.nb-cell[data-cell="Running"]')).toBeTruthy());
+    // One home: the transcript draws no rows of its own, and the card's stand in the cell.
+    await waitFor(() => expect(document.querySelector('[data-live-card] [aria-label="Subagents at work"]')).toBeTruthy());
+    expect(log().getAllByRole('region', { name: 'Subagents at work' })).toHaveLength(1);
     // The running cell gives the Thread its two slots.
     expect(document.querySelectorAll('[role="log"] [data-notebook-slot]')).toHaveLength(2);
   });

@@ -4,7 +4,8 @@ import type { Turn, TurnWord } from '../../lib/turns';
 import { Dot, TONE_TEXT, type Tone } from '../common';
 import { useTurnJump } from './slots';
 
-const WORD_TONE: Record<TurnWord, Tone> = { Done: 'muted', Running: 'accent', 'Asked you': 'attention', Failed: 'error', Stopped: 'muted', Queued: 'muted' };
+/** Each word's tone, here and in the turn's cell (Cell). */
+export const WORD_TONE: Record<TurnWord, Tone> = { Done: 'muted', Running: 'accent', 'Asked you': 'attention', Failed: 'error', Stopped: 'muted', Queued: 'muted' };
 
 const ROW = 'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui pointer-coarse:h-11';
 
@@ -28,7 +29,8 @@ export const TurnList = memo(function TurnList({ turns }: Readonly<{ turns: read
         const row = (
           <>
             <span className="w-5 shrink-0 text-right text-meta text-muted tabular-nums">{turn.number}</span>
-            <span className="min-w-0 flex-1 truncate">{turn.text || (turn.key === 'start' ? 'Before the first message' : 'Message not loaded')}</span>
+            {/* A turn whose message is not held here (lib/turns) is named by its number. */}
+            <span className={cn('min-w-0 flex-1 truncate', !turn.text && turn.key !== 'start' && 'font-normal text-muted')}>{turn.text || (turn.key === 'start' ? 'Before the first message' : `Turn ${turn.number ?? ''}`.trim())}</span>
             {turn.word && (
               <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal', TONE_TEXT[WORD_TONE[turn.word]])}>
                 {turn.word === 'Running' && <Dot tone="accent" />}

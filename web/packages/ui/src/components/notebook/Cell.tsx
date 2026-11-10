@@ -9,37 +9,19 @@ import type { ReactNode } from 'react';
 import type { TurnTiming } from '../../api';
 import { cn } from '../../lib/cn';
 import { completedDuration } from '../../lib/transcript';
-import { dateTime, timeAgo, useMinuteTick } from '../common';
+import type { TurnWord } from '../../lib/turns';
+import { dateTime, timeAgo, TONE_TEXT, useMinuteTick } from '../common';
 import { useNotebookSlotRef } from './slots';
+import { WORD_TONE } from './TurnList';
 
-export type CellState = 'running' | 'asked' | 'done' | 'failed' | 'stopped';
-
-/**
- * A turn's state, from what its head reads already: it runs, or the Thread holds it while it waits
- * on the owner, else how its timing ended. None for a turn whose end was never recorded.
- */
-export function cellState(runs: boolean, waits: boolean, timing: TurnTiming | undefined): CellState | undefined {
-  if (runs) return 'running';
-  if (waits) return 'asked';
-  if (timing?.state === 'completed') return 'done';
-  if (timing?.state === 'failed') return 'failed';
-  return timing?.state === 'cancelled' ? 'stopped' : undefined;
-}
-
-/** Each state's word and its tone; the turn at work and the one that waits also mark the gutter's edge. */
-const STATES: Record<CellState, { word: string; tone: string; mark?: string }> = {
-  running: { word: 'Running', tone: 'text-accent', mark: 'before:bg-accent' },
-  asked: { word: 'Asked you', tone: 'text-attention', mark: 'before:bg-attention' },
-  done: { word: 'Done', tone: 'text-muted' },
-  failed: { word: 'Failed', tone: 'text-error' },
-  stopped: { word: 'Stopped', tone: 'text-muted' },
-};
+/** The turn at work and the one that waits also mark the gutter's edge. */
+const MARK: Partial<Record<TurnWord, string>> = { Running: 'before:bg-accent', 'Asked you': 'before:bg-attention' };
 
 /** What Transcript knows of a turn beyond its head and its answer. */
 export interface CellParts {
-  /** The turn's place among the Thread's turn timings, from 1; none without a timing. */
+  /** The turn's number and how it stands, as the Thread's list of turns has them (lib/turns). */
   number?: number;
-  state?: CellState;
+  word?: TurnWord;
   timing?: TurnTiming;
   /** The turn's message, when the loaded window holds it. */
   prompt?: ReactNode;
@@ -57,20 +39,20 @@ function Age({ at }: Readonly<{ at: string }>) {
   return <time dateTime={at} title={dateTime(at)} className="block">{timeAgo(at)}</time>;
 }
 
-export function Cell({ replyKey, number, state, timing, prompt, live, status, tail, did, children }: Readonly<CellParts & { /** The reply's key, by which the Thread finds the turn (`data-reply`). */ replyKey: string; /** The turn's head. */ did: ReactNode; /** What stands in the answer. */ children?: ReactNode }>) {
+export function Cell({ replyKey, number, word, timing, prompt, live, status, tail, did, children }: Readonly<CellParts & { /** The reply's key, by which the Thread finds the turn (`data-reply`). */ replyKey: string; /** The turn's head. */ did: ReactNode; /** What stands in the answer. */ children?: ReactNode }>) {
   const liveSlot = useNotebookSlotRef('live');
   const asksSlot = useNotebookSlotRef('asks');
-  const shown = state && STATES[state];
+  const mark = word && MARK[word];
   const took = completedDuration(timing);
   return (
     <div
       data-reply={replyKey}
-      data-cell={state ?? ''}
-      className={cn('nb-cell relative flex border-t border-hairline pt-4', shown?.mark && ["before:absolute before:inset-y-0 before:-left-3 before:w-0.5 before:rounded-full before:content-['']", shown.mark])}
+      data-cell={word ?? ''}
+      className={cn('nb-cell relative flex border-t border-hairline pt-4', mark && ["before:absolute before:inset-y-0 before:-left-3 before:w-0.5 before:rounded-full before:content-['']", mark])}
     >
       <div className="nb-gutter pr-3 text-stamp leading-normal tabular-nums text-muted">
         {number !== undefined && <div className="text-display-sm text-ink"><span className="sr-only">Turn </span>{number}</div>}
-        {shown && <div data-cell-state="" className={cn('text-caption font-medium', shown.tone)}>{shown.word}</div>}
+        {word && <div data-cell-state="" className={cn('text-caption font-medium', TONE_TEXT[WORD_TONE[word]])}>{word}</div>}
         {took && <div className="mt-1" title="Recorded foreground turn duration">{took}</div>}
         {timing?.ended_at && <Age at={timing.ended_at} />}
       </div>
@@ -84,10 +66,10 @@ export function Cell({ replyKey, number, state, timing, prompt, live, status, ta
         </div>
         {/* Nothing in it (a turn without a head, a slot not filled): the track leaves, so a folded cell keeps no gap for it. */}
         <div data-track="did" className="nb-did hidden min-w-0 flex-col gap-3 has-[>:not(:empty)]:flex">
-          {/* Where the Thread draws the live card, above the head. */}
-          {live && <div ref={liveSlot} data-notebook-slot="live" className="empty:hidden" />}
           {did}
           {status}
+          {/* Where the Thread draws the live card, under the turn's own line. */}
+          {live && <div ref={liveSlot} data-notebook-slot="live" className="empty:hidden" />}
         </div>
       </div>
     </div>

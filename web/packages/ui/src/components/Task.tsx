@@ -9,7 +9,8 @@ import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../stat
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
-import { nextTurn, outcomeFailures, showsFinish, shownState } from '../lib/tasks';
+import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
+import { threadTurns } from '../lib/turns';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import { failureWords } from '../lib/failure';
@@ -892,7 +893,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!turn) return;
     atBottom.current = false;
     await settle(0);
-    land(turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
+    // The notebook layout's cell (notebook/Cell) lands by its own top: its turn line is in the second track, not at its head.
+    land(turn.matches('[data-cell]') ? turn : turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
   }
 
   /**
@@ -1023,6 +1025,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, []);
   // The notebook layout (lib/layout): its list of turns scrolls this Thread to one, and the header's settings line takes the composer's settings controls.
   useTurnJumpTarget((key) => void jumpToReply(key));
+  // Its turns, numbered once (lib/turns) for the cells' gutters and the composer's cell; the Contents column lists the same.
+  const { outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue } = session;
+  const { turns, next: nextTurn } = useMemo(
+    () => threadTurns({ outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue, state: session.state }),
+    [outline, historyIndex, historyBefore, heldItems, turnTimings, queue, session.state],
+  );
   const [settingsLine, setSettingsLine] = useState<HTMLElement | null>(null);
 
   return (
@@ -1087,6 +1095,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 liveItems={liveItems}
                 historyItemSeq={historyItemSeq}
                 turnTimings={session.turn_timings}
+                turns={turns}
                 interactions={visibleInteractions}
                 subagents={session.subagents}
                 liveCard={!session.history_after}
@@ -1115,9 +1124,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               <ThreadMessages session={session} />
               {/* In the notebook layout a waiting question or permission is answered in the running turn's cell, when one is on screen. */}
               <InNotebookSlot name="asks">
-              {cards.map((i) => (
+              {(inCell) => cards.map((i) => (
                 <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-4" inner="pt-4" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
-                  <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+                  <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} place={inCell ? 'cell' : undefined} />
                 </Collapse>
               ))}
               </InNotebookSlot>
@@ -1166,7 +1175,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </div>
           )}
           <SettingsLineContext.Provider value={settingsLine}>
-          <ComposerCell turn={nextTurn(session)}>
+          <ComposerCell turn={nextTurn}>
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={viewed ? null : answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id && !viewed ? editing : null} subagent={viewed} onThread={backToThread} seed={seed} project={project} />
           </ComposerCell>
           </SettingsLineContext.Provider>

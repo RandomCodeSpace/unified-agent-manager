@@ -12,6 +12,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useLayout } from '../lib/layout';
+import type { Turn as ThreadTurn } from '../lib/turns';
 import { formatCount, lineCountsText } from '../lib/cost';
 import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
@@ -29,7 +30,7 @@ import { LiveSubagents, SubagentChip, SubagentTag, useLiveSubagentIds, useScope,
 import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
-import { Cell, cellState, type CellParts } from './notebook/Cell';
+import { Cell, type CellParts } from './notebook/Cell';
 import { PlanNotice } from './Plan';
 import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
 import { Blocks, type Block } from './ui/blocks';
@@ -58,6 +59,8 @@ interface Props {
   liveItems?: Item[];
   historyItemSeq?: Record<string, number>;
   turnTimings?: TurnTiming[];
+  /** The Thread's turns (lib/turns `threadTurns`): the notebook layout's cells take their number and their state word from it, as its list of turns does. */
+  turns?: readonly ThreadTurn[];
   planVersion?: number;
   planAvailable?: boolean;
   /** The provider's scratch plan file; its edits are not the turn's changed files. */
@@ -135,10 +138,11 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line, and plain rows at the foot while one runs;
  * the chip and each row open the strip's sheet.
  */
-export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenThreadChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], turns, interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenThreadChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   // The notebook layout (lib/layout) stands each turn of the main conversation in a cell; a subagent's transcript keeps today's rows.
   const cells = useLayout() === 'notebook' && !agentId;
+  const turnOf = useMemo(() => new Map(turns?.map((turn) => [turn.key, turn])), [turns]);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
   const inline = !agentId && subagents.length > 0;
@@ -204,7 +208,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const runs = last && working && open;
     // How the turn's parts stand: in a cell in the notebook layout, with its message and, on the last one, the foot.
     // What came before any message is no turn, and stays the full-width rows it is.
-    const cell = (): CellParts | undefined => (cells && userItemId ? { number: timing && turnTimings.indexOf(timing) + 1, state: cellState(runs, last && live && !working && open, timing), timing, prompt, live: last && liveCard, ...(last && foot()) } : undefined);
+    const cell = (): CellParts | undefined => (cells && userItemId ? { number: turnOf.get(userItemId)?.number, word: turnOf.get(userItemId)?.word, timing, prompt, live: last && liveCard, ...(last && foot()) } : undefined);
     if (!group.length) {
       const status = showEnd ? <TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} /> : null;
       const parts = cell();
