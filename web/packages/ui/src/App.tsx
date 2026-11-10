@@ -40,6 +40,7 @@ import { useReadMarks } from './lib/useReadMarks';
 import { ALL_ROUTINES, HASH_PREFIX, SETTINGS_HASH, hashAgent, hashRoutines, hashSelection, useHashRoute } from './lib/useHashRoute';
 import { useDrawer, useSidebar } from './lib/useSidebar';
 import { useTypeToCompose } from './lib/useTypeToCompose';
+import { conversation, useViewFocus } from './lib/useViewFocus';
 import { Contained } from './components/VisualBoundary';
 import { editing, keysTaken, sessionsUpdate } from './lib/overlays';
 import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading, usePaneLoad, useTerminalDock } from './components/Panes';
@@ -76,11 +77,6 @@ const SHELL = 'grid h-[var(--app-height,100dvh)] mt-[var(--app-top,0px)] overflo
 
 
 
-/** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane (also while a view covers the Thread). */
-const conversation = () => {
-  const section = document.querySelector<HTMLElement>('main section[aria-label="Conversation"]');
-  return section && !section.closest('[inert]') ? section : document.querySelector<HTMLElement>('main');
-};
 
 
 export default function App() {
@@ -252,18 +248,9 @@ export default function App() {
   // A move between views (a Task, Settings, Routines) adds a history entry, so Back and
   // Forward retrace it; a correction the app makes on its own (a stale or unknown fragment) replaces the entry.
   const pushView = useRef(false);
-  // What opened Settings or Routines: closing the view gives it focus back.
-  const opener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     viewShown.current = viewOpen;
   });
-  const noteOpener = useCallback(() => {
-    pushView.current = true;
-    const el = document.activeElement;
-    // A move inside the open view keeps the button that opened it.
-    if (viewShown.current && el?.closest('main')) return;
-    opener.current = el instanceof HTMLElement && el !== document.body ? el : null;
-  }, []);
 
   const select = useCallback((id: string | null) => {
     pushView.current = true;
@@ -302,6 +289,7 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [shownAgent, viewOpen, showAgent]);
+  const { noteOpener, closeView } = useViewFocus({ viewOpen, viewShown, pushView, setSettingsOpen, setRoutinesFor });
   const taskList = useMemo(() => ({ sessions: state.sessions, projects: state.projects, openTask }), [state.sessions, state.projects, openTask]);
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
@@ -337,39 +325,6 @@ export default function App() {
       setNewTask(null);
     });
   }, [noteOpener, setDrawerOpen]);
-  // What gets focus back once a closed view has left the screen (undefined: no close pending).
-  const restoreTo = useRef<HTMLElement | null | undefined>(undefined);
-  /** Closes Settings or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
-  const closeView = useCallback(() => {
-    pushView.current = true;
-    // A second Esc before the close commits keeps the first one's target.
-    restoreTo.current ??= opener.current;
-    opener.current = null;
-    startTransition(() => {
-      setSettingsOpen(false);
-      setRoutinesFor(null);
-    });
-  }, []);
-  // After the close commits: until then the Thread is still inert under the view.
-  useEffect(() => {
-    if (viewOpen || restoreTo.current === undefined) return;
-    const back = restoreTo.current;
-    restoreTo.current = undefined;
-    back?.focus();
-    // An opener that cannot take focus (gone, inert, in the closed drawer) gives way to the conversation.
-    if (!back || document.activeElement !== back) conversation()?.focus();
-  }, [viewOpen]);
-  // Esc closes Settings or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
-  useEffect(() => {
-    if (!viewOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || keysTaken() || editing()) return;
-      if (e.target instanceof Element && e.target.closest('.xterm')) return;
-      closeView();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [viewOpen, closeView]);
 
   useEffect(() => {
     if (auth === 'in' && !federated) return startNotifications();
