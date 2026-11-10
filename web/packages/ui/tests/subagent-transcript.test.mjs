@@ -66,7 +66,7 @@ const modules = {
   // Process notes have their own DOM tests; here every reply stays whole.
   '../lib/richMarkdown': { proseOnly: () => false },
   './TurnWaybill': { TurnWaybill: () => null },
-  './VisualBoundary': { VisualBoundary: ({ children }) => children },
+  './VisualBoundary': { VisualBoundary: ({ children }) => children, Contained: ({ children }) => children },
   './Plan': { PlanNotice: () => null },
   './ui/blocks': { Blocks: ({ items }) => React.createElement('span', null, items.map((block) => block.title).join(' ')) },
   './ui/button': { Button: element('button') },

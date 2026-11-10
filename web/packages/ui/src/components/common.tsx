@@ -10,7 +10,7 @@ import { COMPACT_FROM, formatCount, fullNumber } from '../lib/cost';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
-import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
+import { codeFile, decodePath, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import { SEVERITY_ORDER, STATUS_ORDER, commandsOf, outlineOf, remarkRich, type CalloutKind, type Command, type Outline } from '../lib/richMarkdown';
 import type { TodoStatus } from '../api';
 import type { HighlightTree } from '../lib/highlight';
@@ -718,7 +718,7 @@ function nodeText(node: ExtraProps['node']): string {
 function linkWords(node: ExtraProps['node'], href: string | undefined, path: string): string | undefined {
   const words = nodeText(node).trim();
   const name = path.split('/').pop() ?? path;
-  if (!words || [href, path, name, decodeURI(href ?? '')].includes(words) || words.replace(/:\d+(?::\d+)?$/, '').endsWith(path) || words.replace(/:\d+(?::\d+)?$/, '') === name) return undefined;
+  if (!words || [href, path, name, decodePath(href ?? '', decodeURI)].includes(words) || words.replace(/:\d+(?::\d+)?$/, '').endsWith(path) || words.replace(/:\d+(?::\d+)?$/, '') === name) return undefined;
   return words;
 }
 

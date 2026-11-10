@@ -15,6 +15,8 @@ test('only links on the Thread project and its groups are items', () => {
   assert.deepEqual(parseGitLabUrl(`${P}/issues/14#note_1`, origin), { kind: 'issue', id: 14 });
   assert.deepEqual(parseGitLabUrl(`${P}/work_items/22`, origin), { kind: 'issue', id: 22 });
   assert.deepEqual(parseGitLabUrl(`${P}/pipelines/2936820380/`, origin), { kind: 'pipeline', id: 2936820380 });
+  // A malformed escape in the path is read as written, never thrown.
+  assert.equal(parseGitLabUrl(`${P}/wikis/50%off`, origin), null);
   assert.deepEqual(parseGitLabUrl(`${P}/jobs/7?x=1`, origin), { kind: 'job', id: 7 });
   assert.deepEqual(parseGitLabUrl('https://GitLab.com/groups/aksops/-/epics/3', origin), { kind: 'epic', id: 3 });
   assert.equal(parseGitLabUrl('https://gitlab.com/groups/other/-/epics/3', origin), null);
