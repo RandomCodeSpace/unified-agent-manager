@@ -115,10 +115,6 @@ func (m *Manager) settleMerged() {
 	m.mu.Unlock()
 }
 
-// maxMergedMoves bounds the distinct commits of the reflogs that mergedTip
-// checks; longer ones are not proved.
-const maxMergedMoves = 1000
-
 // mergedTip is the proof that the work on branch, checked out in the
 // Thread's worktree at path, has landed on def, origin's default branch as
 // the refs on disk have it (refs/remotes/origin/<def>). It returns the
@@ -179,17 +175,13 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	// Every commit the branch or the worktree's HEAD ever held is in the
 	// branch's history or in def's. One reset or rebased away, or made on a
 	// detached HEAD, lives only in a reflog, and both go with the removal.
+	// Reflogs too long for one command line fail it, which keeps everything.
 	// shortcut: a rebased branch stays unproven, compare patch IDs if those Threads should settle too.
-	wandered, code := git("reflog", "show", "--format=%H", "HEAD")
-	if code != 0 {
-		return "", true
-	}
+	wandered, read := git("reflog", "show", "--format=%H", "HEAD")
 	held := strings.Fields(moves + "\n" + wandered)
 	slices.Sort(held)
-	if held = slices.Compact(held); len(held) > maxMergedMoves {
-		return "", true
-	}
-	if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); code != 0 || lost != "" {
+	held = slices.Compact(held)
+	if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); read != 0 || code != 0 || lost != "" {
 		return "", true
 	}
 	if _, code := git("merge-base", "--is-ancestor", tip, target); code != 0 {
