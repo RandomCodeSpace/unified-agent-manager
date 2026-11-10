@@ -626,3 +626,48 @@ func TestWebStopWithoutControlOrTurnAbortsOutsideAutopilot(t *testing.T) {
 		t.Fatalf("Stop = %v, aborts %d", err, aborts)
 	}
 }
+
+// A session the CLI shuts down with an error is released like one uam ended:
+// its SDK session detaches, its tools stop and its usage ownership goes, so
+// nothing of it outlives the exit.
+func TestWebErrorShutdownReleasesTheSession(t *testing.T) {
+	h := openWeb(t)
+	released := make(chan string, 1)
+	h.p.SetUsageSessionRecorder(func(id string, active bool) error {
+		if !active {
+			released <- id
+		}
+		return nil
+	})
+	conv := h.conv.(*conversation)
+	// Ownership as Open records it; the recorder was set after the open.
+	if err := h.p.recordUsageSession(conv.client, conv.id, true); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("shutdown", &rpc.SessionShutdownData{ShutdownType: rpc.ShutdownTypeError}))
+	if exit := exitOf(h.sink); exit == nil || exit.Detached {
+		t.Fatalf("exit = %+v", exit)
+	}
+	waitFor(t, "the session's detach", h.fs.isDisconnected)
+	select {
+	case id := <-released:
+		if id != conv.id {
+			t.Fatalf("released usage ownership of %q", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("usage ownership was not released")
+	}
+	waitFor(t, "the detach to be forgotten", func() bool {
+		h.p.mu.Lock()
+		defer h.p.mu.Unlock()
+		return len(h.p.detaching[conv.id]) == 0
+	})
+	if conv.tools != nil {
+		conv.tools.mu.Lock()
+		closed := conv.tools.closed
+		conv.tools.mu.Unlock()
+		if !closed {
+			t.Fatal("the session's tools were not stopped")
+		}
+	}
+}

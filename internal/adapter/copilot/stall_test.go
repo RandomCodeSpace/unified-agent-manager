@@ -254,3 +254,201 @@ func TestWebStallWatchIgnoresAToolLeftOverFromAnEarlierTurn(t *testing.T) {
 	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "0"}))
 	waitFor(t, "the abort of the stalled request", func() bool { return h.fs.abortCount() == before+1 })
 }
+
+// adaptiveStall makes the adaptive stall bound test-sized: floor once a
+// request has answered quickly, ceiling before that.
+func adaptiveStall(t *testing.T, floor, ceiling time.Duration) {
+	t.Helper()
+	shortStop(t)
+	after, low := webStallAfter, webStallMin
+	webStallAfter, webStallMin = ceiling, floor
+	t.Cleanup(func() { webStallAfter, webStallMin = after, low })
+}
+
+// quickAnswer runs a turn whose model request answers at once, which brings
+// the stall bound down to its floor.
+func quickAnswer(t *testing.T, h webHarness) {
+	t.Helper()
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-quick", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-quick", &rpc.AssistantMessageData{Content: "quick", MessageID: "m-quick"}))
+	h.fs.onEvent(ev("idle-quick", &rpc.AssistantIdleData{}))
+}
+
+func stallBound(h webHarness) time.Duration {
+	conv := h.conv.(*conversation)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	return conv.stallBoundLocked()
+}
+
+// A request slower than the adapted bound is aborted once. Its retry gets
+// the full bound, so a slow but healthy request is not aborted a second time
+// and the turn goes on; its answer then raises the bound.
+func TestWebRetriedRequestGetsTheFullStallBound(t *testing.T) {
+	adaptiveStall(t, 150*time.Millisecond, 3*time.Second)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the abort at the adapted bound", func() bool { return h.fs.abortCount() == 1 })
+	abortedIdle(h, 1)
+	waitFor(t, "the continuation", func() bool { return len(h.fs.sentMessages()) == 3 })
+	continuation(h, "retry-1")
+	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	time.Sleep(4 * webStallMin)
+	if n := h.fs.abortCount(); n != 1 {
+		t.Fatalf("the retried request was aborted too: aborts = %d", n)
+	}
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "slow but here", MessageID: "m-1"}))
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted || turn.StallGaveUp {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got <= webStallMin {
+		t.Fatalf("bound after the slow answer = %v, want above the floor %v", got, webStallMin)
+	}
+}
+
+// The abort that gives a twice-stalled turn up is no answer: it does not
+// raise the bound for the rest of the conversation.
+func TestWebGivenUpStallDoesNotSizeTheBound(t *testing.T) {
+	adaptiveStall(t, 50*time.Millisecond, 800*time.Millisecond)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the first abort", func() bool { return h.fs.abortCount() == 1 })
+	abortedIdle(h, 1)
+	waitFor(t, "the continuation", func() bool { return len(h.fs.sentMessages()) == 3 })
+	continuation(h, "retry-1")
+	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	waitFor(t, "the second abort", func() bool { return h.fs.abortCount() == 2 })
+	abortedIdle(h, 2)
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled || !turn.StallGaveUp {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got >= webStallAfter {
+		t.Fatalf("bound after a give-up = %v, the ceiling", got)
+	}
+}
+
+// A Stop while the model is silent is no answer either: a conversation no
+// request has answered in keeps the full bound.
+func TestWebStopDoesNotSizeTheStallBound(t *testing.T) {
+	adaptiveStall(t, 50*time.Millisecond, 3*time.Second)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	abortedIdle(h, 1)
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got != webStallAfter {
+		t.Fatalf("bound after a Stop = %v, want %v", got, webStallAfter)
+	}
+}
+
+// A finished subagent that takes a follow-up while the main agent is idle is
+// watched like any other: its silent model request is cancelled.
+func TestWebStalledSubagentFollowUpBetweenTurnsIsCancelled(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "delegating", MessageID: "m-1"}))
+	h.fs.onEvent(ev("task-1", &rpc.ToolExecutionStartData{ToolCallID: "task-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("sub-start", "agent-1", &rpc.SubagentStartedData{ToolCallID: "task-call"}))
+	h.fs.onEvent(agentEv("sub-done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "task-call"}))
+	h.fs.onEvent(ev("task-end", &rpc.ToolExecutionCompleteData{ToolCallID: "task-call", Success: true}))
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted {
+		t.Fatalf("turn = %+v", turn)
+	}
+	followUp := agentEv("sub-ts-2", "agent-1", &rpc.AssistantTurnStartData{TurnID: "1"})
+	followUp.Timestamp = time.Now().Add(time.Hour)
+	h.fs.onEvent(followUp)
+	waitFor(t, "the stalled follow-up's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+	if n := h.fs.abortCount(); n != 0 {
+		t.Fatalf("the idle main agent was aborted %d times", n)
+	}
+}
+
+// A subagent still waiting on the model when the main turn ends keeps its
+// watch: the turn's end does not drop it.
+func TestWebSubagentStallWatchOutlivesTheTurn(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted {
+		t.Fatalf("turn = %+v", turn)
+	}
+	waitFor(t, "the stalled subagent's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 1 || got[0] != "agent-1" {
+		t.Fatalf("subagent cancels = %v", got)
+	}
+}
+
+// A task call the CLI starts with no assistant message before it ends the
+// model wait all the same: the main agent is not aborted while its subagent
+// works in silence.
+func TestWebStallWatchLeavesATaskCallWithoutAMessageAlone(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("task-1", &rpc.ToolExecutionStartData{ToolCallID: "task-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("sub-start", "agent-1", &rpc.SubagentStartedData{ToolCallID: "task-call"}))
+	time.Sleep(5 * webStallAfter)
+	if n := h.fs.abortCount(); n != 0 {
+		t.Fatalf("the main agent was aborted %d times while its subagent ran", n)
+	}
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnWorking {
+		t.Fatalf("turn = %+v", turn)
+	}
+}
+
+// A subagent's tool call whose end was never reported ends with the
+// subagent: it does not keep the stall watch off its later follow-up.
+func TestWebSubagentStallWatchIgnoresAToolLeftOverFromAnEarlierRun(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-msg", "agent-1", &rpc.AssistantMessageData{Content: "running", MessageID: "sm-1"}))
+	h.fs.onEvent(agentEv("sub-tool", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-call", ToolName: "bash"}))
+	h.fs.onEvent(agentEv("sub-done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "task-call"}))
+	followUp := agentEv("sub-ts-2", "agent-1", &rpc.AssistantTurnStartData{TurnID: "1"})
+	followUp.Timestamp = time.Now().Add(time.Hour)
+	h.fs.onEvent(followUp)
+	waitFor(t, "the stalled follow-up's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+}
+
+// A subagent whose own task call starts with no message before it is not
+// waiting on the model while the nested subagent works.
+func TestWebSubagentStallWatchLeavesItsTaskCallAlone(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-task", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "nested-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("nested-start", "agent-2", &rpc.SubagentStartedData{ToolCallID: "nested-call"}))
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 0 {
+		t.Fatalf("a subagent running a subagent of its own was cancelled: %v", got)
+	}
+}
+
+// A turn's stall timer ends with the turn: the next turn's request is
+// checked at its own bound, not when the earlier turn's timer would fire.
+func TestWebNextTurnIsCheckedAtItsOwnStallBound(t *testing.T) {
+	adaptiveStall(t, 100*time.Millisecond, 30*time.Second)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the abort at the adapted bound", func() bool { return h.fs.abortCount() == 1 })
+}

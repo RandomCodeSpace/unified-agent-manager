@@ -2810,6 +2810,11 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer func() {
 		c.mu.Lock()
 		c.sending--
+		// An error recorded for a prompt that started no turn belongs to
+		// none: it must not fail a later one.
+		if c.sending == 0 && !c.turnRunning {
+			c.turnErr = ""
+		}
 		c.sendEndedLocked()
 		c.mu.Unlock()
 	}()
@@ -3741,9 +3746,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	// An event while the main agent waits on the model is an answer of
-	// sorts; the silence before it sizes the stall bound. The abort of a
-	// stalled request is not one.
-	if !c.modelWaitAt.IsZero() && !c.stall.aborting {
+	// sorts; the silence before it sizes the stall bound. An abort is not
+	// one: uam's of a stalled request, retried or given up, or a Stop's.
+	if !c.modelWaitAt.IsZero() && !c.stall.aborting && c.stall.note == "" && !c.stopPendingLocked() {
 		c.modelGapMax = max(c.modelGapMax, time.Since(c.lastEventAt))
 	}
 	c.lastEvent, c.lastEventAt = string(ev.Type()), time.Now()
@@ -4061,8 +4066,21 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			if d.ErrorReason != nil {
 				reason += ": " + clip(displaytext.Sanitize(*d.ErrorReason), maxErrorText)
 			}
+			// Released as detach does it, off the event goroutine: the detach
+			// is due before the exit lets anything reopen the session. The CLI
+			// ended the session, so no permission request waits on an answer.
+			detached := c.p.detachStarted(c.id)
 			c.exitLocked(reason)
 			c.p.forget(c)
+			if c.aside != nil {
+				c.aside()
+			}
+			go func() {
+				defer log.Recover("copilot shut down session release", &c.mu, &c.p.mu)
+				if err := c.release(context.Background(), nil, detached); err != nil {
+					log.Warn("copilot session shut down: detaching it failed", "conversation", c.id, "error", err)
+				}
+			}()
 		}
 		return
 	}
@@ -4165,6 +4183,7 @@ func (c *conversation) startTurnLocked() {
 		c.planEpoch++
 		c.planStopped = false
 		c.turnAt = time.Now()
+		c.forgetUnendedToolsLocked()
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
@@ -4177,6 +4196,22 @@ func (c *conversation) startTurnLocked() {
 	// starts a turn does.
 	c.emitPhaseLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+}
+
+// forgetUnendedToolsLocked drops, when a turn starts, the transcript's
+// running calls of the main agent and of subagents no longer running. Their
+// end was never reported (a call an abort interrupted), and nothing else
+// would drop them. At the start and not the earlier turn's end: an end
+// reported late still finds its call.
+func (c *conversation) forgetUnendedToolsLocked() {
+	for id, agent := range c.tr.toolAgents {
+		if !c.subagentRunsLocked(agent) {
+			delete(c.tr.tools, id)
+			delete(c.tr.toolAgents, id)
+			delete(c.tr.shells, id)
+			delete(c.tr.clippedInput, id)
+		}
+	}
 }
 
 // turnFailure is what a session error says beside its message: its category
@@ -4195,7 +4230,14 @@ func turnFailure(d *rpc.SessionErrorData) agentapi.TurnFailure {
 
 func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	if c.foregroundIdle {
-		return
+		// An error and the idle that ends its turn can both arrive before the
+		// prompt's send returns, which is what starts the turn: start it
+		// here. Otherwise the send starts it afterwards, with no idle left
+		// to end it.
+		if c.sending == 0 || c.turnErr == "" {
+			return
+		}
+		c.startTurnLocked()
 	}
 	if aborted != nil && *aborted && c.continueStalledLocked() {
 		return

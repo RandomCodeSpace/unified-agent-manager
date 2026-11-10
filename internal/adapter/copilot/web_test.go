@@ -1109,6 +1109,87 @@ func TestWebErrorWhileThePromptIsSentFailsItsTurn(t *testing.T) {
 	}
 }
 
+// After an earlier turn, an error and the idle that ends its turn can both
+// arrive before the prompt's send returns. The idle ends that turn as failed:
+// the send must not start it afterwards and leave it working for good.
+func TestWebErrorAndIdleBeforeTheSendReturnsFailTheTurn(t *testing.T) {
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("i1", &rpc.AssistantIdleData{}))
+	h.fs.beforeReturn = func(string) {
+		h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "quota", Message: "no quota"}))
+		h.fs.onEvent(ev("i2", &rpc.AssistantIdleData{}))
+	}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "again"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastTurn(h.sink); got.State != agentapi.TurnFailed || got.Error != "no quota" {
+		t.Fatalf("turn = %+v", got)
+	}
+	// The error is spent: the next turn completes.
+	h.fs.beforeReturn = nil
+	startTurn(t, h)
+	h.fs.onEvent(ev("i3", &rpc.AssistantIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("next turn = %+v", got)
+	}
+}
+
+// erringSendSession is a session whose Send reports a session error and
+// then fails, as when the CLI loses the prompt.
+type erringSendSession struct{ *fakeSession }
+
+func (s erringSendSession) Send(context.Context, copilot.MessageOptions) (string, error) {
+	s.onEvent(ev("send-err", &rpc.SessionErrorData{ErrorType: "query", Message: "prompt lost"}))
+	return "", errors.New("connection reset")
+}
+
+// An error that arrives during a send that then fails started no turn: it
+// fails no later one.
+func TestWebErrorOfAFailedSendFailsNoLaterTurn(t *testing.T) {
+	h := openWeb(t)
+	useSession(h.conv, erringSendSession{h.fs})
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "lost"}); err == nil {
+		t.Fatal("the failed send reported no error")
+	}
+	useSession(h.conv, h.fs)
+	// The next turn ends without one progress event of its own.
+	startTurn(t, h)
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("turn after a failed send = %+v", got)
+	}
+}
+
+// Tool calls whose end was never reported are forgotten when the next turn
+// starts, so they do not pile up; a late end before that still finds its
+// call, and a running subagent's call stays.
+func TestWebUnendedToolCallsAreForgottenAtTheNextTurn(t *testing.T) {
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-tool", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-call", ToolName: "bash"}))
+	h.fs.onEvent(ev("tool-1", &rpc.ToolExecutionStartData{ToolCallID: "call-1", ToolName: "bash"}))
+	h.fs.onEvent(ev("tool-2", &rpc.ToolExecutionStartData{ToolCallID: "call-2", ToolName: "bash"}))
+	h.fs.onEvent(ev("i1", &rpc.AssistantIdleData{}))
+	h.fs.onEvent(ev("late-1", &rpc.ToolExecutionCompleteData{ToolCallID: "call-1", Success: true}))
+	var late *agentapi.Item
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventItem && e.Item.ID == "call-1" {
+			late = e.Item
+		}
+	}
+	if late == nil || late.Tool == nil || late.Tool.Name != "bash" || late.Tool.Status != agentapi.ToolCompleted {
+		t.Fatalf("late end = %+v", late)
+	}
+	startTurn(t, h)
+	conv := h.conv.(*conversation)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	if _, kept := conv.tr.tools["sub-call"]; !kept || len(conv.tr.tools) != 1 || len(conv.tr.toolAgents) != 1 {
+		t.Fatalf("running calls after the next turn's start = %v", conv.tr.toolAgents)
+	}
+}
+
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}

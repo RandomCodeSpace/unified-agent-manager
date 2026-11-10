@@ -31,9 +31,11 @@ var webStallMin = time.Minute
 // silent before it counts as stalled: webStallAfter until the conversation
 // has seen a request answered, then four times the longest silence an
 // answered request showed, within webStallMin and webStallAfter. A Thread
-// whose requests answer in seconds no longer waits three minutes.
+// whose requests answer in seconds no longer waits three minutes. After a
+// stall uam retried, the turn's requests get webStallAfter again: the request
+// may have been slow and not stalled, and its answer then sizes the bound.
 func (c *conversation) stallBoundLocked() time.Duration {
-	if c.modelGapMax <= 0 {
+	if c.modelGapMax <= 0 || c.stall.retries > 0 {
 		return webStallAfter
 	}
 	return min(webStallAfter, max(webStallMin, 4*c.modelGapMax))
@@ -82,8 +84,11 @@ func stallContinuation(d *rpc.UserMessageData) bool {
 }
 
 // noteModelWaitLocked follows whether the main agent waits on a model
-// request: from its assistant.turn_start until the model's message, the end
-// of that call, or an idle.
+// request: from its assistant.turn_start until the model's message, its
+// task call, the end of that call, or an idle. A task call is the model's
+// answer even with no message before it, and no running tool to the watch
+// (observePhaseLocked): it must not leave the main agent waiting on the
+// model while its subagent works.
 func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 	switch d := ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
@@ -93,6 +98,10 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 		}
 	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
 		c.modelWaitAt = time.Time{}
+	case *rpc.ToolExecutionStartData:
+		if d.ToolName == taskTool {
+			c.modelWaitAt = time.Time{}
+		}
 	case *rpc.UserMessageData:
 		if stallContinuation(d) {
 			c.stall.aborting, c.stall.sending = false, false
@@ -104,14 +113,25 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 // main agent's watch never sees: it follows the main agent's requests only.
 func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID string) {
 	w, seen := c.stall.subWait[agentID]
-	switch ev.Data.(type) {
+	switch d := ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
-		w.waiting = true
+		// A new request is watched afresh: the watch outlives the turn, and
+		// a cancel that failed must not exempt the subagent for good.
+		w.waiting, w.cancelled = true, false
 		if c.stall.timer == nil {
 			c.stall.timer = time.AfterFunc(webStallAfter, c.checkStall)
 		}
 	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
 		w.waiting = false
+	case *rpc.ToolExecutionStartData:
+		if !seen {
+			return
+		}
+		// Its own task call, as the main agent's: no running tool to the
+		// watch, so it ends the wait while the nested subagent works.
+		if d.ToolName == taskTool {
+			w.waiting = false
+		}
 	default:
 		if !seen {
 			return
@@ -126,16 +146,17 @@ func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID s
 
 // checkStall aborts a main-agent model request that has heard nothing for
 // webStallAfter, cancels such a subagent, and otherwise looks again when
-// either could have stalled.
+// either could have stalled. Subagents are watched between turns too: one
+// outlives the turn, or takes a follow-up while the main agent is idle.
 func (c *conversation) checkStall() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stall.timer = nil
-	if c.closed || !c.turnRunning {
+	if c.closed {
 		return
 	}
 	next := c.checkSubagentStallsLocked()
-	if c.modelWaitAt.IsZero() {
+	if !c.turnRunning || c.modelWaitAt.IsZero() {
 		if next > 0 {
 			c.stall.timer = time.AfterFunc(next, c.checkStall)
 		}
@@ -204,11 +225,12 @@ func (c *conversation) checkSubagentStallsLocked() time.Duration {
 	return next
 }
 
-// subagentToolRunningLocked reports whether a tool call of the agent runs.
-// The transcript's running calls carry no agent; toolAgents maps them.
+// subagentToolRunningLocked reports whether a tool call of the agent runs:
+// the phase's, as for the main agent, which end with the subagent. The
+// transcript keeps a call whose end was never reported.
 func (c *conversation) subagentToolRunningLocked(agentID string) bool {
-	for _, agent := range c.tr.toolAgents {
-		if agent == agentID {
+	for _, tool := range c.phase.tools {
+		if tool.agentID == agentID {
 			return true
 		}
 	}
@@ -293,11 +315,16 @@ func (c *conversation) stopPendingLocked() bool {
 	return c.stopping != nil && c.stopping.idles == c.idles
 }
 
-// endStallLocked clears the stall watch of a turn that ended.
+// endStallLocked clears the main agent's stall watch of a turn that ended.
+// The subagents' watch stays, with a timer of its own when one of them still
+// waits: the turn's timer would hold the next turn's first check back.
 func (c *conversation) endStallLocked() {
 	if c.stall.timer != nil {
 		c.stall.timer.Stop()
 	}
-	c.stall = stallState{}
+	c.stall = stallState{subWait: c.stall.subWait}
 	c.modelWaitAt = time.Time{}
+	if next := c.checkSubagentStallsLocked(); next > 0 {
+		c.stall.timer = time.AfterFunc(next, c.checkStall)
+	}
 }
