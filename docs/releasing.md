@@ -68,21 +68,27 @@ alpha preparation, beta verification, version syntax, source isolation, stable a
 versioned Go install from a local module proxy, and rejection of source edits
 in a generated child. It does not publish tags or contact a provider.
 
-CI (`.github/workflows/ci.yml`) is one workflow for pull requests, pushes to
-`main`, manual runs and the weekly schedule: tests, lint, security, the distro
-matrix, the macOS smoke and the GoReleaser snapshot. A newer push to the same
-pull request cancels the older run; main, manual and release runs keep separate
-concurrency groups.
+CI (`.github/workflows/ci.yml`) is one workflow for pull requests, the merge
+queue, pushes to `main`, manual runs and the weekly schedule: tests, lint,
+security, the distro matrix, the macOS smoke and the GoReleaser snapshot. A newer
+push to the same pull request cancels the older run; queue, main, manual and
+release runs keep separate concurrency groups.
+
+A pull request runs only the quick jobs: `web`, `lint`, `govulncheck`, `gosec`
+and `dependency-review`. The tests, coverage, Sonar, the builds, the distro
+matrix, the macOS smoke and the snapshot are skipped there and run once, in the
+merge queue, against the `main` they will land on. A failure in one of them
+removes the pull request from the queue; run the tests locally before queueing.
 
 The web job typechecks and builds the bundle once; every Go job, the macOS smoke
 and the snapshot embed that artifact instead of rebuilding it. Component tests run
-with coverage in two parallel shards; the first shard also lints and runs the web
+with coverage in four parallel shards; the first shard also lints and runs the web
 unit tests with coverage. Go tests run twice in parallel: `test-race` with the race
 detector, and `coverage` without it, which produces the coverage report and checks
 the 85% floor. Sonar imports the coverage reports without rerunning tests and fails
 when either input job failed. Missing coverage reports or Sonar credentials fail the
-check. Fork PRs cannot access the Sonar secret: a maintainer must review the change
-and run it on a branch in this repository before merging.
+check. Sonar does not run on a pull request: a fork's change is first scanned in
+the merge queue, after a maintainer has reviewed and queued it.
 
 The snapshot job always cross-builds and checks the four release archives. It
 rehearses the release scripts (`scripts/test-release-packaging`,
@@ -92,14 +98,14 @@ release tooling changes (`scripts/`, `Makefile`, `.goreleaser.yml`, `go.mod`,
 `internal/version/`), and on the weekly schedule and manual runs.
 
 A release tag does not rerun CI when its source commit already has a passing CI
-run: the release verify job checks the tag and ancestry, validates the GoReleaser
+run that was not a pull request run: the release verify job checks the tag and ancestry, validates the GoReleaser
 configuration, rebuilds and compares the tagged bundle, and runs govulncheck. A
 source commit without a passing CI run (one still running, or an unmerged alpha or
 beta source) runs the whole CI first. Sonar does not scan release tags.
 
-Require `web`, both `web-tests` shards, `test-race`, `coverage`, `lint`,
-`SonarCloud quality gate`, `build static binaries`, the five distro checks,
-`GoReleaser snapshot`, `Darwin-native lifecycle and version smoke`, `govulncheck`,
-`gosec` and `dependency-review` alongside CodeQL in branch protection, so a failed
-dependency cannot hide behind a skipped downstream job. Coverage thresholds are
-floors, not a guarantee that the percentage can never decrease.
+Require the `ci` job alongside CodeQL in branch protection. It needs every other
+job and fails when one failed or was cancelled; in the merge queue it also fails
+when one was skipped (except `dependency-review`, which needs a pull request), so
+a failed dependency cannot hide behind a skipped downstream job. The other jobs
+cannot be required by name, because a pull request skips most of them. Coverage
+thresholds are floors, not a guarantee that the percentage can never decrease.
