@@ -73,10 +73,6 @@ const SHEET_INLINE = '(min-width: 1280px)';
 const DRAWER_BACKDROP = 'supports-[-webkit-touch-callout:none]:left-[min(360px,calc(100vw-44px))]';
 const SHELL = 'grid h-[var(--app-height,100dvh)] mt-[var(--app-top,0px)] overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] in-data-keyboard:pb-0';
 
-
-
-
-
 export default function App() {
   const api = useApi();
   const FILTER_KEY = api.storageKey('uam.projectFilter');
@@ -489,7 +485,6 @@ export default function App() {
     }),
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter, setDrawerOpen],
   );
-
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
 
