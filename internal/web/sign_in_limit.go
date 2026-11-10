@@ -63,18 +63,31 @@ func signInClient(r *http.Request) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if peer := net.ParseIP(host); peer == nil || !peer.IsLoopback() {
+	peer := net.ParseIP(host)
+	if peer == nil {
 		return host
+	}
+	if !peer.IsLoopback() {
+		return clientKey(peer)
 	}
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) == 0 {
-		return host
+		return clientKey(peer)
 	}
 	hops := strings.Split(values[len(values)-1], ",")
 	if client := net.ParseIP(strings.TrimSpace(hops[len(hops)-1])); client != nil {
-		return client.String()
+		return clientKey(client)
 	}
-	return host
+	return clientKey(peer)
+}
+
+// clientKey is an IPv4 address, or an IPv6 address's /64: one host is
+// usually given a whole /64, so a finer key would give it many budgets.
+func clientKey(ip net.IP) string {
+	if ip.To4() != nil {
+		return ip.To4().String()
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // admit records an attempt by r's client and returns 0, or returns how long

@@ -85,11 +85,14 @@ func TestSignInClientAndRetryAfter(t *testing.T) {
 		forwarded    []string
 		want         string
 	}{
-		{"ipv6 peer", "[2001:db8::1]:443", nil, "2001:db8::1"},
+		{"ipv6 peer", "[2001:db8::1]:443", nil, "2001:db8::/64"},
+		{"ipv6 peers share their /64", "[2001:db8::ffff:1:2:3]:443", nil, "2001:db8::/64"},
+		{"other ipv6 /64", "[2001:db8:0:1::1]:443", nil, "2001:db8:0:1::/64"},
+		{"ipv4-mapped peer", "[::ffff:192.0.2.1]:443", nil, "192.0.2.1"},
 		{"portless peer", "pipe", []string{"203.0.113.9"}, "pipe"},
 		{"spoofed header from a remote peer", "192.0.2.1:1000", []string{"203.0.113.9"}, "192.0.2.1"},
 		{"loopback proxy", "127.0.0.1:5000", []string{"203.0.113.9"}, "203.0.113.9"},
-		{"loopback proxy keeps the hop it appended", "[::1]:5000", []string{"10.9.9.9, 198.51.100.4", "203.0.113.9, 2001:db8::7 "}, "2001:db8::7"},
+		{"loopback proxy keeps the hop it appended", "[::1]:5000", []string{"10.9.9.9, 198.51.100.4", "203.0.113.9, 2001:db8::7 "}, "2001:db8::/64"},
 		{"loopback without header", "127.0.0.1:5000", nil, "127.0.0.1"},
 		{"loopback with unparseable header", "127.0.0.1:5000", []string{"203.0.113.9, unknown"}, "127.0.0.1"},
 	} {
