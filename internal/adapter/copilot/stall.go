@@ -316,12 +316,15 @@ func (c *conversation) stopPendingLocked() bool {
 }
 
 // endStallLocked clears the main agent's stall watch of a turn that ended.
-// The subagents' watch stays, with a timer to look at it.
+// The subagents' watch stays, with a timer of its own when one of them still
+// waits: the turn's timer would hold the next turn's first check back.
 func (c *conversation) endStallLocked() {
-	timer, subWait := c.stall.timer, c.stall.subWait
-	if timer == nil && len(subWait) > 0 {
-		timer = time.AfterFunc(webStallAfter, c.checkStall)
+	if c.stall.timer != nil {
+		c.stall.timer.Stop()
 	}
-	c.stall = stallState{timer: timer, subWait: subWait}
+	c.stall = stallState{subWait: c.stall.subWait}
 	c.modelWaitAt = time.Time{}
+	if next := c.checkSubagentStallsLocked(); next > 0 {
+		c.stall.timer = time.AfterFunc(next, c.checkStall)
+	}
 }

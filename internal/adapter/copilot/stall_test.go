@@ -441,3 +441,14 @@ func TestWebSubagentStallWatchLeavesItsTaskCallAlone(t *testing.T) {
 		t.Fatalf("a subagent running a subagent of its own was cancelled: %v", got)
 	}
 }
+
+// A turn's stall timer ends with the turn: the next turn's request is
+// checked at its own bound, not when the earlier turn's timer would fire.
+func TestWebNextTurnIsCheckedAtItsOwnStallBound(t *testing.T) {
+	adaptiveStall(t, 100*time.Millisecond, 30*time.Second)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the abort at the adapted bound", func() bool { return h.fs.abortCount() == 1 })
+}
