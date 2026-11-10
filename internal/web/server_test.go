@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -754,5 +755,42 @@ func TestSigningUsesASeparateSecret(t *testing.T) {
 	t.Cleanup(again.Close)
 	if !bytes.Equal(again.signKey, ts.srv.signKey) {
 		t.Fatal("signing key changed across restarts")
+	}
+}
+
+// A refused request whose body never arrives does not hold its connection
+// past the read deadline.
+func TestRefusedRequestWithAWithheldBodyIsBounded(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	srv := httptest.NewServer(uamlog.Requests(ts.srv))
+	t.Cleanup(srv.Close)
+	for _, tc := range []struct {
+		name, contentType string
+		want              int
+	}{{"unauthenticated", "application/json", http.StatusUnauthorized}, {"wrong type", "text/plain", http.StatusUnsupportedMediaType}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close() }()
+			_ = conn.SetDeadline(time.Now().Add(loginReadWait + 10*time.Second))
+			if _, err := io.WriteString(conn, "POST /api/sessions HTTP/1.1\r\nHost: "+srv.Listener.Addr().String()+"\r\nContent-Type: "+tc.contentType+"\r\nContent-Length: 1000\r\n\r\n"); err != nil {
+				t.Fatal(err)
+			}
+			br := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("no response: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if rest, err := io.ReadAll(br); err != nil || len(rest) > 0 {
+				t.Fatalf("connection still open: %v %q", err, rest)
+			}
+		})
 	}
 }

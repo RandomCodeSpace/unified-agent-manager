@@ -416,8 +416,11 @@ func (s *Server) fileKeyRequest(r *http.Request) bool {
 	return pattern == fileKeyRoute || pattern == grantKeyRoute
 }
 
-// refuse answers a request the checks turn away.
+// refuse answers a request the checks turn away. Its body is never read, but
+// the server still reads some of it before replying, so bound how long a
+// slow sender can hold the connection, as handleLogin does.
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(loginReadWait))
 	s.logRequest(r, msg, status)
 	writeError(w, status, msg)
 }
