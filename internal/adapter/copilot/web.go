@@ -69,9 +69,8 @@ const (
 )
 
 var (
-	errNoUser      = errors.New("no user is available to answer")
-	errDeclined    = errors.New("the user declined to answer")
-	cliVersionExpr = regexp.MustCompile(`\d+\.\d+\.\d+`)
+	errNoUser   = errors.New("no user is available to answer")
+	errDeclined = errors.New("the user declined to answer")
 )
 
 // sdkClient is the part of the Copilot SDK client the web provider drives.
@@ -157,7 +156,12 @@ type rejectedError struct{ err error }
 func (e rejectedError) Error() string { return e.err.Error() }
 func (e rejectedError) Unwrap() error { return e.err }
 
-type sdkClientAdapter struct{ c *copilot.Client }
+type sdkClientAdapter struct {
+	c *copilot.Client
+	// export is the CLI's usage export file, "" for none. One the CLI never
+	// wrote to is removed once the CLI has stopped.
+	export string
+}
 
 // ImportSupported probes optional CLI methods without opening a session.
 func (a sdkClientAdapter) ImportSupported(ctx context.Context) bool {
@@ -169,8 +173,14 @@ func (a sdkClientAdapter) ImportSupported(ctx context.Context) bool {
 }
 
 func (a sdkClientAdapter) Start(ctx context.Context) error { return a.c.Start(ctx) }
-func (a sdkClientAdapter) Stop() error                     { return a.c.Stop() }
-func (a sdkClientAdapter) ForceStop()                      { a.c.ForceStop() }
+func (a sdkClientAdapter) Stop() error {
+	err := a.c.Stop()
+	if err == nil {
+		removeEmptyExport(a.export)
+	}
+	return err
+}
+func (a sdkClientAdapter) ForceStop() { a.c.ForceStop(); removeEmptyExport(a.export) }
 
 func (a sdkClientAdapter) Ping(ctx context.Context) error {
 	_, err := a.c.Ping(ctx, "")
@@ -350,15 +360,10 @@ func (a sdkSessionAdapter) RespondPermission(ctx context.Context, requestID stri
 	return res.Success, nil
 }
 
-// isRPCError reports whether err carries the SDK's JSON-RPC error response
-// type. The type lives in an internal SDK package, so it is matched by name.
+// isRPCError reports whether err carries the SDK's JSON-RPC error response.
 func isRPCError(err error) bool {
-	for ; err != nil; err = errors.Unwrap(err) {
-		if fmt.Sprintf("%T", err) == "*jsonrpc2.Error" {
-			return true
-		}
-	}
-	return false
+	var rpcErr *copilot.RPCError
+	return errors.As(err, &rpcErr)
 }
 
 // webProvider drives the installed copilot CLI through the Copilot Go SDK. It
@@ -369,19 +374,21 @@ type webProvider struct {
 	pingEvery time.Duration
 	kick      chan struct{}
 
-	mu                sync.Mutex
-	client            sdkClient
-	stop              chan struct{} // closed to end the current watchdog
-	convs             map[*conversation]struct{}
-	detaching         map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
-	shut              bool
-	importSupported   bool
-	forkUnsupported   bool
-	rewindUnsupported bool
-	importProbed      bool
+	mu           sync.Mutex
+	client       sdkClient
+	stop         chan struct{} // closed to end the current watchdog
+	convs        map[*conversation]struct{}
+	detaching    map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
+	shut         bool
+	importProbed bool
+	// The flags Capabilities reads are atomic so it never waits behind
+	// p.mu, which a CLI start holds for up to webStartTimeout.
+	importSupported   atomic.Bool
+	forkUnsupported   atomic.Bool
+	rewindUnsupported atomic.Bool
 	// assistedRefused says why the running CLI refused assisted
-	// permissions; a new CLI is asked again.
-	assistedRefused string
+	// permissions; a new CLI is asked again. Written under p.mu.
+	assistedRefused atomic.Pointer[string]
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -482,7 +489,11 @@ func sdkClientAt(path string, export bool) sdkClient {
 			log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
 		}
 	}
-	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+	if telemetry != nil && telemetry.FilePath != "" {
+		a.export = telemetry.FilePath
+	}
+	return a
 }
 
 // wsMaxAge caps the age (seconds) at which the CLI still reuses its model
@@ -643,9 +654,11 @@ func (p *webProvider) Name() string        { return agentapi.ProviderCopilot }
 func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 
 func (p *webProvider) Capabilities() agentapi.Capabilities {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: p.assistedRefused == "", AssistedUnavailable: p.assistedRefused}
+	refused := ""
+	if r := p.assistedRefused.Load(); r != nil {
+		refused = *r
+	}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported.Load(), Rewind: !p.rewindUnsupported.Load(), SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported.Load(), HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: refused == "", AssistedUnavailable: refused}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -655,20 +668,8 @@ func (p *webProvider) Check(ctx context.Context) error {
 	}
 	vctx, cancel := context.WithTimeout(ctx, webCheckTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(vctx, path, "--version") // #nosec G204 -- resolveCopilot uses the service owner's PATH; fixed argument, no shell or request input.
-	// The npm shim runs the real binary as a child that inherits the output
-	// pipe; WaitDelay stops a timed-out check from waiting on that child.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail == "" {
-			detail = err.Error()
-		}
-		return fmt.Errorf("copilot --version failed: %s", clip(displaytext.Sanitize(detail), maxErrorText))
-	}
-	if !cliVersionExpr.Match(out) {
-		return fmt.Errorf("copilot --version printed no version: %s", clip(displaytext.Sanitize(string(out)), maxErrorText))
+	if _, err := cliVersion(vctx, path); err != nil {
+		return err
 	}
 	if p.signedOut(ctx) {
 		return fmt.Errorf("copilot is not signed in: %w", agentapi.ErrSignedOut)
@@ -1003,7 +1004,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	}
 	ready := time.Since(start)
 	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
-		_ = sess.Disconnect()
+		p.disconnectBounded(ctx, sess)
 		return "", fmt.Errorf("record copilot %s usage ownership: %w", purpose, err)
 	}
 	defer func() {
@@ -1331,7 +1332,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		if c.tools != nil {
 			c.tools.stop()
 		}
-		_ = sess.Disconnect()
+		p.disconnectBounded(ctx, sess)
 		return nil, fmt.Errorf("record copilot usage ownership: %w", err)
 	}
 	// Under mu: a subagent event may already start a task-list read.
@@ -1404,6 +1405,16 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 	if err != nil {
 		return agentapi.History{}, err
 	}
+	// A read whose snapshot expired starts over, as ReadHistoryWindow does.
+	for attempt := 1; ; attempt++ {
+		h, err := p.readHistory(ctx, client, req)
+		if !errors.Is(err, errJournalChanged) || attempt == webWindowAttempts {
+			return h, err
+		}
+	}
+}
+
+func (p *webProvider) readHistory(ctx context.Context, client sdkClient, req agentapi.ReadRequest) (agentapi.History, error) {
 	// Newest first, so a journal cut at webReadPages keeps its latest turns.
 	backward, perPage := rpc.EventsReadDirectionBackward, int64(webReadEvents)
 	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &backward, Max: &perPage}
@@ -1936,13 +1947,13 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	if !p.importProbed {
 		if probe, ok := c.(interface{ ImportSupported(context.Context) bool }); ok {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
-			p.importSupported = probe.ImportSupported(probeCtx)
+			p.importSupported.Store(probe.ImportSupported(probeCtx))
 			probeCancel()
 		}
 		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
-	p.assistedRefused = ""
+	p.assistedRefused.Store(nil)
 	p.stalls.Store(0)
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()
@@ -3242,6 +3253,29 @@ func (c *conversation) release(ctx context.Context, perms []string, detached fun
 	case <-ctx.Done():
 		c.p.poke()
 		return fmt.Errorf("close copilot conversation: %w", ctx.Err())
+	}
+}
+
+// disconnectBounded detaches sess on an error path and waits until the
+// detach returns, ctx ends or webStopTimeout passes: the SDK's detach has no
+// deadline. A reopen of the session waits for a detach still in flight.
+func (p *webProvider) disconnectBounded(ctx context.Context, sess sdkSession) {
+	id := sess.ID()
+	detached := p.detachStarted(id)
+	done := make(chan struct{})
+	go func() {
+		defer log.Recover("copilot session disconnect", &p.mu)
+		defer detached()
+		defer close(done)
+		if err := sess.Disconnect(); err != nil {
+			log.Info("disconnect copilot session failed", "conversation", id, "error", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, webStopTimeout)
+	defer cancel()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }
 

@@ -116,9 +116,7 @@ func (c *conversation) Rewind(ctx context.Context, event, mode string) (agentapi
 	res, err := sess.Rewind(ctx, &rpc.HistoryRewindRequest{EventID: event, Mode: rpc.HistoryRewindMode(mode)})
 	var rpcErr *copilot.RPCError
 	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
-		c.p.mu.Lock()
-		c.p.rewindUnsupported = true
-		c.p.mu.Unlock()
+		c.p.rewindUnsupported.Store(true)
 		return agentapi.RewindResult{}, agentapi.ErrUnsupported
 	}
 	if err != nil {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -59,14 +58,14 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 		var rpcErr *copilot.RPCError
 		if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
 			if approvalModel != "" {
-				return c.refuseAssisted("the Copilot CLI has no assisted permission mode")
+				return c.refuseAssisted("the Copilot CLI has no assisted permission mode" + autoApprovalHint)
 			}
 			return agentapi.ErrUnsupported
 		}
 		return fmt.Errorf("set permission mode: %s", errText(err))
 	}
 	if approvalModel != "" && res != nil && res.Mode != "" && res.Mode != req.Mode {
-		return c.refuseAssisted(fmt.Sprintf("the Copilot CLI kept permission mode %q instead of assisted", res.Mode))
+		return c.refuseAssisted(fmt.Sprintf("the Copilot CLI kept permission mode %q instead of assisted", res.Mode) + autoApprovalHint)
 	}
 	if res == nil || !res.Success || res.Mode != req.Mode {
 		got := ""
@@ -83,8 +82,13 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 	if err != nil {
 		var rpcErr *copilot.RPCError
 		if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
-			log.Info("copilot CLI takes no assisted approval instructions; the reviewer runs without uam's rules", "session", c.id)
-			return nil
+			// Assisted without uam's rules is not offered: the session goes
+			// back to manual and Assisted is withdrawn while this CLI runs.
+			refused := c.refuseAssisted("the Copilot CLI cannot give the Assisted reviewer uam's approval rules; update the Copilot CLI")
+			if _, err := setter.SetPermissionMode(ctx, &rpc.PermissionsSetModeRequest{Mode: rpc.PermissionModeManual}); err != nil {
+				return fmt.Errorf("return to manual permissions: %s", errText(err))
+			}
+			return refused
 		}
 		return fmt.Errorf("configure assisted approval instructions: %s", errText(err))
 	}
@@ -94,15 +98,17 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 	return nil
 }
 
-// refuseAssisted withdraws assisted permissions while the CLI that refused
-// them runs, so Tasks are not offered a mode it does not apply. UAM starts
-// the CLI with its AUTO_APPROVAL feature flag; a refusal means this CLI or
-// its managed policy does not apply it.
-func (c *conversation) refuseAssisted(why string) error {
-	reason := why + "; Assisted needs the CLI's AUTO_APPROVAL feature flag, which this CLI or its policy did not apply"
+// autoApprovalHint ends a mode refusal's reason. UAM starts the CLI with its
+// AUTO_APPROVAL feature flag; a refusal means this CLI or its managed policy
+// does not apply it.
+const autoApprovalHint = "; Assisted needs the CLI's AUTO_APPROVAL feature flag, which this CLI or its policy did not apply"
+
+// refuseAssisted withdraws assisted permissions, for reason, while the CLI
+// that refused them runs, so Tasks are not offered a mode it does not apply.
+func (c *conversation) refuseAssisted(reason string) error {
 	c.p.mu.Lock()
 	if c.p.client == c.client {
-		c.p.assistedRefused = reason
+		c.p.assistedRefused.Store(&reason)
 	}
 	c.p.mu.Unlock()
 	return fmt.Errorf("%w: %s", agentapi.ErrUnsupported, reason)

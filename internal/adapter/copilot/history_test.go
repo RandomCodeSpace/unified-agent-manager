@@ -542,3 +542,16 @@ func TestReadHistoryMarksACallWaitingOnPermissionPending(t *testing.T) {
 		t.Fatalf("tool statuses = %v, want %v", status, want)
 	}
 }
+
+func TestReadHistoryStartsOverWhenTheJournalIsReplaced(t *testing.T) {
+	grown := windowJournal(3)
+	fc := &fakeClient{journal: windowJournal(2), pageSize: 4, expireRead: 2, grow: grown[10:]}
+	h, err := readerProvider(fc).ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The second pass starts over from the newest end of the grown journal.
+	if ids := itemIDs(h.Items); len(ids) == 0 || ids[len(ids)-1] != "a002" || fc.reads[2].Cursor != nil {
+		t.Fatalf("history = %v", ids)
+	}
+}

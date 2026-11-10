@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -56,7 +57,7 @@ var loginCommand = func(ctx context.Context) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, path, "login", "--device-code") // #nosec G204 -- the service owner's copilot from PATH with fixed arguments.
+	cmd := exec.CommandContext(ctx, nativeCopilot(path), "login", "--device-code") // #nosec G204 -- the service owner's copilot from PATH with fixed arguments.
 	cmd.Env = append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
 	return cmd, nil
 }
@@ -117,9 +118,14 @@ func deviceLogin(ctx context.Context, show func(agentapi.DeviceCode)) error {
 	var stderr boundedBuffer
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = 5 * time.Second
+	// The npm loader runs the CLI as a child: a cancelled or expired sign-in
+	// kills the whole group, so no login keeps polling GitHub.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start copilot login: %s", errText(err))
 	}
+	defer func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }()
 	// state is codeWaiting until the code is shown or the wait for it ends,
 	// whichever comes first; only the wait ending stops the command.
 	var state atomic.Int32

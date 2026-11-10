@@ -95,11 +95,14 @@ func TestOpenAppliesAssistedPermissionsWithTheExplicitReviewer(t *testing.T) {
 	}
 }
 
-// A CLI without session.permissions.configure keeps Assisted, with the
-// reviewer's own rules; any other refusal fails like a mode refusal.
-func TestAssistedRulesUnsupportedCLIStillAssisted(t *testing.T) {
+// A CLI without session.permissions.configure cannot give the reviewer
+// uam's rules: the session goes back to manual and Assisted is withdrawn
+// while that CLI runs. Any other refusal fails like a mode refusal.
+func TestAssistedRulesUnsupportedCLIRefusesAssisted(t *testing.T) {
 	fc := &fakeClient{}
-	conv, err := openAssisted(t, fc, "gpt-6-luna")
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: "gpt-6-luna"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +111,14 @@ func TestAssistedRulesUnsupportedCLIStillAssisted(t *testing.T) {
 	fs.configure = func(*rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
 		return nil, &copilot.RPCError{Code: -32601}
 	}
-	if err := setter.SetAssistedPermissions(context.Background(), "gpt-6-luna"); err != nil {
+	if err := setter.SetAssistedPermissions(context.Background(), "gpt-6-luna"); !errors.Is(err, agentapi.ErrUnsupported) {
 		t.Fatalf("unsupported configure = %v", err)
 	}
-	if on, err := setter.AssistedPermissionsOn(context.Background()); err != nil || !on {
+	if on, err := setter.AssistedPermissionsOn(context.Background()); err != nil || on {
 		t.Fatalf("assisted after unsupported configure = %v, %v", on, err)
+	}
+	if caps := p.Capabilities(); caps.AssistedPermissions || !strings.Contains(caps.AssistedUnavailable, "approval rules") {
+		t.Fatalf("after unsupported configure: assisted %t, reason %q", caps.AssistedPermissions, caps.AssistedUnavailable)
 	}
 	fs.configure = func(*rpc.PermissionsConfigureParams) (*rpc.PermissionsConfigureResult, error) {
 		return nil, errors.New("invalid instructions")

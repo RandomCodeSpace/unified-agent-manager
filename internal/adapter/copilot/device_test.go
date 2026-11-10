@@ -249,3 +249,34 @@ func TestDeviceSignInWithoutACodeFailsPromptly(t *testing.T) {
 		t.Fatalf("DeviceSignIn took %v", d)
 	}
 }
+
+// A cancelled sign-in also stops the CLI the npm loader started as its child.
+func TestDeviceSignInCanceledStopsTheLoadersChild(t *testing.T) {
+	p, _ := accountProvider(t, nil)
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	fakeLogin(t, `sleep 60 >/dev/null 2>&1 & echo $! >`+pidFile+`; `+devicePromptScript+`wait`)
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, err := p.DeviceSignIn(ctx, func(agentapi.DeviceCode) { cancel() }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled DeviceSignIn = %v", err)
+	}
+	waitProcessGone(t, pidFile)
+}
+
+// waitProcessGone fails unless the process whose pid is in pidFile ends
+// within a few seconds; a zombie counts as ended.
+func waitProcessGone(t *testing.T, pidFile string) {
+	t.Helper()
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := strings.TrimSpace(string(raw))
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		stat, err := os.ReadFile("/proc/" + pid + "/stat")
+		if _, rest, ok := strings.Cut(string(stat), ") "); err != nil || ok && strings.HasPrefix(rest, "Z") {
+			return
+		}
+	}
+	_ = exec.Command("kill", "-9", pid).Run()
+	t.Fatalf("child %s kept running", pid)
+}
