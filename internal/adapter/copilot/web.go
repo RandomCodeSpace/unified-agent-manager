@@ -1390,6 +1390,16 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 	if err != nil {
 		return agentapi.History{}, err
 	}
+	// A read whose snapshot expired starts over, as ReadHistoryWindow does.
+	for attempt := 1; ; attempt++ {
+		h, err := p.readHistory(ctx, client, req)
+		if !errors.Is(err, errJournalChanged) || attempt == webWindowAttempts {
+			return h, err
+		}
+	}
+}
+
+func (p *webProvider) readHistory(ctx context.Context, client sdkClient, req agentapi.ReadRequest) (agentapi.History, error) {
 	// Newest first, so a journal cut at webReadPages keeps its latest turns.
 	backward, perPage := rpc.EventsReadDirectionBackward, int64(webReadEvents)
 	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &backward, Max: &perPage}
