@@ -1710,8 +1710,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `~/.copilot`, `.env`, `*.pem`, `*token*`), a push to main or master, any
   force push, deleting files outside the working directory, and sending
   repository contents to a host the request did not name. Nothing is refused
-  automatically. A Copilot CLI too old to take these rules keeps Assisted, and
-  its reviewer judges without them.
+  automatically. A Copilot CLI too old to take these rules does not offer
+  Assisted, and says why when you choose it.
 - **Commands**: type `/` at the start of a message to list supported provider
   commands and skills. Names and aliases are searchable. Known unsupported
   commands stay visible with their reason and cannot become ordinary prompts.
@@ -3269,7 +3269,9 @@ it untouched, including explicit disable flags, exporter destinations, and
 content capture settings. Otherwise UAM enables a private local file export
 for its Copilot child process under `~/.copilot/otel/`, with message content
 capture off. This does not change the user's shell or separately launched
-Copilot. A remote-only exporter supplies no local history to aiusage-core;
+Copilot. An export the CLI never wrote to is removed when that CLI stops, or
+by a later start once it is 30 days old. A remote-only exporter supplies no
+local history to aiusage-core;
 UAM's own SDK usage remains available. The usage database omits raw payloads,
 activity, turn-context, and code-change records even when the user's exporter
 captures content. User-configured telemetry files retain their own content
