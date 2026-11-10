@@ -1,11 +1,12 @@
 import { useApi } from '../ApiContext';
 import { ChevronRight, Clock, Pause, Pencil, Play, Plus, Trash2, X, Zap } from 'lucide-react';
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
-import { describeError, modelCatalog, resolveTaskDefaults, type Project, type Routine, type RoutineInput, type RoutineRun, type SessionSummary } from '../api';
+import { describeError, modelCatalog, resolveTaskDefaults, type Project, type Routine, type RoutineInput, type RoutineRun, type SessionSummary, type ThreadPlace } from '../api';
 import { cn } from '../lib/cn';
 import { modelChoices } from '../lib/models';
-import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, clockText, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
+import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, clockText, describeSchedule, outcomeLabel, outcomeTone, placeLabel, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
 import { BAR_BOX, Note, ProjectBadge, ScrollSentinel, Skeleton, VIEW_BAR, useApp, useMinuteTick, useScrolled } from './common';
+import { DraftPlaceFoot, ROUTINE_PLACE_CAPABILITY } from './PlacePicker';
 import { RoutinesProjectPicker } from './ProjectPicker';
 import { Field, choiceLabel } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -265,6 +266,8 @@ function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit,
         <dd className="text-body">
           {model} · {routineModeLabel(r)} · at most {r.max_runs_per_day} {r.max_runs_per_day === 1 ? 'run' : 'runs'} a day, stopped after {r.max_minutes} min
         </dd>
+        <dt className="text-muted">Runs in</dt>
+        <dd className="text-body [overflow-wrap:anywhere]">{placeLabel(r.place)}</dd>
       </dl>
       <p className="line-clamp-2 text-caption whitespace-pre-line text-muted">{r.prompt}</p>
       {error && (
@@ -336,7 +339,8 @@ function RunLine({ run, sessions, onOpenTask, time = true }: Readonly<{ run: Rou
 
 /**
  * Create or edit a routine. A new one runs with the model New task starts with, Yolo with autopilot (nobody watches
- * a run), until changed here; an existing one keeps the mode it was saved with.
+ * a run), until changed here; an existing one keeps the mode it was saved with. Where each run works is New thread's
+ * choice (`DraftPlaceFoot`): the Project folder, as before the choice existed, or a new worktree for every run.
  * Without a `project` (New routine over every Project) the form asks which one, while there are several.
  */
 function RoutineDialog({ open, projects, project, routine, onClose, onClosed, onSaved }: Readonly<{ open: boolean; projects: Project[]; project?: Project; routine?: Routine; onClose: () => void; onClosed: () => void; onSaved: (r: Routine) => void }>) {
@@ -362,6 +366,14 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
   const modeHint = ROUTINE_MODES.find((m) => m.value === mode)?.hint;
   const [perDay, setPerDay] = useState(String(routine?.max_runs_per_day ?? 24));
   const [minutes, setMinutes] = useState(String(routine?.max_minutes ?? 30));
+  const [chosenPlace, setPlace] = useState<ThreadPlace>(routine?.place ?? { mode: 'current' });
+  const placeable = api.supports(ROUTINE_PLACE_CAPABILITY);
+  // Without Git there is no worktree to make: the choice is off, on the Project folder.
+  const noGit = target?.no_git;
+  const place: ThreadPlace = noGit ? { mode: 'current' } : chosenPlace;
+  let placeHint = 'Each run works in the Project folder, beside the threads open there.';
+  if (noGit) placeHint = `${noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}: a run cannot have its own worktree.`;
+  else if (place.mode === 'worktree') placeHint = 'Each run gets its own worktree and branch, removed when its thread settles.';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const choices = modelChoices(catalog, settings.hidden_models?.[providerName], model);
@@ -378,6 +390,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
       ...routineModeInput(mode),
       max_runs_per_day: Number(perDay),
       max_minutes: Number(minutes),
+      ...(placeable ? { place } : {}),
     };
     try {
       onSaved(routine ? await api.updateRoutine(routine.id, body) : await api.createRoutine(projectId, { ...body, enabled: true }));
@@ -418,7 +431,8 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
       <form id="routine-form" className="flex flex-col gap-4" onSubmit={submit}>
         {pickProject && (
           <Field id="routine-project" label="Project">
-            <Select id="routine-project" value={projectId} items={projects.map((p) => ({ value: p.id, label: p.name }))} onValueChange={setProjectId} />
+            {/* A worktree's source branch is one Project's: another Project starts without it. */}
+            <Select id="routine-project" value={projectId} items={projects.map((p) => ({ value: p.id, label: p.name }))} onValueChange={(id) => { setProjectId(id); setPlace((p) => ({ mode: p.mode })); }} />
           </Field>
         )}
         <Field id="routine-name" label="Name" hint="Each run's thread is named after it, with the date.">
@@ -478,6 +492,13 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
             </Note>
           )}
         </div>
+        {placeable && target && (
+          <div className="flex flex-col gap-1">
+            <span className="text-caption text-muted">Runs in</span>
+            <DraftPlaceFoot routine project={target} place={place} onPlace={setPlace} />
+            <Note>{placeHint}</Note>
+          </div>
+        )}
         <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2">
           <Field id="routine-per-day" label="Daily run limit" hint={kind === 'hours' ? 'Scheduled runs and Run now both count.' : 'The schedule runs at most once a day; this caps Run now too.'}>
             <Input id="routine-per-day" type="number" inputMode="numeric" min={1} max={100} required aria-describedby="routine-per-day-hint" value={perDay} onChange={(e) => setPerDay(e.target.value)} />

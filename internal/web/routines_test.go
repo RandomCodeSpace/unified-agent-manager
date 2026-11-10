@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -707,5 +708,148 @@ func TestAllRoutinesListsEveryProject(t *testing.T) {
 	}
 	if want := []string{a + "/" + first.ID, b + "/" + second.ID}; !slices.Equal(ids, want) {
 		t.Fatalf("listed = %v, want %v", ids, want)
+	}
+}
+
+// worktreeRoutineManager is a started Manager with a Project at a repository
+// (worktreeRepo), whose new worktrees go under the returned root.
+func worktreeRoutineManager(t *testing.T) (m *Manager, prov *agenttest.Provider, st *store.Store, project, repo, root string) {
+	t.Helper()
+	repo = worktreeRepo(t)
+	prov = agenttest.NewProvider("fake", allCaps)
+	prov.SetModels(routineModels, nil)
+	st = openTestStore(t)
+	m = startManager(t, st, prov)
+	return m, prov, st, addProject(t, m, repo), repo, useWorktreeRoot(t, m)
+}
+
+// folderRuns is the count of runs whose Thread worked in the Project's folder
+// with no budget.
+func folderRuns(m *Manager) string {
+	for _, stat := range m.uamStats() {
+		if stat.Key == "uam.routine_runs_project_folder_no_budget" {
+			return stat.Value
+		}
+	}
+	return "0"
+}
+
+// A routine with the worktree place runs each Thread in a new worktree and
+// branch from its base, a fresh one for every run, and is not counted as a
+// run in the Project's folder. A routine saved without a place runs there.
+func TestRoutineRunsInItsOwnWorktree(t *testing.T) {
+	m, prov, _, project, repo, root := worktreeRoutineManager(t)
+	in := hourly("Deps check")
+	in.Place = &PlaceRequest{Mode: placeWorktree, Base: "feature"}
+	r := mustRoutine(t, m, project, in)
+	if r.Place == nil || *r.Place != (PlaceRequest{Mode: placeWorktree, Base: "feature"}) || routinePlaceText(r.Place) != "New worktree from feature" {
+		t.Fatalf("created place = %+v", r.Place)
+	}
+	first := mustSummary(t, m, runNow(t, m, project, r.ID).TaskID)
+	if !strings.HasPrefix(first.Worktree.Branch, "uam/deps-check-") || !strings.HasPrefix(first.Workdir, root) || first.Worktree.Path != first.Workdir || first.RoutineID != r.ID {
+		t.Fatalf("first run's thread = %+v", first)
+	}
+	if _, err := os.Stat(filepath.Join(first.Workdir, "feature-only.go")); err != nil {
+		t.Fatalf("the worktree did not start from the routine's base: %v", err)
+	}
+	if got := folderRuns(m); got != "0" {
+		t.Fatalf("a worktree run counted as %s runs in the project folder", got)
+	}
+	taskConv(t, prov, first.ID).EmitTurn(agentapi.TurnCompleted, "")
+	m.checkRoutines()
+	second := mustSummary(t, m, runNow(t, m, project, r.ID).TaskID)
+	if second.Worktree.Path == "" || second.Worktree.Path == first.Worktree.Path || second.Worktree.Branch == first.Worktree.Branch {
+		t.Fatalf("second run's place = %+v, first %+v", second.Worktree, first.Worktree)
+	}
+	if out := gitOutput(t, repo, "branch", "--show-current"); out != "main" {
+		t.Fatalf("the project folder moved to %q", out)
+	}
+
+	plain := mustRoutine(t, m, project, hourly("Plain"))
+	if plain.Place != nil || routinePlaceText(plain.Place) != "Project folder" {
+		t.Fatalf("a routine without a place = %+v", plain.Place)
+	}
+	inFolder := mustSummary(t, m, runNow(t, m, project, plain.ID).TaskID)
+	if inFolder.Worktree != (WorktreeInfo{}) || inFolder.Workdir != repo {
+		t.Fatalf("a run without a place = %+v in %s", inFolder.Worktree, inFolder.Workdir)
+	}
+	if got := folderRuns(m); got != "1" || !slices.Contains(m.uamStats(), SessionStat{"uam.routine_runs", "3"}) {
+		t.Fatalf("project folder runs = %s, stats %v", got, m.uamStats())
+	}
+}
+
+// A run whose worktree cannot be made fails with the reason, and starts no
+// Thread: it never moves to the Project's folder.
+func TestRoutineRunFailsWhenItsWorktreeCannotBeMade(t *testing.T) {
+	m, _, _, project, _, _ := worktreeRoutineManager(t)
+	plainDir := addProject(t, m, t.TempDir())
+	worktree := func(base string) RoutineInput {
+		in := hourly("Deps check")
+		in.Place = &PlaceRequest{Mode: placeWorktree, Base: base}
+		return in
+	}
+	for _, c := range []struct{ name, project, base, want string }{
+		{"a base that is gone", project, "gone", `"gone" is not a branch or commit of this repository`},
+		{"no repository", plainDir, "", "Git"},
+	} {
+		r := mustRoutine(t, m, c.project, worktree(c.base))
+		run := runNow(t, m, c.project, r.ID)
+		if run.Outcome != RunFailed || !strings.Contains(run.Reason, c.want) || run.TaskID != "" || run.EndedAt.IsZero() {
+			t.Errorf("%s: run = %+v, want failed with %q", c.name, run, c.want)
+		}
+	}
+	if list := m.List(); len(list) != 0 || folderRuns(m) != "0" {
+		t.Fatalf("failed runs left threads %+v, project folder runs %s", list, folderRuns(m))
+	}
+}
+
+// A routine's place is saved, survives a restart and later edits of other
+// fields, and an edit back to the Project's folder sticks. Only the Project's
+// folder and a new worktree are places a routine takes.
+func TestRoutinePlaceIsStoredAndEdited(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels(routineModels, nil)
+	st := openTestStore(t)
+	m := NewManager(st, []agentapi.Provider{prov})
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	project := addProject(t, m, t.TempDir())
+	in := hourly("Deps check")
+	in.Place = &PlaceRequest{Mode: placeWorktree, Base: "origin/main"}
+	r := mustRoutine(t, m, project, in)
+	for _, bad := range []PlaceRequest{{Mode: placeBranch}, {Mode: placeSwitch, Branch: "main"}, {Mode: placeWorktree, Base: "-x"}} {
+		if _, err := m.UpdateRoutine(r.ID, RoutineInput{Place: &bad}); statusOf(err) != http.StatusBadRequest {
+			t.Errorf("place %+v: err = %v, want 400", bad, err)
+		}
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored := func() *store.WebPlace {
+		t.Helper()
+		cfg, err := st.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.WebRoutines[r.ID].Place
+	}
+	if p := stored(); p == nil || *p != (store.WebPlace{Mode: placeWorktree, Base: "origin/main"}) {
+		t.Fatalf("stored place = %+v", p)
+	}
+
+	m2 := startManager(t, st, prov)
+	paused, err := m2.UpdateRoutine(r.ID, RoutineInput{Enabled: ptr(false)})
+	if err != nil || paused.Place == nil || *paused.Place != *in.Place || stored() == nil {
+		t.Fatalf("after a restart and a pause: place %+v, stored %+v, %v", paused.Place, stored(), err)
+	}
+	for _, folder := range []string{placeCurrent, ""} {
+		got, err := m2.UpdateRoutine(r.ID, RoutineInput{Place: &PlaceRequest{Mode: folder}})
+		if err != nil || got.Place != nil || stored() != nil {
+			t.Fatalf("mode %q: place %+v, stored %+v, %v", folder, got.Place, stored(), err)
+		}
+		if _, err := m2.UpdateRoutine(r.ID, RoutineInput{Place: in.Place}); err != nil || stored() == nil {
+			t.Fatalf("back to a worktree: stored %+v, %v", stored(), err)
+		}
 	}
 }

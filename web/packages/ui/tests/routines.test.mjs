@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clockText, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, scheduleOf, untilText } from '../src/lib/routines.ts';
+import { clockText, describeSchedule, outcomeLabel, outcomeTone, placeLabel, routineMode, routineModeInput, routineModeLabel, scheduleOf, untilText } from '../src/lib/routines.ts';
 
 test('a schedule reads in plain words', () => {
   assert.equal(describeSchedule({ kind: 'weekdays', time: '09:00' }, 'en-GB'), 'Every weekday at 09:00');
@@ -48,4 +48,11 @@ test('the next run reads as a distance', () => {
   assert.equal(untilText('2026-10-01T09:05:00Z', now), 'in 5 min');
   assert.equal(untilText('2026-10-01T12:00:00Z', now), 'in 3 h');
   assert.equal(untilText('2026-10-04T09:00:00Z', now), 'in 3 days');
+});
+
+test('where a routine runs reads in the words of its form', () => {
+  assert.equal(placeLabel(undefined), 'Project folder');
+  assert.equal(placeLabel({ mode: 'current' }), 'Project folder');
+  assert.equal(placeLabel({ mode: 'worktree' }), 'New worktree');
+  assert.equal(placeLabel({ mode: 'worktree', base: 'origin/main' }), 'New worktree from origin/main');
 });

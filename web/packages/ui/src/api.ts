@@ -2105,6 +2105,8 @@ export interface RoutineInput {
   autopilot: boolean;
   max_runs_per_day: number;
   max_minutes: number;
+  /** Where each run's Thread works (`routine-place-v1`): the Project folder when absent or `current`, or `worktree`, a new worktree for every run from `base`. */
+  place?: ThreadPlace;
 }
 
 /** Recurring work in a Project: each run starts a Task. `next_run` is absent while paused; `runs` is newest first. */

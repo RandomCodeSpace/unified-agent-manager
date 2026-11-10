@@ -1556,7 +1556,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (Safe or Yolo, without autopilot), and each card shows its mode. The API
   takes `mode` (`safe` or `yolo`) and `autopilot`; a create that leaves
   them out is Yolo with autopilot, and one that sets only `mode: "safe"`
-  gets no autopilot. **Daily run limit** (1 to 100, default 24) counts every run
+  gets no autopilot. **Runs in** is New thread's place choice, for every
+  run: **Project folder** (the run works in the Project folder, on the
+  branch it is on then; a routine saved before the choice existed runs
+  there) or **New worktree** (each run gets its own new worktree and
+  `uam/…` branch, named from the run's Thread, started from the source
+  branch chosen beside it, or without one as a new Thread's worktree is,
+  and removed when its Thread settles like any Thread's worktree). The
+  Project folder's other choices, a new branch there or a switch to
+  another branch, are not offered: a run nobody watches never switches the
+  folder the Project's other Threads share. In a Project without Git the
+  choice is off, on Project folder, and says why ("Not a Git repository"
+  or "Git is not installed"). A run whose worktree cannot be made (the
+  source branch is gone, or the folder is no longer a repository) is
+  recorded as Failed with the reason and starts no Thread; it never moves
+  to the Project folder. Each card says where its routine runs. The API
+  takes `place` (`{"mode": "current"}`, or `{"mode": "worktree", "base":
+  "<branch>"}` with `base` optional) and lists it only for a worktree;
+  connected instances advertise `routine-place-v1`, and the form leaves
+  the choice out on one that does not.
+  **Daily run limit** (1 to 100, default 24) counts every run
   that started, or tried to start, a Thread since local midnight, Run now
   included; a firing past it is skipped. **Stop a run after** (1 to 720
   minutes, default 30) cancels the turn still running then, a turn waiting

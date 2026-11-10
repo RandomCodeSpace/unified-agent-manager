@@ -1,6 +1,6 @@
 // Routine wording (docs/web.md, Routines). Pure, so the unit tests run in node.
 
-import type { Routine, RoutineInput, RoutineOutcome, RoutineRun, RoutineSchedule, SessionState } from '../api';
+import type { Routine, RoutineInput, RoutineOutcome, RoutineRun, RoutineSchedule, SessionState, ThreadPlace } from '../api';
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 
@@ -81,6 +81,12 @@ export function outcomeLabel(run: Pick<RoutineRun, 'outcome'>, taskState?: Sessi
     skipped: 'Skipped',
   };
   return labels[run.outcome] ?? run.outcome;
+}
+
+/** Where a routine's runs work, in the words of its form's choice: "Project folder", "New worktree", "New worktree from main". */
+export function placeLabel(place?: ThreadPlace): string {
+  if (place?.mode !== 'worktree') return 'Project folder';
+  return place.base ? `New worktree from ${place.base}` : 'New worktree';
 }
 
 export type OutcomeTone = 'accent' | 'attention' | 'error' | 'warning' | 'muted' | 'ink';

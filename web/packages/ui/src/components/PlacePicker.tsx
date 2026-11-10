@@ -11,6 +11,8 @@ import { Tip } from './ui/tooltip';
 
 /** What a service that runs new Threads in a new branch or worktree advertises to connected instances. */
 export const PLACE_CAPABILITY = 'worktrees-v1';
+/** What a service whose routines take a place advertises: `place` on a routine. */
+export const ROUTINE_PLACE_CAPABILITY = 'routine-place-v1';
 /** What a service that switches the Project folder to an existing branch advertises: the `switch` place and POST …/git/branch. */
 export const SWITCH_CAPABILITY = 'branch-switch-v1';
 
@@ -165,8 +167,11 @@ function BranchButton({ refFn, open, onClick, children, name }: Readonly<{ refFn
  * the Project folder it switches the folder's branch (New branch from the folder's branch, or an existing branch,
  * `branch-switch-v1`); in New worktree it picks the worktree's source branch. Nothing is made before the first
  * message, which carries the choice; the worktree's own name shows only once it exists.
+ *
+ * A `routine` chooses the same for each of its runs, which nobody watches: the Project folder is taken as it is (no branch
+ * menu there, since a run never switches the folder the other Threads share), and a Project without Git turns the choice off.
  */
-export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: Project; place: ThreadPlace; onPlace: (place: ThreadPlace) => void }>) {
+export function DraftPlaceFoot({ project, place, onPlace, routine }: Readonly<{ project: Project; place: ThreadPlace; onPlace: (place: ThreadPlace) => void; routine?: boolean }>) {
   const api = useApi();
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -186,18 +191,20 @@ export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: 
   const name = value === 'new' ? 'New branch' : value.name;
   return (
     <div data-place="" className="flex min-w-0 items-center gap-1 text-caption">
-      <Segmented aria-label="Where this Thread runs" value={worktree ? 'worktree' : 'current'} className="ml-1"
+      <Segmented aria-label={routine ? 'Where each run works' : 'Where this Thread runs'} value={worktree ? 'worktree' : 'current'} className={routine ? undefined : 'ml-1'} disabled={!!project.no_git}
         onValueChange={(v) => { if ((v === 'worktree') !== worktree) onPlace({ mode: v === 'worktree' ? 'worktree' : 'current' }); }}
         items={[
           { value: 'current', label: <span className="flex items-center gap-1.5"><Folder aria-hidden="true" className="size-3.5 shrink-0" />Project folder</span> },
           { value: 'worktree', label: <span className="flex items-center gap-1.5"><FolderGit2 aria-hidden="true" className="size-3.5 shrink-0" />New worktree</span> },
         ]} />
-      <BranchButton refFn={setAnchor} open={open} onClick={() => setOpen((o) => !o)} name={name}>
-        {value === 'new' ? <GitBranchPlus aria-hidden="true" className="text-muted" /> : <GitBranch aria-hidden="true" className="text-muted" />}
-        <span className="truncate font-medium text-ink">{name}</span>
-      </BranchButton>
-      <BranchMenu anchor={anchor} open={open} onClose={() => setOpen(false)} projectId={project.id} from={from} switching={!worktree}
-        existing={worktree || api.supports(SWITCH_CAPABILITY)} value={value} onPick={pick} />
+      {(worktree || !routine) && <>
+        <BranchButton refFn={setAnchor} open={open} onClick={() => setOpen((o) => !o)} name={name}>
+          {value === 'new' ? <GitBranchPlus aria-hidden="true" className="text-muted" /> : <GitBranch aria-hidden="true" className="text-muted" />}
+          <span className="truncate font-medium text-ink">{name}</span>
+        </BranchButton>
+        <BranchMenu anchor={anchor} open={open} onClose={() => setOpen(false)} projectId={project.id} from={from} switching={!worktree}
+          existing={worktree || api.supports(SWITCH_CAPABILITY)} value={value} onPick={pick} />
+      </>}
     </div>
   );
 }

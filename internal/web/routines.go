@@ -82,7 +82,9 @@ type activeRun struct {
 	cancelAt      time.Time
 }
 
-// Routine is a routine as the browser sees it; Runs is newest first.
+// Routine is a routine as the browser sees it; Runs is newest first. Place is
+// where each run's Task works: absent is the Project's folder, else a new
+// worktree for every run (mode worktree, with its base).
 type Routine struct {
 	ID            string                `json:"id"`
 	ProjectID     string                `json:"project_id"`
@@ -96,14 +98,16 @@ type Routine struct {
 	Autopilot     bool                  `json:"autopilot"`
 	MaxRunsPerDay int                   `json:"max_runs_per_day"`
 	MaxMinutes    int                   `json:"max_minutes"`
+	Place         *PlaceRequest         `json:"place,omitempty"`
 	CreatedAt     time.Time             `json:"created_at"`
 	NextRun       time.Time             `json:"next_run,omitzero"`
 	Runs          []store.WebRoutineRun `json:"runs"`
 }
 
 // RoutineInput is the body of a routine's create (every field but Model,
-// Enabled, Mode, Autopilot and the limits required) or edit (only the fields
-// given change).
+// Enabled, Mode, Autopilot, Place and the limits required) or edit (only the
+// fields given change). Place takes mode current (the Project's folder, also
+// when a create leaves it out) or worktree, with its base.
 type RoutineInput struct {
 	Name          *string                `json:"name"`
 	Prompt        *string                `json:"prompt"`
@@ -114,6 +118,7 @@ type RoutineInput struct {
 	Autopilot     *bool                  `json:"autopilot"`
 	MaxRunsPerDay *int                   `json:"max_runs_per_day"`
 	MaxMinutes    *int                   `json:"max_minutes"`
+	Place         *PlaceRequest          `json:"place"`
 }
 
 var errRoutineNotFound = newError(http.StatusNotFound, "routine not found")
@@ -125,7 +130,28 @@ func routineView(r *store.WebRoutine) Routine {
 		runs = []store.WebRoutineRun{}
 	}
 	return Routine{ID: r.ID, ProjectID: r.ProjectID, Name: r.Name, Prompt: r.Prompt, Provider: r.Provider, Model: r.Model, Schedule: r.Schedule,
-		Enabled: r.Enabled, Mode: string(r.Mode), Autopilot: r.Autopilot, MaxRunsPerDay: r.MaxRunsPerDay, MaxMinutes: r.MaxMinutes, CreatedAt: r.CreatedAt, NextRun: r.NextRun, Runs: runs}
+		Enabled: r.Enabled, Mode: string(r.Mode), Autopilot: r.Autopilot, MaxRunsPerDay: r.MaxRunsPerDay, MaxMinutes: r.MaxMinutes, Place: routinePlace(r.Place), CreatedAt: r.CreatedAt, NextRun: r.NextRun, Runs: runs}
+}
+
+// routinePlace is a routine's stored place as the place each run's Task is
+// created with; nil is the Project's folder.
+func routinePlace(p *store.WebPlace) *PlaceRequest {
+	if p == nil {
+		return nil
+	}
+	return &PlaceRequest{Mode: p.Mode, Base: p.Base}
+}
+
+// routinePlaceText says where a routine's runs work, in the routine form's
+// words.
+func routinePlaceText(p *PlaceRequest) string {
+	switch {
+	case p == nil:
+		return "Project folder"
+	case p.Base != "":
+		return "New worktree from " + p.Base
+	}
+	return "New worktree"
 }
 
 // nextRun is a schedule's first firing after now. Every N hours steps from
@@ -446,13 +472,15 @@ func (m *Manager) lastRunBusy(r *store.WebRoutine) bool {
 	return false
 }
 
-// startRun creates a run's Task as Create would, with the routine's prompt
-// as its first message, and records the Task, or the failure, on the run.
+// startRun creates a run's Task as Create would, in the routine's place and
+// with its prompt as its first message, and records the Task, or the
+// failure, on the run. A worktree that cannot be made fails the run: it
+// never moves to the Project's folder.
 func (m *Manager) startRun(start routineStart) {
 	defer log.Recover("routine run", &m.mu)
 	defer m.wg.Done()
 	r := start.routine
-	req := CreateRequest{ProjectID: r.ProjectID, Provider: r.Provider, Model: r.Model, Name: routineTaskName(r.Name, start.run.At), Prompt: r.Prompt, Mode: string(r.Mode), routineID: r.ID, autopilot: r.Autopilot}
+	req := CreateRequest{ProjectID: r.ProjectID, Provider: r.Provider, Model: r.Model, Name: routineTaskName(r.Name, start.run.At), Prompt: r.Prompt, Mode: string(r.Mode), Place: routinePlace(r.Place), routineID: r.ID, autopilot: r.Autopilot}
 	summary, err := func() (SessionSummary, error) {
 		prov, workdir, mode, err := m.checkCreate(&req)
 		if err != nil {
@@ -606,6 +634,21 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 			return newError(http.StatusBadRequest, "minutes a run must be 1 to %d", store.MaxRoutineMinutes)
 		}
 		r.MaxMinutes = *in.MaxMinutes
+	}
+	if in.Place != nil {
+		if err := checkPlace(in.Place); err != nil {
+			return err
+		}
+		switch in.Place.Mode {
+		case placeWorktree:
+			r.Place = &store.WebPlace{Mode: placeWorktree, Base: in.Place.Base}
+		case "", placeCurrent:
+			r.Place = nil
+		default:
+			// Modes branch and switch: a run nobody watches never switches the
+			// branch of the folder the Project's other Threads share.
+			return newError(http.StatusBadRequest, "a routine's place mode must be current or worktree")
+		}
 	}
 	if !create && in.Model == nil {
 		return nil

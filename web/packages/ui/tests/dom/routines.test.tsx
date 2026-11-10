@@ -201,6 +201,77 @@ describe('routines', () => {
     expect(window.location.hash).toBe('#routines=p3');
   });
 
+  test('a routine chooses where its runs work, as New thread does: the Project folder or a new worktree from a branch', async () => {
+    const create = vi.spyOn(api, 'createRoutine');
+    const update = vi.spyOn(api, 'updateRoutine');
+    const { user } = renderApp('#routines=p1');
+    // A routine saved before the choice existed runs in the Project folder.
+    const old = within(await screen.findByRole('region', { name: 'Dependency check' }));
+    expect(old.getByText('Runs in').nextElementSibling?.textContent).toBe('Project folder');
+    await user.click(screen.getByRole('button', { name: 'New routine' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
+    const where = within(dialog.getByRole('radiogroup', { name: 'Where each run works' }));
+    expect(where.getByRole('radio', { name: 'Project folder' }).getAttribute('aria-checked')).toBe('true');
+    expect(dialog.getByText(/works in the Project folder/)).toBeTruthy();
+    // An unattended run takes the folder as it is: no branch to switch it to.
+    expect(dialog.queryByRole('button', { name: /^Branch / })).toBeNull();
+    await user.click(where.getByRole('radio', { name: 'New worktree' }));
+    expect(await dialog.findByText(/gets its own worktree and branch/)).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: /^Branch / }));
+    const menu = within(await screen.findByRole('dialog', { name: 'Worktree from' }));
+    await user.click(await menu.findByRole('option', { name: /^origin\/main/ }));
+    await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Nightly smoke');
+    await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Run the smoke tests and report failures.');
+    await user.click(dialog.getByRole('button', { name: 'Create routine' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New routine' })).toBeNull());
+    expect(create.mock.calls[0][1].place).toEqual({ mode: 'worktree', base: 'origin/main' });
+    const card = within(await screen.findByRole('region', { name: 'Nightly smoke' }));
+    expect(card.getByText('New worktree from origin/main')).toBeTruthy();
+    // Its form opens on the saved choice, and saves a change back to the Project folder.
+    await user.click(card.getByRole('button', { name: 'Edit' }));
+    const edit = within(await screen.findByRole('dialog', { name: 'Edit routine' }));
+    expect(edit.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-checked')).toBe('true');
+    expect(edit.getByRole('button', { name: 'Branch origin/main' })).toBeTruthy();
+    await user.click(edit.getByRole('radio', { name: 'Project folder' }));
+    await user.click(edit.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit routine' })).toBeNull());
+    expect(update.mock.calls[0][1].place).toEqual({ mode: 'current' });
+    expect(card.getByText('Runs in').nextElementSibling?.textContent).toBe('Project folder');
+  });
+
+  test('in a project without Git the choice is off, on the Project folder, and says why', async () => {
+    const create = vi.spyOn(api, 'createRoutine');
+    const { user } = renderApp('#routines=p2');
+    await user.click(await screen.findByRole('button', { name: 'New routine' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
+    const folder = dialog.getByRole('radio', { name: 'Project folder' });
+    expect(folder.getAttribute('aria-checked')).toBe('true');
+    expect(dialog.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-disabled')).toBe('true');
+    expect(dialog.getByText('Not a Git repository: a run cannot have its own worktree.')).toBeTruthy();
+    await user.click(dialog.getByRole('radio', { name: 'New worktree' }));
+    expect(folder.getAttribute('aria-checked')).toBe('true');
+    await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Tidy');
+    await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Tidy the dotfiles.');
+    await user.click(dialog.getByRole('button', { name: 'Create routine' }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][1].place).toEqual({ mode: 'current' });
+  });
+
+  test('a connected instance without the choice gets no place field, and none is sent', async () => {
+    vi.spyOn(api, 'supports').mockImplementation((capability) => capability !== 'routine-place-v1');
+    const create = vi.spyOn(api, 'createRoutine');
+    const { user } = renderApp('#routines=p1');
+    await screen.findByRole('region', { name: 'Dependency check' });
+    await user.click(screen.getByRole('button', { name: 'New routine' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
+    expect(dialog.queryByRole('radiogroup', { name: 'Where each run works' })).toBeNull();
+    await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Nightly smoke');
+    await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Run the smoke tests.');
+    await user.click(dialog.getByRole('button', { name: 'Create routine' }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect('place' in create.mock.calls[0][1]).toBe(false);
+  });
+
   test('Delete asks first, then removes the routine', async () => {
     const { user } = renderApp('#routines=p1');
     const card = within(await screen.findByRole('region', { name: 'Flaky test sweep' }));
