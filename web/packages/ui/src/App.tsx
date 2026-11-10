@@ -28,12 +28,10 @@ import { TaskActionsContext, TaskList, type Renaming, type TaskActions } from '.
 import { TryModelDialog } from './components/Assist';
 import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
-import { usePresence } from './components/ui/collapse';
 import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
 import { CoveredContext } from './components/ui/reader';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
-import type { TerminalHandle } from './components/Terminal';
 import { decodePath } from './lib/markdown';
 import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
@@ -44,7 +42,7 @@ import { useDrawer, useSidebar } from './lib/useSidebar';
 import { useTypeToCompose } from './lib/useTypeToCompose';
 import { Contained } from './components/VisualBoundary';
 import { editing, keysTaken, sessionsUpdate } from './lib/overlays';
-import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading, usePaneLoad } from './components/Panes';
+import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading, usePaneLoad, useTerminalDock } from './components/Panes';
 
 export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overlays';
 
@@ -146,13 +144,6 @@ export default function App() {
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
-  // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
-  const [terminalId, setTerminalId] = useState<string | null>(null);
-  // The worktree Thread whose folder the shell started in instead of the Project's, or null.
-  const [terminalTask, setTerminalTask] = useState<string | null>(null);
-  const nextTerminalTask = useRef<string | null>(null);
-  // Each opening is a dock of its own: one reopened while the last slides out starts a new shell.
-  const [terminalOpens, setTerminalOpens] = useState(0);
   const { drawerOpen, setDrawerOpen, drawerKept, drawer } = useDrawer(narrow, state.loaded);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -195,7 +186,7 @@ export default function App() {
   const [selectTick, setSelectTick] = useState(0);
 
   useEffect(() => { if (auth !== 'checking') onAuth?.(auth === 'in'); }, [auth, onAuth]);
-  useEffect(() => { onTerminal?.(!!terminalId); }, [terminalId, onTerminal]);
+  const { terminalId, setTerminalId, terminalProject, terminalOpens, docked, terminalDock, terminalPanel, toggleTerminal, closeTerminal } = useTerminalDock({ api, state, onTerminal });
 
   useEffect(() => {
     onUnauthorized(() => {
@@ -268,27 +259,6 @@ export default function App() {
     // Log out is in Settings: closing it leaves the sign-in screen the plain title and no fragment, as a fresh one has.
     void api.logout().finally(() => { dispatch({ type: 'reset' }); setSettingsOpen(false); setAuth('out'); });
   }, [api, recentTasks]);
-  // The header's Terminal opens a closed terminal; an open one closes, or moves to the pressed Task's Project, through the panel, which confirms while its shell is connected.
-  const terminalPanel = useRef<TerminalHandle>(null);
-  const toggleTerminal = useCallback((projectId: string) => {
-    // A Thread in a worktree opens the shell in its worktree.
-    const pressed = state.sessions.find((s) => s.id === state.selectedId);
-    const task = pressed?.project_id === projectId && pressed.worktree ? pressed.id : null;
-    const to = terminalId === projectId && terminalTask === task ? null : state.projects.find((p) => p.id === projectId);
-    nextTerminalTask.current = task;
-    // A panel still loading has no shell to confirm for.
-    if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
-    else {
-      if (!terminalId) setTerminalOpens((n) => n + 1);
-      setTerminalId(to === null ? null : projectId);
-      setTerminalTask(to === null ? null : task);
-    }
-  }, [terminalId, terminalTask, state.projects, state.sessions, state.selectedId]);
-  const closeTerminal = useCallback((to: Project | null) => {
-    setTerminalId(to?.id ?? null);
-    setTerminalTask(to ? nextTerminalTask.current : null);
-    if (!to) document.getElementById('terminal-link')?.focus();
-  }, []);
   const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
   const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);
 
@@ -917,12 +887,6 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', badge);
   }, [attention, shownName, loggedOut]);
 
-  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
-  const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
-  // The dock slides out showing the shell it ended, then unmounts (DESIGN.md Terminal).
-  const terminalDock = usePresence(!!terminalProject);
-  const [docked, setDocked] = useState<{ project: Project; task: string | null }>();
-  if (terminalProject && (terminalProject !== docked?.project || terminalTask !== docked.task)) setDocked({ project: terminalProject, task: terminalTask });
 
   if (auth === 'checking') {
     return (

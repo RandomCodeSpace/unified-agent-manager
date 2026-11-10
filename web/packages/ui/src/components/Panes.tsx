@@ -1,12 +1,12 @@
-import { Suspense, lazy, startTransition, useEffect, useEffectEvent, useState, type Ref } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useRef, useState, type Ref } from 'react';
 import { SquareTerminal } from 'lucide-react';
-import type { Project, SessionDetail } from '../api';
+import type { ApiClient, Project, SessionDetail } from '../api';
 import type { State } from '../state';
 import { BAR_BOX, Loading, Spinner, TranscriptSkeleton, VIEW_BAR, useLate } from './common';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import { Appear } from './ui/appear';
-import { EXIT_MS } from './ui/collapse';
+import { EXIT_MS, usePresence } from './ui/collapse';
 import type { TerminalHandle } from './Terminal';
 
 /** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
@@ -156,4 +156,47 @@ export function usePaneLoad({ state, settingsOpen, routinesFor }: { state: State
 
   const detailId = arrivedId === mountedId ? arrivedId : undefined;
   return { loading, connection, mountedId, detailId, held, lateLoad };
+}
+
+/**
+ * The terminal docked under the Thread view: which Project's (or worktree Thread's) shell it shows, the header
+ * button that opens, moves or closes it, and the dock kept mounted while it slides out.
+ */
+export function useTerminalDock({ api, state, onTerminal }: { api: ApiClient; state: State; /** Tells the federation whether a terminal is open here. */ onTerminal: ((open: boolean) => void) | undefined }) {
+  // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
+  const [terminalId, setTerminalId] = useState<string | null>(null);
+  // The worktree Thread whose folder the shell started in instead of the Project's, or null.
+  const [terminalTask, setTerminalTask] = useState<string | null>(null);
+  const nextTerminalTask = useRef<string | null>(null);
+  // Each opening is a dock of its own: one reopened while the last slides out starts a new shell.
+  const [terminalOpens, setTerminalOpens] = useState(0);
+  useEffect(() => { onTerminal?.(!!terminalId); }, [terminalId, onTerminal]);
+  // The header's Terminal opens a closed terminal; an open one closes, or moves to the pressed Task's Project, through the panel, which confirms while its shell is connected.
+  const terminalPanel = useRef<TerminalHandle>(null);
+  const toggleTerminal = useCallback((projectId: string) => {
+    // A Thread in a worktree opens the shell in its worktree.
+    const pressed = state.sessions.find((s) => s.id === state.selectedId);
+    const task = pressed?.project_id === projectId && pressed.worktree ? pressed.id : null;
+    const to = terminalId === projectId && terminalTask === task ? null : state.projects.find((p) => p.id === projectId);
+    nextTerminalTask.current = task;
+    // A panel still loading has no shell to confirm for.
+    if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
+    else {
+      if (!terminalId) setTerminalOpens((n) => n + 1);
+      setTerminalId(to === null ? null : projectId);
+      setTerminalTask(to === null ? null : task);
+    }
+  }, [terminalId, terminalTask, state.projects, state.sessions, state.selectedId]);
+  const closeTerminal = useCallback((to: Project | null) => {
+    setTerminalId(to?.id ?? null);
+    setTerminalTask(to ? nextTerminalTask.current : null);
+    if (!to) document.getElementById('terminal-link')?.focus();
+  }, []);
+  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
+  const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
+  // The dock slides out showing the shell it ended, then unmounts (DESIGN.md Terminal).
+  const terminalDock = usePresence(!!terminalProject);
+  const [docked, setDocked] = useState<{ project: Project; task: string | null }>();
+  if (terminalProject && (terminalProject !== docked?.project || terminalTask !== docked.task)) setDocked({ project: terminalProject, task: terminalTask });
+  return { terminalId, setTerminalId, terminalProject, terminalOpens, docked, terminalDock, terminalPanel, toggleTerminal, closeTerminal };
 }
