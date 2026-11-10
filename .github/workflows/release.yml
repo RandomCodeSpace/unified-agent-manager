@@ -48,7 +48,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           source="$(git rev-parse "${GITHUB_SHA}^")"
-          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source}&status=success&per_page=1" --jq '.total_count')"
+          # A pull request run skips the tests, so it does not count.
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${source}&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event != "pull_request")] | length')"
           if test "${passed}" -gt 0; then result=passed; else result=missing; fi
           echo "result=${result}" >> "$GITHUB_OUTPUT"
           echo "CI for source ${source}: ${result}"
