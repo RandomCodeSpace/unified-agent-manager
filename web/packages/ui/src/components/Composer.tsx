@@ -1941,7 +1941,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Menu.Content>
           </Menu.Root>
         )}
-        {!newTask && !subagent && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
+        {!newTask && !subagent && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} onOutput={onCommandOutput} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">

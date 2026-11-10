@@ -271,6 +271,7 @@ type fakeSession struct {
 	tasks             []rpc.TaskInfo
 	taskLists         int
 	tasksErr          error
+	readOutput        func(id, cursor string) (*rpc.TasksReadOutputResult, error)
 	todoRows          []rpc.PlanSQLTodosRow
 	todoDeps          []rpc.PlanSQLTodoDependency
 	todoReads         int

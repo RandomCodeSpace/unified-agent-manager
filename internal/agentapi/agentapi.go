@@ -1769,7 +1769,28 @@ type BackgroundTaskController interface {
 	CancelBackgroundTask(context.Context, string) (BackgroundTasks, error)
 }
 
+// BackgroundOutput is one bounded read of a background shell's output.
+type BackgroundOutput struct {
+	// Text is the output after the read's cursor, safe to display.
+	Text string `json:"text"`
+	// Cursor continues after Text in the next read.
+	Cursor string `json:"cursor"`
+	// More reports output already waiting after Text.
+	More bool `json:"more"`
+	// Done reports that the shell ended and Text reaches the end of its output.
+	Done bool `json:"done"`
+}
+
+// BackgroundOutputReader reads a provider-owned shell's output in bounded
+// chunks: an empty cursor reads from the start, a returned one continues.
+type BackgroundOutputReader interface {
+	ReadBackgroundOutput(ctx context.Context, id, cursor string) (BackgroundOutput, error)
+}
+
 var (
 	ErrBackgroundTaskNotFound = errors.New("background shell task not found")
 	ErrBackgroundTaskInactive = errors.New("background shell task is not running")
+	// ErrBackgroundOutputUnavailable: the provider keeps no output to read
+	// for this shell, or no longer keeps it at this cursor.
+	ErrBackgroundOutputUnavailable = errors.New("background shell output is not available")
 )

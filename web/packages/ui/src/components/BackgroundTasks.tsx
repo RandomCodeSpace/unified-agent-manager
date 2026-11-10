@@ -3,6 +3,7 @@ import { Terminal } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { describeError, type BackgroundTasks as Snapshot } from '../api';
 import { cn } from '../lib/cn';
+import type { CommandOutput } from './CommandOutput';
 import { Key } from './InlinePicker';
 import { Button } from './ui/button';
 import { AlertDialog, PHONE, useConfirm } from './ui/dialog';
@@ -13,7 +14,8 @@ import { Tip } from './ui/tooltip';
 /**
  * The Task's background shells in the composer toolbar (DESIGN.md Background tasks): the
  * terminal glyph, `accent` and how many run while any runs (else the glyph alone), and on a
- * click an anchored reader (a bottom sheet on a phone) listing each with its status in words, command and Stop.
+ * click an anchored reader (a bottom sheet on a phone) listing each with its status in words, command, Output
+ * (its output, in the command output panel) and Stop.
  */
 /** The provider's task statuses in words; another reported word shows as it came. */
 const STATUS: Record<string, string> = { running: 'Running', idle: 'Idle', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
@@ -25,7 +27,7 @@ function stopTip(locked: boolean, known: boolean): string {
   return 'Stop this background shell';
 }
 
-export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sessionId: string; snapshot: Snapshot | undefined; locked: boolean }>) {
+export function BackgroundTasks({ sessionId, snapshot, locked, onOutput }: Readonly<{ sessionId: string; snapshot: Snapshot | undefined; locked: boolean; /** Opens a shell's output in the command output panel. */ onOutput?: (output: CommandOutput) => void }>) {
   const api = useApi();
   const [response, setResponse] = useState<{ source: Snapshot | undefined; snapshot: Snapshot } | null>(null);
   const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
@@ -79,6 +81,12 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
                   <span className="shrink-0">{shown.known ? STATUS[task.status] ?? task.status : 'Unknown'}</span>
+                  {onOutput && <Button size="sm" variant="subtle" aria-label={`Show output of background task: ${task.description || task.command}`} onClick={() => {
+                    onOutput({ id: `shell:${task.id}`, name: 'shell', title: task.command, text: '', markdown: false, shell: { sessionId, taskId: task.id } });
+                    setReader({ ...reader, open: false });
+                  }}>
+                    Output
+                  </Button>}
                   {task.status === 'running' && <Tip label={stopTip(locked, shown.known)}>
                     <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
                       {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}

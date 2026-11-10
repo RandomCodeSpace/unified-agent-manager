@@ -138,6 +138,9 @@ type sdkSession interface {
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	// ListTasks returns the tasks the CLI tracks, subagents included.
 	ListTasks(ctx context.Context) ([]rpc.TaskInfo, error)
+	// ReadTaskOutput reads a detached shell's output after cursor, from the
+	// start when cursor is empty (background_output.go).
+	ReadTaskOutput(ctx context.Context, id, cursor string) (*rpc.TasksReadOutputResult, error)
 	// ReadTodos reads the rows of the session's todo list (todos.go).
 	ReadTodos(ctx context.Context) (*rpc.PlanReadSQLTodosWithDependenciesResult, error)
 	// MessageSubagent sends a follow-up to one agent task.

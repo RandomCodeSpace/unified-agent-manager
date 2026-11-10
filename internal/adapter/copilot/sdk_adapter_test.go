@@ -320,6 +320,20 @@ func TestSDKSessionAdapterRequests(t *testing.T) {
 		t.Fatal("ListTasks hid a failure")
 	}
 
+	rt.set("session.tasks.readOutput", `{"text":"one\n","cursor":"shell-output:v1:4","exit":{"status":"completed","exitCode":0}}`)
+	if out, err := s.ReadTaskOutput(ctx, "sh-1", ""); err != nil || out.Text != "one\n" || out.Cursor != "shell-output:v1:4" || out.Exit == nil {
+		t.Fatalf("ReadTaskOutput = %+v, %v", out, err)
+	} else if p := rt.last("session.tasks.readOutput"); p["id"] != "sh-1" || p["cursor"] != nil || p["waitMs"] != nil {
+		t.Fatalf("first read params %v", p)
+	}
+	if _, err := s.ReadTaskOutput(ctx, "sh-1", "shell-output:v1:4"); err != nil || rt.last("session.tasks.readOutput")["cursor"] != "shell-output:v1:4" {
+		t.Fatalf("continued read err %v, params %v", err, rt.last("session.tasks.readOutput"))
+	}
+	rt.fail("session.tasks.readOutput", "No detached shell task with id 'sh-1'")
+	if _, err := s.ReadTaskOutput(ctx, "sh-1", ""); !errors.As(err, &rejected) {
+		t.Fatalf("refused ReadTaskOutput = %v, want a rejection", err)
+	}
+
 	// A JSON-RPC error answer is a refusal: nothing was accepted.
 	rt.set("session.tasks.sendMessage", `{"sent":true}`)
 	if res, err := s.MessageSubagent(ctx, "agent-1", "more"); err != nil || !res.Sent || rt.last("session.tasks.sendMessage")["message"] != "more" {
