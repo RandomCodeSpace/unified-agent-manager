@@ -101,7 +101,7 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 }
 
 // noteSubagentWaitLocked is noteModelWaitLocked for a subagent, which the
-// main agent's watch never sees: its parent's task call is a running tool.
+// main agent's watch never sees: it follows the main agent's requests only.
 func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID string) {
 	w, seen := c.stall.subWait[agentID]
 	switch ev.Data.(type) {
@@ -143,7 +143,10 @@ func (c *conversation) checkStall() {
 	}
 	bound := c.stallBoundLocked()
 	wait := bound - time.Since(c.lastEventAt)
-	if wait <= 0 && (len(c.tr.tools) > 0 || len(c.pending) > 0 || c.stopPendingLocked() || c.stall.aborting) {
+	// The phase's running tools, not the transcript's: a turn's end drops
+	// the calls whose end was never reported (endTurnPhaseLocked), so one
+	// left over from an earlier turn does not keep the watch off.
+	if wait <= 0 && (len(c.phase.tools) > 0 || len(c.pending) > 0 || c.stopPendingLocked() || c.stall.aborting) {
 		wait = bound
 	}
 	if wait > 0 {
