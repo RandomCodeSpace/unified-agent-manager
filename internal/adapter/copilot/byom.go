@@ -18,8 +18,9 @@ import (
 // account's own models (experimental SDK surface, measured on CLI 1.0.88).
 func (p *webProvider) SetCustomModels(models []agentapi.CustomModel) {
 	p.customMu.Lock()
-	defer p.customMu.Unlock()
 	p.custom = slices.Clone(models)
+	p.customMu.Unlock()
+	go p.redactRunning() // a key added or changed while the CLI runs
 }
 
 func (p *webProvider) customModels() []agentapi.CustomModel {

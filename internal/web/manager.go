@@ -2263,6 +2263,16 @@ func (m *Manager) setCustomModels(list []store.WebCustomModel) {
 	}
 }
 
+// setSecrets gives uam's own secret values to each provider that can mask
+// them in its runtime's logs, counting each registration made.
+func (m *Manager) setSecrets(values ...string) {
+	for _, name := range m.order {
+		if r, ok := m.providers[name].(agentapi.SecretRedactor); ok {
+			r.SetSecrets(values, func() { m.count("cli_secret_registrations") })
+		}
+	}
+}
+
 // setSubagentModels gives each provider that can limit its subagents' models
 // its list; a provider without one is not limited.
 func (m *Manager) setSubagentModels(byProvider map[string][]string) {

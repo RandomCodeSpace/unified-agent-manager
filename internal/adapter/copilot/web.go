@@ -172,6 +172,15 @@ func (a sdkClientAdapter) Start(ctx context.Context) error { return a.c.Start(ct
 func (a sdkClientAdapter) Stop() error                     { return a.c.Stop() }
 func (a sdkClientAdapter) ForceStop()                      { a.c.ForceStop() }
 
+// AddSecretFilters registers values with the CLI's redaction filter.
+func (a sdkClientAdapter) AddSecretFilters(ctx context.Context, values []string) error {
+	res, err := a.c.RPC.Secrets.AddFilterValues(ctx, &rpc.SecretsAddFilterValuesRequest{Values: values})
+	if err == nil && !res.Ok {
+		err = errors.New("the CLI did not register the values")
+	}
+	return err
+}
+
 func (a sdkClientAdapter) Ping(ctx context.Context) error {
 	_, err := a.c.Ping(ctx, "")
 	return err
@@ -413,7 +422,7 @@ type webProvider struct {
 	// customMu guards custom, the owner's custom models, subagent, the
 	// models subagents may use (empty for any), githubMCP, whether
 	// sessions start the built-in GitHub MCP server, and gitRules and
-	// coauthor (git_rules.go); it is never held with mu, which a CLI start
+	// coauthor (git_rules.go); mu is never taken under it, since a CLI start
 	// holds for long.
 	customMu  sync.Mutex
 	custom    []agentapi.CustomModel
@@ -421,6 +430,10 @@ type webProvider struct {
 	githubMCP bool
 	gitRules  string
 	coauthor  bool
+	// secrets are uam's own secret values and secretsRegistered counts
+	// their registrations (secrets.go).
+	secrets           []string
+	secretsRegistered func()
 	// quotaMu guards live, the quota snapshots by type from the latest model
 	// call's response since this CLI started. account.getQuota keeps
 	// returning what the CLI read at sign-in, so these supersede it. It also
@@ -472,6 +485,7 @@ func installedCLI() (string, os.FileInfo, error) {
 func sdkClientAt(path string, export bool) sdkClient {
 	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
 	env = withDefault(env, wsMaxAge, "15")
+	env = withDefault(env, secretFiltering, "true")
 	if owner := cliOwner(); owner != "" {
 		env = append(env, cliOwnerEnv+"="+owner)
 	}
@@ -1933,6 +1947,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 		c.ForceStop()
 		return nil, fmt.Errorf("start copilot CLI: %s", errText(err))
 	}
+	p.redactSecrets(ctx, c)
 	if !p.importProbed {
 		if probe, ok := c.(interface{ ImportSupported(context.Context) bool }); ok {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)

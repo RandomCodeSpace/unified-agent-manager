@@ -300,6 +300,15 @@ type GitRulesUser interface {
 	SetGitRules(rules string, providerCoAuthor bool)
 }
 
+// SecretRedactor is implemented by a provider whose runtime can mask known
+// secret values in its own logs. SetSecrets gives it uam's own secret
+// values, which it registers, with its custom models' keys, with each
+// runtime it starts and with the running one; registered is called once per
+// registration the runtime accepted.
+type SecretRedactor interface {
+	SetSecrets(values []string, registered func())
+}
+
 // CustomModel is an OpenAI-compatible model the owner brought. Its model ID
 // is SelectionID. APIKey holds a saved key, or APIKeyEnv names the service
 // environment variable the provider reads when it needs the key.

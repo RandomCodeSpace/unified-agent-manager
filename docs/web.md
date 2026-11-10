@@ -1139,8 +1139,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and their end notes, forks, rewinds, hunk reverts, settles (by you,
   auto-settle or review), archives, budgets set and reached, handoffs,
   trail notes, suggested replies shown, manual compactions, notices by kind
-  and pushes, CLI updates, update failures and restarts, and terminals
-  opened; with the Utility log's calls by purpose and outcome (abstained and
+  and pushes, CLI updates, update failures and restarts, secret value
+  registrations with the CLI, and terminals opened; with the Utility log's calls by purpose and outcome (abstained and
   invalid Decide answers too) over the days it keeps, and routine runs by
   outcome. Lines `config.*` are a snapshot: uam and CLI versions, Threads by
   mode, in worktrees and active, custom model and connected instance
@@ -2125,6 +2125,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   them all. An entry with neither key field keeps the key saved for the same
   provider name, base URL and wire API; changing any of those means entering
   the key again. Settings report `key_present` for each model, never a key.
+  uam registers the custom models' keys and its own access token (values
+  of 16 characters or more) with each Copilot CLI it starts, and again when
+  a key changes, through the CLI's secret redaction filter
+  (`secrets.addFilterValues`, enabled with
+  `COPILOT_ENABLE_SECRET_FILTERING=true`). Measured on CLI 1.0.108, this
+  masks the values only in the CLI's own process log under
+  `~/.copilot/logs`. It does **not** mask them in the session journal
+  (`events.jsonl`), in the Thread's events and transcript, in the tool output
+  the model reads, or in an OpenTelemetry export: a key that a command prints
+  still reaches the model and the journal. A failed registration is logged
+  without the values and never stops a Thread.
   Removing a model also takes it out of `hidden_models` and clears a
   `title_model` set to it, so that provider uses its cheapest model again. In Settings a provider is added or edited as
   a whole: name, base URL and key, then **Load models** lists what
