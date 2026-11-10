@@ -4022,8 +4022,21 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			if d.ErrorReason != nil {
 				reason += ": " + clip(displaytext.Sanitize(*d.ErrorReason), maxErrorText)
 			}
+			// Released as detach does it, off the event goroutine: the detach
+			// is due before the exit lets anything reopen the session. The CLI
+			// ended the session, so no permission request waits on an answer.
+			detached := c.p.detachStarted(c.id)
 			c.exitLocked(reason)
 			c.p.forget(c)
+			if c.aside != nil {
+				c.aside()
+			}
+			go func() {
+				defer log.Recover("copilot shut down session release", &c.mu, &c.p.mu)
+				if err := c.release(context.Background(), nil, detached); err != nil {
+					log.Warn("copilot session shut down: detaching it failed", "conversation", c.id, "error", err)
+				}
+			}()
 		}
 		return
 	}
