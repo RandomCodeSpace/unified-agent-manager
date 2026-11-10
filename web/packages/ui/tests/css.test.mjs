@@ -35,3 +35,14 @@ test('a table cell never breaks inside a word, so an identifier stays whole and 
   assert.match(cells[1], /overflow-wrap: normal;/);
   assert.doesNotMatch(css.slice(css.indexOf('.data-table')), /\.data-table[^{]*\{[^}]*overflow-wrap: (anywhere|break-word)/);
 });
+
+test('a panel head leaves the top pixel row to the surface under it, so a reader keeps its top highlight', () => {
+  const head = styles.build([]).match(/\.panel-head\s*\{([^}]*)\}/);
+  assert.ok(head, 'the panel head rule');
+  assert.match(head[1], /background:\s*linear-gradient\(var\(--color-raised\), var\(--color-raised\)\) 0 1px no-repeat/);
+});
+
+test('a disclosure\'s chevron turns with its own details, not with one it is nested in', () => {
+  const css = styles.build(['[[open]>summary>&]:rotate-z-90']);
+  assert.match(css, /\[open\]\s*>\s*summary\s*>\s*\.\\\[\\\[open\\\]\\>summary\\>\\&\\\]\\:rotate-z-90\s*\{/);
+});

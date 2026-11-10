@@ -15,8 +15,8 @@ import { PanelHead } from './panel';
  * popup so app-level Esc handlers stand back while one is open.
  */
 
-/** The phone-width column (Tailwind's `max-sm`), where readers and pickers become bottom sheets. */
-export const PHONE = '(width < 40rem)';
+/** The phone-width column, where readers and pickers become bottom sheets: the app's `max-sm`, so it is index.css's `--breakpoint-sm` (theme.test.mjs holds the two together). */
+export const PHONE = '(width < 481px)';
 
 // `starting:` (CSS @starting-style) repeats each `data-starting-style` value: Base UI sets that attribute only when a mounted Root opens, so a popup that mounts open enters through it.
 export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0 starting:opacity-0';

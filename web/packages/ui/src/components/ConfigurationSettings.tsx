@@ -1,9 +1,8 @@
 import { useApi } from '../ApiContext';
-import { ChevronRight } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ComponentProps, type ReactNode, type SubmitEvent } from 'react';
 import { describeError, isStatus, routeMissing, type Configuration, type ConfigurationDraft, type ConfigurationFile, type ConfigurationKind, type Model, type Project } from '../api';
 import { cn } from '../lib/cn';
-import { Markdown, Note, Skeleton, useApp } from './common';
+import { Markdown, Note, Skeleton, Summary, useApp } from './common';
 import { CardGroup, ItemCard, ItemReader, useCardReader } from './ConfigCards';
 import { UTILITY_NONE, visibleModels } from '../lib/models';
 import { Field, SectionAction, useInlineForm } from './TaskDefaults';
@@ -79,14 +78,6 @@ function fileName(file: Pick<ConfigurationFile, 'name' | 'path'>): string {
   return file.path.split(/[\\/]/).pop() || file.name;
 }
 
-/** A disclosure's summary with the chevron Settings uses elsewhere (Background AI's log), not the native marker. Its `details` carries `group`. */
-function Summary({ children }: Readonly<{ children: ReactNode }>) {
-  return <summary className="flex cursor-pointer list-none items-center gap-1.5 text-ui font-medium [&::-webkit-details-marker]:hidden">
-    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted transition-transform duration-160 group-open:rotate-z-90" />
-    {children}
-  </summary>;
-}
-
 /** A path that wraps after a slash before it breaks inside a name. */
 function PathText({ path, className }: Readonly<{ path: string; className?: string }>) {
   return <span className={cn('block font-mono text-meta [overflow-wrap:anywhere]', className)}>{path.split('/').map((part, i) => <Fragment key={i}>{i > 0 && <>/<wbr /></>}{part}</Fragment>)}</span>;
@@ -108,7 +99,7 @@ function FileError({ message, path, tone = 'error', role }: Readonly<{ message: 
     {words ? `${head}: ${words}.` : message}
     {path && <PathText path={path} className="mt-1" />}
     {words && <details className="group mt-1 text-muted">
-      <Summary><span className="text-caption font-normal">Details</span></Summary>
+      <Summary className="text-ui font-medium"><span className="text-caption font-normal">Details</span></Summary>
       <code className="mt-1 block font-mono text-meta [overflow-wrap:anywhere]">{message}</code>
     </details>}
   </div>;
@@ -279,7 +270,7 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
       <Input id={`${prefix}-name`} required pattern={kind === 'skills' ? '[a-z0-9]+(-[a-z0-9]+)*' : '(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9_.\\-]*'} maxLength={kind === 'skills' ? 64 : 128} value={draft.name} disabled={busy || locked || editing} onChange={(e) => change({ name: e.target.value })} />
     </Field>}
     {draft.path && <Note className="break-all">{draft.path}{kind === 'skills' && <span className="mt-1 block">Saving changes this resolved file and any aliases that link to it.</span>}</Note>}
-    {draft.raw !== null ? kind === 'instructions' ? nativeEditor : <details open className="group"><Summary>Advanced settings</Summary><div className="mt-3">{nativeEditor}</div></details> : <>
+    {draft.raw !== null ? kind === 'instructions' ? nativeEditor : <details open className="group"><Summary className="text-ui font-medium">Advanced settings</Summary><div className="mt-3">{nativeEditor}</div></details> : <>
       {kind === 'hooks' ? <>
         <Field id={`${prefix}-event`} label="Event"><Select id={`${prefix}-event`} value={draft.event} disabled={busy || locked} items={HOOK_EVENTS.map((value) => ({ value, label: value }))} onValueChange={(event) => change({ event })} /></Field>
         {draft.hookType === 'http' ? <Field id={`${prefix}-url`} label="Webhook URL" hint="Receives a POST with the hook event. HTTPS is required for permission events or header environment variables."><Input id={`${prefix}-url`} type="url" required pattern={draft.allowedEnv.trim() || ['preToolUse', 'permissionRequest'].includes(draft.event) ? 'https://.+' : 'https?://.+'} value={draft.url} disabled={busy || locked} onChange={(e) => change({ url: e.target.value })} /></Field> : draft.execution === 'exec' ?
@@ -297,7 +288,7 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
         </Field>}
         <Field id={`${prefix}-prompt`} label={kind === 'agents' ? 'Agent instructions' : 'Skill instructions'}><TextArea id={`${prefix}-prompt`} rows={10} required value={draft.prompt} disabled={busy || locked} onChange={(e) => change({ prompt: e.target.value })} /></Field>
       </>}
-      <details className="group"><Summary>Advanced settings</Summary><div className="mt-3 flex flex-col gap-3">
+      <details className="group"><Summary className="text-ui font-medium">Advanced settings</Summary><div className="mt-3 flex flex-col gap-3">
         {kind === 'hooks' ? <>
           <Field id={`${prefix}-type`} label="Hook type"><Select id={`${prefix}-type`} value={draft.hookType} disabled={busy || locked} items={[{ value: 'command', label: 'Command' }, { value: 'http', label: 'HTTP request' }]} onValueChange={(hookType) => change({ hookType })} /></Field>
           {draft.hookType === 'command' ? <>
@@ -376,7 +367,7 @@ function SkillInstaller({ projectId, allowed, locked, onInstalled, onBusy }: Rea
     finally { setBusy(false); onBusy(false); }
   }
   return <details className="group rounded-md bg-tint-well p-3">
-    <Summary>Install with npx skills</Summary>
+    <Summary className="text-ui font-medium">Install with npx skills</Summary>
     <div className="mt-3 flex flex-col gap-3">
       <Note>Browse a repository, then install named skills into this scope. Existing skill names are kept. The server needs Node, npx and git.</Note>
       {!allowed && <Note>Turn on Terminal in UAM and access to allow npx to run on the server.</Note>}
@@ -639,7 +630,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       {!draft && kind !== 'instructions' && <>
         <SectionAction><Button size="sm" variant="secondary" data-section-add="" disabled={locked || busy || installing || generating} onClick={() => void edit()}>Add {label}</Button></SectionAction>
         <details className="group rounded-md bg-tint-well p-3">
-          <Summary>Create with AI</Summary>
+          <Summary className="text-ui font-medium">Create with AI</Summary>
           <form aria-label={`Create ${label} with AI`} className="mt-3 flex flex-col gap-3" aria-busy={generating || undefined} onSubmit={(event) => void generate(event)}>
             <Note>Describe what this {label} should do. The Utility model compares installed skills and creates an editable draft. Review it, then select Add {label} to save it.</Note>
             {generationUnavailable && <Note>{generationUnavailable}</Note>}

@@ -7,7 +7,7 @@ import { SquareTerminal, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type Ref } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
-import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
+import { AppContext, BAR_BOX, Dot, Loading, Spinner, TranscriptSkeleton, VIEW_BAR, useLate, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
 import { MessageOutcomesContext, MessagePairsContext } from './components/Messages';
 import { Login } from './components/Login';
@@ -1782,9 +1782,11 @@ export default function App() {
 /** A lost connection is the main pane's banner right above this header, so the header does not repeat it. */
 function PaneHeader({ leading }: Readonly<{ leading: React.ReactNode }>) {
   return (
-    <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
-      {leading}
-      <span className="text-title font-semibold text-ink">UAM</span>
+    <header className={VIEW_BAR}>
+      <div className={BAR_BOX}>
+        {leading}
+        <span className="text-title font-semibold text-ink">UAM</span>
+      </div>
     </header>
   );
 }
@@ -1869,7 +1871,7 @@ function LoadingVeil({ show }: Readonly<{ show: boolean }>) {
 function ViewLoading({ leading }: Readonly<{ leading: React.ReactNode }>) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true">
-      <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
+      <header className={VIEW_BAR}><div className={BAR_BOX}>{leading}</div></header>
       <Loading className="px-6" />
     </div>
   );
@@ -1879,7 +1881,7 @@ function ViewLoading({ leading }: Readonly<{ leading: React.ReactNode }>) {
 function LoadingPane({ leading }: Readonly<{ leading: React.ReactNode }>) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
-      <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
+      <header className={VIEW_BAR}><div className={BAR_BOX}>{leading}</div></header>
       <TranscriptSkeleton />
     </div>
   );

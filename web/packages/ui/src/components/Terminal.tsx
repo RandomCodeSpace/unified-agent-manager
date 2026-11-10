@@ -157,11 +157,11 @@ const LIGHT: ITheme = {
   white: '#3b3b3b', // body
   brightBlack: '#626262', // muted
   brightRed: '#b42d2d', // badge-red
-  brightGreen: '#22783f', // badge-green
+  brightGreen: '#21763e', // badge-green
   brightYellow: '#866100', // badge-amber
   brightBlue: '#0265c0', // badge-blue
   brightMagenta: '#ad3479', // badge-pink
-  brightCyan: '#11766b', // badge-teal
+  brightCyan: '#107469', // badge-teal
   brightWhite: '#111111', // ink
 };
 const DARK: ITheme = {

@@ -71,7 +71,7 @@ const modules = {
   './ui/blocks': { Blocks: ({ items }) => React.createElement('span', null, items.map((block) => block.title).join(' ')) },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
-  './ui/dialog': { PHONE: '(width < 40rem)' },
+  './ui/dialog': { PHONE: '(width < 481px)' },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
   './ui/menu': { ContextMenu: menu, Menu: menu, useLazyContextMenu: () => ({ shell: {}, menu: () => null }) },
   './ui/tooltip': { Tip: shell },

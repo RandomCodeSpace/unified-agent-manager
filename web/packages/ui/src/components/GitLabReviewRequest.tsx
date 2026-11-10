@@ -1,3 +1,5 @@
+import { Summary } from './common';
+
 const marker = /^UAM GitLab review request: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n\n/i;
 const boundary = '\n\nBEGIN UNTRUSTED GITLAB REVIEW EVIDENCE\n';
 
@@ -33,7 +35,7 @@ export function GitLabReviewRequest({ request, text }: { request: NonNullable<Re
     <span className="text-caption text-muted break-words">{request.reference}</span>
     <p>{request.action}</p>
     <details className="text-caption text-muted">
-      <summary className="cursor-pointer rounded-xs hover:text-ink">Review context</summary>
+      <Summary className="rounded-xs hover:text-ink">Review context</Summary>
       <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words font-sans">{text}</pre>
     </details>
   </>;

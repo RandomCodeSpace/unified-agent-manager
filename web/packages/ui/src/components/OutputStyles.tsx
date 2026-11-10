@@ -3,7 +3,7 @@ import { RadioGroup } from '@base-ui/react/radio-group';
 import { Check, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { PROVIDER_STYLE, type OutputStyle, type Settings } from '../api';
-import { Note } from './common';
+import { Note, Summary } from './common';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Select, type SelectOption } from './ui/select';
@@ -87,7 +87,7 @@ export function OutputStyleSettings({ settings, builtin = [], saving, onSave }: 
         <h3 className="text-ui font-medium text-ink">Built in</h3>
         {builtin.map((b) => (
           <details key={b.name} className="rounded-sm bg-tint-well px-2.5 py-2">
-            <summary className="cursor-default text-ui text-ink">{b.name}</summary>
+            <Summary className="text-ui text-ink">{b.name}</Summary>
             <p className="mt-2 text-caption whitespace-pre-line text-muted">{b.text}</p>
           </details>
         ))}

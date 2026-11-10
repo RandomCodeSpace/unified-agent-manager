@@ -166,6 +166,7 @@ motion:
   base: 160ms
   slow: 240ms
   easing: "cubic-bezier(0.2, 0, 0, 1)"
+  spring: "a damped linear() spring at 160ms / 240ms where the browser has linear(); the easing above at 100ms / 160ms elsewhere"
   spin: 1s
 
 layout:
@@ -178,7 +179,7 @@ layout:
   panel-default-width: 440px
   panel-min-width: 320px
   panel-max-width: "min(880px, main pane − 480px)"
-  bp-phone: 480px
+  bp-phone: 481px
   bp-sidebar-collapse: 960px
   bp-panels-inline: 1280px
   bp-wide: 1800px
@@ -216,8 +217,8 @@ components:
     textColor: "{colors.muted}"
     typography: "{typography.ui}"
     rounded: "{rounded.sm}"
-    padding: "2px"
-    height: 32px
+    padding: "1px"
+    height: 24px
     shadow: "{shadows.well}"
   segmented-control-thumb:
     backgroundColor: "{colors.raised}"
@@ -230,7 +231,7 @@ components:
     thumbColor: "{colors.raised}"
     rounded: "{rounded.sm}"
     size: "32px × 18px"
-    shadow: "inset 0 1px 2px rgba(20, 28, 45, 0.2)"
+    shadow: "{shadows.well}"
   task-row:
     backgroundColor: "{colors.rail}"
     textColor: "{colors.body}"
@@ -252,9 +253,9 @@ components:
   main-header:
     backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
-    typography: "{typography.display-sm}"
+    typography: "{typography.title}"
     height: "{layout.header-height}"
-    padding: "0 8px 0 12px"
+    padding: "0 12px 0 14px"
   main-header-meta:
     textColor: "{colors.muted}"
     typography: "{typography.meta}"
@@ -399,14 +400,14 @@ components:
     backgroundColor: transparent
     textColor: "{colors.muted}"
     typography: "{typography.caption}"
-    rounded: "{rounded.xs}"
+    rounded: "{rounded.sm}"
     padding: "0 6px"
     height: 20px
   chip-attention:
     backgroundColor: "{colors.attention-wash}"
     textColor: "{colors.attention}"
     typography: "{typography.caption}"
-    rounded: "{rounded.xs}"
+    rounded: "{rounded.sm}"
     padding: "0 6px"
     height: 20px
   code-block:
@@ -506,7 +507,7 @@ shadows:
 One ink ladder, one surface ladder, rows instead of cards, and colour that only appears when the agent is moving, broken, or needs a human.
 
 Version 3 describes the shipped system after the 2026-09-24 revamp (issue #173): the sidebar is the only place Threads are listed, in the manner of T3 Code's sidebar; the composer settings are one compact toolbar; every surface is built from Tailwind utilities on the tokens above, with Base UI primitives for menus, context menus, dialogs, tooltips and selects.
-There is one cool light theme and no theme toggle.
+At that version there was one cool light theme and no theme toggle; Light, Dark and Match system came later (see Colors).
 
 Version 4 adds the Project badge and its ten tones (#184), the collapsible and filterable sidebar with a quiet placeholder in place of the empty-state screen (#185), and the Settings view with the send default (#183).
 
@@ -571,7 +572,7 @@ The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match
 It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas.
 Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
 
-In Tailwind the tokens are `--color-<name>` in `web/src/index.css` (`@theme`), used as `bg-raised`, `text-muted`, `border-hairline` and so on.
+In Tailwind the tokens are `--color-<name>` in `web/packages/ui/src/index.css` (`@theme`), used as `bg-raised`, `text-muted`, `border-hairline` and so on.
 Tailwind's own palette is removed (`--color-*: initial`), so nothing outside this table can be written by accident.
 
 ### Surfaces
@@ -657,7 +658,7 @@ The badge tones have their own table above.
 
 - **UI and chat:** Figtree Variable (`@fontsource-variable/figtree`, SIL OFL 1.1), family `'Figtree Variable'`.
 - **Code in the conversation, diffs:** JetBrains Mono Variable (`@fontsource-variable/jetbrains-mono`, SIL OFL 1.1), family `'JetBrains Mono Variable'`, ligatures off.
-- Both are imported once in `web/src/main.tsx` and served from the same origin (`font-src 'self'`).
+- Both are imported once in `web/packages/ui/src/index.ts` and served from the same origin (`font-src 'self'`).
   No CDN.
 
 ### Scale
@@ -667,7 +668,7 @@ The scale is the `--text-*` theme in `index.css`; Tailwind's default sizes are r
 |---|---|---|---|---|
 | `display-md` | 20px | 600 | 1.3 | Empty-state and login headings |
 | `display-sm` | 17px | 600 | 1.35 | Dialog titles |
-| `title` | 14px | 600 | 1.4 | The Thread title in the header, card titles, panel titles, dialog section headings, the wordmark |
+| `title` | 14px | 600 | 1.4 | The title in every view's header (Thread, New thread, Settings, Routines), card titles, panel titles, dialog section headings, the wordmark |
 | `ui` (+ `font-medium`) | 13px | 500 | 1.4 | Buttons, selected and needs-you rows, project names, pickers |
 | `ui` | 13px | 400 | 1.4 | Rows at rest, menu items, meta lines, form controls |
 | `chat` / `chat-lg` | 14px / 16px | 400 | 1.7 / 1.6 | Conversation prose at 14px; composer input uses 16px on phones to prevent iOS input zoom; on iOS every other field is 16px for the same reason |
@@ -676,7 +677,7 @@ The scale is the `--text-*` theme in `index.css`; Tailwind's default sizes are r
 | `code` / `code-sm` | 13px / 12px | 400 | 1.55 / 1.5 | Code blocks / ledger rows, diff body (mono) |
 | `keycap` | 11px | 400–500 | 1 | Keyboard hints, version |
 | `stamp` | 10px | 400 | 1 | A message's clock time under its block |
-| `eyebrow` | 11px | 600 | 1.2 | Reserved; no eyebrows above headings in the shipped UI |
+| `eyebrow` | 11px | 600 | 1.2 | Uppercase `muted` section labels in panels, readers and Settings cards; never above a heading |
 
 Rules: weight is ternary (400/500/600); only `display-*` carry negative tracking; counts, durations and times use `tabular-nums`; markdown headings inside chat do not scale up; the transcript and the composer fill the main pane inside its gutters (24px desktop, 16px from 481px, 12px on a phone); only a user bubble keeps its own cap (88%/720px).
 
@@ -764,21 +765,21 @@ Both are small absolutely positioned pseudo-elements over the scroll area, not m
 
 ## Shapes
 
-One scale of three: `sm` 6px for controls (buttons, inputs, selects, menu items, the segmented track, switches), `md` 10px for cards and popups (Thread rows, subagent cards, question blocks, code blocks, menus, popovers, the inline picker), `lg` 14px for the surfaces that float over the pane (the composer, the pending interaction card, dialogs, Settings cards, the user bubble). `xs` 4px stays for what is under 24px tall (chips, inline code, the Project badge, a segment and the thumb inside a segmented control, the switch thumb). `full` is dots, spinners, the Send and Stop circles and the activity and tool-row pills.
+One scale of three: `sm` 6px for controls (buttons, inputs, selects, menu items, chips, state tags and blocks, the segmented track, switches), `md` 10px for cards and popups (Thread rows, subagent cards, question blocks, code blocks, menus, popovers, the inline picker), `lg` 14px for the surfaces that float over the pane (the composer, the pending interaction card, dialogs, Settings cards, the user bubble). `xs` 4px stays for what is under 24px tall (inline code, the Project badge, a segment and the thumb inside a segmented control, the switch thumb). `full` is dots, spinners, the Send and Stop circles and the activity and tool-row pills.
 
 ## Components
 
-Every component is Tailwind utilities on the tokens, in `web/src/components/`; the Base UI wrappers live in `web/src/components/ui/` (`button`, `menu` with `ContextMenu`, `dialog` with `AlertDialog` and `Sheet`, `tooltip`, `select`, `segmented` on the radio group).
+Every component is Tailwind utilities on the tokens, in `web/packages/ui/src/components/`; the Base UI wrappers live in `web/packages/ui/src/components/ui/` (`button`, `menu` with `ContextMenu`, `dialog` with `AlertDialog` and `Sheet`, `tooltip`, `select`, `segmented` on the radio group).
 States are Base UI data attributes (`data-open`, `data-highlighted`, `data-disabled`, `data-starting-style`, `data-ending-style`) or ARIA (`aria-current`, `aria-pressed`, `aria-expanded`).
 Hover is one surface step; press adds `ink`.
 
 ### Sidebar
 Sits on `rail`, 384px, no border to the main pane: the `rail` → `canvas` step is the seam, with a full-height 1px `hairline` rule at the column's right edge (`rail-edge`; owner, 2026-11-09, revamp mock 3: it no longer fades at its ends).
 
-**Header (44px, two rows below 640px).**
+**Header (44px, two rows below 481px).**
 The row keeps its 44px box and its controls sit flat on `rail`, with no bar card (owner, 2026-11-09, revamp mock 3), in the same 36px box as the Thread header's card (see Thread header): 4px from the row's top and bottom and 8px from its sides (6px on a phone), so the two top rows line up.
 In it, the compact 16px UAM mark with the `title` wordmark "UAM" beside it (one button) sits in the top-left corner, followed by local Search, the Project filter (a badge button), Add project and New thread (a pen, Alt+N).
-Search takes the spare toolbar width; below 640px it occupies a full-width second row so its text stays visible.
+Search takes the spare toolbar width; below 481px it occupies a full-width second row so its text stays visible.
 The mark stays in the same position when the sidebar opens or closes.
 The UAM mark collapses the sidebar to its rail without changing the selected Thread or URL, retaining Ctrl/Cmd+B and focus restoration (focus on the sidebar moves to the rail's mark, and back).
 
@@ -882,7 +883,7 @@ Without connections none of this shows.
 With connections, an icon button in the sidebar's top toolbar, between Search and the Project filter, shows a network glyph for All instances or the selected machine's coloured text initials.
 An attention dot indicates Threads need you; the tooltip and accessible name give the machine scope and count.
 The full-width row under the header is removed.
-Below 640px, the sidebar toggle keeps the UAM icon and hides its wordmark so Search retains usable width.
+Below 481px, the sidebar toggle keeps the UAM icon and hides its wordmark so Search retains usable width.
 Pressing it, or Alt+I from anywhere but a menu, a dialog or the terminal, opens an anchored reader below it (352px, `lg`, the modal shadow; the toolbar button lifts to `raised` while it is open; a bottom sheet on a phone): the head "Instances" with a `caption` `muted` line of counts (instances, offline, Needs you), then **All instances**, then **Main Server** and **Connected** under `eyebrow` headings.
 Each row has the same coloured text initials in a transparent 36px slot, a connection-status dot, the full name and a `caption` `muted` facts line (status, version, open and working Threads), the Needs you pill and a check on the current one (`tint-selected`, `aria-current`); a disabled connection is listed, unavailable, with why.
 **Connect another instance** opens this server's Settings at Connected instances.
@@ -911,7 +912,7 @@ While connected nothing shows the connection (a screen-reader status says "Conne
 When it is lost a banner row appears above the footer: `warning-wash` (reconnecting) or `error-wash` (offline) with a still dot and the full sentence.
 
 ### Home and loading states
-With no Thread open, Home is a launcher that fills the main pane (20px gutters, 40px from 960px; no centred column): centred above, the 36px mark and UAM wordmark, "What are you working on?", and a primary **New thread** button using the existing Project picker or opening the draft directly for one Project.
+With no Thread open, Home is a launcher that fills the main pane (20px gutters, 40px from 960px; no centred column): centred above, the 36px mark and UAM wordmark, "What are you working on?" (`display-md`, like every empty-state heading), and a primary **New thread** button using the existing Project picker or opening the draft directly for one Project.
 Below it, **Recent threads** (with "Across all projects", or "Across all instances" while they come from more than one connected instance, each row then showing its short machine label with an accessible name, or "On <instance>" with that instance's Threads alone while the instance switcher scopes the list, in `caption` `muted` opposite the heading, plain text) lists up to six non-archived Threads across known Projects, latest update first, with Project, status and relative time; selecting a row opens that Thread.
 With no Threads, omit the recent list and say "Start your first thread in this project."
 With no Projects, show "Start with a project", explain that the folder is on the machine running UAM, and offer **Add project** using the existing dialog.
@@ -940,7 +941,7 @@ The filtered Project starts highlighted, else the most recently active one; the 
 Enter, a click or Alt+digit choose (Alt+digit while the search shows that Project); the palette closes, then the draft opens with its composer focused (the closing dialog leaves focus alone).
 With exactly one Project the pen opens the draft at once.
 Alt+N opens the palette from anywhere but a menu or dialog (Ctrl+N and Ctrl+digits belong to the browser).
-Choosing a Project opens a draft, not a Thread: the pane shows a 44px header with the Project badge and `display-sm` "New thread", the same centred "New thread in …" lines as an empty Thread, and the composer on the New threads defaults from Settings, focused on a fine pointer.
+Choosing a Project opens a draft, not a Thread: the pane shows a 44px header with the Project badge and `title` "New thread", the same centred "New thread in …" lines as an empty Thread, and the composer on the New threads defaults from Settings, focused on a fine pointer.
 Nothing is created, listed in the sidebar or put in the URL until the first Send, which creates the Thread with the chosen settings, sends the message with its `@` files and attachments, and opens the Thread.
 Leaving the draft (another Thread, Settings, a reload) discards it; its text is kept per Project in this browser (`uam.draft.new.<project>`), attachments are not.
 The `/` and `$` lists say commands and skills are available after the first message; the execution picker appears once the Thread exists.
@@ -951,7 +952,7 @@ Like Routines, it is an opaque `canvas` layer over the main pane: the pane benea
 Opening and closing render in a transition, like a Thread switch: what is on screen stays until the next view is ready, the first open's code load included.
 Closing by × or Esc gives focus back, once the Thread is uncovered, to the button that opened it, or to the Thread's conversation when that button cannot take it.
 Like Routines, opening and closing it adds a browser history entry, so Back and Forward retrace the views (and edited fragments open them); a fragment the app corrects (unknown, or a view that is off) replaces the entry.
-Its header matches the Thread header (44px, `display-sm` "Settings", the drawer toggle first on a narrow screen, a spinner while a change saves).
+Its header is the Thread header's flat bar (the 44px row and its 36px box, `title` "Settings", the drawer toggle first on a narrow screen, a spinner while a change saves), on the `canvas` with the pane header's scroll fade; Routines and the loading panes use the same bar, so the title keeps its size and place from one view to the next.
 With connected instances the title is followed by a `·` and the instance switcher's Settings form: an `md` button with the instance's 20px mark and name, opening the same reader without All instances, headed "Settings of which instance?"; choosing another opens that instance's Settings (and moves a one-instance Thread list scope with it), and every read and write goes to it.
 A section the instance on screen does not offer says so in one `muted` line instead of its form, This browser says its preferences stay in this browser, and Connected instances and Log out appear for the hosting instance only.
 Below the header a 256px **rail** (`SettingsNav.tsx`) holds **Find a setting** (an `md` search field with a leading magnifier; Escape clears it before it closes Settings) and the pages in groups, each under an `eyebrow` `muted` label (with connected instances, a group saved on the instance adds "· on <instance>"): **Threads** (New threads, Conversation, Projects & worktrees, Archived), **Models & AI** (Models, Background AI, Custom providers), **Accounts** (GitHub Copilot, GitLab), **Agent toolkit** (Agents, Skills, Hooks, Instructions, MCP servers), **Replies** (Output styles), **Server** (UAM and access, Connected instances, Session stats) and **This browser** (Appearance & alerts).
@@ -1021,11 +1022,11 @@ Past eight rows a `md` filter input (as Skills') with the shown count leads the 
 Controls disable while saving; stale responses cannot overwrite a newer save.
 A change shows at once and is saved through `PATCH /api/settings`; a refusal puts the old value back and an `error` Note says why.
 
-**Segmented control** (`ui/segmented`, Base UI radio group): a 24px inset `sunken` track (the `well` ring; 36px on a coarse pointer) with 1px padding and `sm` radius, one size everywhere (a settings row, a panel header, the Changes scope); segments are equal columns with 10px side padding and no minimum width, their labels centred, `caption` 500 `muted`, the chosen one `ink`; under them one floating `raised` thumb (the `raised` shadow, 5px corners) slides to the chosen segment on its transform (`base`, snapping under Motion: Match system).
+**Segmented control** (`ui/segmented`, Base UI radio group): a 24px inset `sunken` track (the `well` ring; 36px on a coarse pointer) with 1px padding and `sm` radius, one size everywhere (a settings row, a panel header, the Changes scope); segments are equal columns with 10px side padding and no minimum width, their labels centred, `caption` 500 `muted`, the chosen one `ink`; under them one floating `raised` thumb (the `raised` shadow, `xs` corners) slides to the chosen segment on its transform (the spring, 240ms; snapping under Motion: Match system).
 The segment count and the chosen index reach the thumb as `--seg-n`/`--seg-i` through the CSSOM.
 Arrow keys move the choice; the group is named by the row label and described by its help.
 
-**Switch** (`ui/switch`, Base UI): 32×18, an inset track (`faint`, an inner shadow; `accent` when on) under a floating 14px `raised` thumb with its own small shadow that slides 14px on its transform (`fast`).
+**Switch** (`ui/switch`, Base UI): 32×18, an inset track (`faint` with the `well` ring; `accent` when on) under a floating 14px `raised` thumb (the `raised` shadow) that slides 14px on its transform (the spring, 160ms).
 Off, the `faint` track is 3:1 against `raised` and the white thumb 3:1 against the track, so the control's boundary and state read without colour alone.
 
 ### Thread header
@@ -1043,7 +1044,7 @@ Right: the project strip, that is the branch (`meta`, `muted`, with the Project 
 The Thread's subagents are counted on the status strip above the composer, not in the header (see Status line).
 The model and context details live in the composer.
 At 420px the title truncates and action labels shorten.
-Below 640px (`max-sm`, a phone) the title keeps the row: with no sidebar beside it, the state also shows as its glyph after the title (the Thread list's shapes, Working a still dot so the strip's live line stays the pane's one moving mark; the word for screen readers), and Files and Terminal leave the row for the end of the "…" menu (Browse files or Close files, Open terminal or Close terminal); from 640px up the header is unchanged.
+Below 481px (`max-sm`, a phone; `PHONE` in ui/dialog is the same width, held to `--breakpoint-sm` by a test) the title keeps the row: with no sidebar beside it, the state also shows as its glyph after the title (the state label without its word or fill: the Thread list's shapes and tones, Working a still dot so the strip's live line stays the pane's one moving mark; the word for screen readers), and Files and Terminal leave the row for the end of the "…" menu (Browse files or Close files, Open terminal or Close terminal); from 481px up the header is unchanged.
 The switch is a media query in the component, not `display: none`, so a hidden item is never a stop in the menu's arrow-key order.
 
 ### Terminal
@@ -1249,7 +1250,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   The picture is a transparent PNG from Excalidraw's canvas export on `raised`, drawn again when the scheme changes (dark draws through Excalidraw's dark filter, as the editor does; the file keeps the light scheme's colours).
   With unsent changes the card shows the pair, `AGENT’S V<a>` and `YOURS V<b>` eyebrows over two columns (one on a phone), and a foot with the first two changes ("· n more") and "Goes to the agent with your next message"; once a prompt carried the note the card collapses to the single picture.
   The composer shows a `warning-wash` chip per changed drawing, `<file> · k changes by you · View`; the note that went with a message is an ordinary uam notice row.
-- **Drawing editor:** a centred modal on the backdrop, the viewport less 16px gutters up to 1440px wide (a bottom sheet on a phone), with an `icon-sm` Full screen toggle (Maximize2 / Minimize2, `aria-pressed`) after Done that makes it the whole viewport, square-cornered: crumb with the Thread title, the file name with a `Same as the agent’s` / `Yours · k changes` pill, a facts line (`↳ Agent’s v<n> · from the reply’s mermaid`, the path, Saved / Saving / Save failed), a Version segment — Agent’s v<a> | Yours v<b> | Changes (count badge, disabled at 0) — and a primary `sm` Done.
+- **Drawing editor:** a centred modal on the backdrop, the viewport less 16px gutters up to 1440px wide (a bottom sheet on a phone), with an `icon-sm` Full screen toggle (Maximize2 / Minimize2, `aria-pressed`) after Done that makes it the whole viewport, square-cornered: crumb with the Thread title, the file name with a `Same as the agent’s` / `Yours · k changes` pill, a facts line (`↳ Agent’s v<n> · from the reply’s mermaid`, the path, Saved / Saving / Save failed), a Version segment — Agent’s v<a> | Yours v<b> | Changes (its count a neutral block with the number in `warning`, disabled at 0) — and a primary `sm` Done.
   Yours is Excalidraw itself, Nunito, roughness 0, 1.5px strokes, with its full menu minus the social and collaboration items; it takes focus on open, fits the content at 0.7 and saves every change 200ms after the last with the base version (a 409 reads "The agent changed this drawing" with Reload).
   Agent’s is the agent's picture, read-only.
   Changes is one picture of both versions in the status tones (added `success`, changed `warning`, moved `accent` with the old place dashed, removed `error` dashed, unchanged `faint`) beside a 360px column: YOUR CHANGES, SENT WITH YOUR NEXT MESSAGE (the note in `code-bg`) and WHAT THE AGENT READS.
@@ -1299,7 +1300,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   While the live rows show every subagent of a reply, that reply's chip waits: the live rows carry the same chip, and the reply's comes back when they leave.
 - **Subagent row:** one plain line, the same in the live rows and the sheet's list, read like a tool row: 28px (44px on a coarse pointer), `caption`: the state glyph (a still `accent` dot while it runs, a `success` check, an `error` cross, the idle glyph, a `faint` dash), the identity dot, the name (`body`, truncated, at most 45% of the row when a caption follows), the caption (what it is doing now while it runs, the first line of its result once done, its error in `error` when failed, "Stopped" when stopped and nothing else is known; `muted`, truncated, its tooltip the whole), how long it took and its tokens ("174K"), both `meta` `tabular-nums` `muted` in fixed slots so the columns line up; while it runs the time so far ticks in `accent`.
   On a phone the caption takes a second line under the name (`meta`).
-  A subagent that ran more than once carries "3 runs" before its time (`meta` `accent` on `accent-wash`, a pill that never truncates; "50+ runs" once the record dropped some), and its time and tokens are its totals.
+  A subagent that ran more than once carries "3 runs" before its time (a neutral block, ui/blocks, that never truncates; "50+ runs" once the record dropped some), and its time and tokens are its totals.
   The name is the Utility model's 2–3 word name from its prompt ("Inventory bug review") when one came, then the agent's own name in mono `code-sm` `muted` (`inventory-bug-review`).
   Without that name (no Utility model, the day's limit spent, a late or invalid answer) the agent's own name is the name, alone.
   One spawned by another sits under it, indented 18px behind a `CornerDownRight`.
@@ -1532,7 +1533,7 @@ Only its colour changes, so nothing moves. iOS draws its own overlay bars.
 ### Floating panels
 
 Popovers and dialogs that carry more than one value are floating panels (components/ui/panel.tsx), read with the most useful thing first:
-- **Head:** on the panel's surface with no rule.
+- **Head:** on the panel's surface with no rule; its fill starts 1px down, so a head flush with a reader's top edge leaves that surface's top highlight showing (Dark).
   Once the body scrolls beneath it, a short fade fades in below its edge, as the pane header does.
   It holds the way up or the title, the key value or state beside the title, and one line of facts.
 - **Sections:** an `eyebrow` label in `muted` (uppercase), a `caption` `muted` line beside it, and an action at the end.
@@ -1632,13 +1633,13 @@ Validation rings remain visible.
 | needs permission / answer | shield or question bubble, `attention`, still | Needs permission / Needs answer | the filled tag: `attention` on `attention-wash` |
 | compacting | the working mark; the strip's live line says "Compacting the conversation" | Working | "Working" |
 | completed | circled check, `success` (green); unread sidebar rows use an eye, `badge-teal` | Finished (unread or not) | "Finished" in `muted` beside the green glyph; its hover names what the turn found failed (tests fail, a claim contradicted) |
-| cancelled | square in sidebar, dash in header (`CircleStop` in `warning` when it was not your Stop), `muted` | Stopped | "Stopped", or "Stopped: credit limit" and the like when it was not your Stop (Status line), `muted` |
-| failed | warning triangle in sidebar, cross in header, `error` | Error | "Error" `error`; its hover names the cause when the provider gave one (Rate limit reached, Sign-in needed, No access, Out of quota, Context full, Blocked by policy, Provider error) |
+| cancelled | square (`CircleStop` in `warning` in the Thread header when it was not your Stop), gray | Stopped | "Stopped", or "Stopped: credit limit" and the like when it was not your Stop (Status line), `muted` |
+| failed | warning triangle, `error` | Error | "Error" `error`; its hover names the cause when the provider gave one (Rate limit reached, Sign-in needed, No access, Out of quota, Context full, Blocked by policy, Provider error) |
 | interrupted | pause, `warning` | Interrupted | "Interrupted" `warning` |
-| idle | clock in sidebar, dashed circle in header, gray | Idle | "Idle" `muted` |
-| closed | clock in sidebar, hollow dot in header, gray | Idle | "Idle" `muted`; its hover says the conversation is closed, or that a new branch starts with your first message |
+| idle | clock, gray | Idle | "Idle" `muted` |
+| closed | clock, gray | Idle | "Idle" `muted`; its hover says the conversation is closed, or that a new branch starts with your first message |
 
-The Chip column is the state label of a row and of the Thread header (State labels under Thread row); on a wide header the label uses the sidebar's glyphs.
+The Chip column is the state label of a row and of the Thread header (State labels under Thread row); the header uses the sidebar's glyphs at every width, and a phone shows the glyph alone, in its tone and with no fill.
 Only the attention tag has a fill.
 A failed Thread's conversation ends in one `error` Note (`role="alert"`): the cause in medium weight and the one thing to do ("Rate limit reached. Wait, then send your message again."), then the provider's own text in `muted` on its own line, unless its notice in the conversation already holds it; with no known cause the line is "Turn failed: <the provider's text>", as before.
 Chrome icons are lucide, 12–16px, at one 1.5 stroke (`LucideProvider` in `UamApp.tsx`; a mark that sets its own heavier stroke keeps it).
@@ -1768,18 +1769,19 @@ A state label's glyph springs only on a change, never when a list or a Thread fi
 
 Authored moments:
 - **Sidebar collapse** steps the shell's first `grid-template-columns` track 384px ↔ 48px at once (the width never animates); the sidebar keeps its width inside the clipped column, fades in (opacity, `slow`) when it opens and is `inert` once collapsed, and the rail fades in over it (`fade-in`).
-- **Every disclosure** (shelves, turn lines, tool rows, thinking, the folder picker, a decided card) opens and closes through one component, `Collapse`: its rows track switches 0fr ↔ 1fr at once, so the layout changes in one step and never per frame.
+- **Every disclosure that animates** (shelves, turn lines, tool rows, thinking, the folder picker, a decided card) opens and closes through one component, `Collapse`: its rows track switches 0fr ↔ 1fr at once, so the layout changes in one step and never per frame.
   Opening, the content fades and slides 4px in (opacity and transform, `slow`); closing, the track holds at 1fr while the content fades out on opacity (`fast`), then steps to 0fr once and reports `onClosed` (reopened during the fade, it fades back in place).
   Collapsed content is `inert`, a closing owner stays mounted until `onClosed`, and the Settled shelf moves its selected row to the pinned copy at that step, not before.
   The track never transitions anywhere (the sidebar shelves and the queue strip included): a height that glides is a per-frame reflow.
   A turn line, tool row and panel row mount their content on the first open (`appear`), so the closed transcript carries none of the hidden code blocks.
   Chevrons rotate (`base`).
-  Nothing uses a native `<details>` snap.
+  A few small folds are native `<details>` and open in one step, with no fade: Settings' Advanced settings, Create with AI and a built-in output style's text, the Tools reader's Context groups and its "more tools" fold, the Finish evidence, a GitLab review's draft and context, two transcript notes, and the queue strip.
+  Each draws the app's chevron through `Summary` (common.tsx), which turns with its own `<details>`; the browser's marker is hidden, so every engine shows the same one. The queue strip's summary is a toolbar row and has none.
 - **Rows** step surfaces in `fast`; the meta text and the "…" button cross-fade in place; inline rename swaps without layout shift (the row keeps its 46px); a settled row leaves at once and, while the shelf is closed, the **Settled** header flashes `accent-wash` for 1.4s (the locate flash's overlay).
-  A **state change** fades the new state glyph in over the old one's 16px slot and steps the status word's and the chip's colour (`base`, `StateMark` and `Chip`), so a row turning from Working to Needs permission changes without a snap.
+  A **state change** fades the new state glyph in over the old one's 16px slot and steps the status word's and the chip's colour (`base`, `StateLabel` on the attention `Chip`'s classes), so a row turning from Working to Needs permission changes without a snap.
 - **Buttons:** the filled ones (primary, secondary, danger; an action) press to 0.97 (`fast`); ghost and subtle buttons only tint.
 - **Lift** (`.lift`): Settings cards and image thumbnails rise 1px on hover (transform, `base`) while the `float` shadow drawn on their pseudo-element fades in (opacity); the shadow itself never animates.
-  **Switch** and **segmented** thumbs slide on their transform (`fast` / `base`).
+  **Switch** and **segmented** thumbs slide on their transform (the spring: 160ms / 240ms).
 - **Menus, context menus, pickers, selects, popovers and tooltips** scale from 0.97 at their transform origin and fade (`fast`); **dialogs** scale from 0.97 and fade with the backdrop (`slow`); the **drawer** slides from the left (`slow`); overlay panels slide in from the right and back out, with the backdrop fading both ways; inline panels slide over their committed space and slide out before they leave, unless another inline panel replaces them: then the outgoing one leaves at once and only the incoming one slides; the terminal dock's content slides up into its band and back down the same way.
   **Anchored readers** scale from 0.98 and fade with their dim (`base`); the lifted copy of their anchor stands above the dim from the first frame to the last, with no fade of its own.
   A popup that mounts already open (a reader, a confirmation, a dialog, an overlay or bottom sheet) enters the way it leaves: Base UI marks `data-starting-style` only when a mounted Root opens, so each of those values is repeated as Tailwind's `starting:` (CSS `@starting-style`); an engine without `@starting-style` shows it at once and still runs its exit.
@@ -1792,7 +1794,7 @@ Authored moments:
   Initial snapshots, new Threads, resumed work, explicit settlement, archive and source removal take effect immediately.
   The first load of the list is a skeleton; the list fades in (`base`) once it fills.
 - **Transcript:** new rows rise in, tool rows one by one as they arrive; streaming text appends without animation; the turn status row keeps its slot while the turn runs until "Took" lands in it, and in Compact its counts change in place; "Thinking…" stays steady; besides the sidebar row's ring one mark moves, the live line's (breathing for model work, the ring for local work, still for a long wait, you and subagents), and the rest of the strip is words, the clock and still blocks; and the background-threads chip turns its glyph `accent` while any runs (its list says "Running" by a still dot); the locate action (a subagent's row) flashes `accent-wash` for 1.4s (an overlay behind the row's content fading out on its opacity); a rendered diagram fades in (`base`) over the code it replaces; the status line fades in (`fade-in`) and the "Jump to bottom" button appears and leaves through `Appear`.
-- **Appear** (`ui/appear.tsx`) is the one enter/exit for a small control in a fixed slot: it fades and scales from 0.9 (`base`), stays mounted and inert through its exit, and takes the control's place in a row so nothing beside it moves.
+- **Appear** (`ui/appear.tsx`) is the one enter/exit for a small control in a fixed slot: it fades and scales in from 0.9 on the spring (240ms) and out on `--ease-app` (`base`), stays mounted and inert through its exit, and takes the control's place in a row so nothing beside it moves.
 - **Notes and strips** (`Note`, the connection, update and error strips at the top of the pane) fade in (`base`); nothing slides.
   The loading veil fades in and out (`base`).
 - **Connected instances:** another machine's Thread rows follow the same quiet-period regrouping as this instance's, keyed by machine and Thread ID; disabled sources disappear immediately without animation; the machine label on a row has no entrance of its own.
@@ -1820,7 +1822,7 @@ Only `transform`, `opacity` and colours animate: never a shadow, a filter, a pos
 - **Names:** every icon button has an `aria-label`; pickers put the value and any reason in theirs; the meter has `aria-valuetext`; the connection has `role="status"` text, shown only while the stream is lost.
 - **Live regions:** the transcript is `role="log"`, so new tool rows announce themselves; errors are `role="alert"`.
   A tool row's accessible name is "name argument, state" plus its approval's full resolution; a chosen answer is marked "(chosen)".
-- **Targets:** ≥44×44 on coarse pointers (rows, buttons, menu items, pickers, choice rows).
+- **Targets:** ≥44×44 on coarse pointers (rows, buttons, menu items, pickers, choice rows); the segmented control is the one exception, 36px tall there.
 - **Colour is never the only signal:** every state has a glyph and a word; add/del rows carry `+`/`−`.
 - **Zoom:** the layout holds at 200% (the sidebar becomes the drawer under 960px).
 
@@ -1891,7 +1893,7 @@ Consequences:
 
 ## Iteration guide
 
-1. Add a token before you add a value: colours, sizes, radii, shadows and the easing live in `web/src/index.css` under `@theme`, mirrored here; durations are the bare `duration-100/160/240` utilities.
+1. Add a token before you add a value: colours, sizes, radii, shadows and the easing live in `web/packages/ui/src/index.css` under `@theme`, mirrored here; durations are the bare `duration-100/160/240` utilities.
    A new surface picks a level from the elevation ladder; it does not get a border.
 2. Add a component here before adding one there; use the Base UI wrapper in `components/ui/` rather than a raw primitive.
 3. A new state extends the State marks table; do not invent a fifth semantic colour.

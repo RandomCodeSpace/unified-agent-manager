@@ -5,7 +5,7 @@ import { describeError, modelCatalog, resolveTaskDefaults, type Project, type Ro
 import { cn } from '../lib/cn';
 import { modelChoices } from '../lib/models';
 import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, clockText, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
-import { Note, ProjectBadge, ScrollSentinel, Skeleton, useApp, useMinuteTick, useScrolled } from './common';
+import { BAR_BOX, Note, ProjectBadge, ScrollSentinel, Skeleton, VIEW_BAR, useApp, useMinuteTick, useScrolled } from './common';
 import { RoutinesProjectPicker } from './ProjectPicker';
 import { Field, choiceLabel } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -152,28 +152,30 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
-        {leading}
-        <Clock aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
-        <h1 className="shrink-0 text-display-sm text-ink">Routines</h1>
-        <RoutinesProjectPicker projects={projects} value={project?.id ?? null} onPick={onScope} />
-        <span className="flex-1" />
-        {loadError && routines !== null && (
-          <Tip label={`Could not refresh: ${loadError}`}>
-            <span className="text-caption text-warning">Not refreshed</span>
+      <header className={VIEW_BAR} data-scrolled={scrolled || undefined}>
+        <div className={BAR_BOX}>
+          {leading}
+          <Clock aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
+          <h1 className="shrink-0 text-title text-ink">Routines</h1>
+          <RoutinesProjectPicker projects={projects} value={project?.id ?? null} onPick={onScope} />
+          <span className="flex-1" />
+          {loadError && routines !== null && (
+            <Tip label={`Could not refresh: ${loadError}`}>
+              <span className="text-caption text-warning">Not refreshed</span>
+            </Tip>
+          )}
+          {groups.length > 0 && (
+            <Button variant="secondary" aria-label="New routine" onClick={() => edit()}>
+              <Plus />
+              <span className="max-[480px]:hidden">New routine</span>
+            </Button>
+          )}
+          <Tip label="Close routines">
+            <Button size="icon-md" aria-label="Close routines" className="text-muted" onClick={onClose}>
+              <X />
+            </Button>
           </Tip>
-        )}
-        {groups.length > 0 && (
-          <Button variant="secondary" aria-label="New routine" onClick={() => edit()}>
-            <Plus />
-            <span className="max-[480px]:hidden">New routine</span>
-          </Button>
-        )}
-        <Tip label="Close routines">
-          <Button size="icon-md" aria-label="Close routines" className="text-muted" onClick={onClose}>
-            <X />
-          </Button>
-        </Tip>
+        </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <ScrollSentinel sentinelRef={sentinel} />

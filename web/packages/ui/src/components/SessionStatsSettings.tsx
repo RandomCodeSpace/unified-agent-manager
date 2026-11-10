@@ -121,9 +121,9 @@ function TurnTime({ c }: Readonly<{ c: Counts }>) {
           <div key={r.label} className="contents" title={`${r.label}: median ${fmt(r.p50, 1)} s, p90 ${fmt(r.p90, 1)} s`}>
             <span className="text-caption text-body">{r.label}</span>
             <span className="relative h-3.5">
-              <span className={`absolute inset-y-0 left-0 rounded-[3px] ${r.band}`} style={{ width: `${Math.min(100, (r.p90 * 100) / max)}%` }} />
+              <span className={`absolute inset-y-0 left-0 rounded-xs ${r.band}`} style={{ width: `${Math.min(100, (r.p90 * 100) / max)}%` }} />
               {r.p90 > max && <span aria-hidden="true" className="absolute inset-y-0 right-1 w-0.5 bg-raised" />}
-              <span className={`absolute inset-y-1 left-0 rounded-[2px] ${r.bar}`} style={{ width: `${Math.min(100, (r.p50 * 100) / max)}%` }} />
+              <span className={`absolute inset-y-1 left-0 rounded-xs ${r.bar}`} style={{ width: `${Math.min(100, (r.p50 * 100) / max)}%` }} />
             </span>
             <span className="text-caption tabular-nums text-ink">{fmt(r.p50, 1)} s <span className="text-muted">· p90 {fmt(r.p90, 1)}</span></span>
           </div>
@@ -167,12 +167,12 @@ function Permissions({ c, all }: Readonly<{ c: Counts; all: Counts }>) {
       {rest > 0 && (
         <>
           <span className="flex h-2.5 gap-0.5" title={`The other ${fmt(rest)}`}>
-            {others.map(([name, v]) => <span key={name} className={`rounded-[3px] ${permissionTone(name)}`} style={{ flexGrow: v }} />)}
+            {others.map(([name, v]) => <span key={name} className={`rounded-xs ${permissionTone(name)}`} style={{ flexGrow: v }} />)}
           </span>
           <ul className="grid grid-cols-2 gap-x-3 text-caption">
             {others.map(([name, v]) => (
               <li key={name} className="flex items-center gap-1.5 truncate" title={name}>
-                <span aria-hidden="true" className={`size-2 shrink-0 rounded-[2px] ${permissionTone(name)}`} />
+                <span aria-hidden="true" className={`size-2 shrink-0 rounded-xs ${permissionTone(name)}`} />
                 <span className="truncate">{PERMISSION_NAMES[name] ?? name.replaceAll('-', ' ')}</span>
                 <b className="font-medium tabular-nums text-ink">{fmt(v)}</b>
               </li>
@@ -250,11 +250,11 @@ function CacheMosaic({ c }: Readonly<{ c: Counts }>) {
       <div className="flex h-[150px] gap-0.5" role="img" aria-label={`${pct(num(c, 'tokens.total_cache_read'), num(c, 'tokens.total_input'), 0)} of input tokens read from cache`}>
         {groups.map((g) => (
           <div key={g.group} className="flex min-w-0 flex-col gap-0.5" style={{ flexGrow: g.input / Math.max(1, total) }} title={`${g.label}: ${fmt(g.input / 1e6, 1)}M input, ${pct(g.cached, g.input, 0)} cached`}>
-            <div className="min-h-0 overflow-hidden rounded-[3px] bg-accent-wash px-1.5 py-1 text-caption text-ink" style={{ flexGrow: g.cached }}>
+            <div className="min-h-0 overflow-hidden rounded-xs bg-accent-wash px-1.5 py-1 text-caption text-ink" style={{ flexGrow: g.cached }}>
               <span className="block truncate font-medium">{g.label}</span>
               <span className="block truncate tabular-nums">{pct(g.cached, g.input, 0)}</span>
             </div>
-            <div className="min-h-[3px] rounded-[3px] bg-accent" style={{ flexGrow: g.input - g.cached }} />
+            <div className="min-h-[3px] rounded-xs bg-accent" style={{ flexGrow: g.input - g.cached }} />
           </div>
         ))}
       </div>
@@ -279,7 +279,7 @@ function ModelStrip({ c, all, cost = false }: Readonly<{ c: Counts; all: Counts;
     <Card title={cost ? `${fmt(total)} cost units, by model` : `${fmt(total)} model calls, by model`}>
       <div className="flex h-7 gap-0.5" role="img" aria-label={cost ? 'Cost units by model' : 'Model calls by model'}>
         {models.map(([name, v]) => (
-          <span key={name} className={`flex min-w-[3px] items-center overflow-hidden rounded-[3px] px-1.5 text-caption font-medium text-on-primary ${tone(name)}`} style={{ flexGrow: v }} title={`${name}: ${fmt(v)} (${pct(v, total, 0)})`}>
+          <span key={name} className={`flex min-w-[3px] items-center overflow-hidden rounded-xs px-1.5 text-caption font-medium text-on-primary ${tone(name)}`} style={{ flexGrow: v }} title={`${name}: ${fmt(v)} (${pct(v, total, 0)})`}>
             {v / total >= 0.15 && <span className="truncate">{pct(v, total, 0)}</span>}
           </span>
         ))}
@@ -287,7 +287,7 @@ function ModelStrip({ c, all, cost = false }: Readonly<{ c: Counts; all: Counts;
       <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-caption">
         {models.map(([name, v]) => (
           <li key={name} className="flex items-center gap-1.5">
-            <span aria-hidden="true" className={`size-2 rounded-[2px] ${tone(name)}`} />
+            <span aria-hidden="true" className={`size-2 rounded-xs ${tone(name)}`} />
             {name} <b className="font-medium tabular-nums text-ink">{fmt(v)}</b>
           </li>
         ))}
@@ -334,7 +334,7 @@ function EveryCounter({ list, allTime }: Readonly<{ list: Stat[]; allTime: Set<s
             <dl className="flex flex-col">
               {rows.map((row) => (
                 <div key={row.name} className="relative flex items-baseline gap-2 border-b border-hairline text-caption leading-[1.35] last:border-b-0">
-                  <dt className="min-w-0 flex-1 font-mono text-[0.6875rem] break-words text-body">{breakable(row.name)}</dt>
+                  <dt className="min-w-0 flex-1 font-mono text-meta break-words text-body">{breakable(row.name)}</dt>
                   <dd className="font-medium text-ink tabular-nums">{row.value}</dd>
                   {max > 0 && Number(row.value) > 0 && <span aria-hidden="true" className="absolute -bottom-px left-0 h-0.5 bg-accent/45" style={{ width: `${(Number(row.value) * 100) / max}%` }} />}
                 </div>

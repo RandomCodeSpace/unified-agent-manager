@@ -231,6 +231,8 @@ test('Edit opens the anchored editor on Yours with the version segment, and Done
   expect(checked('Agent’s v1')).toBe('false');
   expect(checked('Yours v2')).toBe('true');
   expect(checked(/^Changes/)).toBe('false');
+  // The count is a neutral block with its tone on the number (ui/blocks), not a filled pill.
+  expect(within(segment).getByRole('radio', { name: /^Changes/ }).querySelector<HTMLElement>('[data-tone]')!.dataset.tone).toBe('warning');
   expect(editor.getByText('Yours · 4 changes')).toBeTruthy();
   expect(await editor.findByTestId('excalidraw')).toBeTruthy();
   expect(editor.getByRole('button', { name: 'Revert to agent’s' })).toBeTruthy();

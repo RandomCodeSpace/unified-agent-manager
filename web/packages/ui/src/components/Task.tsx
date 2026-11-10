@@ -15,7 +15,7 @@ import { stopWords } from '../lib/stop';
 import { failureWords } from '../lib/failure';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, StateMark, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
+import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { PHONE } from './ui/dialog';
@@ -293,10 +293,8 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
           {/* The state, in the Thread list's label (StateLabel). A phone keeps the glyph alone, and a Settled Thread says so in its composer row, so the squeezed title keeps the room. */}
           {readOnly(session) ? (
             <StateLabel status={session.stage === 'settled' ? 'Settled' : 'Archived'} className={session.stage === 'settled' ? 'ml-1 max-sm:hidden' : 'ml-1'} />
-          ) : phone ? (
-            <StateMark state={state} text={shown.word} icon={shown.icon} title={shown.detail} className="shrink-0" />
           ) : (
-            <StateLabel status={STATE_LABELS[state] as StatusWord} text={shown.word} icon={shown.icon} title={shown.detail} className="ml-1" />
+            <StateLabel status={STATE_LABELS[state] as StatusWord} bare={phone} text={shown.word} icon={shown.icon} title={shown.detail} className={phone ? undefined : 'ml-1'} />
           )}
           {/* A Task action in flight is words: nothing in the header turns. */}
           {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
