@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -268,4 +269,59 @@ func (c *conversation) detach(w *stopWatch) {
 	if err := c.release(context.Background(), perms, detached); err != nil {
 		log.Warn("copilot stop: detaching the session failed", "conversation", c.id, "error", err)
 	}
+}
+
+// Cancel stops the running turn. Every wait in it is bounded, so another
+// operation stuck in the CLI cannot hold Stop, and a running turn always
+// ends: one the CLI does not end within webStopGrace uam ends itself
+// (stop.go). Its mode change and abort errors are reported only when no
+// turn runs; while one does, the stop check reports them, and a mode it
+// could not reset is reset once control is free. Stop of autopilot with no
+// turn, while another control operation is in progress, fails with ErrBusy.
+func (c *conversation) Cancel(ctx context.Context) error {
+	// Without control, another mode or agent operation is stuck in the CLI:
+	// Stop aborts without the mode change, which control orders.
+	controlled := lockWithin(&c.control, webStopLockWait)
+	if controlled {
+		defer c.control.Unlock()
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	// With no turn to end, Stop of autopilot only turns it off, which needs
+	// control: it does not claim a stop it did not make.
+	if !controlled && !c.turnRunning && c.sending == 0 && c.execution != nil && c.execution.Mode == string(rpc.SessionModeAutopilot) {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: another operation on the conversation is in progress", agentapi.ErrBusy)
+	}
+	// Stop claims these decisions before any runtime RPC can block. A
+	// concurrent answer must not approve fallback while Abort is in flight.
+	c.expireAutoLocked()
+	c.planStopped = true
+	c.expirePlansLocked()
+	w := c.watchStopLocked()
+	c.mu.Unlock()
+	var modeErr error
+	if runtime, ok := c.sess.(executionSession); ok && controlled {
+		modeCtx, cancel := context.WithTimeout(ctx, webStopRPCWait)
+		modeErr = runtime.SetExecutionMode(modeCtx, rpc.SessionModeInteractive)
+		c.refreshExecution(modeCtx)
+		cancel()
+	}
+	// Abort must still run after a partial mode failure, with its own bounded
+	// context if the mode operation used up the original deadline.
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webStopRPCWait)
+	defer cancel()
+	began := time.Now()
+	abortErr := c.sess.Abort(abortCtx)
+	c.aborted(w, abortErr, time.Since(began))
+	if w != nil && (!controlled || modeErr != nil) {
+		c.leaveAutopilotLater(modeErr)
+	}
+	if (modeErr != nil || abortErr != nil) && w == nil {
+		return fmt.Errorf("copilot stop: %w", errors.Join(modeErr, abortErr))
+	}
+	return nil
 }
