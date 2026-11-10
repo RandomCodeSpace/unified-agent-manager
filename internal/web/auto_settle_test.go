@@ -265,6 +265,20 @@ func TestMergedWorkSettlesAndRemovesItsBranch(t *testing.T) {
 		"commits that cancel out": {setup: func(t *testing.T, _, wt, _ string) {
 			gitIn(t, wt, "revert", "--no-edit", "HEAD")
 		}, kept: 1},
+		// The commit is in no history, only in the reflog the branch takes
+		// with it.
+		"commit reset away, branch on the default branch": {setup: func(t *testing.T, repo, wt, _ string) {
+			commitFile(t, repo, "later.txt", "later\n")
+			gitIn(t, wt, "reset", "-q", "--hard", "main")
+		}, kept: 1},
+		// The commit is on no branch, only in the reflog of the worktree's
+		// HEAD.
+		"commit on a detached HEAD, then back on the branch": {setup: func(t *testing.T, repo, wt, branch string) {
+			gitIn(t, repo, "merge", "-q", "--no-ff", "-m", "merge", branch)
+			gitIn(t, wt, "switch", "-q", "--detach")
+			commitFile(t, wt, "side.txt", "side\n")
+			gitIn(t, wt, "switch", "-q", branch)
+		}, kept: 1},
 		"no commit of its own": {setup: func(t *testing.T, repo, wt, _ string) {
 			gitIn(t, wt, "reset", "-q", "--hard", "HEAD~1")
 			commitFile(t, repo, "later.txt", "later\n")

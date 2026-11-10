@@ -122,7 +122,9 @@ func (m *Manager) settleMerged() {
 //
 //  1. The worktree is on branch, and the branch has moved since it was made
 //     (the oldest entry of its reflog is another commit): a Thread that
-//     never committed has landed nothing.
+//     never committed has landed nothing. Every commit its reflog or the
+//     worktree's HEAD reflog names is in the branch's history or in def's:
+//     none was reset or rebased away, or made off the branch.
 //  2. The branch's commit is an ancestor of def (a merge or fast-forward:
 //     def's history has every commit); or, for a squash or a rebase, the
 //     branch differs from its merge base with def and merging it into def
@@ -169,6 +171,18 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	moves, code := git("reflog", "show", "--format=%H", ref)
 	if made := moves[strings.LastIndexByte(moves, '\n')+1:]; code != 0 || made == "" || made == tip {
 		return "", false
+	}
+	// Every commit the branch or the worktree's HEAD ever held is in the
+	// branch's history or in def's. One reset or rebased away, or made on a
+	// detached HEAD, lives only in a reflog, and both go with the removal.
+	// Reflogs too long for one command line fail it, which keeps everything.
+	// shortcut: a rebased branch stays unproven, compare patch IDs if those Threads should settle too.
+	wandered, read := git("reflog", "show", "--format=%H", "HEAD")
+	held := strings.Fields(moves + "\n" + wandered)
+	slices.Sort(held)
+	held = slices.Compact(held)
+	if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); read != 0 || code != 0 || lost != "" {
+		return "", true
 	}
 	if _, code := git("merge-base", "--is-ancestor", tip, target); code != 0 {
 		if code != 1 {
