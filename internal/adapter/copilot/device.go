@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -24,9 +25,12 @@ const (
 	deviceSignInTimeout = 15 * time.Minute
 	// maxLoginOutput bounds what is kept of the login command's error output.
 	maxLoginOutput = 8 << 10
-	// restartReason ends conversations still open when the CLI restarts.
-	restartReason = "Copilot restarted for a new sign-in"
 )
+
+// deviceCodeWait bounds how long the login command may run without printing
+// a device code before the sign-in fails rather than wait out the code's
+// lifetime. Tests shorten it.
+var deviceCodeWait = 20 * time.Second
 
 // errTokenNotSaved is the CLI approving a sign-in it could not store: the
 // system has no keychain and plaintext storage is off.
@@ -35,9 +39,14 @@ var errTokenNotSaved = fmt.Errorf("%w: GitHub approved the sign-in, but Copilot 
 // noKeychainNotice comes with the second code after errTokenNotSaved.
 const noKeychainNotice = "This server has no system keychain, so Copilot will keep the sign-in in its own settings folder, readable only by this user. Approve this new code to finish."
 
-// devicePrompt is the line `copilot login --device-code` prints:
-// "To authenticate, visit <uri> and enter code <code>".
-var devicePrompt = regexp.MustCompile(`visit (https://[^\s]+) and enter code ([A-Z0-9]{4,}-[A-Z0-9]{4,})`)
+// `copilot login --device-code` prints "To authenticate, visit <uri> and
+// enter code <code>". Only the shapes are matched, not the sentence, so a
+// reworded prompt still yields them: the first https URL, and a code of
+// upper-case letters and digits in two hyphenated groups standing alone.
+var (
+	deviceURL  = regexp.MustCompile(`https://[^\s"'<>]+`)
+	deviceCode = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])([A-Z0-9]{4,}-[A-Z0-9]{4,})(?:$|[^A-Za-z0-9-])`)
+)
 
 // loginCommand runs `copilot login --device-code` with the CLI and
 // environment the runtime uses (newSDKClient), so the sign-in is stored where
@@ -58,7 +67,7 @@ var loginCommand = func(ctx context.Context) (*exec.Cmd, error) {
 // approved sign-in: its plaintext storage is then turned on and show gets a
 // second code. The runtime reads its sign-in only when it starts, so the CLI
 // is restarted afterwards. That would end open conversations, so it is
-// refused while any is open.
+// refused while any is open, before the login and again at the restart.
 func (p *webProvider) DeviceSignIn(ctx context.Context, show func(agentapi.DeviceCode)) (agentapi.Account, error) {
 	if name := envTokenVar(); name != "" {
 		return agentapi.Account{}, fmt.Errorf("%w: %s", agentapi.ErrEnvAccount, name)
@@ -80,7 +89,9 @@ func (p *webProvider) DeviceSignIn(ctx context.Context, show func(agentapi.Devic
 	if err != nil {
 		return agentapi.Account{}, err
 	}
-	if err := p.restartClient(ctx); err != nil {
+	if err := p.restartClient(ctx); errors.Is(err, agentapi.ErrCLIBusy) {
+		return agentapi.Account{}, fmt.Errorf("%w: the sign-in is saved, but Copilot started work meanwhile and signing in restarts it; close the open Copilot threads, then sign in again", agentapi.ErrSignInRejected)
+	} else if err != nil {
 		log.Warn("restart copilot CLI after sign-in failed", "error", err)
 	}
 	p.signInChanged()
@@ -109,26 +120,65 @@ func deviceLogin(ctx context.Context, show func(agentapi.DeviceCode)) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start copilot login: %s", errText(err))
 	}
-	shown := false
+	// state is codeWaiting until the code is shown or the wait for it ends,
+	// whichever comes first; only the wait ending stops the command.
+	var state atomic.Int32
+	noCode := time.AfterFunc(deviceCodeWait, func() {
+		if state.CompareAndSwap(codeWaiting, codeMissing) {
+			cancel()
+		}
+	})
+	defer noCode.Stop()
+	var url, code, first string
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
-		if m := devicePrompt.FindStringSubmatch(sc.Text()); m != nil && !shown {
-			shown = true
-			show(agentapi.DeviceCode{URL: m[1], Code: m[2]})
+		line := sc.Text()
+		if first == "" {
+			first = cleanText(line)
+		}
+		if url == "" {
+			url = deviceURL.FindString(line)
+		}
+		if m := deviceCode.FindStringSubmatch(deviceURL.ReplaceAllString(line, " ")); code == "" && m != nil {
+			code = m[1]
+		}
+		if url != "" && code != "" && state.CompareAndSwap(codeWaiting, codeShown) {
+			show(agentapi.DeviceCode{URL: url, Code: code})
 		}
 	}
 	werr := cmd.Wait()
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
+	case state.Load() == codeMissing:
+		return noCodeError(first, stderr.String())
 	case errors.Is(lctx.Err(), context.DeadlineExceeded):
 		return fmt.Errorf("%w: the code expired; start again", agentapi.ErrSignInRejected)
 	case werr != nil:
 		return loginFailure(stderr.String(), werr)
-	case !shown:
-		return errors.New("copilot login showed no device code")
+	case state.Load() != codeShown:
+		return noCodeError(first, stderr.String())
 	}
 	return nil
+}
+
+const (
+	codeWaiting int32 = iota
+	codeShown
+	codeMissing
+)
+
+// noCodeError says the login command printed no device code, with the first
+// line it printed so a reworded prompt can be told from a silent failure.
+func noCodeError(stdout, stderr string) error {
+	if stdout == "" {
+		line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
+		stdout = cleanText(line)
+	}
+	if stdout == "" {
+		return errors.New("copilot login showed no device code")
+	}
+	return fmt.Errorf("copilot login showed no device code; it said: %s", stdout)
 }
 
 // copilotSettings is the CLI's settings file: settings.json in COPILOT_HOME,
@@ -211,19 +261,21 @@ func (p *webProvider) openConversations() int {
 }
 
 // restartClient stops the running CLI so the next call starts one that reads
-// the current sign-in. Conversations still open end like on a CLI failure.
+// the current sign-in. Stopping it would end the conversations and utility
+// prompts on it, so it refuses (ErrCLIBusy) while any is open; the check and
+// the stop share the lock, so none starts between.
 func (p *webProvider) restartClient(ctx context.Context) error {
 	p.mu.Lock()
-	c := p.detachLocked()
-	if c == nil {
+	if p.client == nil {
 		p.mu.Unlock()
 		return nil
 	}
-	convs := p.takeConvs()
-	p.mu.Unlock()
-	for _, conv := range convs {
-		conv.exit(restartReason)
+	if n := len(p.convs) + p.utilities; n > 0 {
+		p.mu.Unlock()
+		return fmt.Errorf("%w (%d)", agentapi.ErrCLIBusy, n)
 	}
+	c := p.detachLocked()
+	p.mu.Unlock()
 	return p.stopDetached(ctx, c)
 }
 

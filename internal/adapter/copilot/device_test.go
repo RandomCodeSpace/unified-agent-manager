@@ -181,3 +181,71 @@ func TestDeviceSignInCanceledStopsTheCLI(t *testing.T) {
 		t.Fatal("DeviceSignIn kept waiting after cancel")
 	}
 }
+
+// A conversation that opens while the code waits for approval keeps its CLI:
+// the restart is refused and the sign-in says why.
+func TestDeviceSignInDoesNotRestartUnderAConversationOpenedMeanwhile(t *testing.T) {
+	p, fc := accountProvider(t, nil)
+	if _, err := p.Account(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fakeLogin(t, devicePromptScript+`echo "Signed in successfully as octo."`)
+	fc.mu.Lock()
+	before := fc.stopped
+	fc.mu.Unlock()
+	conv := &conversation{}
+	t.Cleanup(func() { p.mu.Lock(); clear(p.convs); p.mu.Unlock() })
+	_, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) {
+		p.mu.Lock()
+		p.convs[conv] = struct{}{}
+		p.mu.Unlock()
+	})
+	if !errors.Is(err, agentapi.ErrSignInRejected) || !strings.Contains(err.Error(), "close the open Copilot threads") {
+		t.Fatalf("DeviceSignIn error = %v", err)
+	}
+	fc.mu.Lock()
+	stopped := fc.stopped
+	fc.mu.Unlock()
+	p.mu.Lock()
+	_, open := p.convs[conv]
+	running := p.client != nil
+	p.mu.Unlock()
+	if stopped != before || !open || !running || conv.closed {
+		t.Fatalf("CLI stopped %d more times, conversation open %v, client running %v, closed %v", stopped-before, open, running, conv.closed)
+	}
+}
+
+// The code and URL are read by their shapes, so a reworded prompt still
+// shows them.
+func TestDeviceSignInReadsARewordedPrompt(t *testing.T) {
+	p, fc := accountProvider(t, nil)
+	fc.status = copilot.GetAuthStatusResponse{IsAuthenticated: true, AuthType: copilot.String("user"), Login: copilot.String("octo"), Host: copilot.String(githubHost)}
+	fakeLogin(t, `echo "Copilot CLI 1.0.99-BETA1"; echo "Open https://github.com/login/device in a browser."; echo "Your one-time code: WX9Z-12K4"; echo "Signed in successfully as octo."`)
+	var shown []agentapi.DeviceCode
+	if _, err := p.DeviceSignIn(context.Background(), func(c agentapi.DeviceCode) { shown = append(shown, c) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(shown) != 1 || shown[0] != (agentapi.DeviceCode{URL: "https://github.com/login/device", Code: "WX9Z-12K4"}) {
+		t.Fatalf("shown = %+v", shown)
+	}
+}
+
+// A login command that prints no code fails within deviceCodeWait, with what
+// it printed, instead of running until the code would expire. Code-shaped
+// text inside a URL is not a code.
+func TestDeviceSignInWithoutACodeFailsPromptly(t *testing.T) {
+	old := deviceCodeWait
+	deviceCodeWait = 200 * time.Millisecond
+	t.Cleanup(func() { deviceCodeWait = old })
+	p, _ := accountProvider(t, nil)
+	fakeLogin(t, `echo; echo "Sign in at the page below"; echo "https://github.com/login/AB12-CD34"; exec sleep 60`)
+	shown := 0
+	start := time.Now()
+	_, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) { shown++ })
+	if err == nil || !strings.Contains(err.Error(), "showed no device code; it said: Sign in at the page below") || shown != 0 {
+		t.Fatalf("DeviceSignIn error = %v, shown %d", err, shown)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("DeviceSignIn took %v", d)
+	}
+}
