@@ -120,3 +120,30 @@ func TestReadOnceResetsOnCompaction(t *testing.T) {
 		t.Fatalf("subagent repeat after the main compaction = %q", got)
 	}
 }
+
+// A truncation, a cleared context and a rewind each drop earlier messages
+// from the agent's context, so its next view passes in full.
+func TestReadOnceResetsWhenTheConversationLosesMessages(t *testing.T) {
+	for name, lost := range map[string]rpc.SessionEventData{
+		"truncation":      &rpc.SessionTruncationData{PerformedBy: "BasicTruncator", MessagesRemovedDuringTruncation: 40, TokensRemovedDuringTruncation: 90000},
+		"context cleared": &rpc.SessionContextClearedData{MessagesCleared: 40},
+		"rewind":          &rpc.SessionSnapshotRewindData{UpToEventID: "e1", EventsRemoved: 40},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := openWeb(t)
+			view(t, h, "", "/work/a.go", nil, "package a")
+			view(t, h, "child", "/work/a.go", nil, "package a")
+			h.fs.onEvent(ev("lost-1", lost))
+			if got := view(t, h, "", "/work/a.go", nil, "package a"); got != "package a" {
+				t.Fatalf("view after the loss = %q", got)
+			}
+			if got := view(t, h, "", "/work/a.go", nil, "package a"); got != readOnceNote {
+				t.Fatalf("repeat after the loss = %q", got)
+			}
+			// The main agent's loss leaves a subagent's context alone.
+			if got := view(t, h, "child", "/work/a.go", nil, "package a"); got != readOnceNote {
+				t.Fatalf("subagent repeat after the main agent's loss = %q", got)
+			}
+		})
+	}
+}

@@ -235,3 +235,22 @@ func TestWebSubagentEventsResetTheStallWatch(t *testing.T) {
 		t.Fatalf("a subagent that was heard from was cancelled: %v", got)
 	}
 }
+
+// A tool call whose end was never reported, left over from a stopped turn,
+// does not keep the stall watch off in the next turn.
+func TestWebStallWatchIgnoresAToolLeftOverFromAnEarlierTurn(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "running", MessageID: "m-1"}))
+	h.fs.onEvent(ev("tool-1", &rpc.ToolExecutionStartData{ToolCallID: "call-1", ToolName: "bash"}))
+	abortedIdle(h, 1)
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled {
+		t.Fatalf("stopped turn = %+v", turn)
+	}
+	before := h.fs.abortCount()
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the abort of the stalled request", func() bool { return h.fs.abortCount() == before+1 })
+}

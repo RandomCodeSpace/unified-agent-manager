@@ -1011,6 +1011,71 @@ func TestWebTurnStates(t *testing.T) {
 	}
 }
 
+// An error the main agent goes on after did not end the turn: its next model
+// call, message or tool call shows that, and the turn ends as completed.
+func TestWebErrorTheTurnRecoversFromDoesNotFailIt(t *testing.T) {
+	for name, progress := range map[string]rpc.SessionEventData{
+		"model call": &rpc.AssistantTurnStartData{TurnID: "1"},
+		"message":    &rpc.AssistantMessageData{MessageID: "m1", Content: "done"},
+		"tool call":  &rpc.ToolExecutionStartData{ToolCallID: "call-1", ToolName: "bash"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := openWeb(t)
+			startTurn(t, h)
+			h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "rate_limit", Message: "rate limited", EligibleForAutoSwitch: copilot.Bool(true)}))
+			h.fs.onEvent(ev("p1", progress))
+			h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+			if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+				t.Fatalf("turn = %+v", got)
+			}
+		})
+	}
+	// A subagent's progress says nothing about the main agent's error, and
+	// an error after the progress is the one that ended the turn.
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "rate_limit", Message: "rate limited"}))
+	h.fs.onEvent(ev("s1", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	h.fs.onEvent(ev("err2", &rpc.SessionErrorData{ErrorType: "quota", Message: "no quota"}))
+	h.fs.onEvent(agentEv("sub-m1", "agent-1", &rpc.AssistantMessageData{MessageID: "sm1", Content: "still here"}))
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnFailed || got.Error != "no quota" {
+		t.Fatalf("turn the second error ended = %+v", got)
+	}
+}
+
+// An error while no turn runs is a notice only: it fails no later turn.
+func TestWebErrorBetweenTurnsFailsNoTurn(t *testing.T) {
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "query", Message: "background hiccup"}))
+	if notice := h.sink.last(); notice.Kind != agentapi.EventItem || notice.Item.ID != "err1" || notice.Item.Kind != agentapi.ItemNotice {
+		t.Fatalf("error notice = %+v", notice)
+	}
+	// The next turn ends without one progress event of its own.
+	startTurn(t, h)
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("turn after an error between turns = %+v", got)
+	}
+}
+
+// An error that arrives while the prompt is still on its way to the CLI
+// belongs to the turn that prompt starts.
+func TestWebErrorWhileThePromptIsSentFailsItsTurn(t *testing.T) {
+	h := openWeb(t)
+	h.fs.beforeReturn = func(string) {
+		h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "quota", Message: "no quota"}))
+	}
+	startTurn(t, h)
+	h.fs.beforeReturn = nil
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnFailed || got.Error != "no quota" {
+		t.Fatalf("turn = %+v", got)
+	}
+}
+
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
