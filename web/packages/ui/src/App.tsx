@@ -4,7 +4,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { describeError, newRequestId, onUnauthorized, readOnly, taskName, unsavedRefusal, type Changes as ChangesData, type GitPending, type Interaction, type Project, type SessionDetail, type SessionSummary } from './api';
+import { describeError, newRequestId, onUnauthorized, readOnly, taskName, type Interaction, type Project, type SessionDetail, type SessionSummary } from './api';
 import { initialState, loggedIn, reducer, type Auth } from './state';
 import { AppContext, Dot, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
@@ -25,9 +25,9 @@ import { TaskActionsContext, TaskList, type Renaming, type TaskActions } from '.
 import { TryModelDialog } from './components/Assist';
 import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
-import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
+import { AlertDialog, Sheet } from './components/ui/dialog';
 import { CoveredContext } from './components/ui/reader';
-import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
+import { SettleGuard, useUnsavedGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
@@ -386,51 +386,7 @@ export default function App() {
     }
   }, []);
 
-  // Settle and Archive of a Thread whose folder has unsaved git work ask first (SettleGuard): the service refuses
-  // without `force`, naming the counts and the first files. `changesRequest` asks the Thread's view to open its Changes.
-  const [unsaved, setUnsaved] = useState<UnsavedTarget | null>(null);
-  const [unsavedOpen, setUnsavedOpen] = useState(false);
-  const [forcing, setForcing] = useState(false);
-  const [changesRequest, setChangesRequest] = useState<{ id: string; at: number } | null>(null);
-  // Counts openings: a confirm whose request reopened the popover with a refusal leaves it open.
-  const unsavedAsked = useRef(0);
-  /** Opens the confirmation; `list` reads the folder's first changed files when no refusal named them. */
-  const openUnsaved = useCallback((t: UnsavedTarget, list?: () => Promise<ChangesData>) => {
-    unsavedAsked.current += 1;
-    setUnsaved(t);
-    setUnsavedOpen(true);
-    list?.().then((c) => {
-      const paths = c.files.filter((f) => f.status !== 'untracked').slice(0, 3).map((f) => f.path);
-      setUnsaved((u) => (u === t ? { ...t, paths } : u));
-    }).catch(() => {});
-  }, []);
-  /**
-   * Settle or Archive a Thread. Unsaved work the summary knows will stop it (`known`, see `putAwayWork`) opens the
-   * confirmation at once, with no request; otherwise `request` runs, and a refusal over work the summary did not know
-   * (a shared folder's Thread's own changes) opens it instead of failing.
-   * The anchor is read now, as the control is activated: the row stays on screen while its hover Settle leaves it.
-   */
-  const askUnsaved = useCallback(async <T,>(known: GitPending | null, request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, list: () => Promise<ChangesData>): Promise<T | void> => {
-    // Read now; a refusal while the plain Archive asks keeps that popover and its anchor.
-    const anchor = rowAnchor();
-    if (known) return openUnsaved(target({ pending: known, paths: [], anchor }), list);
-    try {
-      return await request();
-    } catch (e) {
-      const refused = unsavedRefusal(e);
-      if (!refused) throw e;
-      openUnsaved(target({ ...refused, anchor }));
-    }
-  }, [openUnsaved]);
-  /**
-   * Archive asks once: its dry run (`check`) reads the Thread's unsaved work before the popover opens, so it opens as
-   * the plain question or with the files. Any other failure (an older instance's 405) opens the plain one, whose
-   * request still meets the service's refusal in place.
-   */
-  const askArchive = useCallback((check: () => Promise<unknown>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, plain: () => Promise<unknown>) => {
-    const anchor = rowAnchor();
-    void check().then(() => null, unsavedRefusal).then((refused) => openUnsaved(refused ? target({ ...refused, anchor }) : { kind: 'archive', anchor, pending: null, paths: [], force: plain }));
-  }, [openUnsaved]);
+  const { guard, askUnsaved, askArchive, changesRequest, setChangesRequest, setUnsavedOpen } = useUnsavedGuard();
   /** This machine's Thread in the confirmation: its forced request, and Open Changes. */
   const localTarget = useCallback((id: string, kind: UnsavedTarget['kind']) => (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>): UnsavedTarget => ({
     kind,
@@ -441,7 +397,7 @@ export default function App() {
       select(id);
       setChangesRequest({ id, at: Date.now() });
     },
-  }), [runTask, api, select]);
+  }), [runTask, api, select, setUnsavedOpen, setChangesRequest]);
   const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(putAwayWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), localTarget(id, kind), () => api.changes(id, 'workspace')), `${kind} the thread`), [runTask, askUnsaved, api, localTarget]);
 
   /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
@@ -981,22 +937,7 @@ export default function App() {
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
-            <SettleGuard
-              target={unsaved}
-              open={unsavedOpen}
-              onOpenChange={(o) => !o && setUnsavedOpen(false)}
-              onClosed={() => setUnsaved(null)}
-              busy={forcing}
-              onConfirm={() => {
-                if (!unsaved) return;
-                const asked = unsavedAsked.current;
-                setForcing(true);
-                void unsaved.force().catch(() => {}).finally(() => {
-                  setForcing(false);
-                  if (unsavedAsked.current === asked) setUnsavedOpen(false);
-                });
-              }}
-            />
+            <SettleGuard {...guard} />
             <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />
           </div>
         </TooltipProvider>
