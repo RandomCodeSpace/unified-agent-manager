@@ -1,10 +1,13 @@
 package log
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -284,6 +287,68 @@ func Supervise(ctx context.Context, what string, fn func(), locks ...Lock) {
 		wait = min(wait*2, superviseMaxWait)
 	}
 }
+
+// Requests wraps an HTTP handler so a panic in a request is handled as
+// Recover handles one in a background goroutine: it is logged with its stack
+// and the process exits when one of locks was left held. With the locks free
+// the request fails with a 500 when nothing was sent yet; otherwise its
+// connection is dropped. http.ErrAbortHandler keeps its meaning: the
+// connection is dropped without a log line.
+func Requests(next http.Handler, locks ...Lock) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guarded := &guardedResponse{ResponseWriter: w}
+		defer func() {
+			p := recover()
+			if p == nil {
+				return
+			}
+			if p != http.ErrAbortHandler {
+				current.Error("request handler panicked", "method", r.Method, "path", r.URL.Path, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+			}
+			checkLocks("http request", p, locks)
+			if p == http.ErrAbortHandler || guarded.sent {
+				panic(http.ErrAbortHandler)
+			}
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(guarded, r)
+	})
+}
+
+// guardedResponse records whether anything reached the client, so a panic
+// handler knows if an error response can still be sent.
+type guardedResponse struct {
+	http.ResponseWriter
+	sent bool
+}
+
+func (w *guardedResponse) WriteHeader(code int) {
+	w.sent = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *guardedResponse) Write(b []byte) (int, error) {
+	w.sent = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush, FlushError and Hijack commit the response too, so they are seen
+// here instead of being reached through Unwrap.
+func (w *guardedResponse) Flush() { _ = w.FlushError() }
+
+func (w *guardedResponse) FlushError() error {
+	w.sent = true
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+func (w *guardedResponse) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	w.sent = w.sent || err == nil
+	return conn, rw, err
+}
+
+// Unwrap lets http.ResponseController reach deadlines and full duplex.
+func (w *guardedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // panicked runs fn and reports whether it ended in a panic, logged by Recover.
 func panicked(what string, fn func(), locks []Lock) (p bool) {

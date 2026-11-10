@@ -449,7 +449,7 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	defer func() { _ = os.Remove(statePath(dir)) }()
 
 	httpSrv := &http.Server{
-		Handler:           srv,
+		Handler:           log.Requests(srv, &mgr.mu),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
