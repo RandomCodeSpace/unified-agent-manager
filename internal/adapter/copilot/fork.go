@@ -174,9 +174,7 @@ func (p *webProvider) Fork(ctx context.Context, req agentapi.ForkRequest) (strin
 	res, err := forker.ForkSession(ctx, params)
 	var rpcErr *copilot.RPCError
 	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
-		p.mu.Lock()
-		p.forkUnsupported = true
-		p.mu.Unlock()
+		p.forkUnsupported.Store(true)
 		return "", agentapi.ErrUnsupported
 	}
 	if err != nil {

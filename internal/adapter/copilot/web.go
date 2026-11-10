@@ -369,19 +369,21 @@ type webProvider struct {
 	pingEvery time.Duration
 	kick      chan struct{}
 
-	mu                sync.Mutex
-	client            sdkClient
-	stop              chan struct{} // closed to end the current watchdog
-	convs             map[*conversation]struct{}
-	detaching         map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
-	shut              bool
-	importSupported   bool
-	forkUnsupported   bool
-	rewindUnsupported bool
-	importProbed      bool
+	mu           sync.Mutex
+	client       sdkClient
+	stop         chan struct{} // closed to end the current watchdog
+	convs        map[*conversation]struct{}
+	detaching    map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
+	shut         bool
+	importProbed bool
+	// The flags Capabilities reads are atomic so it never waits behind
+	// p.mu, which a CLI start holds for up to webStartTimeout.
+	importSupported   atomic.Bool
+	forkUnsupported   atomic.Bool
+	rewindUnsupported atomic.Bool
 	// assistedRefused says why the running CLI refused assisted
-	// permissions; a new CLI is asked again.
-	assistedRefused string
+	// permissions; a new CLI is asked again. Written under p.mu.
+	assistedRefused atomic.Pointer[string]
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -643,9 +645,11 @@ func (p *webProvider) Name() string        { return agentapi.ProviderCopilot }
 func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 
 func (p *webProvider) Capabilities() agentapi.Capabilities {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: p.assistedRefused == "", AssistedUnavailable: p.assistedRefused}
+	refused := ""
+	if r := p.assistedRefused.Load(); r != nil {
+		refused = *r
+	}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported.Load(), Rewind: !p.rewindUnsupported.Load(), SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported.Load(), HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: refused == "", AssistedUnavailable: refused}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -1936,13 +1940,13 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	if !p.importProbed {
 		if probe, ok := c.(interface{ ImportSupported(context.Context) bool }); ok {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
-			p.importSupported = probe.ImportSupported(probeCtx)
+			p.importSupported.Store(probe.ImportSupported(probeCtx))
 			probeCancel()
 		}
 		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
-	p.assistedRefused = ""
+	p.assistedRefused.Store(nil)
 	p.stalls.Store(0)
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()

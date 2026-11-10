@@ -102,7 +102,7 @@ func (c *conversation) refuseAssisted(why string) error {
 	reason := why + "; Assisted needs the CLI's AUTO_APPROVAL feature flag, which this CLI or its policy did not apply"
 	c.p.mu.Lock()
 	if c.p.client == c.client {
-		c.p.assistedRefused = reason
+		c.p.assistedRefused.Store(&reason)
 	}
 	c.p.mu.Unlock()
 	return fmt.Errorf("%w: %s", agentapi.ErrUnsupported, reason)

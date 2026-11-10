@@ -3232,3 +3232,40 @@ func TestWebSubagentDescriptionIsWhatItsCallAsked(t *testing.T) {
 	}
 	check("live", live)
 }
+
+// hangingStartClient is a fakeClient whose Start waits for release.
+type hangingStartClient struct {
+	*fakeClient
+	started chan struct{}
+	release chan struct{}
+}
+
+func (h hangingStartClient) Start(ctx context.Context) error {
+	close(h.started)
+	select {
+	case <-h.release:
+	case <-ctx.Done():
+	}
+	return h.fakeClient.Start(ctx)
+}
+
+// Capabilities answers while a CLI start hangs: web asks for it under its
+// own lock, so waiting behind the start would stall every handler.
+func TestCapabilitiesDoNotWaitForACLIStart(t *testing.T) {
+	h := hangingStartClient{fakeClient: &fakeClient{}, started: make(chan struct{}), release: make(chan struct{})}
+	p := newWebProvider(func() (sdkClient, error) { return h, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	go func() { _, _ = p.ensureStarted(context.Background()) }()
+	<-h.started
+	defer close(h.release)
+	done := make(chan agentapi.Capabilities, 1)
+	go func() { done <- p.Capabilities() }()
+	select {
+	case caps := <-done:
+		if !caps.Fork || !caps.Rewind || !caps.AssistedPermissions {
+			t.Fatalf("capabilities during a start = %+v", caps)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Capabilities waited for the CLI start")
+	}
+}
