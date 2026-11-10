@@ -427,6 +427,7 @@ func replaceBinary(staged, target string) error {
 func (p *webProvider) holdStarts() (release func(), err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.awaitStartLocked()
 	switch {
 	case p.shut:
 		return nil, agentapi.ErrClosed

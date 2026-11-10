@@ -384,8 +384,10 @@ type webProvider struct {
 	detaching    map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
 	shut         bool
 	importProbed bool
-	// The flags Capabilities reads are atomic so it never waits behind
-	// p.mu, which a CLI start holds for up to webStartTimeout.
+	// starting is the CLI start in flight, nil when none is: it runs
+	// without mu held, and ensureStarted waits for it.
+	starting *cliStart
+	// The flags Capabilities reads are atomic so it never takes p.mu.
 	importSupported   atomic.Bool
 	forkUnsupported   atomic.Bool
 	rewindUnsupported atomic.Bool
@@ -423,8 +425,7 @@ type webProvider struct {
 	// customMu guards custom, the owner's custom models, subagent, the
 	// models subagents may use (empty for any), githubMCP, whether
 	// sessions start the built-in GitHub MCP server, and gitRules and
-	// coauthor (git_rules.go); it is never held with mu, which a CLI start
-	// holds for long.
+	// coauthor (git_rules.go); it is never held with mu.
 	customMu  sync.Mutex
 	custom    []agentapi.CustomModel
 	subagent  []string
@@ -1898,72 +1899,160 @@ func (p *webProvider) InUse(ctx context.Context, ids []string) ([]string, error)
 	return held, nil
 }
 
+// cliStart is one CLI start: done closes when it has ended, and err then
+// says why it failed. cancel ends it early.
+type cliStart struct {
+	done   chan struct{}
+	cancel context.CancelFunc
+	err    error
+}
+
+// ensureStarted returns the running client and starts the CLI when none
+// runs. One start runs at a time, without mu held: each caller waits for it
+// within its own ctx and gets its result, and a failed one is started again
+// by the next call.
 func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// An update is replacing the CLI: a start waits for the new install
-	// instead of failing, and an outdated client is not handed out while it
-	// is being stopped. A current one keeps serving.
-	for p.updating != nil && (p.client == nil || p.outdated) {
-		updating := p.updating
+	for {
+		// An update is replacing the CLI: a start waits for the new install
+		// instead of failing, and an outdated client is not handed out while
+		// it is being stopped. A current one keeps serving.
+		for p.updating != nil && (p.client == nil || p.outdated) {
+			updating := p.updating
+			p.mu.Unlock()
+			select {
+			case <-updating:
+			case <-ctx.Done():
+			}
+			p.mu.Lock()
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("wait for the Copilot CLI update: %w", err)
+			}
+		}
+		if p.shut {
+			return nil, agentapi.ErrClosed
+		}
+		if p.client != nil {
+			return p.client, nil
+		}
+		st := p.starting
+		if st == nil {
+			st = p.startLocked()
+		}
 		p.mu.Unlock()
 		select {
-		case <-updating:
+		case <-st.done:
 		case <-ctx.Done():
+			p.mu.Lock()
+			return nil, fmt.Errorf("start copilot CLI: %s", errText(ctx.Err()))
 		}
 		p.mu.Lock()
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("wait for the Copilot CLI update: %w", err)
+		if st.err != nil {
+			return nil, st.err
 		}
 	}
-	if p.shut {
-		return nil, agentapi.ErrClosed
-	}
-	if p.client != nil {
-		return p.client, nil
-	}
-	if !p.swept {
-		p.swept = true
+}
+
+// startLocked begins a CLI start on its own goroutine. No caller's ctx
+// bounds it: the callers that wait for it each have their own. The caller
+// holds mu and has found no client and no start in flight.
+func (p *webProvider) startLocked() *cliStart {
+	ctx, cancel := context.WithCancel(context.Background())
+	st := &cliStart{done: make(chan struct{}), cancel: cancel}
+	p.starting = st
+	sweep, probe := !p.swept, !p.importProbed
+	p.swept = true
+	go p.runStart(ctx, st, sweep, probe)
+	return st
+}
+
+// runStart starts a CLI and, under mu, makes it the running client, unless
+// the start failed or the provider shut down meanwhile: then no CLI is left
+// running.
+func (p *webProvider) runStart(ctx context.Context, st *cliStart, sweep, probe bool) {
+	defer log.Recover("copilot CLI start", &p.mu)
+	var (
+		c    sdkClient
+		path string
+		file os.FileInfo
+		// What a start that panics ends with, so nothing waits on it for good.
+		err = errors.New("start copilot CLI: the start did not finish")
+	)
+	defer func() {
+		p.mu.Lock()
+		p.starting = nil
+		if p.shut {
+			err = agentapi.ErrClosed
+		}
+		if err == nil {
+			p.cliPath, p.cliFile, p.importProbed = path, file, true
+			p.client, p.stop = c, make(chan struct{})
+			p.assistedRefused.Store(nil)
+			p.stalls.Store(0)
+			// This CLI's sign-in read is newer than any call of the one before.
+			p.quotaMu.Lock()
+			p.live, p.plan, p.credits = nil, "", nil
+			p.quotaMu.Unlock()
+			go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
+		}
+		st.err = err
+		p.mu.Unlock()
+		if err != nil && c != nil {
+			c.ForceStop()
+		}
+		st.cancel()
+		close(st.done)
+	}()
+	if sweep {
 		if n := sweepOrphanCLIs(); n > 0 {
 			log.Warn("stopped copilot CLIs left running by a uam that is gone", "count", n)
 		}
 	}
 	// Read before the start: a file replaced meanwhile reads as replaced,
 	// never the reverse.
-	p.cliPath, p.cliFile = "", nil
 	if p.installedCLI != nil {
-		if path, info, err := p.installedCLI(); err == nil {
-			p.cliPath, p.cliFile = path, info
+		if now, info, statErr := p.installedCLI(); statErr == nil {
+			path, file = now, info
 		}
 	}
+	c, err = p.startClient(ctx, probe)
+}
+
+// startClient starts a CLI within webStartTimeout and returns its client;
+// probe also asks it whether it imports sessions. A CLI that fails to start
+// is stopped.
+func (p *webProvider) startClient(ctx context.Context, probe bool) (sdkClient, error) {
 	c, err := p.newClient()
 	if err != nil {
 		return nil, err
 	}
-	// ctx bounds only the start; the process itself is not tied to it.
 	sctx, cancel := context.WithTimeout(ctx, webStartTimeout)
 	defer cancel()
 	if err := c.Start(sctx); err != nil {
 		c.ForceStop()
 		return nil, fmt.Errorf("start copilot CLI: %s", errText(err))
 	}
-	if !p.importProbed {
+	if probe {
 		if probe, ok := c.(interface{ ImportSupported(context.Context) bool }); ok {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
 			p.importSupported.Store(probe.ImportSupported(probeCtx))
 			probeCancel()
 		}
-		p.importProbed = true
 	}
-	p.client, p.stop = c, make(chan struct{})
-	p.assistedRefused.Store(nil)
-	p.stalls.Store(0)
-	// This CLI's sign-in read is newer than any call of the one before.
-	p.quotaMu.Lock()
-	p.live, p.plan, p.credits = nil, "", nil
-	p.quotaMu.Unlock()
-	go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
 	return c, nil
+}
+
+// awaitStartLocked returns once no CLI start is in flight, for what stops or
+// replaces the CLI: it must not miss one that is starting. The caller holds
+// mu, which is released while it waits.
+func (p *webProvider) awaitStartLocked() {
+	for p.starting != nil {
+		done := p.starting.done
+		p.mu.Unlock()
+		<-done
+		p.mu.Lock()
+	}
 }
 
 // startUtility returns the running client for a utility prompt, counted
@@ -2077,6 +2166,16 @@ func (p *webProvider) forget(c *conversation) {
 func (p *webProvider) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	p.shut = true
+	if st := p.starting; st != nil {
+		// A start in flight ends early and stops what it started.
+		st.cancel()
+		p.mu.Unlock()
+		select {
+		case <-st.done:
+		case <-ctx.Done():
+		}
+		p.mu.Lock()
+	}
 	convs := p.takeConvs()
 	client := p.client
 	p.client, p.outdated = nil, false
@@ -4215,6 +4314,7 @@ func (c *conversation) forgetUnendedToolsLocked() {
 			delete(c.tr.clippedInput, id)
 		}
 	}
+	maps.DeleteFunc(c.tr.hidden, func(_, agent string) bool { return !c.subagentRunsLocked(agent) })
 }
 
 // turnFailure is what a session error says beside its message: its category
@@ -4568,9 +4668,9 @@ type transcript struct {
 	// Clipped, and clippedInput holds the running tool calls whose input was.
 	whole        bool
 	clippedInput map[string]bool
-	// hidden holds the IDs of running skill tool calls, which are not
-	// transcript items.
-	hidden map[string]struct{}
+	// hidden holds the running skill tool calls, which are not transcript
+	// items, each with its agent.
+	hidden map[string]string
 	// longest is the length of the main agent's longest reply since the
 	// owner's last prompt; promoted records, by receipt ID, whether a
 	// receipt's summary became a reply.
@@ -4601,7 +4701,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}, hidden: map[string]struct{}{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}, hidden: map[string]string{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -4752,7 +4852,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	case *rpc.ToolExecutionStartData:
 		if d.ToolName == skillTool {
 			// Loading a skill is bookkeeping, not work: skillLoad reports it.
-			t.hidden[d.ToolCallID] = struct{}{}
+			t.hidden[d.ToolCallID] = it.AgentID
 			return it, false
 		}
 		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
