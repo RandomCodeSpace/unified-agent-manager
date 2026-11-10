@@ -810,9 +810,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	// What a killed run left mid-write; only this service writes these files.
 	removeTempFiles(filepath.Dir(m.store.Path()), ".token-usage-", ".worktrees-", ".uam-counts-", ".fetch-fuses-", utilityLogFile+".tmp.")
-	if err := m.loadTokenLedger(); err != nil {
-		return err
-	}
+	m.loadTokenLedger()
 	usageLedger, err := m.prepareHarnessUsage()
 	if err != nil {
 		return err

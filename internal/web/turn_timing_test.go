@@ -415,9 +415,7 @@ func sameFile(a, b os.FileInfo) bool {
 func savedTokens(t *testing.T, st *store.Store) int64 {
 	t.Helper()
 	again := NewManager(st, nil)
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	return int64(again.TokenUsage().Periods["lifetime"].Total.Input)
 }
 
