@@ -24,6 +24,9 @@ const (
 	tokenFileName = "web-token"
 	tokenBytes    = 32
 	cookieName    = "uam_web"
+	// signingKeyFileName holds the random secret cookies and file keys are
+	// signed with (signingKey), next to the token and created the same way.
+	signingKeyFileName = "web-signing-key"
 	// fileCookieName is the companion of file keys over HTTPS (fileCookie).
 	fileCookieName = "uam_file"
 	cookieMaxAge   = 30 * 24 * 60 * 60
@@ -158,6 +161,16 @@ func SetToken(path, token string) error {
 	return nil
 }
 
+// signingKey is the HMAC key for session cookies, file keys and file
+// cookies: the random secret, bound to the token so a new token still
+// invalidates every cookie. Signing with the secret keeps the token itself
+// out of every signed value.
+func signingKey(secret, token string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("uam-web-signing-key-v1|" + token))
+	return mac.Sum(nil)
+}
+
 // sessionCookie derives a session cookie bound to the request host and valid
 // until exp (Unix seconds). The cookie never carries the token itself and
 // survives service restarts; replacing the token file invalidates every
@@ -166,18 +179,18 @@ func SetToken(path, token string) error {
 // one, and the expiry bounds how long a leaked cookie stays usable. The
 // nonce makes each sign-in its own session, so Log out can revoke one
 // cookie (by its MAC, see revokedSessions) and no other.
-func sessionCookie(token, host string, exp int64) string {
+func sessionCookie(key []byte, host string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
 	nonce := rand.Text()
-	return e + "." + nonce + "." + cookieMAC(token, host, e, nonce)
+	return e + "." + nonce + "." + cookieMAC(key, host, e, nonce)
 }
 
 // cookieMAC signs a session cookie. An empty nonce is a cookie issued before
 // the nonce existed; those are still accepted until they expire, so an
 // upgrade signs nobody out. Drop that label once they are all expired
 // (cookieMaxAge after 2026-10-13).
-func cookieMAC(token, host, exp, nonce string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func cookieMAC(key []byte, host, exp, nonce string) string {
+	mac := hmac.New(sha256.New, key)
 	if nonce == "" {
 		mac.Write([]byte("uam-web-session-v3|" + strings.ToLower(host) + "|" + exp))
 	} else {
@@ -191,13 +204,13 @@ func cookieMAC(token, host, exp, nonce string) string {
 // from the Task's directory is sandboxed, so its requests for its sibling
 // files carry no cookie; under a key in the path its relative links still
 // resolve, and the key opens no other route and no other Task.
-func fileKey(token, host, id string, exp int64) string {
+func fileKey(key []byte, host, id string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileKeyMAC(token, host, id, e)
+	return e + "." + fileKeyMAC(key, host, id, e)
 }
 
-func fileKeyMAC(token, host, id, exp string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func fileKeyMAC(key []byte, host, id, exp string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("uam-web-file-v2|" + strings.ToLower(host) + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -211,7 +224,7 @@ func (s *Server) validFileKey(key, host, id string) bool {
 	if err != nil || time.Now().Unix() >= until {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.token, host, id, exp))) == 1
+	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.signKey, host, id, exp))) == 1
 }
 
 // fileCookie derives the companion a file key needs over HTTPS: the view route
@@ -219,13 +232,13 @@ func (s *Server) validFileKey(key, host, id string) bool {
 // path, so the key in a view URL opens nothing without the browser that
 // opened it. SameSite=None lets the sandboxed page's own requests carry it;
 // plain HTTP cannot set such a cookie, so there the key alone is checked.
-func fileCookie(token, host, id string, exp int64) string {
+func fileCookie(key []byte, host, id string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileCookieMAC(token, host, id, e)
+	return e + "." + fileCookieMAC(key, host, id, e)
 }
 
-func fileCookieMAC(token, host, id, exp string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func fileCookieMAC(key []byte, host, id, exp string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("uam-web-file-cookie-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -242,7 +255,7 @@ func (s *Server) validFileCookie(r *http.Request, id string) bool {
 		if err != nil || time.Now().Unix() >= until {
 			continue
 		}
-		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.token, r.Host, id, exp))) == 1 {
+		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.signKey, r.Host, id, exp))) == 1 {
 			return true
 		}
 	}
@@ -274,7 +287,11 @@ func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
 	if !ok {
 		nonce, mac = "", rest
 	}
-	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.token, r.Host, e, nonce))) != 1 {
+	// A cookie signed with the token itself is from before signKey; accept it
+	// until it expires so the upgrade signs nobody out. Drop that fallback
+	// cookieMaxAge after 2026-11-10.
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, r.Host, e, nonce))) != 1 &&
+		subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC([]byte(s.token), r.Host, e, nonce))) != 1 {
 		return "", 0, false
 	}
 	return mac, exp, true

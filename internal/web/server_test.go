@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,8 +67,8 @@ func TestSessionCookieFromBeforeTheCurrentLabelIsRefused(t *testing.T) {
 	}
 }
 
-func validCookie(host string) string {
-	return sessionCookie(testToken, host, time.Now().Add(time.Hour).Unix())
+func validCookie(s *Server, host string) string {
+	return sessionCookie(s.signKey, host, time.Now().Add(time.Hour).Unix())
 }
 
 type reqOpt func(*http.Request)
@@ -74,7 +76,7 @@ type reqOpt func(*http.Request)
 func withHeader(k, v string) reqOpt { return func(r *http.Request) { r.Header.Set(k, v) } }
 func withHost(h string) reqOpt      { return func(r *http.Request) { r.Host = h } }
 func withCookie(ts *testServer) reqOpt {
-	return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(r.Host)}) }
+	return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(ts.srv, r.Host)}) }
 }
 
 func (ts *testServer) login(t *testing.T, host string) reqOpt {
@@ -513,7 +515,8 @@ func TestRoutesReportFailures(t *testing.T) {
 	}
 	t.Cleanup(imp.Close)
 	prov.SetPrevious(nil, errors.New("listing failed"))
-	w = (&testServer{srv: imp, m: m, prov: prov}).do(http.MethodGet, "/api/previous/counts", "", auth)
+	its := &testServer{srv: imp, m: m, prov: prov}
+	w = its.do(http.MethodGet, "/api/previous/counts", "", withCookie(its))
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "could not list previous") {
 		t.Fatalf("previous counts = %d %s", w.Code, w.Body)
 	}
@@ -597,7 +600,7 @@ func TestEventStreamOverHTTP(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/api/events?session="+sum.ID, nil)
-	req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(req.Host)})
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(ts.srv, req.Host)})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -669,14 +672,14 @@ func TestSessionCookieIsHostBoundAndExpires(t *testing.T) {
 			r.AddCookie(&http.Cookie{Name: cookieName, Value: cookie})
 		}).Code
 	}
-	loopback := validCookie("127.0.0.1:8260")
+	loopback := validCookie(ts.srv, "127.0.0.1:8260")
 	if code := sessions("127.0.0.1:8260", loopback); code != http.StatusOK {
 		t.Fatalf("cookie on its own host = %d, want 200", code)
 	}
 	if code := sessions("uam.example.com", loopback); code != http.StatusUnauthorized {
 		t.Fatalf("loopback cookie replayed at the public host = %d, want 401", code)
 	}
-	expired := sessionCookie(testToken, "127.0.0.1:8260", time.Now().Add(-time.Second).Unix())
+	expired := sessionCookie(ts.srv.signKey, "127.0.0.1:8260", time.Now().Add(-time.Second).Unix())
 	if code := sessions("127.0.0.1:8260", expired); code != http.StatusUnauthorized {
 		t.Fatalf("expired cookie = %d, want 401", code)
 	}
@@ -702,7 +705,7 @@ func TestSessionCookieIsHostBoundAndExpires(t *testing.T) {
 	if code := sessions("evil.example", loopback); code != http.StatusUnauthorized {
 		t.Fatalf("loopback cookie replayed at a foreign host = %d, want 401", code)
 	}
-	if code := sessions("evil.example", validCookie("evil.example")); code != http.StatusOK {
+	if code := sessions("evil.example", validCookie(ts.srv, "evil.example")); code != http.StatusOK {
 		t.Fatalf("cookie minted for a foreign host on that host = %d, want 200", code)
 	}
 }
@@ -712,5 +715,44 @@ func TestLoginBodyIsSmall(t *testing.T) {
 	body := `{"token":"` + strings.Repeat("a", maxLoginBytes) + `"}`
 	if w := ts.do(http.MethodPost, "/api/login", body); w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized login = %d, want 413", w.Code)
+	}
+}
+
+// Cookies and file keys are signed with a separate secret kept in its own
+// owner-only file, not with the access token; a cookie signed with the token
+// by an earlier release still signs in until it expires.
+func TestSigningUsesASeparateSecret(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	path := filepath.Join(filepath.Dir(ts.m.store.Path()), signingKeyFileName)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("signing key mode = %v", info.Mode().Perm())
+	}
+	if bytes.Equal(ts.srv.signKey, []byte(testToken)) {
+		t.Fatal("signing key is the token")
+	}
+	sum, _ := viewTask(t, ts)
+	e := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	byToken := e + "." + legacyMAC("uam-web-file-v2|127.0.0.1:8260|"+sum.ID+"|"+e)
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+byToken+"/notes.md", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("file key signed with the token = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+fileKey(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(time.Hour).Unix())+"/notes.md", ""); w.Code != http.StatusOK {
+		t.Fatalf("file key = %d", w.Code)
+	}
+	old := sessionCookie([]byte(testToken), "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())
+	if w := ts.do(http.MethodGet, "/api/sessions", "", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: old}) }); w.Code != http.StatusOK {
+		t.Fatalf("session cookie from before the signing key = %d", w.Code)
+	}
+	again, err := NewServer(ServerConfig{Manager: ts.m, Token: testToken, Assets: fstest.MapFS{"index.html": {Data: []byte("x")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(again.Close)
+	if !bytes.Equal(again.signKey, ts.srv.signKey) {
+		t.Fatal("signing key changed across restarts")
 	}
 }

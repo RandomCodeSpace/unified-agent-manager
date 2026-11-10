@@ -27,7 +27,7 @@ func TestDetailEventsKeepUntrustedBodiesInsideJSON(t *testing.T) {
 	defer cancel()
 	interest, _ := json.Marshal([]string{"", itemID})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, host.URL+"/api/events/detail?session="+sum.ID+"&item="+url.QueryEscape(string(interest)), nil)
-	req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(req.Host)})
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(ts.srv, req.Host)})
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

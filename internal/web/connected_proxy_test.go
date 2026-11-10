@@ -92,7 +92,7 @@ func (f *connectedProxyFixture) request(t *testing.T, method, localPath, body st
 	if method != "GET" && method != "HEAD" && r.Header.Get("Content-Type") == "" {
 		r.Header.Set("Content-Type", "application/json")
 	}
-	r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(r.URL.Host)})
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(f.home.srv, r.URL.Host)})
 	response, err := f.client.Do(r)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestConnectedProxyFiltersInformationalHeadersAndTrailers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(r.URL.Host)})
+			r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(f.home.srv, r.URL.Host)})
 			var informational atomic.Int32
 			r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{Got1xxResponse: func(_ int, _ textproto.MIMEHeader) error {
 				informational.Add(1)
@@ -308,7 +308,7 @@ func TestConnectedProxyWebSocketOriginAndGeneration(t *testing.T) {
 		}
 	})
 	u, _ := url.Parse(f.server.URL)
-	headers := http.Header{"Cookie": {cookieName + "=" + validCookie(u.Host)}, "Origin": {"https://foreign.example"}}
+	headers := http.Header{"Cookie": {cookieName + "=" + validCookie(f.home.srv, u.Host)}, "Origin": {"https://foreign.example"}}
 	target := f.server.URL + "/api/connected/" + f.target.ID + "/api/projects/project/terminal?uam_generation=" + strconv.FormatUint(f.target.Generation, 10)
 	conn, response, err := websocket.Dial(context.Background(), target, &websocket.DialOptions{HTTPClient: f.client, HTTPHeader: headers})
 	if conn != nil {

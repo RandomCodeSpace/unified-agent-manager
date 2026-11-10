@@ -402,10 +402,10 @@ func TestViewFileOverHTTPSNeedsTheCompanionCookie(t *testing.T) {
 		"sibling in another folder":        {prefix + key + "/shot.png", []reqOpt{https, withFile(companion.Value)}, http.StatusOK},
 		"key without the cookie":           {loc, []reqOpt{https}, http.StatusUnauthorized},
 		"key with the sign-in cookie only": {loc, []reqOpt{https, auth}, http.StatusUnauthorized},
-		"cookie of another Task":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", other.ID, exp))}, http.StatusUnauthorized},
-		"cookie of another host":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "evil.example", sum.ID, exp))}, http.StatusUnauthorized},
-		"expired cookie":                   {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Second).Unix()))}, http.StatusUnauthorized},
-		"cookie of another secret":         {loc, []reqOpt{https, withFile(fileCookie("another-secret-token-0123456789", "127.0.0.1:8260", sum.ID, exp))}, http.StatusUnauthorized},
+		"cookie of another Task":           {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "127.0.0.1:8260", other.ID, exp))}, http.StatusUnauthorized},
+		"cookie of another host":           {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "evil.example", sum.ID, exp))}, http.StatusUnauthorized},
+		"expired cookie":                   {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Second).Unix()))}, http.StatusUnauthorized},
+		"cookie of another secret":         {loc, []reqOpt{https, withFile(fileCookie([]byte("another-secret-token-0123456789"), "127.0.0.1:8260", sum.ID, exp))}, http.StatusUnauthorized},
 		"tampered cookie":                  {loc, []reqOpt{https, withFile(companion.Value + "0")}, http.StatusUnauthorized},
 		"file key as the cookie":           {loc, []reqOpt{https, withFile(key)}, http.StatusUnauthorized},
 		// Plain HTTP (loopback, SSH) cannot hold a Secure cookie: the key alone opens.
@@ -474,7 +474,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 		t.Fatalf("keyed outside link = %d", w.Code)
 	}
 
-	expired := fileKey(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
+	expired := fileKey(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
 	// The last hex digit changed, never replaced by itself.
 	flip := "0"
 	if strings.HasSuffix(key, "0") {
@@ -487,7 +487,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 		"tampered":     keyURL(sum.ID, key[:len(key)-1]+flip, "notes.md"),
 		"extended":     keyURL(sum.ID, strconv.FormatInt(valid, 10)+key[strings.IndexByte(key, '.'):], "notes.md"),
 		"no mac":       keyURL(sum.ID, strconv.FormatInt(valid, 10), "notes.md"),
-		"other secret": keyURL(sum.ID, fileKey("another-token-of-24-chars-plus", "127.0.0.1:8260", sum.ID, valid), "notes.md"),
+		"other secret": keyURL(sum.ID, fileKey([]byte("another-token-of-24-chars-plus"), "127.0.0.1:8260", sum.ID, valid), "notes.md"),
 	}
 	for name, target := range refused {
 		if w := ts.do(http.MethodGet, target, ""); w.Code != http.StatusUnauthorized {

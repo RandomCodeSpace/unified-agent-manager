@@ -296,7 +296,7 @@ func TestSetTokenValidatesAndReplacesTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(after.Close)
-	cookie := &http.Cookie{Name: cookieName, Value: sessionCookie(old, "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())}
+	cookie := &http.Cookie{Name: cookieName, Value: sessionCookie(before.signKey, "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())}
 	for _, tc := range []struct {
 		srv  *Server
 		want int

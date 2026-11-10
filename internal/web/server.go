@@ -110,6 +110,7 @@ type Server struct {
 	transports    proxyTransports
 	m             *Manager
 	token         string
+	signKey       []byte // signs cookies and file keys (signingKey)
 	headerLog     bool
 	csrf          *http.CrossOriginProtection
 	assets        fs.FS
@@ -179,7 +180,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if s.m.store == nil || s.m.ctx == nil {
 		return nil, errors.New("web server needs persistent manager state")
 	}
-	var err error
+	signingSecret, err := LoadOrCreateToken(filepath.Join(filepath.Dir(s.m.store.Path()), signingKeyFileName))
+	if err != nil {
+		return nil, fmt.Errorf("signing key: %w", err)
+	}
+	s.signKey = signingKey(signingSecret, s.token)
 	s.connections, err = openConnectionRegistry(s.m.ctx, filepath.Dir(s.m.store.Path()), s.token)
 	if err != nil {
 		return nil, fmt.Errorf("connection state: %w", err)
@@ -592,7 +597,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signIns.succeeded(r)
-	s.setCookie(w, r, sessionCookie(s.token, r.Host, time.Now().Add(cookieMaxAge*time.Second).Unix()), cookieMaxAge)
+	s.setCookie(w, r, sessionCookie(s.signKey, r.Host, time.Now().Add(cookieMaxAge*time.Second).Unix()), cookieMaxAge)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1218,11 +1223,11 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		exp := time.Now().Add(fileKeyTTL).Unix()
-		key := fileKey(s.token, r.Host, id, exp)
+		key := fileKey(s.signKey, r.Host, id, exp)
 		prefix := "/api/sessions/" + url.PathEscape(id) + "/files/key/"
 		target := prefix + key + "/" + viewPath(r.PathValue("path"))
 		if secureRequest(r) {
-			setFileCookie(w, fileCookie(s.token, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
+			setFileCookie(w, fileCookie(s.signKey, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
 		}
 		if r.URL.Query().Get("download") == "1" {
 			target += "?download=1"
