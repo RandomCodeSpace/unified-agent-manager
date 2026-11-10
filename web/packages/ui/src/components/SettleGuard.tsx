@@ -1,5 +1,6 @@
 import { ArrowUpFromLine, FileDiff, FilePen } from 'lucide-react';
 import type { GitPending } from '../api';
+import { Blocks } from './ui/blocks';
 import { Button } from './ui/button';
 import { AlertDialog } from './ui/dialog';
 
@@ -59,20 +60,14 @@ export function SettleGuard({ target, open, onOpenChange, onClosed, busy, onConf
         </Button>
       )}
     >
-      {p && <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        {p.uncommitted > 0 && (
-          <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
-            <FilePen aria-hidden="true" className="size-3" />
-            {p.uncommitted} not committed
-          </span>
-        )}
-        {p.unpushed > 0 && (
-          <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-warning-wash px-1.5 text-caption text-warning tabular-nums">
-            <ArrowUpFromLine aria-hidden="true" className="size-3" />
-            {p.unpushed} not pushed
-          </span>
-        )}
-      </span>}
+      {/* Counts are blocks (DESIGN.md): neutral cells, the tone on the glyph and the word; nothing here is a filled tag. */}
+      {p && <Blocks
+        className="mt-1.5"
+        items={[
+          ...(p.uncommitted > 0 ? [{ key: 'uncommitted', tone: 'warning' as const, Icon: FilePen, label: `${p.uncommitted} not committed`, title: `${p.uncommitted} ${p.uncommitted === 1 ? 'file' : 'files'} not committed` }] : []),
+          ...(p.unpushed > 0 ? [{ key: 'unpushed', tone: 'warning' as const, Icon: ArrowUpFromLine, label: `${p.unpushed} not pushed`, title: `${p.unpushed} ${p.unpushed === 1 ? 'commit' : 'commits'} not pushed` }] : []),
+        ]}
+      />}
       {paths.length > 0 && (
         <ul aria-label="Not committed" className="mt-1 flex flex-col">
           {paths.map((path) => {

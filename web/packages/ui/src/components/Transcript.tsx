@@ -21,7 +21,7 @@ import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { NoRecordSlot, Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, Summary, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentTag, useLiveSubagentIds, useScope, useSubagentReplies } from './Subagents';
@@ -1282,7 +1282,7 @@ function ResumeWarning({ text, className }: Readonly<{ text: string; className?:
   return (
     <div className={cn('flex min-h-8 flex-col justify-center text-caption text-muted', className)}>
       <details>
-        <summary className="cursor-pointer">{calls} tool {calls === '1' ? 'call' : 'calls'} had no result at resume</summary>
+        <Summary>{calls} tool {calls === '1' ? 'call' : 'calls'} had no result at resume</Summary>
         <Markdown text={text} className="mt-1 [&_p]:m-0" />
       </details>
     </div>
@@ -1318,7 +1318,7 @@ function UamNotes({ text, className }: Readonly<{ text: string; className?: stri
         if (memory) {
           return (
             <details key={index}>
-              <summary className="cursor-pointer">{memory[1].charAt(0).toUpperCase() + memory[1].slice(1)}</summary>
+              <Summary>{memory[1].charAt(0).toUpperCase() + memory[1].slice(1)}</Summary>
               <p className="m-0 mt-1 break-words whitespace-pre-wrap">{memory[2]}</p>
             </details>
           );

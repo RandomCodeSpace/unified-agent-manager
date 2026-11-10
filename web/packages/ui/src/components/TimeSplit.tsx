@@ -5,6 +5,7 @@ import { describeError, LIVE, type SessionSummary, type TimeSplit } from '../api
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
 import { formatCount } from '../lib/cost';
+import { Summary } from './common';
 import { Blocks, type Block } from './ui/blocks';
 import { Tip } from './ui/tooltip';
 
@@ -98,7 +99,7 @@ export function ToolTimes({ split }: Readonly<{ split: TimeSplit }>) {
   return <>
     <div className={grid}>{split.tools.slice(0, TOP_TOOLS).map(tool)}</div>
     {split.tools.length > TOP_TOOLS && <details className="mt-1.5">
-      <summary className="cursor-pointer text-caption text-muted">{plural(split.tools.length - TOP_TOOLS, 'more tool')}</summary>
+      <Summary className="text-caption text-muted">{plural(split.tools.length - TOP_TOOLS, 'more tool')}</Summary>
       <div className={cn(grid, 'mt-1.5')}>{split.tools.slice(TOP_TOOLS).map(tool)}</div>
     </details>}
     <p className="mt-1.5 text-caption text-muted">Each tool's own run time without waiting; runs that overlap count for each tool.</p>

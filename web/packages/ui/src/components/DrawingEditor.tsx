@@ -16,6 +16,7 @@ import { DrawingsContext, type DrawingView, type OpenDrawing } from './Drawing';
 import { Figure, fileName, useBackground, useDrawioPicture, useParsed, usePicture } from './DrawingCards';
 import type { ExcalidrawImperativeAPI } from './ExcalidrawCanvas';
 import { Key } from './InlinePicker';
+import { Blocks } from './ui/blocks';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { backdropClass, readerPopupClass } from './ui/dialog';
@@ -162,7 +163,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             items={[
               { value: 'agent', label: `Agent’s v${doc.agent_version}` },
               { value: 'mine', label: count ? `Yours v${doc.version}` : 'Yours' },
-              { value: 'changes', label: count ? <span className="flex items-center gap-1.5">Changes<span className="rounded-full bg-warning-wash px-1.5 text-meta font-semibold text-warning tabular-nums">{count}</span></span> : 'Changes', disabled: !count },
+              { value: 'changes', label: count ? <span className="flex items-center gap-1.5">Changes<Blocks items={[{ key: 'count', tone: 'warning', label: count, title: changesWord(count) }]} /></span> : 'Changes', disabled: !count },
             ]}
           />
         )}

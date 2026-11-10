@@ -56,14 +56,14 @@ export function Segmented({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-[5px] bg-raised shadow-raised transition-transform duration-(--spring-base) ease-spring"
+        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-xs bg-raised shadow-raised transition-transform duration-(--spring-base) ease-spring"
       />
       {items.map((it) => (
         <Radio.Root
           key={it.value}
           value={it.value}
           disabled={it.disabled}
-          className="flex h-full cursor-pointer items-center justify-center rounded-[5px] px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45"
+          className="flex h-full cursor-pointer items-center justify-center rounded-xs px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45"
         >
           {it.label}
         </Radio.Root>

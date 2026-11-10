@@ -41,6 +41,55 @@ test('every colour token has a dark value', () => {
   assert.deepEqual(Object.keys(dark).sort(), Object.keys(light).sort());
 });
 
+const sources = () => {
+  const src = new URL('../src/', import.meta.url);
+  return readdirSync(src, { recursive: true }).filter((f) => f.endsWith('.tsx') && !f.startsWith('mock')).map((file) => [file, readFileSync(new URL(file, src), 'utf8')]);
+};
+
+test('"phone" is one width: the JavaScript media query is the stylesheet\'s sm breakpoint', () => {
+  const sm = css.match(/--breakpoint-sm:\s*(\d+px);/)[1];
+  const dialog = readFileSync(new URL('../src/components/ui/dialog.tsx', import.meta.url), 'utf8');
+  assert.equal(dialog.match(/export const PHONE = '([^']+)';/)[1], `(width < ${sm})`);
+});
+
+test('the terminal palette holds the token values it names, in both schemes', () => {
+  // Each palette line names its token: `red: '#c4262d', // error`. The dark palette is the second object.
+  const src = readFileSync(new URL('../src/components/Terminal.tsx', import.meta.url), 'utf8');
+  const split = src.indexOf("background: '", src.indexOf("background: '") + 1);
+  const drift = [];
+  for (const m of src.matchAll(/'(#[0-9a-f]{6})', \/\/ ([a-z-]+)/g)) {
+    const tokens = m.index < split ? light : dark;
+    if (m[2] in tokens && tokens[m[2]].toLowerCase() !== m[1]) drift.push(`${m.index < split ? 'light' : 'dark'} ${m[2]}: ${m[1]}, token ${tokens[m[2]]}`);
+  }
+  assert.ok(split > 0);
+  assert.deepEqual(drift, []);
+});
+
+test('shadows and tints are ink from the tokens: the old cool ink is gone', () => {
+  const cool = /20,\s*28,\s*45/;
+  assert.doesNotMatch(css, cool);
+  assert.deepEqual(sources().filter(([, text]) => cool.test(text)).map(([file]) => file), []);
+});
+
+test('every native disclosure draws the app chevron', () => {
+  // A summary is the shared Summary (common.tsx) or holds a chevron of its own; the queue strip's summary is a toolbar row.
+  const bare = [];
+  for (const [file, text] of sources()) {
+    for (const m of text.matchAll(/<summary\b[\s\S]{0,400}/g)) if (!m[0].includes('Chevron')) bare.push(file);
+  }
+  assert.deepEqual(bare, ['components/Composer.tsx']);
+});
+
+test('a page heading is `title` in a view\'s bar or `display-md` on an empty state, and every view header is the shared bar', () => {
+  const sizes = [], headers = [];
+  for (const [file, text] of sources()) {
+    for (const [, className] of text.matchAll(/<h1\b[^>]*?className="([^"]*)"/g)) if (!/\btext-(title|display-md)\b/.test(className)) sizes.push(`${file}: ${className}`);
+    if (/<header className="[^"]*h-header/.test(text)) headers.push(file);
+  }
+  assert.deepEqual(sizes, []);
+  assert.deepEqual(headers, []);
+});
+
 // WCAG relative luminance and contrast of #rrggbb colours.
 const luminance = (hex) => {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));

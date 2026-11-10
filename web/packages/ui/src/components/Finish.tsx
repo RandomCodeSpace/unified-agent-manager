@@ -8,7 +8,7 @@ import type { CommandOutput } from './CommandOutput';
 import { useBodyRead } from './Details';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { LineCounts } from './common';
+import { LineCounts, Summary } from './common';
 
 /**
  * "Since you left": one line under the Task header when the Task changed while the owner was
@@ -147,7 +147,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
   return (
     <section aria-label="Finished — check the evidence" className="max-h-[35%] min-h-10 shrink overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
       <details open>
-        <summary className="cursor-pointer text-ui font-medium text-ink">Finished — check the evidence</summary>
+        <Summary className="text-ui font-medium text-ink">Finished — check the evidence</Summary>
         <div className="flex flex-col gap-3 pt-2">
           {unverified > 0 && <Chip className="self-start bg-warning-wash text-warning">{unverified} {unverified === 1 ? 'claim' : 'claims'} not verified</Chip>}
           {(checks.length > 0 || claims.length > 0) && <ul className="flex flex-col divide-y divide-hairline">
@@ -171,7 +171,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
                     {output(c)}
                   </> : (
                     <details className="min-w-0 flex-1">
-                      <summary className="cursor-pointer text-ui text-ink">{`${checkText(c.kinds)} ×${runs.length}`}</summary>
+                      <Summary className="text-ui text-ink">{`${checkText(c.kinds)} ×${runs.length}`}</Summary>
                       <ul className="flex flex-col gap-1.5 pt-1.5">
                         {runs.map((r) => (
                           <li key={r.item_id} className="flex items-start gap-3">

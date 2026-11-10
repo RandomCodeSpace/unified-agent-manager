@@ -31,8 +31,10 @@ describe('settling or archiving with unsaved git work', () => {
     expectAnchoredTo(dialog, 't15');
     const guard = within(dialog);
     expect(guard.getByText('Settling moves this Thread out of Active (Reopen brings it back); this work is not saved anywhere else.')).toBeTruthy();
-    expect(guard.getByText('2 not committed')).toBeTruthy();
-    expect(guard.getByText('3 not pushed')).toBeTruthy();
+    // Counts are neutral blocks with the tone on the glyph and the word (ui/blocks), never a filled tag.
+    expect(guard.getByText('2 not committed').closest<HTMLElement>('[data-tone]')!.dataset.tone).toBe('warning');
+    expect(guard.getByText('3 not pushed').closest<HTMLElement>('[data-tone]')!.dataset.tone).toBe('warning');
+    expect(guard.getByText('2 files not committed', { selector: '.sr-only' })).toBeTruthy();
     await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
     await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Remove unused exports across packages' })).toBeNull());
     expect(stage.mock.calls).toEqual([['t15', 'settle', { force: true }]]);

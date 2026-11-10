@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Archive, Ban, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, Check, CircleDashed, Clock, Copy, CornerDownLeft, ExternalLink, Eye, ImageIcon, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, ShieldQuestionMark, SkipForward, Square, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { Archive, Ban, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, Check, Clock, Copy, CornerDownLeft, ExternalLink, Eye, ImageIcon, ImageOff, Info, Lightbulb, MessageCircleQuestion, OctagonAlert, Pause, ShieldQuestionMark, SkipForward, Square, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -26,7 +26,7 @@ import { DiagramCard } from './Diagram';
 import { MarkdownTable } from './DataTable';
 import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
-import { Chip, chipVariants } from './ui/chip';
+import { chipVariants } from './ui/chip';
 import { Input } from './ui/input';
 import { ContextMenu, useLazyContextMenu, type ActionItem } from './ui/menu';
 
@@ -44,20 +44,6 @@ export const STATE_LABELS: Record<SessionState, string> = {
 };
 
 export type Tone = 'accent' | 'attention' | 'success' | 'error' | 'warning' | 'muted' | 'faint';
-
-/** Colour is reserved for act-now (attention), in-motion (accent) and broken (error/warning). */
-export const STATE_TONE: Record<SessionState, Tone> = {
-  idle: 'faint',
-  starting: 'accent',
-  working: 'accent',
-  awaiting_permission: 'warning',
-  awaiting_answer: 'warning',
-  completed: 'success',
-  cancelled: 'muted',
-  failed: 'error',
-  interrupted: 'warning',
-  closed: 'faint',
-};
 
 export const TONE_TEXT: Record<Tone, string> = {
   accent: 'text-accent',
@@ -86,6 +72,8 @@ const TONE_BG: Record<Tone, string> = {
  */
 export const BAR_ROW = 'relative z-10 flex h-header shrink-0 items-center px-1.5 sm:px-2';
 export const BAR_BOX = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 pr-1 pl-1.5';
+/** The same bar as the header of a view that scrolls beneath it (Settings, Routines, a loading pane): `.pane-header` adds the canvas and the scroll fade. */
+export const VIEW_BAR = `pane-header ${BAR_ROW}`;
 
 export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was not resumed or resent.';
 
@@ -134,30 +122,15 @@ export function useMedia(query: string): boolean {
 }
 
 /**
- * State mark (DESIGN.md): a dot for in-motion and act-now states, a drawn glyph for the
- * finished ones, always with the word for assistive tech. `label` renders the word too,
- * as a chip; only the attention chip has a fill.
+ * A native disclosure's summary with the app's chevron: the browser's own marker is hidden everywhere (index.css).
+ * The chevron turns with its own `<details>`, so one disclosure inside another keeps its own.
  */
-export function StateMark({ state, label = false, compacting = false, title, className, text = STATE_LABELS[state] ?? state, icon, tone = STATE_TONE[state] }: Readonly<{ state: SessionState; label?: boolean; compacting?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…", "Stopped: credit limit"). */ text?: string; /** The glyph in place of the state's. */ icon?: ReactNode; /** The chip's tone in place of the state's, with `icon` and `text` saying the same. */ tone?: Tone }>) {
-  // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
-  const glyph = (
-    <span key={state} className="flex animate-fade-in">
-      {compacting ? <Minimize2 aria-hidden="true" className="size-3.5 text-badge-violet" /> : icon ?? <StateGlyph state={state} />}
-    </span>
-  );
-  if (!label) {
-    return (
-      <span className={cn('inline-flex size-4 shrink-0 items-center justify-center', className)} title={title}>
-        {glyph}
-        <span className="sr-only">{text}</span>
-      </span>
-    );
-  }
+export function Summary({ className, children }: Readonly<{ className?: string; children: ReactNode }>) {
   return (
-    <Chip tone={tone === 'faint' ? 'muted' : tone} className={cn(compacting && 'text-badge-violet', className)} title={title}>
-      {glyph}
-      {text}
-    </Chip>
+    <summary className={cn('flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden', className)}>
+      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted transition-transform duration-160 [[open]>summary>&]:rotate-z-90" />
+      {children}
+    </summary>
   );
 }
 
@@ -194,7 +167,7 @@ const STATUS_MARKS = {
 export type StatusWord = keyof typeof STATUS_MARKS;
 
 /** The state label of a Thread row and of the Thread header. An unread Finished keeps the word and takes its own glyph and `ink`. */
-export function StateLabel({ status, unread = false, text = status, icon, title, className }: Readonly<{ status: StatusWord; unread?: boolean; /** The word in place of the state's ("Stopped: credit limit"). */ text?: string; /** The glyph in place of the state's. */ icon?: ReactNode; title?: string; className?: string }>) {
+export function StateLabel({ status, unread = false, bare = false, text = status, icon, title, className }: Readonly<{ status: StatusWord; unread?: boolean; /** The glyph alone, the word for screen readers (the phone's Thread header). */ bare?: boolean; /** The word in place of the state's ("Stopped: credit limit"). */ text?: string; /** The glyph in place of the state's. */ icon?: ReactNode; title?: string; className?: string }>) {
   const { icon: Icon, tone, rung } = STATUS_MARKS[status];
   const fresh = unread && status === 'Finished';
   const glyph = icon ?? (fresh ? <Eye aria-hidden="true" className="size-3.5 shrink-0 text-badge-teal" /> : <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', tone)} />);
@@ -209,43 +182,20 @@ export function StateLabel({ status, unread = false, text = status, icon, title,
   return (
     <span
       title={title}
+      data-rung={rung}
       className={cn(
         'flex shrink-0 items-center gap-1 text-caption font-normal whitespace-nowrap',
-        // -my-0.5: the 20px tag takes a text line's room, so a row with one keeps its two lines where every row has them.
-        rung === 'now' && '-my-0.5 h-5 rounded-sm bg-attention-wash px-1.5 font-medium text-attention',
+        // The one filled tag is the attention Chip's own classes. -my-0.5: the 20px tag takes a text line's room, so a row with one keeps its two lines where every row has them.
+        rung === 'now' && !bare && [chipVariants({ tone: 'attention' }), '-my-0.5 gap-1 font-medium'],
         (rung === 'live' || rung === 'bad') && tone,
         (rung === 'done' || rung === 'off') && (fresh ? 'font-medium text-ink' : 'text-muted'),
         className,
       )}
     >
       <span key={shown} className={cn('flex shrink-0', swapped && 'animate-glyph-in')}>{glyph}</span>
-      {text}
+      {bare ? <span className="sr-only">{text}</span> : text}
     </span>
   );
-}
-
-function StateGlyph({ state }: Readonly<{ state: SessionState }>) {
-  const tone = STATE_TONE[state];
-  switch (state) {
-    case 'working':
-    case 'starting':
-      return <WorkingMark />;
-    case 'awaiting_permission':
-    case 'awaiting_answer':
-      return <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" />;
-    case 'completed':
-      return <Check aria-hidden="true" className={cn('size-3.5', TONE_TEXT[tone])} strokeWidth={2.5} />;
-    case 'failed':
-      return <X aria-hidden="true" className={cn('size-3.5', TONE_TEXT[tone])} strokeWidth={2.5} />;
-    case 'cancelled':
-      return <Minus aria-hidden="true" className={cn('size-3.5', TONE_TEXT[tone])} strokeWidth={2.5} />;
-    case 'interrupted':
-      return <Pause aria-hidden="true" className={cn('size-3', TONE_TEXT[tone])} strokeWidth={2.5} fill="currentColor" />;
-    case 'idle':
-      return <CircleDashed aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2} />;
-    default:
-      return <span aria-hidden="true" className={cn('size-2 rounded-full border-[1.5px]', tone === 'faint' ? 'border-faint' : `border-current ${TONE_TEXT[tone]}`)} />;
-  }
 }
 
 // Full class names so Tailwind emits every tone (DESIGN.md Badges).

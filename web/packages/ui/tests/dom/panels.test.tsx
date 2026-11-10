@@ -694,6 +694,8 @@ describe('subagents', () => {
     const first = within(index.getByRole('region', { name: /^“Audit every Go and TS package/ }));
     const original = first.getByRole('button', { name: /^Audit package internal\/store, running, 3 runs/ });
     expect(original.textContent).toContain('3 runs');
+    // A count is a neutral block (ui/blocks), not a filled pill.
+    expect(original.querySelector<HTMLElement>('[title="3 runs"]')!.dataset.tone).toBe('none');
     expect(index.getAllByRole('button', { name: /^Audit package internal\/store, / })).toHaveLength(1);
     // Run 2 came during turn 2, run 3 runs in turn 3: a reference row in each, never the row itself.
     for (const turn of [/^“Yes, run the rest/, /^“Retry the failed ones/]) {

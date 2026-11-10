@@ -18,6 +18,7 @@ import { useFileHintItems } from './FileReferences';
 import { BADGE_TEXT, Markdown, Note, Num, Skeleton, Spinner, StepDots, SubagentIdleIcon, clockTime, useApp } from './common';
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
+import { Blocks } from './ui/blocks';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
@@ -519,7 +520,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
             {text}
           </span>
         )}
-        {runs && <span className="flex-none rounded-full bg-accent-wash px-1.5 text-meta font-medium whitespace-nowrap text-accent">{runs}</span>}
+        {runs && <Blocks items={[{ key: 'runs', tone: 'none', label: runs, title: runs }]} />}
         <Took subagent={s} className="w-14 text-right" />
         <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? <Num value={s.tokens} /> : ''}</span>
       </button>

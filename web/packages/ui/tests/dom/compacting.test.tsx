@@ -1,10 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { StatusLine, statusLine } from '../../src/components/StatusLine';
-import { StateMark } from '../../src/components/common';
 import type { SessionDetail } from '../../src/api';
 
-test('while the conversation compacts, the live line says so with the breathing dot; the state chip can still say it', () => {
+test('while the conversation compacts, the live line says so with the breathing dot', () => {
   const session = { id: 't', state: 'working', compacting: true, items: [], interactions: [], subagents: [] } as unknown as SessionDetail;
   const { container } = render(<StatusLine line={statusLine(session, true, true)} session={session} hidden={false} jump={false} onJump={() => {}} />);
   expect(container.textContent).toContain('Compacting the conversation');
@@ -13,9 +12,6 @@ test('while the conversation compacts, the live line says so with the breathing 
   // Plain words, not a button: nothing to peek at.
   expect(screen.getByText('Compacting the conversation', { selector: '.sr-only' })).toBeTruthy();
   expect(screen.queryByRole('button')).toBeNull();
-  render(<StateMark state="working" label compacting text="Compacting…" />);
-  expect(screen.getByText('Compacting…')).toBeTruthy();
-  expect(screen.queryByText('Working')).toBeNull();
 });
 
 test('a Task compacting mid-turn says so once, on the strip\'s live line: not at the transcript foot, not in the header', async () => {

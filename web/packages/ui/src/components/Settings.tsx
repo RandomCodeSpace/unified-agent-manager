@@ -15,7 +15,7 @@ import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { TaskList } from './taskActions';
-import { Note, Skeleton, Spinner, useApp, useMedia, useScrolled, ScrollSentinel } from './common';
+import { BAR_BOX, Note, Skeleton, Spinner, VIEW_BAR, useApp, useMedia, useScrolled, ScrollSentinel } from './common';
 import { SETTINGS_PAGES, SettingsRail, isSettingsPage, pageMatches, type PageAttention, type SettingsPage, type SettingsScope } from './SettingsNav';
 import { cn } from '../lib/cn';
 import { byCodeUnit } from '../lib/order';
@@ -1030,25 +1030,27 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   return (
     <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>
-      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={((wide || shown) && scrolled) || undefined}>
-        {leading}
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {!wide && current ? <>
-            <Tip label="All settings">
-              <Button ref={back} size="icon-md" aria-label="All settings" className="-ml-1 text-muted" onClick={() => { returnTo.current = current.id; setPage(null); }}>
-                <ChevronLeft />
-              </Button>
-            </Tip>
-            <h1 className="min-w-0 truncate text-display-sm text-ink">{current.label}<span className="sr-only"> · Settings{instance && ` · ${instance}`}</span></h1>
-          </> : <h1 className="shrink-0 text-display-sm text-ink">Settings{instance && <span className="sr-only"> · {instance}</span>}</h1>}
-          {instance && <><span aria-hidden="true" className="text-muted">·</span><InstanceSwitcher place="settings" onConnect={() => { setPage('connections'); setQuery(''); }} /></>}
+      <header className={VIEW_BAR} data-scrolled={((wide || shown) && scrolled) || undefined}>
+        <div className={BAR_BOX}>
+          {leading}
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {!wide && current ? <>
+              <Tip label="All settings">
+                <Button ref={back} size="icon-md" aria-label="All settings" className="-ml-1 text-muted" onClick={() => { returnTo.current = current.id; setPage(null); }}>
+                  <ChevronLeft />
+                </Button>
+              </Tip>
+              <h1 className="min-w-0 truncate text-title text-ink">{current.label}<span className="sr-only"> · Settings{instance && ` · ${instance}`}</span></h1>
+            </> : <h1 className="shrink-0 text-title text-ink">Settings{instance && <span className="sr-only"> · {instance}</span>}</h1>}
+            {instance && <><span aria-hidden="true" className="text-muted">·</span><InstanceSwitcher place="settings" onConnect={() => { setPage('connections'); setQuery(''); }} /></>}
+          </div>
+          {saving && <Spinner className="shrink-0" />}
+          <Tip label="Close settings">
+            <Button size="icon-md" aria-label="Close settings" className="text-muted" onClick={onClose}>
+              <X />
+            </Button>
+          </Tip>
         </div>
-        {saving && <Spinner className="shrink-0" />}
-        <Tip label="Close settings">
-          <Button size="icon-md" aria-label="Close settings" className="text-muted" onClick={onClose}>
-            <X />
-          </Button>
-        </Tip>
       </header>
       <div className="flex min-h-0 flex-1">
         {(wide || !shown) && <SettingsRail pages={pages} current={railCurrent} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}

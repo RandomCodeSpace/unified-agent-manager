@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { LIVE, describeError, newRequestId, type ContextAttribution, type ContextBreakdown, type ContextHeaviest, type SessionDetail } from '../api';
 import { formatCount } from '../lib/cost';
-import { Num } from './common';
+import { Num, Summary } from './common';
 import { contextLabel } from './ComposerUsage';
 import { Button } from './ui/button';
 import { PanelSection } from './ui/panel';
@@ -26,7 +26,7 @@ function Sources({ attribution }: Readonly<{ attribution: ContextAttribution }>)
   return <>
     <p className="text-caption text-muted">Source counts can overlap. A parent includes its children; do not add these rows together.</p>
     {[...groups].map(([kind, entries]) => <details key={kind} className="py-2" open={groups.size === 1}>
-      <summary className="cursor-pointer text-ui text-ink">{kind} <span className="text-caption text-muted">({entries.length})</span></summary>
+      <Summary className="text-ui text-ink">{kind}<span className="text-caption text-muted">({entries.length})</span></Summary>
       <ul className="mt-2 space-y-2">{entries.map((entry) => <li key={entry.id} className="flex items-start justify-between gap-4">
         <span className="min-w-0 break-words text-ui">{entry.label || entry.kind || 'Source'}{entry.parent_id && <span className="block text-caption text-muted">Included in {names.get(entry.parent_id) || 'another source'}</span>}</span>
         <span className="shrink-0 text-caption tabular-nums">{tokens(entry.tokens)}</span>
