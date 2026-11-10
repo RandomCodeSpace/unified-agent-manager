@@ -1807,7 +1807,13 @@ function thinkingLabel(streaming: boolean, took: string | null | undefined): str
 
 export function Thinking({ item, streaming, endedAt, className }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string }>) {
   const key = THINKING_KEY + (item.agent_id ? `${item.agent_id}:` : '') + item.id;
-  const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return sessionStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
   const { item: fullItem, body, attach, retry } = useItemBody(item, expanded);
   const text = fullItem?.text ?? '';
   const took = !streaming && endedAt ? duration(item.time, endedAt) : null;

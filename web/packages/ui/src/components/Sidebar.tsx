@@ -859,7 +859,7 @@ export const Sidebar = memo(function Sidebar({
   const toggleSettled = () =>
     setShelves((s) => {
       const next = { ...s, [`${shelfScope}:settled`]: !settledOpen };
-      localStorage.setItem(SHELVES_KEY, JSON.stringify(next));
+      try { localStorage.setItem(SHELVES_KEY, JSON.stringify(next)); } catch { /* Kept for this page only. */ }
       return next;
     });
 
