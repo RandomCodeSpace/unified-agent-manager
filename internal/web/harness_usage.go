@@ -77,6 +77,7 @@ func (m *Manager) prepareHarnessUsage() (*corestore.Ledger, error) {
 		}
 		m.tokens.CopilotSessions[id] = intervals
 	}
+	m.pruneCopilotOwnership()
 	m.harness.collection.CopilotSince = m.tokens.CopilotSince
 	m.persistMu.Lock()
 	err := m.flushTokenLedger()
@@ -96,6 +97,38 @@ func (m *Manager) prepareHarnessUsage() (*corestore.Ledger, error) {
 		return nil, nil // SDK usage and ownership remain available for recovery.
 	}
 	return ledger, nil
+}
+
+// copilotOwnershipKeep is how long the ownership of a released Copilot session
+// is kept. Every session uam starts adds to it, so without a limit the ledger,
+// which is rewritten whole on each activation, only grows.
+const copilotOwnershipKeep = 30 * 24 * time.Hour
+
+// pruneCopilotOwnership drops the ownership that ended more than
+// copilotOwnershipKeep ago and moves CopilotPruned to that boundary. A usage
+// file is read whole again whenever it changes, and a call that old can then
+// no longer be told from an external one, so usageOnlyStore imports nothing
+// from before the boundary: it was imported, or owned, when it was first read.
+// It runs at start, before the collector, once every interval has its end.
+func (m *Manager) pruneCopilotOwnership() {
+	boundary := m.now().Add(-copilotOwnershipKeep)
+	for id, intervals := range m.tokens.CopilotSessions {
+		kept := slices.DeleteFunc(slices.Clone(intervals), func(o copilotOwnership) bool {
+			return !o.End.IsZero() && o.End.Before(boundary)
+		})
+		if len(kept) == len(intervals) {
+			continue
+		}
+		if len(kept) == 0 {
+			delete(m.tokens.CopilotSessions, id)
+		} else {
+			m.tokens.CopilotSessions[id] = kept
+		}
+		if boundary.After(m.tokens.CopilotPruned) {
+			m.tokens.CopilotPruned = boundary
+		}
+		m.tokens.revision++
+	}
 }
 
 func (m *Manager) recordCopilotUsageSession(id string, active bool) error {
@@ -148,7 +181,8 @@ func (s usageOnlyStore) ApplyBatch(ctx context.Context, b corestore.ObservationB
 	events := b.Events[:0]
 	for _, event := range b.Events {
 		if event.Tool == coremodel.ToolCopilot {
-			if event.EventTime.Before(s.m.tokens.CopilotSince) {
+			// Before CopilotPruned the owners are no longer known.
+			if event.EventTime.Before(s.m.tokens.CopilotSince) || event.EventTime.Before(s.m.tokens.CopilotPruned) {
 				continue
 			}
 			if s.m.copilotOwnedAtLocked(event.SessionID, event.EventTime) {

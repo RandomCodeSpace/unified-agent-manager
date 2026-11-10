@@ -64,12 +64,15 @@ type tokenDay struct {
 
 // Daily aggregates have no transcript or task dependency, so removing a
 // task cannot subtract its usage. There is no retention cutoff for Lifetime.
+// CopilotPruned is the time before which Copilot ownership was dropped
+// (pruneCopilotOwnership); zero while none was.
 type tokenLedger struct {
 	Version             int                           `json:"version"`
 	Since               time.Time                     `json:"since"`
 	Days                map[string]tokenDay           `json:"days"`
 	CopilotSince        time.Time                     `json:"copilot_since,omitzero"`
 	CopilotSessions     map[string][]copilotOwnership `json:"copilot_sessions,omitempty"`
+	CopilotPruned       time.Time                     `json:"copilot_pruned,omitzero"`
 	CopilotUnattributed bool                          `json:"copilot_unattributed,omitempty"`
 	revision, saved     uint64
 }
