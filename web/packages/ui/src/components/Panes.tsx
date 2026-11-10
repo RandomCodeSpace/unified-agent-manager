@@ -1,11 +1,12 @@
-import { Suspense, lazy, useEffect, useEffectEvent, useState, type Ref } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useRef, useState, type Ref } from 'react';
 import { SquareTerminal } from 'lucide-react';
-import type { Project } from '../api';
-import { BAR_BOX, Loading, Spinner, TranscriptSkeleton, VIEW_BAR } from './common';
+import type { ApiClient, Project, SessionDetail } from '../api';
+import type { State } from '../state';
+import { BAR_BOX, Loading, Spinner, TranscriptSkeleton, VIEW_BAR, useLate } from './common';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import { Appear } from './ui/appear';
-import { EXIT_MS } from './ui/collapse';
+import { EXIT_MS, usePresence } from './ui/collapse';
 import type { TerminalHandle } from './Terminal';
 
 /** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
@@ -118,4 +119,84 @@ export function LoadingPane({ leading }: Readonly<{ leading: React.ReactNode }>)
       <TranscriptSkeleton />
     </div>
   );
+}
+
+/** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
+const QUIET_MS = 600;
+
+/**
+ * The main pane while a Thread is on its way: the veil for a load that lasts (`loading`) and the banner for a lost
+ * connection that lasts (`connection`); the Thread whose first render, a transition, is done (`mountedId`, and
+ * `detailId` once its detail is the one on screen); the Thread the pane holds until then (`held`), and whether
+ * the wait has lasted (`lateLoad`).
+ */
+export function usePaneLoad({ state, settingsOpen, routinesFor }: { state: State; settingsOpen: boolean; routinesFor: string | null }) {
+  // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
+  const late = useLate(state.connection !== 'connected', QUIET_MS);
+  const loading = late && state.connection === 'connecting';
+  const connection = late && !loading ? state.connection : 'connected';
+  // A Thread's view first renders in a transition, which yields between rows: a long transcript is not one long task.
+  // Until then the pane shows what it showed while the detail was on its way; later frames of the Thread render at once.
+  const [mountedId, setMountedId] = useState<string | null>(null);
+  const arrivedId = state.detail?.id ?? null;
+  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way. A cached
+  // revisit is on screen before its detail arrives: the detail then replaces it in place, not in a second mount.
+  const cachedId = state.previousCached && state.previous?.id === state.selectedId ? state.selectedId : null;
+  if (!arrivedId && mountedId !== cachedId) setMountedId(cachedId);
+  useEffect(() => {
+    if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
+  }, [arrivedId, mountedId]);
+  // The snapshot and the detail drop the Thread select() froze as they land; the pane keeps it until the new Thread has rendered.
+  // Keyed to the selection, so one made from Home or a draft holds nothing; let go once the Thread is on screen.
+  const [held, setHeld] = useState<{ id: string | null; detail: SessionDetail | null }>({ id: null, detail: null });
+  if (held.id !== state.selectedId || (state.previous && state.previous !== held.detail)) setHeld({ id: state.selectedId, detail: state.previous });
+  else if (held.detail && arrivedId && arrivedId === mountedId) setHeld({ id: held.id, detail: null });
+
+  const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
+
+  const detailId = arrivedId === mountedId ? arrivedId : undefined;
+  return { loading, connection, mountedId, detailId, held, lateLoad };
+}
+
+/**
+ * The terminal docked under the Thread view: which Project's (or worktree Thread's) shell it shows, the header
+ * button that opens, moves or closes it, and the dock kept mounted while it slides out.
+ */
+export function useTerminalDock({ api, state, onTerminal }: { api: ApiClient; state: State; /** Tells the federation whether a terminal is open here. */ onTerminal: ((open: boolean) => void) | undefined }) {
+  // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
+  const [terminalId, setTerminalId] = useState<string | null>(null);
+  // The worktree Thread whose folder the shell started in instead of the Project's, or null.
+  const [terminalTask, setTerminalTask] = useState<string | null>(null);
+  const nextTerminalTask = useRef<string | null>(null);
+  // Each opening is a dock of its own: one reopened while the last slides out starts a new shell.
+  const [terminalOpens, setTerminalOpens] = useState(0);
+  useEffect(() => { onTerminal?.(!!terminalId); }, [terminalId, onTerminal]);
+  // The header's Terminal opens a closed terminal; an open one closes, or moves to the pressed Task's Project, through the panel, which confirms while its shell is connected.
+  const terminalPanel = useRef<TerminalHandle>(null);
+  const toggleTerminal = useCallback((projectId: string) => {
+    // A Thread in a worktree opens the shell in its worktree.
+    const pressed = state.sessions.find((s) => s.id === state.selectedId);
+    const task = pressed?.project_id === projectId && pressed.worktree ? pressed.id : null;
+    const to = terminalId === projectId && terminalTask === task ? null : state.projects.find((p) => p.id === projectId);
+    nextTerminalTask.current = task;
+    // A panel still loading has no shell to confirm for.
+    if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
+    else {
+      if (!terminalId) setTerminalOpens((n) => n + 1);
+      setTerminalId(to === null ? null : projectId);
+      setTerminalTask(to === null ? null : task);
+    }
+  }, [terminalId, terminalTask, state.projects, state.sessions, state.selectedId]);
+  const closeTerminal = useCallback((to: Project | null) => {
+    setTerminalId(to?.id ?? null);
+    setTerminalTask(to ? nextTerminalTask.current : null);
+    if (!to) document.getElementById('terminal-link')?.focus();
+  }, []);
+  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
+  const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
+  // The dock slides out showing the shell it ended, then unmounts (DESIGN.md Terminal).
+  const terminalDock = usePresence(!!terminalProject);
+  const [docked, setDocked] = useState<{ project: Project; task: string | null }>();
+  if (terminalProject && (terminalProject !== docked?.project || terminalTask !== docked.task)) setDocked({ project: terminalProject, task: terminalTask });
+  return { terminalId, setTerminalId, terminalProject, terminalOpens, docked, terminalDock, terminalPanel, toggleTerminal, closeTerminal };
 }
