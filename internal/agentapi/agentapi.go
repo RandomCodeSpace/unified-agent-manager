@@ -1675,6 +1675,10 @@ type BackgroundTask struct {
 	Status      string    `json:"status"`
 	StartedAt   time.Time `json:"started_at,omitzero"`
 	EndedAt     time.Time `json:"ended_at,omitzero"`
+	// OutputUnreadable is true when the provider keeps no output to read for
+	// this shell (a Copilot attached shell). False also means not known, so a
+	// read can still be refused.
+	OutputUnreadable bool `json:"output_unreadable,omitempty"`
 }
 
 // TodoList is the todo list the agents keep in the conversation.

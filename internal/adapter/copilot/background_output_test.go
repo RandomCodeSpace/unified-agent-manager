@@ -145,3 +145,20 @@ func TestWebBackgroundOutputFailures(t *testing.T) {
 		t.Fatalf("closed read = %v, want ErrClosed", err)
 	}
 }
+
+// The CLI keeps readable output only for a detached shell, so the snapshot
+// marks an attached one; a shell of another or unknown mode stays readable.
+func TestWebBackgroundTasksMarkAttachedShellOutputUnreadable(t *testing.T) {
+	h := openWeb(t)
+	h.fs.setTasks(
+		&rpc.TaskShellInfo{ID: "0", Command: "make test", AttachmentMode: rpc.TaskShellInfoAttachmentModeAttached, Status: rpc.TaskStatusRunning},
+		&rpc.TaskShellInfo{ID: "1", Command: "sleep 120", AttachmentMode: rpc.TaskShellInfoAttachmentModeDetached, Status: rpc.TaskStatusRunning},
+		&rpc.TaskShellInfo{ID: "2", Command: "true", Status: rpc.TaskStatusCompleted},
+	)
+	h.fs.onEvent(ev("background", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 1)
+	got := h.sink.last().BackgroundTasks
+	if got == nil || len(got.Tasks) != 3 || !got.Tasks[0].OutputUnreadable || got.Tasks[1].OutputUnreadable || got.Tasks[2].OutputUnreadable {
+		t.Fatalf("background tasks = %+v", got)
+	}
+}

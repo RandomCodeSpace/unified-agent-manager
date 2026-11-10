@@ -15,7 +15,7 @@ import { Tip } from './ui/tooltip';
  * The Task's background shells in the composer toolbar (DESIGN.md Background tasks): the
  * terminal glyph, `accent` and how many run while any runs (else the glyph alone), and on a
  * click an anchored reader (a bottom sheet on a phone) listing each with its status in words, command, Output
- * (its output, in the command output panel) and Stop.
+ * (its output, in the command output panel; only on a shell whose output can be read) and Stop.
  */
 /** The provider's task statuses in words; another reported word shows as it came. */
 const STATUS: Record<string, string> = { running: 'Running', idle: 'Idle', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' };
@@ -81,7 +81,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked, onOutput }: Reado
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
                   <span className="shrink-0">{shown.known ? STATUS[task.status] ?? task.status : 'Unknown'}</span>
-                  {onOutput && <Button size="sm" variant="subtle" aria-label={`Show output of background task: ${task.description || task.command}`} onClick={() => {
+                  {onOutput && !task.output_unreadable && <Button size="sm" variant="subtle" aria-label={`Show output of background task: ${task.description || task.command}`} onClick={() => {
                     onOutput({ id: `shell:${task.id}`, name: 'shell', title: task.command, text: '', markdown: false, shell: { sessionId, taskId: task.id } });
                     setReader({ ...reader, open: false });
                   }}>

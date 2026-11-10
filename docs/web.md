@@ -1756,8 +1756,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the command output panel: the first 8 KB at once, **Load more** for the
   next, and once you have caught up with a running command, what it prints
   next (read every two seconds while the panel is open). A finished command
-  stays readable while the CLI keeps its output; when it does not, or for a
-  shell the agent still holds attached, the panel says so in one line.
+  stays readable while the CLI keeps its output; when it does not, the panel
+  says so in one line. A shell the agent holds attached has no **Output**:
+  the CLI keeps no output to read for it.
   Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.

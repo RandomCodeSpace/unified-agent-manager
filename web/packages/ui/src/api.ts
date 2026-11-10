@@ -1262,7 +1262,8 @@ export interface ModelCalls { threads: number; subagents: number; background: nu
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {
   known: boolean;
-  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
+  /** `output_unreadable`: the provider keeps no output for that shell, so it has no Output; absent from older servers. */
+  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string; output_unreadable?: boolean }[];
 }
 
 /**
