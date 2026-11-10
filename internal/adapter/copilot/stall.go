@@ -84,8 +84,11 @@ func stallContinuation(d *rpc.UserMessageData) bool {
 }
 
 // noteModelWaitLocked follows whether the main agent waits on a model
-// request: from its assistant.turn_start until the model's message, the end
-// of that call, or an idle.
+// request: from its assistant.turn_start until the model's message, its
+// task call, the end of that call, or an idle. A task call is the model's
+// answer even with no message before it, and no running tool to the watch
+// (observePhaseLocked): it must not leave the main agent waiting on the
+// model while its subagent works.
 func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 	switch d := ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
@@ -95,6 +98,10 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 		}
 	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
 		c.modelWaitAt = time.Time{}
+	case *rpc.ToolExecutionStartData:
+		if d.ToolName == taskTool {
+			c.modelWaitAt = time.Time{}
+		}
 	case *rpc.UserMessageData:
 		if stallContinuation(d) {
 			c.stall.aborting, c.stall.sending = false, false

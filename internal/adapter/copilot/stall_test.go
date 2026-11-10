@@ -393,3 +393,22 @@ func TestWebSubagentStallWatchOutlivesTheTurn(t *testing.T) {
 		t.Fatalf("subagent cancels = %v", got)
 	}
 }
+
+// A task call the CLI starts with no assistant message before it ends the
+// model wait all the same: the main agent is not aborted while its subagent
+// works in silence.
+func TestWebStallWatchLeavesATaskCallWithoutAMessageAlone(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("task-1", &rpc.ToolExecutionStartData{ToolCallID: "task-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("sub-start", "agent-1", &rpc.SubagentStartedData{ToolCallID: "task-call"}))
+	time.Sleep(5 * webStallAfter)
+	if n := h.fs.abortCount(); n != 0 {
+		t.Fatalf("the main agent was aborted %d times while its subagent ran", n)
+	}
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnWorking {
+		t.Fatalf("turn = %+v", turn)
+	}
+}
