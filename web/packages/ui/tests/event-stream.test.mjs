@@ -45,9 +45,12 @@ test('streams go over EventSource until sockets are enabled', () => {
   assert.equal(natives.length, 1);
   assert.equal(sockets.length, 0);
   enableSocketStreams();
-  assert.ok(openEventStream('/api/events') instanceof SocketEventSource);
+  const source = openEventStream('/api/events');
+  assert.ok(source instanceof SocketEventSource);
   assert.equal(sockets.length, 1);
   assert.equal(natives.length, 1);
+  // A socket stream is watched from the start: closing it ends the watch.
+  source.close();
 });
 
 test('a 200 opens the stream and its frames arrive as named events, across message boundaries', () => {
@@ -62,6 +65,7 @@ test('a 200 opens the stream and its frames arrive as named events, across messa
   socket.send('retry: 2000\n\nevent: snapshot\ndata: {"a":');
   socket.send('1}\n\n: keep-alive\n\nevent: delta\r\ndata: one\r\ndata: two\r\n\r\ndata: plain\n\n');
   assert.deepEqual(log, ['open@1', 'snapshot:{"a":1}', 'delta:one\ntwo', 'message:plain']);
+  source.close();
 });
 
 test('a refused stream is closed for good, as EventSource closes on a status other than 200', (t) => {
@@ -192,6 +196,42 @@ test('an EventSource stream is watched for silence once it has sent a heartbeat 
   natives[1].dispatchEvent(new MessageEvent('keep-alive', { data: '{}' }));
   t.mock.timers.tick(10 * STREAM_SILENCE_MS);
   assert.equal(natives.length, 2);
+});
+
+test('a reopened stream that hears nothing is dropped and reopened like any silent one', (t) => {
+  reset();
+  enableSocketStreams();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const source = openEventStream('/api/events');
+  const log = heard(source);
+  sockets[0].status(200);
+  sockets[0].drop();
+  t.mock.timers.tick(3000);
+  assert.equal(sockets.length, 2);
+  // The new socket connects and the stream's status never comes.
+  t.mock.timers.tick(STREAM_SILENCE_MS - 1);
+  assert.ok(!sockets[1].closed);
+  t.mock.timers.tick(1);
+  assert.ok(sockets[1].closed);
+  assert.deepEqual(log, ['open@1', 'error@0', 'error@0']);
+  t.mock.timers.tick(3000);
+  assert.equal(sockets.length, 3);
+  source.close();
+
+  // Over EventSource, once its heartbeats are known to come as events.
+  reset();
+  const plain = openEventStream('/api/events');
+  natives[0].dispatchEvent(new MessageEvent('keep-alive', { data: '{}' }));
+  t.mock.timers.tick(STREAM_SILENCE_MS);
+  t.mock.timers.tick(3000);
+  assert.equal(natives.length, 2);
+  natives[1].readyState = 1;
+  natives[1].onopen(new Event('open'));
+  t.mock.timers.tick(STREAM_SILENCE_MS);
+  assert.equal(natives[1].readyState, 2);
+  t.mock.timers.tick(3000);
+  assert.equal(natives.length, 3);
+  plain.close();
 });
 
 test('after a socket has opened, a socket that cannot connect is a dropped connection, not a reason to stop using sockets', (t) => {
