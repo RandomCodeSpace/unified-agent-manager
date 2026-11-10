@@ -10,6 +10,8 @@ export const LIMITS = {
   image: 3 * 1024 * 1024,
   pdf: 10 * 1024 * 1024,
   text: 256 * 1024,
+  /** A paste larger than this becomes a text attachment; the service hands text this large to the agent as a path. */
+  pasteFile: 8 * 1024,
 } as const;
 
 export type Kind = 'image' | 'pdf' | 'text';

@@ -370,6 +370,46 @@ func TestPromptPDFCarriesANamedCopy(t *testing.T) {
 	}
 }
 
+// Text over 8 KiB goes as a named copy the agent reads by path, never named
+// as a PDF; smaller text stays inline. Both are counted, as is long prompt
+// text sent inline.
+func TestPromptLargeTextCarriesANamedCopy(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	small := []byte("one line\n")
+	large := bytes.Repeat([]byte("a log line\n"), largeTextBytes/10)
+	cases := []struct {
+		name, copyName string
+		data           []byte
+	}{{"build.log", "build.log", large}, {"notes.pdf", "notes.pdf.txt", large}, {"note.txt", "", small}}
+	for i, c := range cases {
+		a := mustUpload(t, m, sum.ID, c.name, c.data)
+		if _, err := m.Submit(sum.ID, PromptRequest{Text: "read it", RequestID: mustUUID(t), Attachments: []string{a.ID}}); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, "prompt sent", func() bool { return len(conv.Prompts()) == i+1 })
+		p := conv.Prompts()[i]
+		want := ""
+		if c.copyName != "" {
+			want = filepath.Join(dirs.task(sum.ID), a.ID+".d", c.copyName)
+		}
+		if len(p.Attachments) != 1 || p.Attachments[0].MIME != mimeText || p.Attachments[0].Path != want || !bytes.Equal(p.Attachments[0].Data, c.data) {
+			t.Fatalf("%s sent %+v, want path %q", c.name, p.Attachments, want)
+		}
+		if want != "" {
+			if data, err := os.ReadFile(want); err != nil || !bytes.Equal(data, c.data) {
+				t.Fatalf("named copy = %d bytes, %v", len(data), err)
+			}
+		}
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: string(large), RequestID: mustUUID(t)}); err != nil {
+		t.Fatal(err)
+	}
+	if files, text := countOf(m, "large_text_files"), countOf(m, "large_prompt_text"); files != 2 || text != 1 {
+		t.Fatalf("counts: large_text_files %d, large_prompt_text %d", files, text)
+	}
+}
+
 // prov returns the only provider of a test manager.
 func (m *Manager) prov() *agenttest.Provider {
 	return m.providers[m.order[0]].(*agenttest.Provider)

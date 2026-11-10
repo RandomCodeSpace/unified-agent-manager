@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -326,6 +327,41 @@ func TestWebSendCarriesANamedPDFAsAFile(t *testing.T) {
 	history, err := h.conv.History(context.Background())
 	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0].Attachments, []agentapi.Attachment{{Name: "Forms.pdf", MIME: "application/pdf", NotNative: true}}) {
 		t.Fatalf("history = %+v, %v", history.Items, err)
+	}
+}
+
+// A large text upload with a named copy goes as that file, without its
+// content, and the message shows it as a text upload the agent was not
+// warned about; a small one stays an inline blob.
+func TestWebSendCarriesLargeTextAsAPath(t *testing.T) {
+	h := openWeb(t)
+	config := t.TempDir()
+	t.Setenv("UAM_CONFIG_DIR", config)
+	dir := filepath.Join(config, agentapi.UploadsDir, "task-1", "up-1.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	large, path := bytes.Repeat([]byte("a log line\n"), 1000), filepath.Join(dir, "build.log")
+	if err := os.WriteFile(path, large, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	small := []byte("one line\n")
+	blobs := []agentapi.Blob{{Name: "build.log", MIME: "text/plain", Data: large, Path: path}, {Name: "note.txt", MIME: "text/plain", Data: small}}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "read it", Attachments: blobs}); err != nil {
+		t.Fatal(err)
+	}
+	data, name := base64.StdEncoding.EncodeToString(small), "note.txt"
+	want := []copilot.Attachment{&rpc.AttachmentFile{Path: path, DisplayName: "build.log"}, &rpc.AttachmentBlob{Data: &data, MIMEType: "text/plain", DisplayName: &name}}
+	if got := h.fs.msgs[0].Attachments; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachments = %+v", got)
+	}
+
+	live := userMessage("msg-1", rpc.UserMessageDeliveryIdle, "read it")
+	live.Attachments = h.fs.msgs[0].Attachments
+	h.fs.onEvent(ev("u1", live))
+	sum := sha256.Sum256(large)
+	if it := h.sink.last().Item; it == nil || len(it.Attachments) != 2 || it.Attachments[0] != (agentapi.Attachment{Name: "build.log", MIME: "text/plain", Size: int64(len(large)), SHA256: hex.EncodeToString(sum[:])}) {
+		t.Fatalf("live item = %+v", it)
 	}
 }
 
