@@ -93,6 +93,17 @@ return 404; unknown, closed, read-only or inactive Threads and refused cancellat
 return 409. A failed refresh retains the last snapshot with `known: false` and
 returns an error. Subagents keep their separate cancellation endpoint.
 
+## Background shell output
+
+`GET /api/sessions/{id}/background-tasks/{task_id}/output?cursor=` returns
+`{text, cursor, more, done}`: at most 8 KB of the shell's output after the
+cursor, from the start when the cursor is empty. `more` means output is already
+waiting after `text`; `done` means the shell ended and `text` reaches the end.
+The task must be a shell the Thread lists. Nothing polls on the server: the
+browser reads on open and again while the panel stays open. The adapter reads
+with `session.tasks.readOutput`, which serves detached shells only; a shell
+whose output the CLI does not keep answers 404.
+
 ## Command outcomes and retries
 
 `POST /api/sessions/{id}/command` returns the existing Submission shape with an

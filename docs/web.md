@@ -1139,8 +1139,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and their end notes, forks, rewinds, hunk reverts, settles (by you,
   auto-settle or review), archives, budgets set and reached, handoffs,
   trail notes, suggested replies shown, manual compactions, notices by kind
-  and pushes, CLI updates, update failures and restarts, and terminals
-  opened; with the Utility log's calls by purpose and outcome (abstained and
+  and pushes, CLI updates, update failures and restarts, terminals
+  opened, and background command outputs opened; with the Utility log's calls by purpose and outcome (abstained and
   invalid Decide answers too) over the days it keeps, and routine runs by
   outcome. Lines `config.*` are a snapshot: uam and CLI versions, Threads by
   mode, in worktrees and active, custom model and connected instance
@@ -1745,7 +1745,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Background tasks**: a chip in the composer's toolbar counts the Thread's
   running provider shells (once none runs, it shows its glyph alone while
   the finished ones stay listed); click it to see each shell's status and command
-  and to stop one. Stopping one shell does not stop the foreground turn.
+  and to stop one. **Output** on a row opens what that command has printed in
+  the command output panel: the first 8 KB at once, **Load more** for the
+  next, and once you have caught up with a running command, what it prints
+  next (read every two seconds while the panel is open). A finished command
+  stays readable while the CLI keeps its output; when it does not, or for a
+  shell the agent still holds attached, the panel says so in one line.
+  Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
   When the list cannot be read, UAM reads it again every 15 seconds; until

@@ -2,6 +2,7 @@ import { SquareSlash, SquareTerminal, X } from 'lucide-react';
 import { useEffect } from 'react';
 import type { CommandResult } from '../api';
 import { popupOpen, threadCovered } from '../App';
+import { BackgroundOutput } from './BackgroundOutput';
 import { Markdown } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -15,6 +16,8 @@ export interface CommandOutput {
   title?: string;
   text: string;
   markdown: boolean;
+  /** A background shell: the panel reads its output itself, in chunks, and `text` stays empty. */
+  shell?: { sessionId: string; taskId: string };
 }
 
 /** Output for the panel, not the composer: Markdown, or text (a confirmation's too) longer than one short line. */
@@ -69,7 +72,7 @@ export function CommandOutputPanel({ output, inline, open, onClose, onClosed }: 
       </PanelHeader>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
       <div key={output.id} role="region" aria-label={label} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pb-4">
-        {output.markdown ? <Markdown text={output.text} /> : <pre translate="no" className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{output.text}</pre>}
+        {output.shell ? <BackgroundOutput sessionId={output.shell.sessionId} taskId={output.shell.taskId} /> : output.markdown ? <Markdown text={output.text} /> : <pre translate="no" className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{output.text}</pre>}
       </div>
       </div>
     </SidePanel>

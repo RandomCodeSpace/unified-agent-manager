@@ -32,6 +32,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/resend", false},
 		{"GET", "/api/sessions/task/rewind", false},
 		{"DELETE", "/api/sessions/task/rewind", false},
+		{"GET", "/api/sessions/task/background-tasks/shell/output", true},
+		{"POST", "/api/sessions/task/background-tasks/shell/output", false},
 		{"GET", "/api/events", true},
 		{"HEAD", "/api/sessions/task/files/view/out/index.html", true},
 		{"GET", "/api/projects/project/terminal", true},

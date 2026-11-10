@@ -1264,6 +1264,12 @@ export interface BackgroundTasks {
 }
 
 /**
+ * One read of a background shell's output, 8 KB at most: `cursor` continues after `text`, `more`
+ * says output already waits after it, and `done` that the shell ended and `text` reaches the end.
+ */
+export interface BackgroundOutput { text: string; cursor: string; more: boolean; done: boolean }
+
+/**
  * The open conversation's native schedules, display only: no prompts, and nothing UAM runs. `known`
  * false with rows is a partial list (`truncated`); without rows the list is unknown, never empty.
  */
@@ -2594,6 +2600,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     rawFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`),
     /** Any file of the Task's directory by its "/"-separated path relative to it, as a path so a page's relative links resolve to its siblings. */
     viewFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/view/${path.split('/').map(enc).join('/')}`),
+    /** A background shell's output after `cursor`; from its start with an empty cursor. */
+    backgroundOutput: (id: string, taskId: string, cursor: string) => call<BackgroundOutput>('GET', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/output?cursor=${enc(cursor)}`),
     cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
     cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
     close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
