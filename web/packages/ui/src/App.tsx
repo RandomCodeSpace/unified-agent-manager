@@ -125,6 +125,15 @@ function readJSON<T>(key: string, fallback: T): T {
   }
 }
 
+/** Stores a value; full or blocked storage keeps it for this page only, never failing the caller. */
+function writeJSON(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage unavailable: kept for this page only.
+  }
+}
+
 /** The routines the fragment shows: a Project id, `all`, or null for another view. */
 function hashRoutines(path = window.location.hash): string | null {
   const h = path.split('&')[0];
@@ -245,7 +254,7 @@ export default function App() {
   const applyFilter = useCallback((id: string | null) => {
     if (machines && onMachineFilter) return onMachineFilter(id === null ? null : { machine: here, project: id });
     setFilter(id);
-    localStorage.setItem(FILTER_KEY, JSON.stringify(id));
+    writeJSON(FILTER_KEY, id);
   }, [machines, onMachineFilter, here, FILTER_KEY]);
   const [settingsOpen, setSettingsOpen] = useState(() => (initialPath ?? window.location.hash) === SETTINGS_HASH);
   // The subagent open in the selected Thread's Conversation pane; it belongs to that Thread, so selecting another leaves it.
@@ -266,7 +275,7 @@ export default function App() {
     const since = readJSON<string | null>(VIEWED_SINCE_KEY, null);
     if (since) return since;
     const now = new Date().toISOString();
-    localStorage.setItem(VIEWED_SINCE_KEY, JSON.stringify(now));
+    writeJSON(VIEWED_SINCE_KEY, now);
     return now;
   });
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
@@ -373,7 +382,7 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     const next = !sidebarOpen;
     setSidebarState((current) => ({ ...current, open: next }));
-    localStorage.setItem(SIDEBAR_KEY, JSON.stringify(next));
+    writeJSON(SIDEBAR_KEY, next);
     if (aside.current?.contains(document.activeElement)) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
   }, [sidebarOpen]);
 
@@ -446,7 +455,7 @@ export default function App() {
     setViewed((v) => {
       if (v[id] === at) return v;
       const next = { ...v, [id]: at };
-      localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
+      writeJSON(VIEWED_KEY, next);
       return next;
     });
   }, [VIEWED_KEY, markLooked]);

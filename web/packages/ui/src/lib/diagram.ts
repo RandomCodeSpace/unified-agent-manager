@@ -298,6 +298,8 @@ let frame: HTMLIFrameElement | null = null;
 let queue: DiagramQueue | null = null;
 let loaded: Promise<void> | null = null;
 let removeFrameListeners: (() => void) | null = null;
+/** How many rendered diagrams stay in memory: each SVG carries its font, about 30 KB. */
+export const KEPT_DIAGRAMS = 50;
 const cache = new Map<string, Promise<Rendered>>();
 
 function dropFrame() {
@@ -382,16 +384,24 @@ function scrollPaused(): Promise<void> {
   });
 }
 
-/** Renders Mermaid source to an SVG string; the same source renders once per page and scheme. */
+/** Renders Mermaid source to an SVG string; the same source renders once per page and scheme while among the last `KEPT_DIAGRAMS` used. */
 export function renderDiagram(source: string): Promise<Rendered> {
   const key = `${document.documentElement.dataset.theme ?? ''}\n${source}`;
   const hit = cache.get(key);
-  if (hit) return hit;
+  if (hit) {
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
   const { queue: q, loaded: ready } = ensureFrame();
   const p = ready.then(scrollPaused).then(() => q.render(source, diagramTheme()));
   cache.set(key, p);
+  for (const old of cache.keys()) {
+    if (cache.size <= KEPT_DIAGRAMS) break;
+    cache.delete(old);
+  }
   p.catch((err: unknown) => {
-    if (err instanceof DiagramError && err.transient) cache.delete(key);
+    if (err instanceof DiagramError && err.transient && cache.get(key) === p) cache.delete(key);
   });
   return p;
 }
