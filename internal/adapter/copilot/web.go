@@ -4169,7 +4169,14 @@ func turnFailure(d *rpc.SessionErrorData) agentapi.TurnFailure {
 
 func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	if c.foregroundIdle {
-		return
+		// An error and the idle that ends its turn can both arrive before the
+		// prompt's send returns, which is what starts the turn: start it
+		// here. Otherwise the send starts it afterwards, with no idle left
+		// to end it.
+		if c.sending == 0 || c.turnErr == "" {
+			return
+		}
+		c.startTurnLocked()
 	}
 	if aborted != nil && *aborted && c.continueStalledLocked() {
 		return

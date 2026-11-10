@@ -1109,6 +1109,32 @@ func TestWebErrorWhileThePromptIsSentFailsItsTurn(t *testing.T) {
 	}
 }
 
+// After an earlier turn, an error and the idle that ends its turn can both
+// arrive before the prompt's send returns. The idle ends that turn as failed:
+// the send must not start it afterwards and leave it working for good.
+func TestWebErrorAndIdleBeforeTheSendReturnsFailTheTurn(t *testing.T) {
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("i1", &rpc.AssistantIdleData{}))
+	h.fs.beforeReturn = func(string) {
+		h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "quota", Message: "no quota"}))
+		h.fs.onEvent(ev("i2", &rpc.AssistantIdleData{}))
+	}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "again"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastTurn(h.sink); got.State != agentapi.TurnFailed || got.Error != "no quota" {
+		t.Fatalf("turn = %+v", got)
+	}
+	// The error is spent: the next turn completes.
+	h.fs.beforeReturn = nil
+	startTurn(t, h)
+	h.fs.onEvent(ev("i3", &rpc.AssistantIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("next turn = %+v", got)
+	}
+}
+
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
