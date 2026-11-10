@@ -40,6 +40,8 @@ import { CoveredContext } from './components/ui/reader';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
+import { decodePath } from './lib/markdown';
+import { Contained } from './components/VisualBoundary';
 
 /** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
 const TerminalPanel = lazy(() => import('./components/Terminal'));
@@ -127,7 +129,7 @@ function readJSON<T>(key: string, fallback: T): T {
 function hashRoutines(path = window.location.hash): string | null {
   const h = path.split('&')[0];
   if (h === ROUTINES_HASH) return ALL_ROUTINES;
-  return h.startsWith(ROUTINES_PREFIX) ? decodeURIComponent(h.slice(ROUTINES_PREFIX.length)) || ALL_ROUTINES : null;
+  return h.startsWith(ROUTINES_PREFIX) ? decodePath(h.slice(ROUTINES_PREFIX.length)) || ALL_ROUTINES : null;
 }
 
 function hashSelection(path = window.location.hash): string | null {
@@ -1659,7 +1661,7 @@ export default function App() {
                 {/* A cached page is presentation only; actions and typing wait for confirmation. Under a view the pane is skipped, not unmounted: content-visibility keeps its scroll, display:none would not. */}
                 <div className={cn('flex min-h-0 flex-1 flex-col', !!view && '[content-visibility:hidden]')} inert={stale || !!view} aria-hidden={!!view || undefined} aria-busy={stale || undefined}>
                   <CoveredContext.Provider value={!!view}>
-                    <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
+                    <Contained what="This view" of={shown?.id ?? newTask?.projectId ?? mismatched}><Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense></Contained>
                   </CoveredContext.Provider>
                 </div>
                 {/* Always mounted, so a view that opens in a transition waits here for its code instead of showing the fallback. */}

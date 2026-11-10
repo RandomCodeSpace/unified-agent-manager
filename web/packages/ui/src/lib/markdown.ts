@@ -69,10 +69,10 @@ function splitLine(ref: string): { ref: string; hash: string } {
   return m && (rest.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(rest)) ? { ref: rest, hash: `#L${m[1]}` } : { ref, hash: '' };
 }
 
-/** A path percent-decoded, as markdown encodes it; a stray `%` is part of the name. */
-function decodePath(p: string): string {
+/** Text percent-decoded (agent, file or fragment text); a malformed escape keeps the text as written. */
+export function decodePath(p: string, decode: (text: string) => string = decodeURIComponent): string {
   try {
-    return decodeURIComponent(p);
+    return decode(p);
   } catch {
     return p;
   }

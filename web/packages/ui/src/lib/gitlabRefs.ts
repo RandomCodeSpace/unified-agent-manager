@@ -1,4 +1,5 @@
 import type { Item } from '../api';
+import { decodePath } from './markdown.ts';
 import { readableInput, toolKind } from './transcript.ts';
 
 // GitLab items a turn touched (DESIGN.md GitLab from the conversation): GitLab
@@ -51,7 +52,7 @@ export function parseGitLabUrl(href: string, origin: GitLabOrigin): GitLabRef | 
   let url: URL;
   try { url = new URL(href); } catch { return null; }
   if ((url.protocol !== 'https:' && url.protocol !== 'http:') || lower(url.hostname) !== lower(origin.host)) return null;
-  const path = decodeURIComponent(url.pathname).replace(/\/+$/, '');
+  const path = decodePath(url.pathname).replace(/\/+$/, '');
   const group = /^\/groups\/(.+?)\/-\/(?:epics|work_items)\/(\d+)$/.exec(path);
   if (group) return epic(Number(group[2]), group[1], origin);
   const prefix = `/${origin.path}/-/`;

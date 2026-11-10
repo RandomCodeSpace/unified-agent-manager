@@ -120,6 +120,17 @@ test('a link keeps its own words on the chip', async () => {
   expect(link.textContent).toBe('the review');
 });
 
+test('a link to a file whose name holds a bad percent escape renders as written', async () => {
+  const odd = 'coverage-50%off.md';
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    if (String(input).endsWith('/files/resolve')) return Response.json({ files: [{ path: odd, exists: true, kind: 'file' }] });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<Conversation entries={[{ ...items[1], text: `See [Results](${odd}).` }]} />);
+  const link = await screen.findByRole('link', { name: `Open ${odd}` });
+  expect(link.textContent).toBe('Results');
+});
+
 test('an open preview reloads when a tool in the Thread changes its file', async () => {
   let body = 'first version';
   vi.mocked(fetch).mockImplementation(async (input, init) => {
