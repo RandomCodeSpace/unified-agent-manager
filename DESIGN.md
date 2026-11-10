@@ -1417,6 +1417,9 @@ The textarea's accessible description carries it; the visible copy is `aria-hidd
   First, where the Thread runs: in the Project folder the branch dropdown alone (`GitBranch`, the name in `ink`, `ChevronDown` in `faint`; it opens the branch menu, plain text when the Thread cannot switch), in its own worktree "Worktree" in `muted` and the branch in `ink` behind `FolderGit2`, read-only, the whole branch and the path on its tip (the folder, named for the branch, is left out).
   No "Current branch" label.
   A draft offers a segmented **Project folder | New worktree** (`Folder`, `FolderGit2`) before the branch dropdown, in a 32px row under its composer (`ComposerFoot`), outside the composer's surface.
+  The routine form's **Runs in** field is the same control, for every run of the routine (owner, 2026-11-10): the same two segments, and in New worktree the same source branch dropdown.
+  In Project folder it has no branch dropdown, since a run nobody watches takes the folder as it is; a `muted` `caption` line under it says what the choice does, and in a Project without Git the segments are off, on Project folder, with the reason on that line ("Not a Git repository: a run cannot have its own worktree.").
+  A routine's card says the same in a **Runs in** row: "Project folder", "New worktree" or "New worktree from main".
   What the turn waits on now is not here: it is the status strip's live line (owner, 2026-10-21, r13 A).
   Then the time split as two blocks, `Cpu` model and `Terminal` local: their shares while the Thread works, their times once it is idle (local alone where model time is not recorded); its tip, and its name, is the whole sentence with the waiting left out.
   The branch's name is capped at 192px with its picker (plain text carries the whole name in its `title`); the blocks never shrink; when the control row has wrapped the name truncates further, so nothing overflows at 390px.

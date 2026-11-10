@@ -90,7 +90,11 @@ type WebRoutineRun struct {
 // starts a Task with Prompt on Model. NextRun is the next due firing, zero
 // while paused; Runs is the newest MaxRoutineRuns firings, oldest first.
 // Autopilot turns autopilot on in each run's Task: it keeps working until
-// the agent calls task_complete or the run's time limit stops it.
+// the agent calls task_complete or the run's time limit stops it. Place is
+// where each run's Task works: nil is the Project's folder; Mode "worktree"
+// is a new worktree and branch for every run, started from Base ("" starts
+// where a new Task's worktree does). Its Branch, Worktree and Named are a
+// made place's and stay empty.
 type WebRoutine struct {
 	ID            string          `json:"id"`
 	ProjectID     string          `json:"project_id"`
@@ -104,6 +108,7 @@ type WebRoutine struct {
 	Autopilot     bool            `json:"autopilot,omitempty"`
 	MaxRunsPerDay int             `json:"max_runs_per_day"`
 	MaxMinutes    int             `json:"max_minutes"`
+	Place         *WebPlace       `json:"place,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	NextRun       time.Time       `json:"next_run,omitzero"`
 	Runs          []WebRoutineRun `json:"runs,omitempty"`
@@ -115,7 +120,7 @@ type webRoutineAlias WebRoutine
 
 var knownWebRoutineFields = map[string]struct{}{
 	"id": {}, "project_id": {}, "name": {}, "prompt": {}, "provider": {}, "model": {}, "schedule": {}, "enabled": {},
-	"mode": {}, "autopilot": {}, "max_runs_per_day": {}, "max_minutes": {}, "created_at": {}, "next_run": {}, "runs": {},
+	"mode": {}, "autopilot": {}, "max_runs_per_day": {}, "max_minutes": {}, "place": {}, "created_at": {}, "next_run": {}, "runs": {},
 }
 
 func (r WebRoutine) MarshalJSON() ([]byte, error) {
@@ -137,8 +142,10 @@ func (r *WebRoutine) UnmarshalJSON(data []byte) error {
 }
 
 // dropInvalidRoutines removes stored routines a hand edit or a bug could
-// have broken: a bad ID, a missing Project, an unusable schedule, mode or
-// limit. Its Project is looked up in cfg, so a routine never outlives one.
+// have broken: a bad ID, a missing Project, an unusable schedule, mode,
+// limit or place. Its Project is looked up in cfg, so a routine never
+// outlives one. A routine with a place that is not a new worktree is dropped,
+// not moved to the Project's folder, where its runs were not meant to work.
 // Runs beyond MaxRoutineRuns are cut, oldest first.
 func dropInvalidRoutines(cfg *Config) {
 	for key, r := range cfg.WebRoutines {
@@ -157,6 +164,8 @@ func dropInvalidRoutines(cfg *Config) {
 			reason = "invalid limits"
 		case r.Provider == "" || hasControlChar(r.Provider) || len(r.Provider) > maxWebModelBytes || hasControlChar(r.Model) || len(r.Model) > maxWebModelBytes:
 			reason = "invalid model"
+		case r.Place != nil && r.Place.Mode != "worktree":
+			reason = "invalid place"
 		}
 		if reason != "" {
 			log.Warn("dropping invalid routine", "key", key, "reason", reason)

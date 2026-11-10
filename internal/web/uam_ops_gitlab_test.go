@@ -120,7 +120,11 @@ func TestUAMReadRoutines(t *testing.T) {
 	}
 
 	for i := range uamMaxRows + 2 {
-		r := mustRoutine(t, m, project, hourly(fmt.Sprintf("r%02d", i)))
+		in := hourly(fmt.Sprintf("r%02d", i))
+		if i == uamMaxRows+1 {
+			in.Place = &PlaceRequest{Mode: placeWorktree, Base: "main"}
+		}
+		r := mustRoutine(t, m, project, in)
 		if i == 0 {
 			m.routines.mu.Lock()
 			rec := m.routines.list[r.ID]
@@ -138,7 +142,7 @@ func TestUAMReadRoutines(t *testing.T) {
 	first := page.Rows[0]
 	uamCheckHostile(t, first["name"].(string))
 	runs := first["runs"].([]any)
-	if len(runs) != uamRoutineRuns || first["runs_kept"] != float64(5) {
+	if len(runs) != uamRoutineRuns || first["runs_kept"] != float64(5) || first["runs_in"] != "Project folder" {
 		t.Fatalf("runs not capped: %+v", first)
 	}
 	run := runs[0].(map[string]any)
@@ -151,7 +155,7 @@ func TestUAMReadRoutines(t *testing.T) {
 	}
 	var rest uamTestPage
 	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"routines","args":{"cursor":%q}}`, page.Next), &rest)
-	if len(rest.Rows) != 2 || rest.Rows[1]["name"] != fmt.Sprintf("r%02d", uamMaxRows+1) {
+	if len(rest.Rows) != 2 || rest.Rows[1]["name"] != fmt.Sprintf("r%02d", uamMaxRows+1) || rest.Rows[1]["runs_in"] != "New worktree from main" {
 		t.Fatalf("second page: %+v", rest)
 	}
 
