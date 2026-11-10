@@ -378,6 +378,8 @@ func (m *Manager) Rewind(id string, req RewindRequest) (RewindReceipt, error) {
 		log.Warn("native rewind result is unknown", "session", id, "error", err)
 	}
 	truncated := err == nil && (result.Outcome == "success" || result.Outcome == "checkpoint-cleanup-failed" || result.Outcome == "snapshot-prune-failed")
+	// The prune must not run while a flush appends the records it removes.
+	m.persistMu.Lock()
 	m.mu.Lock()
 	before := m.summaryLocked(s)
 	rec := s.rewind.Clone()
@@ -400,6 +402,7 @@ func (m *Manager) Rewind(id string, req RewindRequest) (RewindReceipt, error) {
 	m.changedLocked(s, before)
 	out := receiptOf(rec)
 	m.mu.Unlock()
+	m.persistMu.Unlock()
 	if closeConv != nil {
 		m.closeConversation(closeConv)
 	}
@@ -424,7 +427,8 @@ func (m *Manager) recordedRewind(s *webSession, req RewindRequest) (RewindReceip
 }
 
 // pruneRewoundLocked drops the turn timings, and their pending snapshot rows,
-// of the owner turns the provider confirmed it removed.
+// of the owner turns the provider confirmed it removed. The caller holds
+// persistMu as well: flush takes the rows it appended from the same queues.
 func (m *Manager) pruneRewoundLocked(s *webSession, discarded []string) {
 	if len(discarded) == 0 {
 		return
@@ -598,9 +602,12 @@ func (m *Manager) reconcileRewind(id, requestID string) (RewindReceipt, error) {
 			return RewindReceipt{}, newError(http.StatusBadGateway, "could not check the recorded conversation: %s", shortError(err))
 		}
 	}
+	// The prune must not run while a flush appends the records it removes.
+	m.persistMu.Lock()
 	m.mu.Lock()
 	if s.removed || s.rewind == nil || s.rewind.RequestID != requestID {
 		m.mu.Unlock()
+		m.persistMu.Unlock()
 		return RewindReceipt{}, newError(http.StatusConflict, msgHistoryChanged)
 	}
 	before := m.summaryLocked(s)
@@ -611,6 +618,7 @@ func (m *Manager) reconcileRewind(id, requestID string) (RewindReceipt, error) {
 	done, gen := s.historyDone, s.historyGen
 	m.changedLocked(s, before)
 	m.mu.Unlock()
+	m.persistMu.Unlock()
 	if conv != nil {
 		m.closeConversation(conv)
 	}

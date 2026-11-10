@@ -135,17 +135,18 @@ func TestNoteHistoryRecordsEdits(t *testing.T) {
 	at := time.Now()
 	sub := toolEdit("e2", "edit", "b.go", agentapi.ToolCompleted, at)
 	sub.AgentID = "agent-1"
-	m.noteHistoryLocked(s, agentapi.History{Items: []agentapi.Item{
+	h := agentapi.History{Items: []agentapi.Item{
 		{ID: "u", Kind: agentapi.ItemUser, Time: at},
 		toolEdit("e1", "apply_patch", "", agentapi.ToolCompleted, at),
 		toolEdit("e3", "create", "a.go", agentapi.ToolRunning, at.Add(-time.Second)),
 		sub,
-	}, Truncated: true}, true)
+	}, Truncated: true}
+	m.noteHistoryLocked(s, h, notesOf(h.Items), true)
 	// The running create may yet fail: it is not an edit until it completes.
 	if s.editsKnown || len(s.edits) != 1 || !s.turnStart.Equal(at) {
 		t.Fatalf("edits = %v known %v turn %v", s.edits, s.editsKnown, s.turnStart)
 	}
-	m.noteHistoryLocked(s, agentapi.History{}, true)
+	m.noteHistoryLocked(s, agentapi.History{}, nil, true)
 	if !s.editsKnown {
 		t.Fatal("a whole record did not make the edits known")
 	}

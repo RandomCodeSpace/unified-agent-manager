@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -87,6 +88,9 @@ func (m *Manager) quotaUsedLocked(provider string) (float64, bool) {
 	return used, ok
 }
 
+// budgetViewLocked is s's budget as its summary shows it. The pointer is
+// kept while the view is unchanged, so an unchanged summary still compares
+// equal and publishes nothing (as pendingAsk).
 func (m *Manager) budgetViewLocked(s *webSession) *BudgetView {
 	if s.budget.Credits == 0 && s.budget.QuotaPercent == 0 {
 		return nil
@@ -99,7 +103,10 @@ func (m *Manager) budgetViewLocked(s *webSession) *BudgetView {
 	if used, ok := m.quotaUsedLocked(s.provider); ok {
 		v.QuotaUsed = &used
 	}
-	return v
+	if s.budgetView == nil || !reflect.DeepEqual(s.budgetView, v) {
+		s.budgetView = v
+	}
+	return s.budgetView
 }
 
 // budgetOverLocked says why s's budget is spent; "" while it is not.

@@ -717,3 +717,27 @@ func TestSenseSharesTheComposerBudgetEstimate(t *testing.T) {
 		t.Fatalf("reached sense = %+v estimate %+v", sense.Budget, sense.BudgetEstimate)
 	}
 }
+
+// Every tab receives a Thread's summary, so a budgeted Thread publishes it
+// when it changed, not on each event of a streaming reply.
+func TestBudgetedThreadStreamsWithoutSummaryFrames(t *testing.T) {
+	m, prov := startUsageManager(t, nil, nil)
+	at := time.Now()
+	m.now = func() time.Time { return at } // a new minute publishes the summary
+	sum, conv := budgetThread(t, m, prov, t.TempDir())
+	conv.EmitDelta("a1", agentapi.ItemAssistant, "one")
+	sub, _, err := m.Subscribe("") // a tab with no Thread open
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 200 {
+		conv.EmitDelta("a1", agentapi.ItemAssistant, " more")
+	}
+	noFrame(t, sub, "a reply streaming on a budgeted Thread")
+	reportUnits(conv, 6)
+	var got SessionSummary
+	decodeField(t, frameOf(t, sub, "session"), "session", &got)
+	if got.ID != sum.ID || got.Budget == nil || got.Budget.Spent != 1 || got.Budget.Left == nil || *got.Budget.Left != 1 {
+		t.Fatalf("summary after spending = %+v", got.Budget)
+	}
+}

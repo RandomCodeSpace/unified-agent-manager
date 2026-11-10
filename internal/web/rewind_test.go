@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -502,5 +504,87 @@ func TestRewindRefusesATokenTakenBeforeAnOutsideEdit(t *testing.T) {
 	}
 	if _, err := m.Rewind(sum.ID, RewindRequest{UserItemID: "u-second", Mode: agentapi.RewindConversationAndFiles, Token: previewToken(t, m, sum.ID), RequestID: mustUUID(t)}); err != nil || rc.rewinds() != 1 {
 		t.Fatalf("fresh preview = %v; rewinds %d", err, rc.rewinds())
+	}
+}
+
+// A flush clones the queued turn records, appends them outside the manager
+// lock and then takes them from the queues' front. A rewind that prunes the
+// same queues waits for it: pruning in between would leave the flush taking
+// more records than the queues hold.
+func TestRewindWaitsForAFlushAppendingTheTurnRecordsItPrunes(t *testing.T) {
+	for _, reconciled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconciled=%v", reconciled), func(t *testing.T) {
+			m, p, _, sum, rc := rewindManager(t)
+			req := RewindRequest{UserItemID: "u-second", Mode: agentapi.RewindConversationAndFiles, Token: previewToken(t, m, sum.ID), RequestID: mustUUID(t)}
+			s := budgetSession(t, m, sum.ID)
+			// While the provider answers, the turns' records are queued (a late
+			// change capture lands) and a flush gets as far as cloning the
+			// queues, as flush does, before the rewind goes on to prune them.
+			var todos keptTodos
+			var changes keptTurnChanges
+			flushing := make(chan struct{})
+			flush := func() {
+				m.persistMu.Lock()
+				m.mu.Lock()
+				for _, timing := range s.turnTimings {
+					s.turnTodos = append(s.turnTodos, TurnTodos{TimingID: timing.ID, EndedAt: timing.EndedAt})
+					s.turnChanges = append(s.turnChanges, TurnChanges{TimingID: timing.ID, EndedAt: timing.EndedAt})
+				}
+				timings := store.CloneTurnTimings(s.turnTimings)
+				todos = keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings}
+				changes = keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings}
+				m.mu.Unlock()
+				close(flushing)
+			}
+			run := func() error { _, err := m.Rewind(sum.ID, req); return err }
+			rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+				flush()
+				return agentapi.RewindResult{Outcome: "success"}, nil
+			}
+			if reconciled {
+				// The result was lost: the prune waits for the reconcile.
+				rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+					return agentapi.RewindResult{}, fmt.Errorf("%w: connection lost", agentapi.ErrRewindUncertain)
+				}
+				if err := run(); err != nil {
+					t.Fatal(err)
+				}
+				p.readHook = func(agentapi.ForkBoundaryRequest) error {
+					flush()
+					return agentapi.ErrItemNotFound
+				}
+				run = func() error { _, err := m.ReconcileRewind(sum.ID, req.RequestID); return err }
+			}
+			done := make(chan error, 1)
+			go func() { done <- run() }()
+			<-flushing
+			if len(todos.records) != 3 || len(changes.records) != 3 {
+				t.Fatalf("the flush cloned %d and %d queued records, want 3 of each", len(todos.records), len(changes.records))
+			}
+			queued := func() int {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return len(s.turnTodos) + len(s.turnChanges)
+			}
+			// A rewind that does not wait prunes within microseconds of the provider's answer.
+			pruned := false
+			for deadline := time.Now().Add(100 * time.Millisecond); !pruned && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+				pruned = queued() < len(todos.records)+len(changes.records)
+			}
+			if !pruned {
+				m.appendTurnTodos(todos)
+				m.appendTurnChanges(changes)
+			}
+			m.persistMu.Unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if pruned {
+				t.Fatal("the rewind pruned queued turn records while a flush was appending them")
+			}
+			if users := timingUsers(m, sum.ID); !reflect.DeepEqual(users, []string{"u-first"}) || queued() != 0 {
+				t.Fatalf("after the rewind: timings %v, %d queued turn records", users, queued())
+			}
+		})
 	}
 }
