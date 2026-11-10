@@ -2670,6 +2670,28 @@ func TestWebCheck(t *testing.T) {
 	}
 }
 
+// A timed-out check stops the CLI the npm loader started as its child, and
+// asks the binary itself, not a self-update the loader downloaded.
+func TestWebCheckStopsTheLoadersChild(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	pidFile, argsFile := filepath.Join(dir, "child.pid"), filepath.Join(dir, "args")
+	script := "#!/bin/sh\necho \"$@\" >" + argsFile + "\nsleep 60 >/dev/null 2>&1 &\necho $! >" + pidFile + "\nwait\n"
+	if err := os.WriteFile(filepath.Join(dir, "copilot"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := newWebProvider(func() (sdkClient, error) { return nil, errors.New("no runtime in this test") }, time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := p.Check(ctx); err == nil {
+		t.Fatal("a hung check passed")
+	}
+	waitProcessGone(t, pidFile)
+	if args, _ := os.ReadFile(argsFile); strings.TrimSpace(string(args)) != "--no-auto-update --version" {
+		t.Fatalf("check ran copilot %q", args)
+	}
+}
+
 // TestWebRealCopilotCreateWithoutPrompt starts the installed CLI and opens a
 // conversation without sending anything, so no model call is made.
 func TestWebRealCopilotCreateWithoutPrompt(t *testing.T) {

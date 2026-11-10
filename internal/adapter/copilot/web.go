@@ -69,9 +69,8 @@ const (
 )
 
 var (
-	errNoUser      = errors.New("no user is available to answer")
-	errDeclined    = errors.New("the user declined to answer")
-	cliVersionExpr = regexp.MustCompile(`\d+\.\d+\.\d+`)
+	errNoUser   = errors.New("no user is available to answer")
+	errDeclined = errors.New("the user declined to answer")
 )
 
 // sdkClient is the part of the Copilot SDK client the web provider drives.
@@ -659,20 +658,8 @@ func (p *webProvider) Check(ctx context.Context) error {
 	}
 	vctx, cancel := context.WithTimeout(ctx, webCheckTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(vctx, path, "--version") // #nosec G204 -- resolveCopilot uses the service owner's PATH; fixed argument, no shell or request input.
-	// The npm shim runs the real binary as a child that inherits the output
-	// pipe; WaitDelay stops a timed-out check from waiting on that child.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail == "" {
-			detail = err.Error()
-		}
-		return fmt.Errorf("copilot --version failed: %s", clip(displaytext.Sanitize(detail), maxErrorText))
-	}
-	if !cliVersionExpr.Match(out) {
-		return fmt.Errorf("copilot --version printed no version: %s", clip(displaytext.Sanitize(string(out)), maxErrorText))
+	if _, err := cliVersion(vctx, path); err != nil {
+		return err
 	}
 	if p.signedOut(ctx) {
 		return fmt.Errorf("copilot is not signed in: %w", agentapi.ErrSignedOut)
