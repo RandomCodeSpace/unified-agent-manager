@@ -17,8 +17,9 @@ const (
 )
 
 // Sanitize returns valid UTF-8 terminal display text. It removes ANSI CSI,
-// OSC, DCS, SOS, PM, and APC control sequences; drops unsafe control runes;
-// and turns horizontal tabs and line breaks into spaces.
+// OSC, DCS, SOS, PM, and APC control sequences; drops unsafe control runes
+// and Unicode direction controls; and turns horizontal tabs and line breaks
+// into spaces.
 func Sanitize(s string) string {
 	return sanitize(s, false)
 }
@@ -122,7 +123,9 @@ func appendGround(r rune, b *strings.Builder, lines bool) parseState {
 		}
 		return ground
 	}
-	if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f {
+	// Direction embeddings, overrides and isolates (U+202A to U+202E, U+2066
+	// to U+2069) can make text read in another order than it is stored.
+	if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 {
 		return ground
 	}
 	b.WriteRune(r)

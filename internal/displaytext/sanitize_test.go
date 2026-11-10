@@ -80,3 +80,14 @@ func FuzzSanitize(f *testing.F) {
 		}
 	})
 }
+
+func TestSanitizeDropsDirectionControls(t *testing.T) {
+	in := "a\u202ab\u202bc\u202cd\u202de\u202ef\u2066g\u2067h\u2068i\u2069j \u200e\u05e9\u05dc\u05d5\u05dd"
+	want := "abcdefghij \u200e\u05e9\u05dc\u05d5\u05dd"
+	if got := Sanitize(in); got != want {
+		t.Fatalf("Sanitize() = %q, want %q", got, want)
+	}
+	if got := SanitizeText(in); got != want {
+		t.Fatalf("SanitizeText() = %q, want %q", got, want)
+	}
+}
