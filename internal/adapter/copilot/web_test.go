@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
@@ -1188,6 +1189,22 @@ func TestWebUnendedToolCallsAreForgottenAtTheNextTurn(t *testing.T) {
 	defer conv.mu.Unlock()
 	if _, kept := conv.tr.tools["sub-call"]; !kept || len(conv.tr.tools) != 1 || len(conv.tr.toolAgents) != 1 {
 		t.Fatalf("running calls after the next turn's start = %v", conv.tr.toolAgents)
+	}
+}
+
+// Skill calls whose end was never reported are forgotten the same way.
+func TestWebUnendedSkillCallsAreForgottenAtTheNextTurn(t *testing.T) {
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-skill", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-skill-call", ToolName: skillTool}))
+	h.fs.onEvent(ev("skill-1", &rpc.ToolExecutionStartData{ToolCallID: "skill-call", ToolName: skillTool}))
+	h.fs.onEvent(ev("i1", &rpc.AssistantIdleData{}))
+	startTurn(t, h)
+	conv := h.conv.(*conversation)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	if !conv.tr.isHidden("sub-skill-call") || len(conv.tr.hidden) != 1 {
+		t.Fatalf("running skill calls after the next turn's start = %v", conv.tr.hidden)
 	}
 }
 
@@ -3372,6 +3389,132 @@ func TestCapabilitiesDoNotWaitForACLIStart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Capabilities waited for the CLI start")
 	}
+}
+
+// hangingStart returns a client whose Start waits for release.
+func hangingStart(startErr error) hangingStartClient {
+	return hangingStartClient{fakeClient: &fakeClient{startErr: startErr}, started: make(chan struct{}), release: make(chan struct{})}
+}
+
+// Calls that arrive during a CLI start share it. It runs without the
+// provider lock, so a state read answers meanwhile, and a call whose own
+// context ends gives up alone.
+func TestCallsDuringACLIStartShareIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := hangingStart(nil)
+		var clients atomic.Int32
+		p := newWebProvider(func() (sdkClient, error) { clients.Add(1); return h, nil }, time.Hour)
+		defer func() { _ = p.Shutdown(context.Background()) }()
+		got := make(chan sdkClient, 2)
+		for range 2 {
+			go func() { c, _ := p.ensureStarted(context.Background()); got <- c }()
+		}
+		synctest.Wait()
+		if n := p.openConversations(); n != 0 {
+			t.Fatalf("open conversations during a start = %d", n)
+		}
+		short, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if _, err := p.ensureStarted(short); err == nil || !strings.Contains(err.Error(), "start copilot CLI: context deadline exceeded") {
+			t.Fatalf("call bounded by its own context = %v", err)
+		}
+		close(h.release)
+		for range 2 {
+			if c := <-got; c != sdkClient(h) {
+				t.Fatalf("a call during the start got %v", c)
+			}
+		}
+		if started, _ := h.counts(); clients.Load() != 1 || started != 1 {
+			t.Fatalf("clients = %d, starts = %d, want one of each", clients.Load(), started)
+		}
+	})
+}
+
+// A failed start is reported to every call that waited for it, and the next
+// call starts the CLI again.
+func TestAFailedCLIStartIsReportedToEveryWaiter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h, fc := hangingStart(errors.New("CLI unavailable")), &fakeClient{}
+		var clients atomic.Int32
+		p := newWebProvider(func() (sdkClient, error) {
+			if clients.Add(1) == 1 {
+				return h, nil
+			}
+			return fc, nil
+		}, time.Hour)
+		defer func() { _ = p.Shutdown(context.Background()) }()
+		got := make(chan error, 2)
+		for range 2 {
+			go func() { _, err := p.ensureStarted(context.Background()); got <- err }()
+		}
+		synctest.Wait()
+		close(h.release)
+		for range 2 {
+			if err := <-got; err == nil || !strings.Contains(err.Error(), "CLI unavailable") {
+				t.Fatalf("a call during the failed start = %v", err)
+			}
+		}
+		if _, forced := h.counts(); clients.Load() != 1 || forced != 1 {
+			t.Fatalf("after the failed start: clients = %d, forced = %d", clients.Load(), forced)
+		}
+		if c, err := p.ensureStarted(context.Background()); err != nil || c != sdkClient(fc) {
+			t.Fatalf("the next call = %v, %v", c, err)
+		}
+	})
+}
+
+// Shutdown ends a CLI start in flight instead of waiting for it, and the
+// CLI it started is stopped.
+func TestShutdownDuringACLIStartLeavesNoCLIRunning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := hangingStart(nil)
+		p := newWebProvider(func() (sdkClient, error) { return h, nil }, time.Hour)
+		got := make(chan error, 1)
+		go func() { _, err := p.ensureStarted(context.Background()); got <- err }()
+		synctest.Wait()
+		if err := p.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-got; !errors.Is(err, agentapi.ErrClosed) {
+			t.Fatalf("the call that waited for the start = %v", err)
+		}
+		p.mu.Lock()
+		client, starting := p.client, p.starting
+		p.mu.Unlock()
+		if started, forced := h.counts(); started != 1 || forced != 1 || client != nil || starting != nil {
+			t.Fatalf("started = %d, forced = %d, client = %v, starting = %v", started, forced, client, starting)
+		}
+		if _, err := p.ensureStarted(context.Background()); !errors.Is(err, agentapi.ErrClosed) {
+			t.Fatalf("start after shutdown = %v", err)
+		}
+	})
+}
+
+// A restart for a new sign-in waits for a CLI start in flight and stops the
+// CLI it started, which read the sign-in before.
+func TestRestartWaitsForACLIStartInFlight(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := hangingStart(nil)
+		p := newWebProvider(func() (sdkClient, error) { return h, nil }, time.Hour)
+		defer func() { _ = p.Shutdown(context.Background()) }()
+		go func() { _, _ = p.ensureStarted(context.Background()) }()
+		synctest.Wait()
+		done := make(chan error, 1)
+		go func() { done <- p.restartClient(context.Background()) }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("the restart did not wait for the start: %v", err)
+		default:
+		}
+		close(h.release)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if started, stopped, _ := h.lifecycle(); started != 1 || stopped != 1 {
+			t.Fatalf("started = %d, stopped = %d", started, stopped)
+		}
+	})
 }
 
 func TestIsRPCErrorFindsTheSDKErrorAnywhereInTheChain(t *testing.T) {

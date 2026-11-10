@@ -272,6 +272,7 @@ func (p *webProvider) openConversations() int {
 // the stop share the lock, so none starts between.
 func (p *webProvider) restartClient(ctx context.Context) error {
 	p.mu.Lock()
+	p.awaitStartLocked()
 	if p.client == nil {
 		p.mu.Unlock()
 		return nil
