@@ -18,7 +18,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type Works
 import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, type DraftAttachment } from './lib/drafts';
-import { byActivity, cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, putAwayWork, sidebarTasks, tasksOf } from './lib/tasks';
+import { byActivity, cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, pageTitle, putAwayWork, sidebarTasks, tasksOf } from './lib/tasks';
 import { setViewing, startNotifications } from './lib/notify';
 import { clearArchive, forgetArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -39,6 +39,7 @@ import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
 import { useEventStream, type SweptMembership } from './lib/useEventStream';
 import { useMeta } from './lib/useMeta';
+import { useReadMarks } from './lib/useReadMarks';
 import { useDrawer, useSidebar } from './lib/useSidebar';
 import { useTypeToCompose } from './lib/useTypeToCompose';
 import { Contained } from './components/VisualBoundary';
@@ -113,7 +114,6 @@ function hashAgent(path = window.location.hash): { task: string; agent: string }
 export default function App() {
   const api = useApi();
   const FILTER_KEY = api.storageKey('uam.projectFilter');
-  const VIEWED_SINCE_KEY = api.storageKey('uam.viewedSince');
   const LOOKED_KEY = api.storageKey('uam.looked');
   const VIEWED_KEY = api.storageKey('uam.viewed');
   const federation = useFederation();
@@ -165,7 +165,6 @@ export default function App() {
   // The New task palette (the pen, or Alt+N); it chooses the draft's Project.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
-  const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const emptyWorkspace = state.loaded && state.sessions.length === 0;
   const [ownFilter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   // Under federation the filter is a Project on a machine (or a machine alone), kept by the owner; here it is that Project while its machine is on screen.
@@ -190,14 +189,6 @@ export default function App() {
   // `tick` refocuses its composer when New task is chosen again.
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
   const newTaskTick = useRef(0);
-  // A Task never opened in this browser counts as read up to the first visit, so a reload (the phone drops pages often) never forgets what finished meanwhile.
-  const [loadedAt] = useState(() => {
-    const since = readJSON<string | null>(VIEWED_SINCE_KEY, null);
-    if (since) return since;
-    const now = new Date().toISOString();
-    writeJSON(VIEWED_SINCE_KEY, now);
-    return now;
-  });
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
   // Task whose composer takes focus once its detail arrives (a Task just created, or one chosen
@@ -245,59 +236,9 @@ export default function App() {
   // Settings or Routines over the selected Task: the owner is not looking at it, as if the page were hidden.
   const viewOpen = settingsOpen || !!routinesFor;
   const viewShown = useRef(false);
-  // When the owner last looked at each Task: while it is on screen, and as they leave it.
-  const markLooked = useCallback((id: string) => {
-    try {
-      localStorage.setItem(LOOKED_KEY, JSON.stringify({ ...readJSON<Record<string, string>>(LOOKED_KEY, {}), [id]: new Date().toISOString() }));
-    } catch {
-      // Storage unavailable: no mark, so no "Since you left".
-    }
-  }, [LOOKED_KEY]);
-
-  // The selected task counts as viewed as long as it is on screen: every frame that carries
-  // its updated_at marks it, so nothing it does while open shows as unread later. A hidden
-  // page, or Settings over the Task, shows nothing: what the Task does meanwhile stays unread
-  // until the page is back.
-  const markViewed = useCallback((id: string, at: string) => {
-    if (document.visibilityState !== 'visible' || viewShown.current) return;
-    markLooked(id);
-    setViewed((v) => {
-      if (v[id] === at) return v;
-      const next = { ...v, [id]: at };
-      writeJSON(VIEWED_KEY, next);
-      return next;
-    });
-  }, [VIEWED_KEY, markLooked]);
-  // Leaving a Task, hiding the page or closing it ends the look at the Task on screen; so does opening Settings over it.
-  useEffect(() => {
-    const id = state.selectedId;
-    if (!id || viewOpen) return;
-    const onHide = () => markLooked(id);
-    const onVisibility = () => { if (document.hidden) markLooked(id); };
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', onHide);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', onHide);
-      // A hidden page recorded the leave when it hid; it shows nothing since.
-      if (!document.hidden) markLooked(id);
-    };
-  }, [state.selectedId, viewOpen, markLooked]);
-  const markShown = useEffectEvent(() => {
-    const shown = state.sessions.find((s) => s.id === state.selectedId);
-    if (shown) markViewed(shown.id, shown.updated_at);
-  });
-  useEffect(() => {
-    document.addEventListener('visibilitychange', markShown);
-    return () => document.removeEventListener('visibilitychange', markShown);
-  }, []);
+  const { setViewed, markViewed, hasNews, opened } = useReadMarks({ api, selectedId: state.selectedId, sessions: state.sessions, viewOpen, viewShown, LOOKED_KEY, VIEWED_KEY });
   const setStreamKey = useEventStream({ api, auth, selectedId: state.selectedId, dispatch, forwardEvent, recentTasks, sweptMembership, confirmedDetail, checkVersion, markViewed, setAuth, setNotice, setFilter, setViewed, FILTER_KEY, LOOKED_KEY, VIEWED_KEY });
 
-  const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
-  // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.
-  // A Settings or Routines visit is not leaving: the Thread stays mounted under it and comes back as it was.
-  const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
-  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
