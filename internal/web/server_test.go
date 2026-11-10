@@ -76,6 +76,12 @@ type reqOpt func(*http.Request)
 
 func withHeader(k, v string) reqOpt { return func(r *http.Request) { r.Header.Set(k, v) } }
 func withHost(h string) reqOpt      { return func(r *http.Request) { r.Host = h } }
+
+// behindHTTPSProxy is a request from an HTTPS reverse proxy on loopback.
+func behindHTTPSProxy(r *http.Request) {
+	r.RemoteAddr = "127.0.0.1:40000"
+	r.Header.Set("X-Forwarded-Proto", "https")
+}
 func withCookie(ts *testServer) reqOpt {
 	return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(ts.srv, r.Host)}) }
 }
@@ -132,7 +138,7 @@ func TestAPIRequiresLoginAndCookieWorks(t *testing.T) {
 		c[0].MaxAge != 30*24*60*60 || c[0].Secure || c[0].Value == testToken {
 		t.Fatalf("cookie = %+v", c)
 	}
-	if w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, withHeader("X-Forwarded-Proto", "https")); !w.Result().Cookies()[0].Secure {
+	if w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, behindHTTPSProxy); !w.Result().Cookies()[0].Secure {
 		t.Fatal("cookie behind an HTTPS proxy must be Secure")
 	}
 	if w := ts.do(http.MethodGet, "/api/auth", "", func(r *http.Request) { r.AddCookie(c[0]) }); w.Body.String() != "{\"authenticated\":true,\"required\":true}\n" {

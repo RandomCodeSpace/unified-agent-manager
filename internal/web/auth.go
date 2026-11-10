@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -297,8 +298,20 @@ func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
 	return mac, exp, true
 }
 
-func secureRequest(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+// secureRequest reports whether the browser sent r over HTTPS: its own
+// TLS, a Host that is one of the https public origins, or X-Forwarded-Proto
+// from a reverse proxy on loopback. Another peer's header is ignored, as
+// signInClient ignores its X-Forwarded-For.
+func (s *Server) secureRequest(r *http.Request) bool {
+	if r.TLS != nil || s.mcpCallbackOrigins[strings.ToLower(r.Host)] != "" {
+		return true
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	return peer != nil && peer.IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
@@ -311,6 +324,6 @@ func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
 func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set for TLS/proxy HTTPS; loopback/SSH HTTP is supported, with HttpOnly and SameSiteStrict always set.
 		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureRequest(r),
+		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secureRequest(r),
 	})
 }

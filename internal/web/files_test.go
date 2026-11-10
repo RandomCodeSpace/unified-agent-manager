@@ -369,7 +369,7 @@ func TestViewFileOverHTTPSNeedsTheCompanionCookie(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	sum, _ := viewTask(t, ts)
 	other, _ := createSession(t, ts.m, ts.prov)
-	https := withHeader("X-Forwarded-Proto", "https")
+	https := reqOpt(behindHTTPSProxy)
 	auth := withCookie(ts)
 
 	w := ts.do(http.MethodGet, viewURL(sum.ID, "out/report.html"), "", auth, https)
@@ -515,7 +515,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 func TestViewFileRedirectTargetIsBuiltFromTheRoute(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	https := withHeader("X-Forwarded-Proto", "https")
+	https := reqOpt(behindHTTPSProxy)
 	for _, c := range []struct{ name, id, escapedID, path, want string }{
 		{"plain", "task", "task", "out/report.html", "out/report.html"},
 		{"escaped name", "task", "task", "a%20b.txt", "a%20b.txt"},
@@ -548,5 +548,47 @@ func TestViewFileRedirectTargetIsBuiltFromTheRoute(t *testing.T) {
 		if w := ts.do(http.MethodGet, loc, ""); w.Code != http.StatusNotFound {
 			t.Errorf("%s: following %q = %d", c.name, loc, w.Code)
 		}
+	}
+}
+
+// HTTPS is the request's own TLS, a Host among the https public origins, or
+// X-Forwarded-Proto from a proxy on loopback; another peer's header is not
+// believed.
+func TestSecureRequestSources(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}})
+	sum, _ := viewTask(t, ts)
+	for _, tc := range []struct {
+		name   string
+		opts   []reqOpt
+		secure bool
+	}{
+		{"plain", nil, false},
+		{"header from a remote peer", []reqOpt{withHeader("X-Forwarded-Proto", "https")}, false},
+		{"header from a loopback proxy", []reqOpt{behindHTTPSProxy}, true},
+		{"https public origin without the header", []reqOpt{withHost("uam.example.com")}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, tc.opts...)
+			if c := w.Result().Cookies(); len(c) != 1 || c[0].Secure != tc.secure {
+				t.Fatalf("session cookie = %+v, want Secure %v", c, tc.secure)
+			}
+			w = ts.do(http.MethodGet, viewURL(sum.ID, "notes.md"), "", append(append([]reqOpt{}, tc.opts...), withCookie(ts))...)
+			companion := false
+			for _, c := range w.Result().Cookies() {
+				companion = companion || c.Name == fileCookieName
+			}
+			if w.Code != http.StatusFound || companion != tc.secure {
+				t.Fatalf("view = %d, companion cookie %v, want %v", w.Code, companion, tc.secure)
+			}
+			// Without its companion a key opens the file only where HTTPS
+			// cannot set one.
+			want := http.StatusOK
+			if tc.secure {
+				want = http.StatusUnauthorized
+			}
+			if got := ts.do(http.MethodGet, w.Header().Get("Location"), "", tc.opts...).Code; got != want {
+				t.Fatalf("key without companion = %d, want %d", got, want)
+			}
+		})
 	}
 }

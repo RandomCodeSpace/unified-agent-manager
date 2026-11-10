@@ -1220,7 +1220,7 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if key := r.PathValue("key"); key != "" {
-		if !s.validFileKey(key, r.Host, id) || (secureRequest(r) && !s.validFileCookie(r, id)) {
+		if !s.validFileKey(key, r.Host, id) || (s.secureRequest(r) && !s.validFileCookie(r, id)) {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
@@ -1229,7 +1229,7 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		key := fileKey(s.signKey, r.Host, id, exp)
 		prefix := "/api/sessions/" + url.PathEscape(id) + "/files/key/"
 		target := prefix + key + "/" + viewPath(r.PathValue("path"))
-		if secureRequest(r) {
+		if s.secureRequest(r) {
 			setFileCookie(w, fileCookie(s.signKey, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
 		}
 		if r.URL.Query().Get("download") == "1" {
