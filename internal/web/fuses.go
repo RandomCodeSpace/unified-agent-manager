@@ -184,6 +184,10 @@ func (m *Manager) blockFetchLocked(key, status string, until time.Time) {
 func (m *Manager) failedToolUse(ctx context.Context, s *webSession, use agentapi.ToolUse, failure string) string {
 	// A compound shell call may commit successfully before a later command fails.
 	m.succeededToolUse(ctx, s, use)
+	// No fuse handles view or apply_patch, so a hint ends the call.
+	if hint := m.failureHint(ctx, s, use, failure); hint != "" {
+		return hint
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || s.removed || s.base == StateClosed || m.sessions[s.id] != s {
