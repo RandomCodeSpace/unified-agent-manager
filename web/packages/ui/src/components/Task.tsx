@@ -12,6 +12,7 @@ import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRe
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
+import { failureWords } from '../lib/failure';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
 import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, StateMark, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
@@ -177,6 +178,9 @@ function headerState(session: SessionSummary, state: SessionState, failures: str
     detail = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   } else if (state === 'completed' && failures) {
     detail = failures;
+  } else if (state === 'failed') {
+    // Why it failed, when the provider said (lib/failure); its own text stays in the conversation.
+    detail = failureWords(session)?.cause;
   }
   return { word, detail, icon };
 }
@@ -971,6 +975,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
   const noticed = !!failure && foregroundItems(liveItems).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
+  // The cause in plain words leads when the provider named one (lib/failure); its own text follows unless the notice already holds it.
+  const why = failureWords(session);
 
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
@@ -1107,7 +1113,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {session.handoff && !live && !session.history_after && (
                 <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
               )}
-              {session.state === 'failed' && !noticed && (
+              {why ? (
+                <Note tone="error" role="alert">
+                  <span className="font-medium">{why.cause}.</span> {why.action}
+                  {!noticed && session.state_detail && <span className="block text-muted">{session.state_detail}</span>}
+                </Note>
+              ) : session.state === 'failed' && !noticed && (
                 <Note tone="error" role="alert">
                   Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
                 </Note>

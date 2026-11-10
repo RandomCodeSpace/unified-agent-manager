@@ -1378,6 +1378,44 @@ const (
 	TurnFailed    TurnState = "failed"
 )
 
+// ErrorKind is the provider's own category for the error that failed a turn.
+type ErrorKind string
+
+// The categories the Copilot SDK documents for a session error, and
+// ErrorOther for every other or missing one.
+const (
+	ErrorAuthentication ErrorKind = "authentication"
+	ErrorAuthorization  ErrorKind = "authorization"
+	ErrorPolicy         ErrorKind = "policy"
+	ErrorQuota          ErrorKind = "quota"
+	ErrorRateLimit      ErrorKind = "rate_limit"
+	ErrorContextLimit   ErrorKind = "context_limit"
+	ErrorQuery          ErrorKind = "query"
+	ErrorOther          ErrorKind = "other"
+)
+
+// ErrorKinds is every ErrorKind, in a fixed order.
+var ErrorKinds = []ErrorKind{ErrorAuthentication, ErrorAuthorization, ErrorPolicy, ErrorQuota, ErrorRateLimit, ErrorContextLimit, ErrorQuery, ErrorOther}
+
+// ErrorKindOf is the ErrorKind for a provider's error category: the category
+// itself when it is a known one, ErrorOther otherwise.
+func ErrorKindOf(category string) ErrorKind {
+	if k := ErrorKind(category); slices.Contains(ErrorKinds, k) {
+		return k
+	}
+	return ErrorOther
+}
+
+// TurnFailure is what the provider reported with the error that failed a
+// turn, beside its text. Code and Remediation are the provider's own short
+// codes, sanitized; Status is the upstream HTTP status, 0 when there was none.
+type TurnFailure struct {
+	Kind        ErrorKind `json:"kind"`
+	Code        string    `json:"code,omitempty"`
+	Status      int       `json:"status,omitempty"`
+	Remediation string    `json:"remediation,omitempty"`
+}
+
 // Turn reports a turn transition with evidence from the provider.
 type Turn struct {
 	// Completion is the main agent's receipt from this foreground event
@@ -1386,6 +1424,9 @@ type Turn struct {
 	State      TurnState       `json:"state"`
 	// Error is the sanitized provider error for TurnFailed.
 	Error string `json:"error,omitempty"`
+	// Failure is what else the provider said about that error; nil when
+	// the turn did not fail.
+	Failure *TurnFailure `json:"failure,omitempty"`
 	// Model is the model the provider reported for this turn, when known.
 	Model string `json:"model,omitempty"`
 	// Reason is the provider's code for why a TurnCancelled turn stopped,

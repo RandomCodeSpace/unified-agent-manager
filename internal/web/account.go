@@ -233,6 +233,7 @@ func (m *Manager) kickSignedOutLocked(s *webSession, detail string) {
 		}
 		before := m.summaryLocked(s)
 		s.setBase(StateFailed, signedOutReason(p))
+		s.failKind = agentapi.ErrorAuthentication
 		m.changedLocked(s, before)
 	}()
 }

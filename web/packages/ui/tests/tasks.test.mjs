@@ -206,6 +206,12 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Finished');
   assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Finished');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
+  // The provider's category names the cause; one it does not name leaves the plain words.
+  assert.equal(status({ state: 'failed', failure_kind: 'rate_limit' }), 'Rate limit reached');
+  assert.equal(status({ state: 'failed', failure_kind: 'authentication' }), 'Sign-in needed');
+  assert.equal(status({ state: 'failed', failure_kind: 'other' }), 'Stopped with an error');
+  assert.equal(status({ state: 'failed', failure_kind: 'something_new' }), 'Stopped with an error');
+  assert.equal(status({ state: 'completed', failure_kind: 'rate_limit' }), 'Finished');
   // No reason is not proof it was you: Copilot reports uam's own Stop and any other as user_initiated.
   assert.equal(status({ state: 'cancelled' }), 'Stopped');
   assert.equal(status({ state: 'cancelled', stop_reason: 'owner' }), 'You stopped it');

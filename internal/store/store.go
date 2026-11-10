@@ -582,6 +582,9 @@ type WebState struct {
 	// StopReason says why the last turn was cancelled (owner, time_limit,
 	// credit_limit, budget, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
+	// FailureKind is the provider's category for the error that failed the
+	// last turn (an agentapi.ErrorKind); empty otherwise.
+	FailureKind string `json:"failure_kind,omitempty"`
 	// Budget is the owner's spending limit for the Thread; nil without one.
 	Budget *Budget `json:"budget,omitempty"`
 	// Handoff is what the Thread left for whoever continues its work when it
@@ -708,6 +711,7 @@ var knownWebStateFields = map[string]struct{}{
 	"unseen_end":          {},
 	"interrupted_at":      {},
 	"stop_reason":         {},
+	"failure_kind":        {},
 	"budget":              {},
 	"handoff":             {},
 	"memory_notes":        {},

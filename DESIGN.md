@@ -827,7 +827,7 @@ Two lines: first the 16px Project badge, visible Project name, and the state lab
 "Finished" colours only its glyph (`success`) and sets the word in `muted`; an unread one takes an eye in `badge-teal` and the word in medium `ink`.
 "Idle", "Stopped", "Settled" and "Archived" have no colour: a `faint` glyph and a `muted` word.
 A new state takes one of these four rungs; nothing else on a row or a header is filled.
-These are the only Thread states (owner, 2026-10-25: more create confusion): a phase of the work (compacting, wrapping up at a budget), what a finished turn found (tests fail, commands failed, a claim contradicted) and why a Thread is idle (closed, a branch not started) are the row tip's and the header chip's hover words, never another state.
+These are the only Thread states (owner, 2026-10-25: more create confusion): a phase of the work (compacting, wrapping up at a budget), what a finished turn found (tests fail, commands failed, a claim contradicted), why a turn failed (rate limit reached, sign-in needed) and why a Thread is idle (closed, a branch not started) are the row tip's and the header chip's hover words, never another state.
 The second line holds the Thread title at 13px, the Thread's branch in normal-weight `meta` `muted` (up to 112px) only when it is not the Project's default branch (owner, 2026-11-09, revamp mock 3: a branch on a row means "not the default"), and the relative time of its last change.
 The default is the default branch of the Project's origin as the folder's local refs record it (`default_branch`, never guessed from a name); when git cannot tell (no origin, an older server) the branch is drawn.
 Long titles and branches truncate.
@@ -1633,13 +1633,14 @@ Validation rings remain visible.
 | compacting | the working mark; the strip's live line says "Compacting the conversation" | Working | "Working" |
 | completed | circled check, `success` (green); unread sidebar rows use an eye, `badge-teal` | Finished (unread or not) | "Finished" in `muted` beside the green glyph; its hover names what the turn found failed (tests fail, a claim contradicted) |
 | cancelled | square in sidebar, dash in header (`CircleStop` in `warning` when it was not your Stop), `muted` | Stopped | "Stopped", or "Stopped: credit limit" and the like when it was not your Stop (Status line), `muted` |
-| failed | warning triangle in sidebar, cross in header, `error` | Error | "Error" `error` |
+| failed | warning triangle in sidebar, cross in header, `error` | Error | "Error" `error`; its hover names the cause when the provider gave one (Rate limit reached, Sign-in needed, No access, Out of quota, Context full, Blocked by policy, Provider error) |
 | interrupted | pause, `warning` | Interrupted | "Interrupted" `warning` |
 | idle | clock in sidebar, dashed circle in header, gray | Idle | "Idle" `muted` |
 | closed | clock in sidebar, hollow dot in header, gray | Idle | "Idle" `muted`; its hover says the conversation is closed, or that a new branch starts with your first message |
 
 The Chip column is the state label of a row and of the Thread header (State labels under Thread row); on a wide header the label uses the sidebar's glyphs.
 Only the attention tag has a fill.
+A failed Thread's conversation ends in one `error` Note (`role="alert"`): the cause in medium weight and the one thing to do ("Rate limit reached. Wait, then send your message again."), then the provider's own text in `muted` on its own line, unless its notice in the conversation already holds it; with no known cause the line is "Turn failed: <the provider's text>", as before.
 Chrome icons are lucide, 12–16px, at one 1.5 stroke (`LucideProvider` in `UamApp.tsx`; a mark that sets its own heavier stroke keeps it).
 The Copilot provider mark uses its official Primer SVG.
 The working mark is one component (`WorkingMark` in `common.tsx`), and model work has its own, a 7px `ink` dot that breathes (`BreathingDot`, opacity and scale).

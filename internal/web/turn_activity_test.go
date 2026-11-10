@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -61,6 +62,69 @@ func TestStopReasonPrecedencePersistsAndClearsAtTheNextTurn(t *testing.T) {
 	m = startManager(t, st, agenttest.NewProvider("fake", allCaps))
 	if got := summary(); got.State != StateCancelled || got.StopReason != stopCreditLimit {
 		t.Fatalf("reloaded = %s %q", got.State, got.StopReason)
+	}
+}
+
+// A failed turn's kind stands beside the provider's own text, which stays as
+// it was. It reaches the API, survives a restart and goes when the failure
+// does.
+func TestFailureKindPersistsReachesTheAPIAndGoesWithTheFailure(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	summary := func() SessionSummary {
+		t.Helper()
+		s, err := m.Summary(sum.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	failed := func(text string, f *agentapi.TurnFailure) {
+		conv.EmitTurn(agentapi.TurnWorking, "")
+		conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnFailed, Error: text, Failure: f}})
+	}
+
+	// A failure the provider said nothing more about has no kind, and a
+	// kind outside the fixed list is "other".
+	failed("boom", nil)
+	if got := summary(); got.State != StateFailed || got.FailureKind != "" || got.StateDetail != "boom" {
+		t.Fatalf("plain failure = %s %q %q", got.State, got.FailureKind, got.StateDetail)
+	}
+	failed("boom", &agentapi.TurnFailure{Kind: "made_up"})
+	if got := summary(); got.FailureKind != string(agentapi.ErrorOther) || got.StateDetail != "boom" {
+		t.Fatalf("unknown kind = %q %q", got.FailureKind, got.StateDetail)
+	}
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if got := summary(); got.FailureKind != "" {
+		t.Fatalf("a new turn kept the failure kind %q", got.FailureKind)
+	}
+
+	failed("429 too many", &agentapi.TurnFailure{Kind: agentapi.ErrorRateLimit, Code: "user_weekly_rate_limited", Status: 429, Remediation: "show_account"})
+	if got := summary(); got.State != StateFailed || got.FailureKind != "rate_limit" || got.StateDetail != "429 too many" {
+		t.Fatalf("rate limit failure = %s %q %q", got.State, got.FailureKind, got.StateDetail)
+	}
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m}
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID, "", withCookie(ts)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"failure_kind":"rate_limit"`) {
+		t.Fatalf("GET detail = %d, failure_kind missing", w.Code)
+	}
+
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := loadRecord(t, st, prov.Name(), sum.ID); rec.Web == nil || rec.Web.FailureKind != "rate_limit" {
+		t.Fatalf("persisted = %+v", rec.Web)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m = startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if got := summary(); got.State != StateFailed || got.FailureKind != "rate_limit" {
+		t.Fatalf("reloaded = %s %q", got.State, got.FailureKind)
 	}
 }
 
