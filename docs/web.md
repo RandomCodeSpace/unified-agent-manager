@@ -2674,7 +2674,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     waiting it says "Nothing needs you." Without a Project it says
     "Start with a project" and offers **Add project**. Settings → This browser →
     Theme picks Light, Dark or Match system (the default, which follows the
-    OS as it changes); the choice is kept per browser.
+    OS as it changes); the choice is kept per browser. Interface, on the same
+    page, picks Current or Notebook (beta), also per browser: Notebook shows a
+    Thread's turns as numbered cells with the running turn's work beside the
+    reply, and your other active Threads in the left column, answerable there.
+    Both show the same Threads and offer the same controls.
 
 States shown for each session:
 
