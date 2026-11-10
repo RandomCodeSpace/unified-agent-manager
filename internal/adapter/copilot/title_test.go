@@ -163,9 +163,11 @@ func TestUtilityUsesLowestSupportedEffort(t *testing.T) {
 // Every path after a created session deletes it, with a context of its own;
 // a failed create has nothing to delete.
 func TestTitleAlwaysDeletesItsSession(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	// The context ends inside the send: a deadline could pass before the session exists.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p, fc := titleProvider(func(ctx context.Context, _ copilot.MessageOptions) (string, error) {
+		cancel()
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
