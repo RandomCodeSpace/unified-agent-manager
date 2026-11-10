@@ -32,12 +32,12 @@ import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
 import { CoveredContext } from './components/ui/reader';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
-import { decodePath } from './lib/markdown';
 import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
 import { useEventStream, type SweptMembership } from './lib/useEventStream';
 import { useMeta } from './lib/useMeta';
 import { useReadMarks } from './lib/useReadMarks';
+import { ALL_ROUTINES, HASH_PREFIX, SETTINGS_HASH, hashAgent, hashRoutines, hashSelection, useHashRoute } from './lib/useHashRoute';
 import { useDrawer, useSidebar } from './lib/useSidebar';
 import { useTypeToCompose } from './lib/useTypeToCompose';
 import { Contained } from './components/VisualBoundary';
@@ -66,12 +66,6 @@ const COARSE = '(pointer: coarse)';
 
 /** When this browser first ran the Task list's read tracking: a Task never opened here and changed since is unread. */
 
-const HASH_PREFIX = '#task=';
-const SETTINGS_HASH = '#settings';
-/** Every Project's routines: `#routines` (or `#routines=all`); one Project's: `#routines=<project id>`. */
-const ROUTINES_HASH = '#routines';
-const ROUTINES_PREFIX = '#routines=';
-const ALL_ROUTINES = 'all';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
 
 // With the on-screen keyboard open the shell covers only what is visible above it (lib/viewport).
@@ -88,24 +82,6 @@ const conversation = () => {
   return section && !section.closest('[inert]') ? section : document.querySelector<HTMLElement>('main');
 };
 
-/** The routines the fragment shows: a Project id, `all`, or null for another view. */
-function hashRoutines(path = window.location.hash): string | null {
-  const h = path.split('&')[0];
-  if (h === ROUTINES_HASH) return ALL_ROUTINES;
-  return h.startsWith(ROUTINES_PREFIX) ? decodePath(h.slice(ROUTINES_PREFIX.length)) || ALL_ROUTINES : null;
-}
-
-function hashSelection(path = window.location.hash): string | null {
-  const h = path.split('&')[0];
-  return h.startsWith(HASH_PREFIX) ? new URLSearchParams(h.slice(1)).get('task') || null : null;
-}
-
-/** A subagent open in its Thread's Conversation pane: `#task=<id>&agent=<agent id>`. */
-function hashAgent(path = window.location.hash): { task: string; agent: string } | null {
-  const task = hashSelection(path);
-  const agent = new URLSearchParams(path.replace(/^#/, '')).get('agent');
-  return task && agent ? { task, agent } : null;
-}
 
 export default function App() {
   const api = useApi();
@@ -403,62 +379,7 @@ export default function App() {
     if (auth === 'in') setViewing(settingsOpen || routinesFor || mismatched ? null : state.selectedId);
   }, [auth, state.selectedId, settingsOpen, routinesFor, mismatched]);
 
-  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#routines…`, else the selected task.
-  let viewHash = '';
-  if (settingsOpen) viewHash = SETTINGS_HASH;
-  else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
-  else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}${shownAgent ? `&agent=${encodeURIComponent(shownAgent)}` : ''}`;
-  // Written when the view changes, never over a fragment the user just navigated to (its event may come
-  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it:
-  // an earlier render's effect that lands after the click (a blur the press caused) leaves it alone.
-  const writtenHash = useRef<string | null>(null);
-  useEffect(() => {
-    if (writtenHash.current === viewHash) return;
-    const push = pushView.current;
-    // Under federation the owner writes the fragment (with the instance identity); it declines until the route is resolved, and a later render retries.
-    if (onRoute && !onRoute(viewHash, push)) return;
-    pushView.current = false;
-    writtenHash.current = viewHash;
-    if (onRoute || window.location.hash === viewHash) return;
-    const url = `${window.location.pathname}${window.location.search}${viewHash}`;
-    if (push) history.pushState(null, '', url);
-    else history.replaceState(null, '', url);
-  });
-  // A fragment the user navigates to (Back/Forward, a pasted or edited URL) shows its view; the writes
-  // above fire neither event. Traversing history fires both, so a fragment already on screen is skipped.
-  // Under federation the owner resolves the fragment and announces this instance's part of it.
-  // `force`: a click on the view already shown still runs its navigation (it closes the drawer).
-  const followHash = useEffectEvent((h: string, force = false) => {
-    if (!force && h === viewHash) return;
-    const routines = hashRoutines(h);
-    if (h === SETTINGS_HASH) showSettings();
-    else if (routines) showRoutines(routines);
-    else {
-      // Back from a subagent to its Thread (or Forward again) keeps the Thread selected.
-      const id = hashSelection(h);
-      if (id !== state.selectedId || settingsOpen || routinesFor) select(id);
-      setAgentView(hashAgent(h));
-    }
-    // The entry is already in history.
-    pushView.current = false;
-  });
-  useEffect(() => {
-    if (federated) {
-      const navigate = (event: Event) => {
-        const detail = (event as CustomEvent<{path: string; connection: string; force?: boolean}>).detail;
-        if (detail.connection === (api.owner?.id ?? '')) followHash(detail.path, detail.force);
-      };
-      window.addEventListener('uam-route', navigate);
-      return () => window.removeEventListener('uam-route', navigate);
-    }
-    const onHash = () => followHash(window.location.hash);
-    window.addEventListener('hashchange', onHash);
-    window.addEventListener('popstate', onHash);
-    return () => {
-      window.removeEventListener('hashchange', onHash);
-      window.removeEventListener('popstate', onHash);
-    };
-  }, [api, federated]);
+  useHashRoute({ api, federated, onRoute, pushView, selectedId: state.selectedId, shownAgent, settingsOpen, routinesFor, select, showSettings, showRoutines, setAgentView });
 
   /** New task: a draft for the Project on the Task defaults of Settings, with its composer focused; no request until its first Send. */
   const startTask = useCallback(
