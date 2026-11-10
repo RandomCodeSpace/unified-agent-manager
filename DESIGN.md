@@ -752,7 +752,7 @@ In Dark the Floating and Modal levels also carry a still 1px top highlight insid
 | 1 Raised | `raised` fill | `raised`: `0 0 0 1px .05, 0 2px 6px .07` | The user bubble (on `bubble-user`), question blocks and the finish card (both on `tint-well` once settled), Settings cards, the segmented thumb, a selected file or folder row |
 | 2 Floating | `raised` | `float`: `0 0 0 1px .06, 0 6px 20px .10` | The composer, the pending interaction card, menus, context menus, popovers, selects' lists, the inline picker, tooltips (ink fill), a lifted card or thumbnail on hover |
 | 3 Modal | `raised` + `backdrop` | `modal`: `0 0 0 1px .06, 0 20px 48px .18` | Dialogs, the command palette, the drawer, overlay panels, the lightbox image |
-| Focus | any of the above | `focus`: `0 0 0 1px focus, 0 0 0 4px focus@18%` (`focus-float` adds `0 10px 28px .12`) | Fields, the sidebar search and, through `focus-within`, the composer |
+| Focus | any of the above | `focus`: `0 0 0 1px .08, 0 2px 8px .10` (`focus-float`: `0 0 0 1px .10, 0 10px 28px .14`) | No current user; never a focus mark (under 3:1). Keyboard focus is the 2px `focus` outline (see Accessibility), drawn on a stretched card's `::after` and inset inside rows and tabs |
 
 A shadow is never transitioned.
 Every hover lift (`lift`) draws the deeper shadow on a pseudo-element at opacity 0 and fade it in; the element itself moves only on `transform`.
@@ -851,7 +851,7 @@ The Search box shows the 2px `focus` ring while focused.
 **Shelf.**
 The **Settled** shelf header (28px): the word and count in `caption` `muted`, a fading rule, a chevron.
 Settled sits at the foot of the sidebar, under the Thread list's own scroller, so the active list keeps its place however long it is; open, its rows scroll on their own within 40% of the screen height (`40dvh`), and it shows its newest ten (newest settled first) with **Show all N** / **Show fewer**.
-A shelf row is one 32px line holding the Project badge and the Thread title, at 60% opacity until hovered, focused or selected.
+A shelf row is one 32px line holding the Project badge and the Thread title, its title `muted` at rest and in the row's normal ink when hovered, focused or selected (colour, never opacity, so it keeps AA).
 Its tip (to the right) carries the full title, the badge with the Project name, the directory in `on-primary/70`, and the created and settled times (local date and time; a time the Thread lacks is left out); a Thread the service settled says so ("Settled automatically after 7 quiet days", "Settled after you reviewed it").
 Collapsed by default; an open shelf persists (`uam.shelves`).
 A collapsed shelf still shows the open Thread pinned beneath its header.

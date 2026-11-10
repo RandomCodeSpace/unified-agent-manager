@@ -113,9 +113,10 @@ export function SettingsRail({ pages, current, query, onQuery, onOpen, attention
         </div>
       </div>
       {groups.length === 0 && <Note role="status" className="px-2">No setting matches “{query.trim()}”.</Note>}
-      {groups.map(({ group, pages: items }) => (
-        <div key={group.label} role="group" aria-labelledby={`${id}-${group.label}`} className="flex flex-col gap-0.5">
-          <div id={`${id}-${group.label}`} className="truncate px-2 pb-1 text-eyebrow uppercase text-muted">{group.label}{where && group.scope === 'service' && <span className="normal-case"> · on {where}</span>}</div>
+      {groups.map(({ group, pages: items }, index) => (
+        // The index, not the label, in the id: a label with spaces would split `aria-labelledby` into ids that do not exist.
+        <div key={group.label} role="group" aria-labelledby={`${id}-group-${index}`} className="flex flex-col gap-0.5">
+          <div id={`${id}-group-${index}`} className="truncate px-2 pb-1 text-eyebrow uppercase text-muted">{group.label}{where && group.scope === 'service' && <span className="normal-case"> · on {where}</span>}</div>
           {items.map((page) => {
             const mark = attention[page.id];
             const on = page.id === current;

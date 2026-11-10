@@ -508,9 +508,11 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   let rowClass: string;
   if (compact) {
     rowClass = cn(
-      'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
-      selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
+      'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
       weight,
+      // Quiet at rest by colour, never by opacity (it would take the title under AA); the row's own ink on hover and focus.
+      !selected && cn('text-muted hover:bg-tint-hover', strong ? 'hover:text-ink focus-visible:text-ink' : 'hover:text-body focus-visible:text-body'),
+      selected && 'bg-tint-selected',
     );
   } else {
     rowClass = cn(

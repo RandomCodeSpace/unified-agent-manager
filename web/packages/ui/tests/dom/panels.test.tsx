@@ -29,6 +29,22 @@ describe('changes', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('changes-link'));
   });
 
+  test('the file map scrolls to a file smoothly, and at once when Motion matches a system asking for reduced motion', async () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    const original = window.matchMedia.bind(window);
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === '(prefers-reduced-motion: reduce)' ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
+    onTestFinished(() => { vi.restoreAllMocks(); delete document.documentElement.dataset.motion; });
+    const { user } = await openTask('t1');
+    await user.click(await screen.findByRole('button', { name: /^Open changes, 3 files$/ }));
+    const map = within(within(await screen.findByRole('dialog', { name: 'Changes' })).getByRole('navigation', { name: 'Changed files' }));
+    const go = map.getByRole('button', { name: /^Go to internal\/vterm\/redraw_test\.go/ });
+    await user.click(go);
+    await waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'smooth' }));
+    document.documentElement.dataset.motion = 'system';
+    await user.click(go);
+    await waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' }));
+  });
+
   test('a shell write the session tracking lists is labelled, and other changes in the folder sit apart, read-only', async () => {
     const changes = vi.spyOn(api, 'changes').mockResolvedValue({
       scope: 'task', label: '', supported: true, counts: { task: 2, turn: 1, workspace: 3 },

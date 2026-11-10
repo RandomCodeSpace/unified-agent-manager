@@ -180,8 +180,14 @@ test('an overflowing table pins a bar naming the rows below its visible bottom, 
     // A table that fits has no bar.
     scrollTop = 0;
     Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return this.tagName === 'SECTION' ? 300 : 0; } });
-    render(<Markdown text={`| Name | Count |\n| --- | ---: |\n${rows}`} />);
+    render(<Markdown text={`| Name | Count |\n| --- | ---: |\n${rows}`} />).unmount();
     expect(screen.queryByRole('button', { name: /^Scroll to the end/ })).toBeNull();
+    // Paged, the bar counts the rows on this page, not the table's total: rows 10 to 100 of the first page are below.
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return this.tagName === 'SECTION' ? 360 : 0; } });
+    const many = Array.from({ length: 150 }, (_, index) => `| row ${index + 1} | ${index} |`).join('\n');
+    render(<Markdown text={`| Name | Count |\n| --- | ---: |\n${many}`} />);
+    expect(await screen.findByRole('button', { name: 'Scroll to the end: 91 more rows · 100 on this page' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('1–100 of 150 rows');
   } finally {
     rect.mockRestore();
     scrollTo.mockRestore();

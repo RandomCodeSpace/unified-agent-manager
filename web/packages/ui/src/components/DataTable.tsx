@@ -169,7 +169,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           region.current?.focus({ preventScroll: true });
           region.current?.scrollTo({ top: region.current.scrollHeight });
         }}>
-          <span><span className="sr-only">Scroll to the end: </span><span className="text-ink">{more} more {more === 1 ? 'row' : 'rows'}</span><span className="text-muted"> · {shown.length} total</span></span>
+          <span><span className="sr-only">Scroll to the end: </span><span className="text-ink">{more} more {more === 1 ? 'row' : 'rows'}</span><span className="text-muted"> · {shown.length} {paginated ? 'on this page' : 'total'}</span></span>
           <ArrowDown aria-hidden="true" className="size-3.5 text-accent" />
         </button>}
       </section>

@@ -14,6 +14,18 @@ function reducedMotion() {
   return vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === '(prefers-reduced-motion: reduce)' ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
 }
 
+test('every rail group is named by its label, a label with spaces too', async () => {
+  renderApp('#settings');
+  await screen.findByRole('heading', { level: 1, name: 'Settings' });
+  const names = [...screen.getByRole('navigation', { name: 'Settings sections' }).querySelectorAll('[role="group"]')].map((g) => {
+    // `aria-labelledby` is a list of ids: each one must exist.
+    const parts = (g.getAttribute('aria-labelledby') ?? '').split(/\s+/).map((id) => document.getElementById(id)?.textContent);
+    return parts.includes(undefined) ? undefined : parts.join(' ');
+  });
+  expect(names).toEqual(expect.arrayContaining([expect.stringMatching(/^Models & AI/), 'Agent toolkit', 'This browser']));
+  expect(names.every(Boolean)).toBe(true);
+});
+
 test('Output styles is a page in its own rail group, and Find a setting finds it', async () => {
   const { user } = renderApp('#settings');
   await screen.findByRole('heading', { level: 1, name: 'Settings' });

@@ -156,7 +156,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
         ]} />
       )}>
       <div role="group" aria-label="Usage period" className="flex rounded-sm bg-sunken p-0.5">
-        {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
+        {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className="flex-1 px-1 aria-pressed:bg-raised aria-pressed:shadow-raised" aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
       {error && <div role="alert" className="mt-3 flex items-center gap-2 text-caption text-error">
         <span className="min-w-0 flex-1">{report ? 'Could not refresh usage. Showing the last read. ' : 'Could not load usage. '}{error}</span>

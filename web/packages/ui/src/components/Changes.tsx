@@ -6,6 +6,7 @@ import { LIVE, describeError, newRequestId, readOnly, type ChangeFile, type Chan
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { hunkText } from '../lib/lens';
+import { motionReduced } from '../lib/motion';
 import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
 import { Highlighted, InstanceName, LineCounts, Note, Skeleton } from './common';
 import { lineCountsText } from '../lib/cost';
@@ -248,7 +249,7 @@ export function ChangesSheet({
   const jump = (path: string) => {
     if (!listed.some(f => f.path === path)) setFilter('all');
     setFolds(f => ({ ...f, [path]: false }));
-    requestAnimationFrame(() => body.current?.querySelector(`[data-change-file="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    requestAnimationFrame(() => body.current?.querySelector(`[data-change-file="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start', behavior: motionReduced() ? 'auto' : 'smooth' }));
   };
 
   // The files on screen, for the Change Map's marks.

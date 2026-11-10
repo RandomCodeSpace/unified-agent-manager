@@ -105,7 +105,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
         </div>
         <Tabs.List activateOnFocus loopFocus aria-label="Tool" className="-ml-1 flex gap-0.5 pb-1">
           {tools.map((t) => (
-            <Tabs.Tab key={t} value={t} ref={t === tab ? activeTab : undefined} className="flex h-7 items-center rounded-sm px-2 text-ui whitespace-nowrap text-muted outline-hidden hover:text-ink focus-visible:shadow-focus data-active:bg-tint-selected data-active:text-ink pointer-coarse:h-9">
+            <Tabs.Tab key={t} value={t} ref={t === tab ? activeTab : undefined} className="flex h-7 items-center rounded-sm px-2 text-ui whitespace-nowrap text-muted hover:text-ink focus-visible:-outline-offset-2 data-active:bg-tint-selected data-active:text-ink pointer-coarse:h-9">
               {LABEL[t]}
             </Tabs.Tab>
           ))}

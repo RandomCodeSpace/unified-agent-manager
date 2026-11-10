@@ -83,7 +83,7 @@ export function ItemCard({ name, label, detail, detailId, chips, aside, expanded
           aria-haspopup="dialog"
           aria-expanded={expanded}
           aria-controls={expanded ? controls : undefined}
-          className="min-w-0 flex-1 text-left text-ui font-medium text-ink outline-hidden [overflow-wrap:anywhere] after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:shadow-focus"
+          className="min-w-0 flex-1 text-left text-ui font-medium text-ink outline-hidden [overflow-wrap:anywhere] after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:outline-offset-1 focus-visible:after:outline-focus"
           onClick={(e) => onOpen(e.currentTarget)}
         >
           {name}

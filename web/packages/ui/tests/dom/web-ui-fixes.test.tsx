@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { Lightbox } from '../../src/components/Attachments';
+import { Button } from '../../src/components/ui/button';
 import * as data from '../../src/mock/data';
 import { log, openTask, renderApp, sidebar } from './render';
 
@@ -26,6 +27,25 @@ describe('sidebar shelves', () => {
     const rows = document.querySelector('nav[aria-label="Threads"] [data-task-row="t11"]')!.closest('ul')!.parentElement!;
     expect(rows.className).toContain('overflow-y-auto');
     expect(rows.className).toContain('max-h-[40dvh]');
+    // A settled row is quiet by colour, not opacity, so its title keeps AA.
+    const row = document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-task-row="t11"] button')!;
+    expect(row.className).not.toMatch(/(^|\s)opacity-/);
+    expect(row.className.split(' ')).toContain('text-muted');
+  });
+});
+
+describe('buttons', () => {
+  test('a loading button keeps its name: the label turns transparent, not hidden', () => {
+    // What Tailwind compiles `invisible` and `opacity-0` to; happy-dom applies it when it names the button.
+    const style = document.createElement('style');
+    style.textContent = '.invisible { visibility: hidden } .opacity-0 { opacity: 0 }';
+    document.head.append(style);
+    try {
+      render(<Button loading>Save token prices</Button>);
+      expect(screen.getByRole('button', { name: 'Save token prices' }).getAttribute('aria-busy')).toBe('true');
+    } finally {
+      style.remove();
+    }
   });
 });
 

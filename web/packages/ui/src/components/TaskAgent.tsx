@@ -55,7 +55,7 @@ export function AgentChoices({ session, agents, error, reason, onChange }: Reado
     <div className="flex flex-col gap-1.5">
       <RadioGroup aria-label="Agent" value={chosen} disabled={!!reason} onValueChange={(v) => v !== chosen && onChange(v as string)} className="-mx-2 flex flex-col">
         {rows.map((r) => (
-          <Radio.Root key={r.id} value={r.id} disabled={r.disabled} className="group/agent flex min-h-8 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover data-disabled:opacity-45 pointer-coarse:min-h-11">
+          <Radio.Root key={r.id} value={r.id} disabled={r.disabled} className="group/agent flex min-h-8 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover focus-visible:-outline-offset-2 data-disabled:opacity-45 pointer-coarse:min-h-11">
             <Check aria-hidden="true" strokeWidth={2.5} className="invisible mt-0.5 size-3.5 shrink-0 text-accent group-data-checked/agent:visible" />
             <span className="flex min-w-0 flex-col">
               <span className="text-ui text-ink">{r.name}</span>
