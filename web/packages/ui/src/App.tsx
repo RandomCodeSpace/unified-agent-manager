@@ -5,7 +5,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ACCOUNT_NOT_LINKED, SIGNED_OUT, describeError, errorCode, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from './api';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, describeError, errorCode, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Changes as ChangesData, type GitPending, type Interaction, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from './api';
 import { initialState, loggedIn, reducer, type Auth } from './state';
 import { AppContext, Dot, useLate, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
@@ -22,7 +22,6 @@ import { byActivity, cycleTask, needsYouCount, needsYouNow, newTaskProject as pa
 import { setViewing, startNotifications } from './lib/notify';
 import { clearArchive, forgetArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
-import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
 import { TaskActionsContext, TaskList, type Renaming, type TaskActions } from './components/taskActions';
@@ -38,10 +37,11 @@ import type { TerminalHandle } from './components/Terminal';
 import { decodePath } from './lib/markdown';
 import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
-import { increment, useEventStream, type SweptMembership } from './lib/useEventStream';
+import { useEventStream, type SweptMembership } from './lib/useEventStream';
+import { useMeta } from './lib/useMeta';
 import { useDrawer, useSidebar } from './lib/useSidebar';
 import { Contained } from './components/VisualBoundary';
-import { keysTaken, popupOpen, sessionsUpdate } from './lib/overlays';
+import { editing, keysTaken, sessionsUpdate } from './lib/overlays';
 import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading } from './components/Panes';
 
 export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overlays';
@@ -75,11 +75,6 @@ const ROUTINES_HASH = '#routines';
 const ROUTINES_PREFIX = '#routines=';
 const ALL_ROUTINES = 'all';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
-/** Typing anywhere (Settings forms, a subagent follow-up) counts as unsent work, like a composer draft. */
-function editing(): boolean {
-  const el = document.activeElement;
-  return el instanceof HTMLElement && (el.isContentEditable || el.matches('textarea, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])'));
-}
 
 // With the on-screen keyboard open the shell covers only what is visible above it (lib/viewport).
 // iOS paints the status bar in the colour of a full-width fixed element at the page's top edge, so
@@ -125,7 +120,6 @@ export default function App() {
   const onRoute = federation?.onRoute;
   const forwardEvent = federation?.onEvent;
   const onTerminal = federation?.onTerminal;
-  const onHomeVersion = federation?.onHomeVersion;
   const initialPath = federation?.initialPath;
   const federated = !!federation;
   // With connected instances, every machine; switching the one on screen starts its view from what is known of it, without a blank page.
@@ -150,8 +144,6 @@ export default function App() {
     confirmedDetail.current = auth === 'in' && state.connection === 'connected' ? state.detail && recentProjection(state.detail) : null;
   }, [auth, state.connection, state.detail]);
   const metaCache = federation?.metaCache;
-  const [meta, setMeta] = useState<Meta | null>(() => metaCache?.get(here) ?? null);
-  const [metaError, setMetaError] = useState<string | null>(null);
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
@@ -211,11 +203,6 @@ export default function App() {
   // from the list on a fine pointer); `selectTick` re-runs the focus when the open Task is chosen again.
   const focusTask = useRef<string | null>(null);
   const [selectTick, setSelectTick] = useState(0);
-  // The service version this page loaded with, the time of the last version check, and whether a newer
-  // version waits for a Reload.
-  const loadedVersion = useRef<string | null>(null);
-  const lastCheck = useRef(0);
-  const [updated, setUpdated] = useState(false);
 
   useEffect(() => { if (auth !== 'checking') onAuth?.(auth === 'in'); }, [auth, onAuth]);
   useEffect(() => { onTerminal?.(!!terminalId); }, [terminalId, onTerminal]);
@@ -246,59 +233,7 @@ export default function App() {
     }
   }, [auth]);
 
-  // `metaAttempt` is a Retry after a failure, or a change to the custom models: they are part of the model lists. The
-  // list is unknown until the first snapshot, which only shows what the first read already had.
-  const customModels = state.loaded ? JSON.stringify(state.settings.custom_models ?? []) : null;
-  const [metaAttempt, setMetaAttempt] = useState(0);
-  const [readModels, setReadModels] = useState(customModels);
-  if (customModels !== readModels) {
-    setReadModels(customModels);
-    if (customModels !== null && readModels !== null) setMetaAttempt(increment);
-  }
-  useEffect(() => {
-    if (auth !== 'in') return;
-    lastCheck.current = Date.now();
-    api
-      .meta()
-      .then((m) => {
-        setMeta(m);
-        setMetaError(null);
-        metaCache?.set(api.owner?.id ?? '', m);
-      })
-      .catch((e: unknown) => {
-        setMeta(null);
-        setMetaError(describeError(e));
-      });
-  }, [api, auth, metaAttempt, metaCache]);
-
-  /**
-   * A redeploy shows as the stream reconnecting, so the version is read again once the stream
-   * is back; a page coming back into view (a phone that slept through it) reads it too, at most
-   * once a minute. A failed read keeps the providers on screen.
-   */
-  const checkVersion = useCallback((force: boolean) => {
-    const now = Date.now();
-    if (!force && !checkDue(lastCheck.current, now)) return;
-    lastCheck.current = now;
-    api.meta().then(setMeta).catch(() => {});
-  }, [api]);
-  useEffect(() => {
-    if (auth !== 'in') return;
-    const onVisible = () => document.visibilityState === 'visible' && checkVersion(false);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [auth, checkVersion]);
-  // A new version applies itself when nothing would be lost (no draft, no popup); otherwise the
-  // snackbar over the pane offers Reload and the next check tries again.
-  useEffect(() => {
-    const version = api.owner ? federation?.homeVersion : meta?.version;
-    if (!version) return;
-    loadedVersion.current ??= federation?.homeLoadedVersion ?? version;
-    const decision = decideUpdate(loadedVersion.current, version, { draft: !!document.querySelector('[data-draft]') || editing(), popup: popupOpen() });
-    if (decision === 'reload') window.location.reload();
-    else if (decision === 'offer') setUpdated(true);
-  }, [api, meta, federation?.homeVersion, federation?.homeLoadedVersion]);
-  useEffect(() => { if (!api.owner && meta) onHomeVersion?.(meta.version); }, [api, meta, onHomeVersion]);
+  const { meta, metaError, checkVersion, refreshMeta, updated } = useMeta({ api, auth, federation, customModels: state.loaded ? JSON.stringify(state.settings.custom_models ?? []) : null });
 
   const { sidebarOpen, toggleSidebar, aside } = useSidebar({ auth, narrow, emptyWorkspace, setDrawerOpen });
 
@@ -402,8 +337,6 @@ export default function App() {
 
   const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
 
-  // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
-  const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
   const openUsage = useCallback(() => {
     if (narrow) setDrawerOpen(true);
     // The drawer's portal mounts before the next frame.
