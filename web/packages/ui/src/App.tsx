@@ -1666,7 +1666,7 @@ export default function App() {
                 </div>
                 {/* Always mounted, so a view that opens in a transition waits here for its code instead of showing the fallback. */}
                 <Suspense fallback={<div className="absolute inset-0 flex flex-col bg-canvas"><ViewLoading leading={leading} /></div>}>
-                  {view && <div data-view="" className="absolute inset-0 flex flex-col bg-canvas">{view}</div>}
+                  {view && <div data-view="" className="absolute inset-0 flex flex-col bg-canvas"><Contained what="This view" of={settingsOpen ? 'settings' : routinesFor}>{view}</Contained></div>}
                 </Suspense>
                 {/* Settings, routines and a new Task do not wait on the stream; the skeleton's own loading line is its one ring. */}
                 <LoadingVeil show={loading && !skeletonPane && !settingsOpen && !mismatched && !routinesShown && !newTask} />
