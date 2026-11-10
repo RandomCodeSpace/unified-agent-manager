@@ -460,6 +460,9 @@ func (m *Manager) startRun(start routineStart) {
 		}
 		return m.createChecked(req, prov, workdir, mode)
 	}()
+	if err == nil {
+		m.countRoutineRun(summary.ID)
+	}
 	rs := &m.routines
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -482,6 +485,19 @@ func (m *Manager) startRun(start routineStart) {
 	}
 	m.saveRoutinesLocked(r.ID)
 	m.kickRoutines()
+}
+
+// countRoutineRun counts a run whose Task started, and whether that Task works
+// in the Project folder (no worktree) with no budget.
+func (m *Manager) countRoutineRun(id string) {
+	m.mu.Lock()
+	s := m.sessions[id]
+	shared := s != nil && (s.place == nil || s.place.Worktree == "") && s.budget.Credits == 0 && s.budget.QuotaPercent == 0
+	m.mu.Unlock()
+	m.count("routine_runs")
+	if shared {
+		m.count("routine_runs_project_folder_no_budget")
+	}
 }
 
 // startAutopilot turns autopilot on in a run's new Task before its first

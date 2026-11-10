@@ -39,6 +39,10 @@ const sessionStatsRecent = 7 * 24 * time.Hour
 // message in the journal (the Copilot adapter's stallSource).
 const stallRetrySource = "uam-stall-retry"
 
+// largePrompt is the owner prompt size, in bytes, the work.prompts_over_8kb
+// count starts above: the Copilot adapter's tool output cap.
+const largePrompt = 8 << 10
+
 // shellPoll matches a shell command that waits: a sleep, or a while/until loop.
 var shellPoll = regexp.MustCompile(`(?s)\bsleep\b|\b(while|until)\b.*\bdo\b`)
 
@@ -68,10 +72,12 @@ type journalEvent struct {
 		ToolCallID string          `json:"toolCallId"`
 		ToolName   string          `json:"toolName"`
 		Arguments  json.RawMessage `json:"arguments"`
-		Success    *bool           `json:"success"`
-		Result     json.RawMessage `json:"result"`
-		Reason     string          `json:"reason"`
-		Error      struct {
+		// Content is a user.message's prompt; only its size is kept.
+		Content json.RawMessage `json:"content"`
+		Success *bool           `json:"success"`
+		Result  json.RawMessage `json:"result"`
+		Reason  string          `json:"reason"`
+		Error   struct {
 			Message string `json:"message"`
 		} `json:"error"`
 		ErrorType         string `json:"errorType"`
@@ -129,6 +135,10 @@ type sessionTally struct {
 	// Shell calls, those that wait (shellPoll), and repeats of the same
 	// command in one turn: from a prompt to its reply, not one model step.
 	shells, polls, sameInTurn int
+	// Shell calls started in the background (mode async, detached or not).
+	backgroundShells int
+	// Each owner prompt's size in bytes.
+	promptBytes []float64
 	// Completed turns: seconds, tool calls, and how many ran no tool;
 	// promptTurns is the main turns of each owner prompt.
 	turnSecs, turnTools, promptTurns []float64
@@ -389,6 +399,9 @@ func (t *sessionTally) add(e *journalEvent, js *journalScan) bool {
 		// continuation of a stalled request.
 		if e.AgentID == "" && e.Data.Source != stallRetrySource {
 			t.prompts++
+			var text string
+			_ = json.Unmarshal(e.Data.Content, &text)
+			t.promptBytes = append(t.promptBytes, float64(len(text)))
 			t.days[e.Timestamp[:min(len(e.Timestamp), 10)]] = true
 			if js.turnsSince >= 0 {
 				t.promptTurns = append(t.promptTurns, float64(js.turnsSince))
@@ -412,8 +425,13 @@ func (t *sessionTally) addShell(raw json.RawMessage, seen map[[32]byte]bool) {
 	t.shells++
 	var args struct {
 		Command string `json:"command"`
+		Mode    string `json:"mode"`
 	}
-	if json.Unmarshal(raw, &args) != nil || args.Command == "" {
+	if json.Unmarshal(raw, &args) != nil {
+		return
+	}
+	t.backgroundShells += b2i(args.Mode == "async")
+	if args.Command == "" {
 		return
 	}
 	t.polls += b2i(shellPoll.MatchString(args.Command))
@@ -511,6 +529,12 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	out = append(out, SessionStat{"sessions.first", day(t.first)}, SessionStat{"sessions.last", day(t.last)})
 	add("sessions.resumes", t.events["session.resume"])
 	add("work.prompts", t.events["user.message"])
+	over := 0
+	for _, n := range t.promptBytes {
+		over += b2i(n > largePrompt)
+	}
+	add("work.prompts_over_8kb", over)
+	addF("work.prompt_bytes_p90", quantile(t.promptBytes, 0.9), 0)
 	add("work.turns", t.events["assistant.turn_start"])
 	add("work.tool_calls", t.events["tool.execution_start"])
 	add("work.subagents", t.events["subagent.started"])
@@ -557,6 +581,7 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	add("polling.sleep_or_loop", t.polls)
 	add("polling.sleep_or_loop_pct", pct(t.polls, t.shells))
 	add("polling.same_command_in_prompt", t.sameInTurn)
+	add("polling.background_shells", t.backgroundShells)
 
 	add("turns.completed", len(t.turnSecs))
 	addF("turns.median_s", quantile(t.turnSecs, 0.5), 1)

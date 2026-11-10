@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +252,47 @@ func TestSessionStatsRoadmapCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "gh run") {
+		t.Fatalf("file holds journal text:\n%s", data)
+	}
+}
+
+// Owner prompts over 8 KB and the prompt-size p90 leave out a subagent's task
+// and a stall continuation; background shells are those started async.
+func TestSessionStatsPromptSizesAndBackgroundShells(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".copilot")
+	t.Setenv("COPILOT_HOME", home)
+	dir := filepath.Join(home, "session-state", "p")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("secret ", 2000)
+	lines := []string{
+		`{"type":"user.message","timestamp":"2026-10-05T10:00:00Z","data":{"content":"` + big + `"}}`,
+		`{"type":"user.message","timestamp":"2026-10-05T10:00:01Z","data":{"content":"short"}}`,
+		`{"type":"user.message","timestamp":"2026-10-05T10:00:02Z","data":{"content":"` + big + `","source":"uam-stall-retry"}}`,
+		`{"type":"user.message","agentId":"a1","timestamp":"2026-10-05T10:00:03Z","data":{"content":"` + big + `"}}`,
+		`{"type":"tool.execution_start","timestamp":"2026-10-05T10:00:04Z","data":{"toolCallId":"t1","toolName":"bash","arguments":{"command":"npm run dev","mode":"async","detach":true}}}`,
+		`{"type":"tool.execution_start","timestamp":"2026-10-05T10:00:05Z","data":{"toolCallId":"t2","toolName":"bash","arguments":{"command":"npm test","mode":"async"}}}`,
+		`{"type":"tool.execution_start","timestamp":"2026-10-05T10:00:06Z","data":{"toolCallId":"t3","toolName":"bash","arguments":{"command":"ls","mode":"sync"}}}`,
+	}
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, _, _ := newTestManager(t)
+	got, err := m.SessionStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []SessionStat{{"work.prompts_over_8kb", "1"}, {"work.prompt_bytes_p90", strconv.Itoa(len(big))}, {"polling.background_shells", "2"}, {"scan.skipped", "0"}} {
+		if !slices.Contains(got.Stats, want) {
+			t.Errorf("missing %v in %v", want, got.Stats)
+		}
+	}
+	data, err := os.ReadFile(got.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "npm") {
 		t.Fatalf("file holds journal text:\n%s", data)
 	}
 }
