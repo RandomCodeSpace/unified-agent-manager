@@ -25,6 +25,7 @@ import { DrawingChips } from './Drawing';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
+import { SUMMARY_KEYS } from '../state';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Loading, Markdown, Note, useApp, useMedia } from './common';
 import { ExecutionItems } from './ExecutionStatus';
@@ -1185,7 +1186,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       if (sub.status === 'accepted' || sub.status === 'rejected') pendingExecution.current = null;
       if (sub.status === 'accepted') {
         setCommandVersion((v) => v + 1);
-        dispatch({ type: 'detail_loaded', detail: await api.session(session.id) });
+        // Only the summary changes: a whole detail would rebuild the conversation at its tail.
+        const detail = await api.session(session.id);
+        dispatch({ type: 'upsert_session', session: Object.fromEntries(SUMMARY_KEYS.map((key) => [key, detail[key]])) as unknown as SessionSummary });
       }
     });
   }

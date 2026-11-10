@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { api, newRequestId } from '../../src/api';
+import * as mockData from '../../src/mock/data';
 import { install } from '../../src/mock/install';
 import { choose, composer, log, openMenu, openTask, renderApp } from './render';
 
@@ -601,5 +602,39 @@ describe('composer menus and notices', () => {
     await user.click(reopen);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Reopen' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(composer()));
+  });
+});
+
+describe('changing the execution mode', () => {
+  test('keeps the conversation where the reader is: older pages read stay', async () => {
+    const original = mockData.seed;
+    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
+      const state = original();
+      const task = mockData.perfTask(state.projects.find((p) => p.id === 'p1')!.dir, 100);
+      state.tasks.push(Object.assign(task, { open: true, execution: { known: true, mode: 'interactive' }, capabilities: { ...task.capabilities, execution_modes: true } }));
+      return state;
+    });
+    onTestFinished(() => seed.mockRestore());
+    const { user } = await openTask('t-perf');
+    const oldest = () => log().queryAllByText(/^Package 1: removed/).length > 0;
+    expect(oldest()).toBe(false);
+    fireEvent.wheel(screen.getByRole('region', { name: 'Conversation' }), { deltaY: -100 });
+    await waitFor(() => expect(oldest()).toBe(true));
+    // The service's detail reply carries its newest seq, past this Thread's frames once anything else has happened.
+    const fetched = window.fetch;
+    const fetch = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const res = await fetched(input, init);
+      if (!/\/api\/sessions\/t-perf(\?|$)/.test(String(input)) || (init?.method ?? 'GET') !== 'GET') return res;
+      return new Response(JSON.stringify({ ...(await res.json()), seq: 1e9 }), { headers: { 'Content-Type': 'application/json' } });
+    });
+    onTestFinished(() => fetch.mockRestore());
+    const menu = await openMenu(user, 'Permissions and execution: Safe · Interactive');
+    const autopilot = await menu.findByRole('menuitemradio', { name: /^Autopilot/ });
+    await waitFor(() => expect(autopilot.hasAttribute('aria-disabled')).toBe(false));
+    await user.click(autopilot);
+    expect(await screen.findByRole('button', { name: 'Permissions and execution: Safe · Autopilot' })).toBeTruthy();
+    await waitFor(() => expect(fetch.mock.calls.some(([input]) => /\/api\/sessions\/t-perf(\?|$)/.test(String(input)))).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(oldest()).toBe(true);
   });
 });
