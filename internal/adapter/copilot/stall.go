@@ -108,7 +108,9 @@ func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID s
 	w, seen := c.stall.subWait[agentID]
 	switch ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
-		w.waiting = true
+		// A new request is watched afresh: the watch outlives the turn, and
+		// a cancel that failed must not exempt the subagent for good.
+		w.waiting, w.cancelled = true, false
 		if c.stall.timer == nil {
 			c.stall.timer = time.AfterFunc(webStallAfter, c.checkStall)
 		}
@@ -128,16 +130,17 @@ func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID s
 
 // checkStall aborts a main-agent model request that has heard nothing for
 // webStallAfter, cancels such a subagent, and otherwise looks again when
-// either could have stalled.
+// either could have stalled. Subagents are watched between turns too: one
+// outlives the turn, or takes a follow-up while the main agent is idle.
 func (c *conversation) checkStall() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stall.timer = nil
-	if c.closed || !c.turnRunning {
+	if c.closed {
 		return
 	}
 	next := c.checkSubagentStallsLocked()
-	if c.modelWaitAt.IsZero() {
+	if !c.turnRunning || c.modelWaitAt.IsZero() {
 		if next > 0 {
 			c.stall.timer = time.AfterFunc(next, c.checkStall)
 		}
@@ -295,11 +298,13 @@ func (c *conversation) stopPendingLocked() bool {
 	return c.stopping != nil && c.stopping.idles == c.idles
 }
 
-// endStallLocked clears the stall watch of a turn that ended.
+// endStallLocked clears the main agent's stall watch of a turn that ended.
+// The subagents' watch stays, with a timer to look at it.
 func (c *conversation) endStallLocked() {
-	if c.stall.timer != nil {
-		c.stall.timer.Stop()
+	timer, subWait := c.stall.timer, c.stall.subWait
+	if timer == nil && len(subWait) > 0 {
+		timer = time.AfterFunc(webStallAfter, c.checkStall)
 	}
-	c.stall = stallState{}
+	c.stall = stallState{timer: timer, subWait: subWait}
 	c.modelWaitAt = time.Time{}
 }

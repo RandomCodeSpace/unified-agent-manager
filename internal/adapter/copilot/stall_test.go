@@ -351,3 +351,45 @@ func TestWebStopDoesNotSizeTheStallBound(t *testing.T) {
 		t.Fatalf("bound after a Stop = %v, want %v", got, webStallAfter)
 	}
 }
+
+// A finished subagent that takes a follow-up while the main agent is idle is
+// watched like any other: its silent model request is cancelled.
+func TestWebStalledSubagentFollowUpBetweenTurnsIsCancelled(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "delegating", MessageID: "m-1"}))
+	h.fs.onEvent(ev("task-1", &rpc.ToolExecutionStartData{ToolCallID: "task-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("sub-start", "agent-1", &rpc.SubagentStartedData{ToolCallID: "task-call"}))
+	h.fs.onEvent(agentEv("sub-done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "task-call"}))
+	h.fs.onEvent(ev("task-end", &rpc.ToolExecutionCompleteData{ToolCallID: "task-call", Success: true}))
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted {
+		t.Fatalf("turn = %+v", turn)
+	}
+	followUp := agentEv("sub-ts-2", "agent-1", &rpc.AssistantTurnStartData{TurnID: "1"})
+	followUp.Timestamp = time.Now().Add(time.Hour)
+	h.fs.onEvent(followUp)
+	waitFor(t, "the stalled follow-up's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+	if n := h.fs.abortCount(); n != 0 {
+		t.Fatalf("the idle main agent was aborted %d times", n)
+	}
+}
+
+// A subagent still waiting on the model when the main turn ends keeps its
+// watch: the turn's end does not drop it.
+func TestWebSubagentStallWatchOutlivesTheTurn(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted {
+		t.Fatalf("turn = %+v", turn)
+	}
+	waitFor(t, "the stalled subagent's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 1 || got[0] != "agent-1" {
+		t.Fatalf("subagent cancels = %v", got)
+	}
+}
