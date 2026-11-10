@@ -77,6 +77,7 @@ func (m *Manager) appendPlanReviews(k keptPlanReviews) {
 	}
 	path := filepath.Join(dir, planReviewsFile)
 	size, err := appendPrivate(m.uploadRoot(), dir, path, data)
+	failed := err != nil
 	if err == nil && size > maxPlanReviewsBytes {
 		err = compactPlanReviews(path)
 	}
@@ -84,8 +85,9 @@ func (m *Manager) appendPlanReviews(k keptPlanReviews) {
 		log.Warn("keep the plan review failed", "session", k.s.id, "error", err)
 	}
 	m.mu.Lock()
-	k.s.planRecords = slices.Delete(k.s.planRecords, 0, len(k.records))
+	k.s.planRecords = afterAppend(k.s.planRecords, len(k.records), failed)
 	removed := k.s.removed
+	m.retryAppendLocked(k.s, failed)
 	m.mu.Unlock()
 	if removed {
 		removeUploads(dir)

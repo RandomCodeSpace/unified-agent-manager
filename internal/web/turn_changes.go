@@ -182,6 +182,7 @@ func (m *Manager) appendTurnChanges(k keptTurnChanges) {
 	}
 	path := filepath.Join(dir, turnChangesFile)
 	size, err := appendPrivate(m.uploadRoot(), dir, path, data)
+	failed := err != nil
 	if err == nil && size > maxTurnTodosBytes {
 		err = compactTurnRecords(path, k.timings, keptTurnTodosBytes, ".turn-changes-*")
 	}
@@ -189,8 +190,9 @@ func (m *Manager) appendTurnChanges(k keptTurnChanges) {
 		log.Warn("keep native turn changes failed", "session", k.s.id, "error", err)
 	}
 	m.mu.Lock()
-	k.s.turnChanges = slices.Delete(k.s.turnChanges, 0, len(k.records))
+	k.s.turnChanges = afterAppend(k.s.turnChanges, len(k.records), failed)
 	removed := k.s.removed
+	m.retryAppendLocked(k.s, failed)
 	m.mu.Unlock()
 	if removed {
 		removeUploads(dir)
