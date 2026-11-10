@@ -412,3 +412,32 @@ func TestWebStallWatchLeavesATaskCallWithoutAMessageAlone(t *testing.T) {
 		t.Fatalf("turn = %+v", turn)
 	}
 }
+
+// A subagent's tool call whose end was never reported ends with the
+// subagent: it does not keep the stall watch off its later follow-up.
+func TestWebSubagentStallWatchIgnoresAToolLeftOverFromAnEarlierRun(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-msg", "agent-1", &rpc.AssistantMessageData{Content: "running", MessageID: "sm-1"}))
+	h.fs.onEvent(agentEv("sub-tool", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-call", ToolName: "bash"}))
+	h.fs.onEvent(agentEv("sub-done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "task-call"}))
+	followUp := agentEv("sub-ts-2", "agent-1", &rpc.AssistantTurnStartData{TurnID: "1"})
+	followUp.Timestamp = time.Now().Add(time.Hour)
+	h.fs.onEvent(followUp)
+	waitFor(t, "the stalled follow-up's cancel", func() bool { return len(h.fs.subagentCancels()) == 1 })
+}
+
+// A subagent whose own task call starts with no message before it is not
+// waiting on the model while the nested subagent works.
+func TestWebSubagentStallWatchLeavesItsTaskCallAlone(t *testing.T) {
+	shortStall(t)
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-task", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "nested-call", ToolName: "task"}))
+	h.fs.onEvent(agentEv("nested-start", "agent-2", &rpc.SubagentStartedData{ToolCallID: "nested-call"}))
+	time.Sleep(5 * webStallAfter)
+	if got := h.fs.subagentCancels(); len(got) != 0 {
+		t.Fatalf("a subagent running a subagent of its own was cancelled: %v", got)
+	}
+}

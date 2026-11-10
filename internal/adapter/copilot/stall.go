@@ -113,7 +113,7 @@ func (c *conversation) noteModelWaitLocked(ev copilot.SessionEvent) {
 // main agent's watch never sees: it follows the main agent's requests only.
 func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID string) {
 	w, seen := c.stall.subWait[agentID]
-	switch ev.Data.(type) {
+	switch d := ev.Data.(type) {
 	case *rpc.AssistantTurnStartData:
 		// A new request is watched afresh: the watch outlives the turn, and
 		// a cancel that failed must not exempt the subagent for good.
@@ -123,6 +123,15 @@ func (c *conversation) noteSubagentWaitLocked(ev copilot.SessionEvent, agentID s
 		}
 	case *rpc.AssistantMessageData, *rpc.AssistantTurnEndData, *rpc.AssistantIdleData, *rpc.SessionIdleData, *rpc.AbortData:
 		w.waiting = false
+	case *rpc.ToolExecutionStartData:
+		if !seen {
+			return
+		}
+		// Its own task call, as the main agent's: no running tool to the
+		// watch, so it ends the wait while the nested subagent works.
+		if d.ToolName == taskTool {
+			w.waiting = false
+		}
 	default:
 		if !seen {
 			return
@@ -216,11 +225,12 @@ func (c *conversation) checkSubagentStallsLocked() time.Duration {
 	return next
 }
 
-// subagentToolRunningLocked reports whether a tool call of the agent runs.
-// The transcript's running calls carry no agent; toolAgents maps them.
+// subagentToolRunningLocked reports whether a tool call of the agent runs:
+// the phase's, as for the main agent, which end with the subagent. The
+// transcript keeps a call whose end was never reported.
 func (c *conversation) subagentToolRunningLocked(agentID string) bool {
-	for _, agent := range c.tr.toolAgents {
-		if agent == agentID {
+	for _, tool := range c.phase.tools {
+		if tool.agentID == agentID {
 			return true
 		}
 	}
