@@ -1756,8 +1756,14 @@ The easing is the `--ease-app` token in `index.css`; the durations are the bare 
 | `base` | 160ms | Chevrons, disclosure rows, panel fade-in, anchored readers and their dim |
 | `slow` | 240ms | Dialogs and the drawer, the sidebar fade, group and shelf expand, the meter fill |
 | easing | `cubic-bezier(0.2, 0, 0, 1)` | Everything above (exponential ease-out) |
+| `spring` | `--ease-spring`: a damped spring (ζ 0.78, 2% over) as CSS `linear()` | The segmented thumb (240ms) and the switch thumb (160ms), a small control entering its slot (`Appear`: Stop, Jump to bottom; 240ms), a state label's glyph when the state changes in place (`glyph-in`: scale 0.6→1 with the fade, 240ms) |
 | `spin` | 1s linear | Quiet rings for the sidebar row's state glyph, the live line's local work and request loading |
 | `breathe` | 2.4s ease-in-out | The live line's model work (opacity 0.25→1, scale 0.72→1); with `spin`, the only loops |
+
+The spring (owner, 2026-11-09, revamp mock 4) is for those few small parts only: menus, readers, dialogs, panels and everything that enters or leaves the page keep `--ease-app`.
+It runs one duration step longer than the curve it replaced, because a spring spends its tail settling, and only on transform, scale and opacity.
+Where the browser does not parse `linear()` the token is `--ease-app` and the durations stay at 100 and 160ms (`--spring-fast`, `--spring-base`, set by an `@supports` rule), so nothing is lost; exits stay on `--ease-app`.
+A state label's glyph springs only on a change, never when a list or a Thread first draws.
 
 Authored moments:
 - **Sidebar collapse** steps the shell's first `grid-template-columns` track 384px ↔ 48px at once (the width never animates); the sidebar keeps its width inside the clipped column, fades in (opacity, `slow`) when it opens and is `inert` once collapsed, and the rail fades in over it (`fade-in`).

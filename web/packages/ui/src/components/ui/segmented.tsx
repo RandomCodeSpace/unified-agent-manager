@@ -13,7 +13,7 @@ export interface Segment {
 /**
  * A segmented control on Base UI's radio group: one compact inset `sunken` track (24px, the
  * `well` ring, 1px padding) with equal-width segments, their `caption` labels centred, and one
- * floating `raised` thumb that slides to the chosen one on its transform (`base`; it snaps
+ * floating `raised` thumb that slides to the chosen one on its transform (the spring; it snaps
  * under Motion: Match system). The segment count and the chosen index reach the thumb as
  * custom properties through the CSSOM (React's `style` prop), never as inline markup. Arrow
  * keys move the choice; the group carries the label. `size` is accepted for its callers; both
@@ -56,7 +56,7 @@ export function Segmented({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-[5px] bg-raised shadow-raised transition-transform duration-160 ease-app"
+        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-[5px] bg-raised shadow-raised transition-transform duration-(--spring-base) ease-spring"
       />
       {items.map((it) => (
         <Radio.Root

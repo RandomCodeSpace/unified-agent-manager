@@ -4,8 +4,7 @@ import { EXIT_MS, usePresence } from './collapse';
 
 /**
  * Enter and exit for a small control that comes and goes in a fixed slot (the Stop button,
- * the "Jump to bottom" button): it fades and scales from 0.9 over `base`, back out the same
- * way, and stays mounted through the exit, inert. The wrapper is an inline flex item, so
+ * the "Jump to bottom" button): it fades and scales from 0.9 on the spring, back out over `base` on the app curve, and stays mounted through the exit, inert. The wrapper is an inline flex item, so
  * it takes the control's place in a row without moving its neighbours.
  */
 export function Appear({ show, className, children }: Readonly<{ show: boolean; className?: string; children: ReactNode }>) {
@@ -28,7 +27,7 @@ export function Appear({ show, className, children }: Readonly<{ show: boolean; 
   }, [show]);
   if (!mounted) return null;
   return (
-    <span inert={!show} className={cn('inline-flex transition-[opacity,scale] duration-160 ease-app', !(show && entered) && 'scale-90 opacity-0', className)}>
+    <span inert={!show} className={cn('inline-flex transition-[opacity,scale]', show && entered ? 'duration-(--spring-base) ease-spring' : 'scale-90 opacity-0 duration-160 ease-app', className)}>
       {children}
     </span>
   );
