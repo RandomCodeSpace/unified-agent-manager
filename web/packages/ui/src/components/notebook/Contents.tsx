@@ -16,6 +16,9 @@ const ALL_ID = 'contents-all';
 const BACK_ID = 'contents-back';
 const focusNext = (id: string) => requestAnimationFrame(() => document.getElementById(id)?.focus());
 
+/** How many waiting Threads show their whole answer form at once: they are listed first, and the rest open theirs when asked, so the column stays a list. */
+const OPEN_ASKS = 2;
+
 /** Another Thread shows under "Also running" while it works, waits on you, or finished and was not read. */
 function running(s: SessionSummary, unread: Unread): boolean {
   if (readOnly(s)) return false;
@@ -48,7 +51,7 @@ const Sections = memo(function Sections({ turns, projects, sessions, selectedId,
         <section aria-label="Also running" className="flex min-h-0 flex-col">
           <h2 className={HEADING}>Also running</h2>
           <ul className="-mx-1 flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {others.map(({ session, project }) => <ThreadCard key={session.id} session={session} project={project} unread={hasNews(session)} minute={minute} />)}
+            {others.map(({ session, project }, i) => <ThreadCard key={session.id} session={session} project={project} unread={hasNews(session)} minute={minute} folded={i >= OPEN_ASKS} />)}
           </ul>
         </section>
       )}

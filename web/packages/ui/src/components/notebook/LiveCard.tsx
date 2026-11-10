@@ -1,10 +1,10 @@
 // The notebook layout's live card (lib/layout): the one home of what the running turn does, drawn
 // in its cell's "did" track. Top to bottom, each a section that folds: Now (the progress line and
-// its peek), Plan (the todo list, each row's stage in a word), Subagents (the rows at work) and
-// Changed so far (the Thread's files, with Review). The status strip owns the state and hands the
-// parts in (StatusLine), so nothing is kept twice: the card only says where they stand. A section
-// with nothing in it is absent, and so is the card with no section. It never says that the Thread
-// waits on you: the question in the cell does.
+// its peek), Todos (the todo list, each row's stage in a word), Subagents (the rows at work, under
+// their own line of counts) and Changed so far (the Thread's files, with Review). The status strip
+// owns the state and hands the parts in (StatusLine), so nothing is kept twice: the card only says
+// where they stand. A section with nothing in it is absent, and so is the card with no section. It
+// never says that the Thread waits on you: the question in the cell does.
 
 import { ChevronRight } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
@@ -19,10 +19,12 @@ import { Button } from '../ui/button';
 import { Collapse } from '../ui/collapse';
 import { useNotebookSlot, type NotebookSlot } from './slots';
 
-/** `children` in the running cell's slot while the notebook layout has one on screen, else where they were written. */
-export function InNotebookSlot({ name, children }: Readonly<{ name: NotebookSlot; children: ReactNode }>) {
+/** `children` in the running cell's slot while the notebook layout has one on screen, else where they were written; as a function they are told which. */
+export function InNotebookSlot({ name, children }: Readonly<{ name: NotebookSlot; children: ReactNode | ((placed: boolean) => ReactNode) }>) {
   const slot = useNotebookSlot(name);
-  return useLayout() === 'notebook' && slot ? createPortal(children, slot) : children;
+  const placed = useLayout() === 'notebook' && !!slot;
+  const content = typeof children === 'function' ? children(placed) : children;
+  return placed ? createPortal(content, slot) : content;
 }
 
 /** How many changed files the card lists before "and n more"; Review shows them all. */
@@ -72,7 +74,6 @@ export function LiveCard({ now, plan, changed }: Readonly<{
   changed?: { files: readonly ChangeFile[]; onReview: () => void };
 }>) {
   const live = useScope((d) => d.live);
-  const subagents = live?.filter((x) => !x.ref).length ?? 0;
   const files = changed?.files ?? [];
   if (!now && !plan && !live?.length && !files.length) return null;
   return (
@@ -83,12 +84,12 @@ export function LiveCard({ now, plan, changed }: Readonly<{
         </Section>
       )}
       {plan && (
-        <Section label="Plan" meta={plan.rows ? `${plan.done} of ${plan.total}` : undefined} action={plan.links}>
+        <Section label="Todos" meta={plan.rows ? `${plan.done} of ${plan.total}` : undefined} action={plan.links}>
           {plan.rows && <div className={PAD}>{plan.rows}</div>}
         </Section>
       )}
       {!!live?.length && (
-        <Section label="Subagents" meta={subagents ? String(subagents) : undefined}>
+        <Section label="Subagents">
           <LiveSubagents />
         </Section>
       )}

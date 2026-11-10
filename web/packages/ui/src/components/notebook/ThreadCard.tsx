@@ -8,10 +8,6 @@ import { TaskRowContent } from '../Sidebar';
 import { taskMenuItems, useTaskActions } from '../taskActions';
 import { Button } from '../ui/button';
 
-// The request's own card (Interactions) drawn flat inside this one: this card is its surface, and its
-// state line already carries the one orange tag, so the request's chip row is left out.
-const FLAT = '[&>section]:animate-none [&>section]:rounded-none [&>section]:bg-transparent [&>section]:p-0 [&>section]:shadow-none [&>section>div:first-child]:hidden [&_h3]:text-ui';
-
 /**
  * What another Thread waits on, answered from its card. The Thread list holds only the request's
  * title (`ask`); the request itself is in the Thread's detail, read once per request. A plan to
@@ -33,7 +29,7 @@ function ThreadAsk({ session: s, text }: Readonly<{ session: SessionSummary; tex
   const pending = detail?.interactions.find(awaitsUser);
   const update = (next: Interaction) => setRead((held) => held?.detail ? { ...held, detail: { ...held.detail, interactions: held.detail.interactions.map((i) => (i.id === next.id ? next : i)) } } : held);
   if (detail && pending && pending.kind !== 'plan_review') {
-    return <div className={FLAT}><InteractionCard session={detail} interaction={pending} onUpdate={update} /></div>;
+    return <InteractionCard session={detail} interaction={pending} onUpdate={update} place="card" />;
   }
   // Answered here a moment ago: the Thread's next state arrives with the list.
   if (detail && !pending) return null;
@@ -48,12 +44,15 @@ function ThreadAsk({ session: s, text }: Readonly<{ session: SessionSummary; tex
 /**
  * Another Thread that is active, as a small card in the Contents column ("Also running"): the
  * sidebar row's own two lines (Project, state, title), the one line that matters, and its actions
- * in words. A Thread that waits on you is answered here.
+ * in words. A Thread that waits on you is answered here; `folded`, behind "Answer here".
  */
-export const ThreadCard = memo(function ThreadCard({ session: s, project, unread }: Readonly<{ session: SessionSummary; project: Project; unread: boolean; /** The list's shared clock refreshes the relative time. */ minute: number }>) {
+export const ThreadCard = memo(function ThreadCard({ session: s, project, unread, folded = false }: Readonly<{ session: SessionSummary; project: Project; unread: boolean; /** The list's shared clock refreshes the relative time. */ minute: number; /** With many Threads waiting, this one shows its request's line until asked for its form (Contents). */ folded?: boolean }>) {
   const a = useTaskActions();
+  const [answering, setAnswering] = useState(false);
   const status = taskStatus(s, unread);
   const waits = status.tone === 'attention';
+  // Folded, it says what it asks, and "Answer here" brings the form.
+  const asks = waits && folded && !answering;
   const finished = shownState(s) === 'completed';
   // The row menu's own Settle, with its rules and its guard.
   const settle = finished ? taskMenuItems(s, a, 'row').find((item) => item.key === 'settle' && !item.disabled) : undefined;
@@ -65,8 +64,9 @@ export const ThreadCard = memo(function ThreadCard({ session: s, project, unread
         <TaskRowContent session={s} project={project} selected={false} unread={unread} />
       </button>
       {line && <p className="line-clamp-2 [overflow-wrap:anywhere] text-caption text-muted">{line}</p>}
-      {waits && <ThreadAsk session={s} text={status.text} />}
+      {waits && (asks ? <p className="line-clamp-2 [overflow-wrap:anywhere] text-caption text-body">{s.ask?.title ?? status.text}</p> : <ThreadAsk session={s} text={status.text} />)}
       <div className="flex gap-1.5">
+        {asks && <Button size="sm" variant="secondary" className="flex-1" onClick={() => setAnswering(true)}>Answer here</Button>}
         <Button size="sm" variant="secondary" className="flex-1" onClick={() => a.select(s.id)}>Open</Button>
         {settle && <Button size="sm" variant="secondary" className="flex-1" onClick={() => settle.onSelect()}>{settle.label}</Button>}
       </div>

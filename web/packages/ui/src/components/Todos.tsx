@@ -53,9 +53,9 @@ function TodoMark({ status, className }: Readonly<{ status: TodoStatus; classNam
 }
 
 /** The subagent that first wrote a row: its identity dot, as on its row, and its name; a button that shows it once its name is known. */
-function AgentTag({ id, name, quiet = false }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean }>) {
+function AgentTag({ id, name, quiet = false, className }: Readonly<{ id: string; name?: string; /** The dot alone on screen: the row's title already says the name. */ quiet?: boolean; className?: string }>) {
   return (
-    <span className="flex h-5 max-w-36 shrink-0 items-center text-caption text-muted">
+    <span className={cn('flex h-5 max-w-36 shrink-0 items-center text-caption text-muted', className)}>
       <span className="sr-only">, by </span>
       <SubagentTag id={id} name={name || 'subagent'} still={!name} className="max-w-full">
         {quiet ? <span className="sr-only">{name}</span> : undefined}
@@ -102,7 +102,8 @@ function TodoRow({ todo, name, now = false, quietName = false, word = false, sta
         ) : (
           <span className="flex min-w-0 flex-1 flex-col">{words}</span>
         )}
-        {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} />}
+        {/* In a narrow cell (a phone, where the live card's rows are) the name gives room to the title. */}
+        {todo.agent_id && <AgentTag id={todo.agent_id} name={name} quiet={quietName && sameWords(todo.title, name)} className={word ? '@max-md:max-w-20' : undefined} />}
         {!word && <span className="sr-only">, {todoWord(todo.status)}{waits && `, waits on ${waits}`}</span>}
       </div>
       {open && children}

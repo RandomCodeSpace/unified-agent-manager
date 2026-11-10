@@ -11,7 +11,6 @@ import { NotebookSlots, useNotebookSlotRef } from '../../src/components/notebook
 import { StatusLine, statusLine } from '../../src/components/StatusLine';
 import { SubagentScope } from '../../src/components/Subagents';
 import { applyLayout } from '../../src/lib/layout';
-import { nextTurn } from '../../src/lib/tasks';
 import { choose, openTask } from './render';
 
 afterEach(() => applyLayout('classic'));
@@ -61,7 +60,7 @@ function strip(session: SessionDetail, slots: boolean, onReview = () => {}) {
 
 const stripButtons = () => within(screen.getByTestId('strip')).queryAllByRole('button').map((b) => b.textContent);
 
-test('with the running cell on screen, Now, Plan, Subagents and the changed files stand in the live card and the strip draws none of them', async () => {
+test('with the running cell on screen, Now, Todos, Subagents and the changed files stand in the live card and the strip draws none of them', async () => {
   applyLayout('notebook');
   const onReview = vi.fn();
   strip(working, true, onReview);
@@ -69,7 +68,7 @@ test('with the running cell on screen, Now, Plan, Subagents and the changed file
   expect(screen.getByTestId('live').contains(screen.getByRole('region', { name: 'This turn so far' }))).toBe(true);
   expect(within(card.getByRole('region', { name: 'Now' })).getByText('Running go test ./...', { ignore: '.sr-only' })).toBeTruthy();
   // The list, each row's stage in a word.
-  const plan = within(card.getByRole('region', { name: 'Plan' }));
+  const plan = within(card.getByRole('region', { name: 'Todos' }));
   expect(plan.getByText('1 of 3')).toBeTruthy();
   expect(plan.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['In progressBuild the index page', 'BlockedSign in to the registryNo token on this machine', 'DonePlan the pages']);
   expect(within(card.getByRole('region', { name: 'Subagents' })).getByRole('button', { name: /^Survey the templates \(explore\), running/ })).toBeTruthy();
@@ -79,7 +78,7 @@ test('with the running cell on screen, Now, Plan, Subagents and the changed file
   expect(stripButtons()).toEqual([]);
   expect(document.querySelectorAll('[data-progress-words]')).toHaveLength(1);
   // A section folds; the list's reader opens from its word.
-  const fold = plan.getByRole('button', { name: /^Plan/ });
+  const fold = plan.getByRole('button', { name: /^Todos/ });
   fireEvent.click(fold);
   expect(fold.getAttribute('aria-expanded')).toBe('false');
   fireEvent.click(plan.getByRole('button', { name: 'Open the list' }));
@@ -90,7 +89,7 @@ test('a Thread that waits on an answer draws no Now: the card does not restate t
   applyLayout('notebook');
   strip(waiting, true);
   const card = within(await screen.findByRole('region', { name: 'This turn so far' }));
-  expect(card.getByRole('region', { name: 'Plan' })).toBeTruthy();
+  expect(card.getByRole('region', { name: 'Todos' })).toBeTruthy();
   expect(card.queryByRole('region', { name: 'Now' })).toBeNull();
   expect(screen.queryByText('Needs answer')).toBeNull();
 });
@@ -117,7 +116,7 @@ function asks(slots: boolean) {
       <Cell slots={slots} />
       <div data-testid="place">
         <InNotebookSlot name="asks">
-          <InteractionCard session={{ id: 't', capabilities: { permissions: true, questions: true } } as unknown as SessionDetail} interaction={question} onUpdate={() => {}} />
+          {(inCell) => <InteractionCard session={{ id: 't', capabilities: { permissions: true, questions: true } } as unknown as SessionDetail} interaction={question} onUpdate={() => {}} place={inCell ? 'cell' : undefined} />}
         </InNotebookSlot>
       </div>
     </NotebookSlots>,
@@ -129,13 +128,17 @@ test('a pending question renders in the cell when it gives the slot, and in its 
   const inCell = asks(true);
   expect(await within(screen.getByTestId('asks')).findByText('Which terminals?')).toBeTruthy();
   expect(screen.getByTestId('place').childElementCount).toBe(0);
+  // The cell's gutter says "Asked you": the card in it carries no chip.
+  expect(screen.queryByText('Needs answer')).toBeNull();
   inCell.unmount();
   const noCell = asks(false);
   expect(within(screen.getByTestId('place')).getByText('Which terminals?')).toBeTruthy();
+  expect(screen.getByText('Needs answer')).toBeTruthy();
   noCell.unmount();
   applyLayout('classic');
   asks(true);
   expect(within(screen.getByTestId('place')).getByText('Which terminals?')).toBeTruthy();
+  expect(screen.getByText('Needs answer')).toBeTruthy();
   expect(screen.getByTestId('asks').childElementCount).toBe(0);
 });
 
@@ -170,11 +173,4 @@ test('the current layout keeps the controls in the composer, with no settings li
   expect(screen.queryByRole('group', { name: 'Thread settings' })).toBeNull();
   expect(screen.queryByText('next')).toBeNull();
   await waitFor(() => expect(screen.queryByText('Model')).toBeNull());
-});
-
-test('the next turn takes the number after the turns so far and the queued messages', () => {
-  expect(nextTurn({})).toBe(1);
-  expect(nextTurn({ turn_timings: [timing, timing], queued: 1 })).toBe(4);
-  // Turns without timings are counted by their messages; a subagent's are not turns.
-  expect(nextTurn({ items: [{ id: 'u', kind: 'user', time: since }, { id: 's', kind: 'user', time: since, agent_id: 'x' }] as Item[] })).toBe(2);
 });
