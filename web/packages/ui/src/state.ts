@@ -5,6 +5,8 @@ import type { AccountUsage, HistoryPage, MessagePair, ModelCalls, PeerMessage, I
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 /** Whether this browser is signed in to the service: unknown until its first answer. */
 export type Auth = 'checking' | 'in' | 'out';
+// Older servers omit `required`; treat absent as true.
+export const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;
 
 /** The service's defaults, in force until its snapshot arrives (and on a service too old to send one). */
 export const DEFAULT_SETTINGS: Settings = { send_default: 'steer', terminal: false };
