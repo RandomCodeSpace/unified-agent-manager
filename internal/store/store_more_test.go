@@ -94,7 +94,7 @@ func TestNormalizeMigrateBackupMoveAside(t *testing.T) {
 	if matches, _ := filepath.Glob(filepath.Join(dir, "sessions.json.bak.*")); len(matches) == 0 {
 		t.Fatal("no backup")
 	}
-	if err := s.moveAside(); err != nil {
+	if _, err := s.moveAside(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(s.path); !os.IsNotExist(err) {

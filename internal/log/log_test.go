@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -477,3 +480,84 @@ func TestRecoverLogsPanicAndKeepsProcess(t *testing.T) {
 		t.Fatalf("panic record = %+v", entry)
 	}
 }
+
+// A request panic with the locks free fails that request with a 500 when
+// nothing was sent, drops the connection when something was, and leaves the
+// process up; one that leaves a lock held exits, as a background one does.
+func TestRequestsHandlesAPanicAsRecoverDoes(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf lockedBuffer
+	UseStderr(&buf)
+	held, oldExit := lockWait, exit
+	t.Cleanup(func() { lockWait, exit = held, oldExit })
+	lockWait = 30 * time.Millisecond
+	var exits atomic.Int32
+	exit = func(int) { exits.Add(1) }
+
+	var mu sync.Mutex
+	srv := httptest.NewServer(Requests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/free":
+			mu.Lock()
+			defer mu.Unlock()
+			panic("boom")
+		case "/sent":
+			_, _ = io.WriteString(w, "partial")
+			_ = http.NewResponseController(w).Flush()
+			panic("boom")
+		case "/abort":
+			panic(http.ErrAbortHandler)
+		case "/held":
+			mu.Lock()
+			panic("boom")
+		}
+		_, _ = io.WriteString(w, "ok")
+	}), &mu))
+	t.Cleanup(srv.Close)
+	get := func(path string) (*http.Response, error) {
+		res, err := http.Get(srv.URL + path)
+		if err == nil {
+			_, err = io.ReadAll(res.Body)
+			_ = res.Body.Close()
+		}
+		return res, err
+	}
+
+	if res, err := get("/free"); err != nil || res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("free lock: %v, %v", res, err)
+	}
+	if !strings.Contains(buf.String(), "request handler panicked") || !strings.Contains(buf.String(), `"path":"/free"`) {
+		t.Fatalf("panic not logged: %s", buf.String())
+	}
+	if _, err := get("/sent"); err == nil {
+		t.Fatal("a response cut by a panic read as complete")
+	}
+	buf.Reset()
+	if _, err := get("/abort"); err == nil || buf.Len() != 0 {
+		t.Fatalf("abort: err=%v logs=%s", err, buf.String())
+	}
+	if res, err := get("/ok"); err != nil || res.StatusCode != http.StatusOK || exits.Load() != 0 {
+		t.Fatalf("after panics: %v, %v, exits=%d", res, err, exits.Load())
+	}
+	_, _ = get("/held")
+	if exits.Load() != 1 || !strings.Contains(buf.String(), "a lock was left held after a panic") {
+		t.Fatalf("held lock: exits=%d logs=%s", exits.Load(), buf.String())
+	}
+}
+
+// lockedBuffer is a log sink a server goroutine and the test share.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }
+func (b *lockedBuffer) Reset()         { b.mu.Lock(); b.buf.Reset(); b.mu.Unlock() }
+func (b *lockedBuffer) Len() int       { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.Len() }

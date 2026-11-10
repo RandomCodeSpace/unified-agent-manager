@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode"
@@ -147,6 +148,11 @@ type WebGitLabInvestigation struct {
 // from a newer on-disk schema. Refusing the write prevents an older binary
 // from clobbering fields it does not understand (F33).
 var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-only")
+
+// ErrSetAside is returned by every write once this Store set the file aside
+// after an earlier load had returned its records: the caller's in-memory state
+// came from that file, and saving onto fresh defaults would drop it unseen.
+var ErrSetAside = errors.New("store: the config file could not be read and was set aside; changes are not saved")
 
 // configAlias mirrors Config without the custom marshaller (and without the
 // in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
@@ -1283,6 +1289,14 @@ type Store struct {
 	sessionExists   func(string) bool
 	migrationBackup func() error
 	migrationWrite  func(Config) error
+
+	// mu guards loaded and setAside (the file lock is invisible to -race).
+	mu sync.Mutex
+	// loaded is set once a load returned the file's records (or no file).
+	loaded bool
+	// setAside is the backup path of a file set aside after loaded was set;
+	// non-empty makes every write fail with ErrSetAside.
+	setAside string
 }
 
 func Open(path string) (*Store, error) {
@@ -1400,6 +1414,9 @@ func (s *Store) Update(fn func(*Config) error) error {
 func (s *Store) loadNoLock() (Config, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.mu.Lock()
+		s.loaded = true
+		s.mu.Unlock()
 		return DefaultConfig(), nil
 	}
 	if err != nil {
@@ -1412,11 +1429,22 @@ func (s *Store) loadNoLock() (Config, error) {
 		// would let the next Save overwrite it with defaults and lose the only
 		// copy. Propagate the error instead so the app refuses to clobber it
 		// (F43). normalize guarantees a non-nil Sessions map on the success path.
-		if mvErr := s.moveAside(); mvErr != nil {
+		backup, mvErr := s.moveAside()
+		if mvErr != nil {
 			return Config{}, fmt.Errorf("quarantine corrupt config %s: %w", s.path, mvErr)
 		}
+		// The decode error can quote the file, so only the paths are logged.
+		log.Error("config file could not be read; set it aside and started from defaults", "path", s.path, "backup", backup)
+		s.mu.Lock()
+		if s.loaded {
+			s.setAside = backup
+		}
+		s.mu.Unlock()
 		return normalize(DefaultConfig()), nil
 	}
+	s.mu.Lock()
+	s.loaded = true
+	s.mu.Unlock()
 	// Untrusted on-disk records are validated and coerced on every load path,
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
@@ -1812,6 +1840,12 @@ func migrate(cfg Config) Config {
 }
 
 func (s *Store) saveNoLock(cfg Config) error {
+	s.mu.Lock()
+	backup := s.setAside
+	s.mu.Unlock()
+	if backup != "" {
+		return fmt.Errorf("%w (backup %s)", ErrSetAside, backup)
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
@@ -1909,7 +1943,10 @@ func (s *Store) copyBackup() error {
 	return syncDir(filepath.Dir(s.path))
 }
 
-func (s *Store) moveAside() error { return os.Rename(s.path, s.backupPath()) }
+func (s *Store) moveAside() (string, error) {
+	backup := s.backupPath()
+	return backup, os.Rename(s.path, backup)
+}
 
 // MarkSessionClosed flags the record whose backend session name matches as
 // user-closed and records the agent's exit code. It is what a session host

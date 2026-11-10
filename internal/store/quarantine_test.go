@@ -1,9 +1,15 @@
 package store
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,5 +82,58 @@ func TestLoadCorruptJSONQuarantineSuccessStartsFreshWithNonNilMap(t *testing.T) 
 	}
 	if cfg.SchemaVersion != CurrentSchemaVersion {
 		t.Fatalf("schema = %d, want %d", cfg.SchemaVersion, CurrentSchemaVersion)
+	}
+}
+
+// A file set aside on the store's first read leaves nothing in memory to lose,
+// so writes go on; the log names the backup and never quotes the file.
+func TestFirstLoadSetAsideLogsBackupAndKeepsWriting(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { log.SetLogger(previous) })
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	if err := os.WriteFile(path, []byte(`{"default_agent": FILE-CONTENT}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error { cfg.DefaultAgent = "copilot"; return nil }); err != nil {
+		t.Fatalf("update after a first-read set-aside: %v", err)
+	}
+	backups, _ := filepath.Glob(path + ".bak.*")
+	if len(backups) != 1 || !strings.Contains(logs.String(), backups[0]) || strings.Contains(logs.String(), "FILE-CONTENT") {
+		t.Fatalf("backups=%v logs=%s", backups, logs.String())
+	}
+}
+
+// Once a load returned the file's records, a later set-aside makes every write
+// fail: saving defaults would report success while dropping those records.
+func TestSetAsideAfterLoadRefusesWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error { cfg.DefaultAgent = "copilot"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version": "x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if err := s.Update(func(*Config) error { return nil }); !errors.Is(err, ErrSetAside) {
+			t.Fatalf("update %d after set-aside = %v, want %v", i, err, ErrSetAside)
+		}
+	}
+	if err := s.Save(DefaultConfig()); !errors.Is(err, ErrSetAside) {
+		t.Fatalf("save after set-aside = %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("defaults were written over the set-aside file: %v", err)
+	}
+	if backups, _ := filepath.Glob(path + ".bak.*"); len(backups) != 1 {
+		t.Fatalf("backups = %v", backups)
 	}
 }
