@@ -296,11 +296,7 @@ func (s *Server) verifySession(host, value string) (mac string, exp int64, ok bo
 	if !ok {
 		nonce, mac = "", rest
 	}
-	// A cookie signed with the token itself is from before signKey; accept it
-	// until it expires so the upgrade signs nobody out. Drop that fallback
-	// cookieMaxAge after 2026-11-10.
-	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, host, e, nonce))) != 1 &&
-		subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC([]byte(s.token), host, e, nonce))) != 1 {
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, host, e, nonce))) != 1 {
 		return "", 0, false
 	}
 	return mac, exp, true

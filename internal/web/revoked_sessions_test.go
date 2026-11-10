@@ -51,7 +51,7 @@ func TestLogoutRevokesACookieWithoutNonce(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	e := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
 	old := func(r *http.Request) {
-		r.AddCookie(&http.Cookie{Name: cookieName, Value: e + "." + legacyMAC("uam-web-session-v3|127.0.0.1:8260|"+e)})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: e + "." + cookieMAC(ts.srv.signKey, "127.0.0.1:8260", e, "")})
 	}
 	if w := ts.do(http.MethodGet, "/api/sessions", "", old); w.Code != http.StatusOK {
 		t.Fatalf("cookie without nonce = %d, want 200", w.Code)
