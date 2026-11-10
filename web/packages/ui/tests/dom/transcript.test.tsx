@@ -399,8 +399,9 @@ describe('messages', () => {
     expect(view.container.textContent).toContain('<b>raw</b>');
   });
 
-  test('an https image loads in place with no referrer and links to itself; an http one stays a link card', () => {
+  test('an https image from another site loads on request with no referrer and links to itself; an http one stays a link card', () => {
     const view = render(<Markdown text={'![chart](https://example.com/a.png)\n\n![old](http://example.com/b.png)'} />);
+    fireEvent.click(view.getByRole('button', { name: 'Load image from example.com' }));
     const img = view.getByRole('img', { name: 'chart' });
     expect(img.getAttribute('src')).toBe('https://example.com/a.png');
     expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');

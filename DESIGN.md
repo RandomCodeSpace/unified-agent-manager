@@ -1837,8 +1837,11 @@ Consequences:
   The browser checks record zero `securitypolicyviolation` events.
 - **No inline scripts, no `eval`.**
   Vite emits external chunks only.
-- **Web images load from their host over https (owner, 2026-10-18).**
-  A Markdown image with an `https:` address (a reply, a Markdown file in the viewer) is drawn in place with `referrerpolicy="no-referrer"`, linking to itself; one that fails to load falls back to the link card. `http:` images stay the card.
+- **Web images load at once only from trusted origins; any other origin waits for a click (owner, 2026-11-10; replaces 2026-10-18).**
+  A Markdown image with an `https:` address (a reply, a note, a GitLab comment or description, a Markdown file in the viewer) loads at once when its address is this uam server (the page's own origin) or an enabled connected uam server (both compared by scheme, host and port), or the Thread's GitLab host (compared exactly).
+  Any other origin draws the link card in its place: the alt text, the host (linking to the full address) and a Load image button named for the host. Loading draws the image as before, with `referrerpolicy="no-referrer"`, lazily, linking to itself; one that fails to load falls back to the link card.
+  A loaded image stays loaded for the page's lifetime (in memory only, never stored), so a remounted row keeps it. An address that does not parse is never loaded; `http:` images stay the card; images from the Thread's own files and `data:`/`blob:` images are unchanged.
+  The gate is in the renderer: `img-src` still allows `https:` so the click can load any image. A `<picture>`'s `<source>` elements in GitLab HTML are dropped so every image passes the gate.
 - **Fonts and icons from `'self'`:** fontsource woff2 files hashed into `/assets/`; icons are lucide SVG in the markup.
 - **A push-only service worker.**
   The app manifest (`/manifest.webmanifest`, served as `application/manifest+json`, `no-cache`) and the icons are enough for Chromium to offer install (`Page.getInstallabilityErrors` is empty on desktop and mobile). `/sw.js` (`no-cache`, `script-src 'self'`) is registered only once notifications are turned on, and handles `push` and `notificationclick` alone: no fetch handler and no cache, so the interface stays a live view of the service and nothing sits between the page and `/api/*`, the event stream or the immutable `/assets/`.

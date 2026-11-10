@@ -236,7 +236,7 @@ export function turnGitLabRefs(items: Item[], origin: GitLabOrigin, own?: GitLab
 
 /**
  * A GitLab Markdown body for the shared renderer. Project uploads (`/uploads/…`) are relative to
- * the project in GitLab: they become links there, which the renderer shows as links, never loads.
+ * the project in GitLab: they become addresses there; an image from the GitLab host loads at once.
  */
 export function gitLabMarkdown(text: string, origin?: GitLabOrigin): string {
   if (!origin) return text;
