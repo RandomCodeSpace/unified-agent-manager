@@ -115,6 +115,10 @@ func (m *Manager) settleMerged() {
 	m.mu.Unlock()
 }
 
+// maxMergedMoves bounds the distinct commits of the reflogs that mergedTip
+// checks; longer ones are not proved.
+const maxMergedMoves = 1000
+
 // mergedTip is the proof that the work on branch, checked out in the
 // Thread's worktree at path, has landed on def, origin's default branch as
 // the refs on disk have it (refs/remotes/origin/<def>). It returns the
@@ -122,8 +126,9 @@ func (m *Manager) settleMerged() {
 //
 //  1. The worktree is on branch, and the branch has moved since it was made
 //     (the oldest entry of its reflog is another commit): a Thread that
-//     never committed has landed nothing. Every commit its reflog names is
-//     in the branch's history or in def's: none was reset or rebased away.
+//     never committed has landed nothing. Every commit its reflog or the
+//     worktree's HEAD reflog names is in the branch's history or in def's:
+//     none was reset or rebased away, or made off the branch.
 //  2. The branch's commit is an ancestor of def (a merge or fast-forward:
 //     def's history has every commit); or, for a squash or a rebase, the
 //     branch differs from its merge base with def and merging it into def
@@ -140,10 +145,6 @@ func (m *Manager) settleMerged() {
 // unproven reports that 1 held and 2 did not: commits kept for want of a
 // proof. A git failure, a cut-off answer or any other doubt keeps
 // everything.
-// maxMergedMoves bounds the distinct commits of a branch's reflog that
-// mergedTip checks; a longer one is not proved.
-const maxMergedMoves = 1000
-
 func mergedTip(ctx context.Context, path, branch, def string) (tip string, unproven bool) {
 	repo, _, err := openRepo(ctx, path)
 	if err != nil || repo == nil {
@@ -175,11 +176,15 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	if made := moves[strings.LastIndexByte(moves, '\n')+1:]; code != 0 || made == "" || made == tip {
 		return "", false
 	}
-	// Every commit the branch ever held is in its own history or in def's.
-	// One reset or rebased away lives only in the reflog, which goes with the
-	// branch.
+	// Every commit the branch or the worktree's HEAD ever held is in the
+	// branch's history or in def's. One reset or rebased away, or made on a
+	// detached HEAD, lives only in a reflog, and both go with the removal.
 	// shortcut: a rebased branch stays unproven, compare patch IDs if those Threads should settle too.
-	held := strings.Fields(moves)
+	wandered, code := git("reflog", "show", "--format=%H", "HEAD")
+	if code != 0 {
+		return "", true
+	}
+	held := strings.Fields(moves + "\n" + wandered)
 	slices.Sort(held)
 	if held = slices.Compact(held); len(held) > maxMergedMoves {
 		return "", true
