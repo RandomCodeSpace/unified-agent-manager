@@ -39,8 +39,9 @@ import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
 import { decodePath } from './lib/markdown';
+import { useChangesSheet } from './lib/useChangesSheet';
 import { Contained } from './components/VisualBoundary';
-import { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overlays';
+import { keysTaken, popupOpen, sessionsUpdate } from './lib/overlays';
 import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading } from './components/Panes';
 
 export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overlays';
@@ -182,16 +183,6 @@ export default function App() {
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  // What had focus when Changes opened (the header button, a turn's "View changes"); focus goes back there on
-  // close, or to the header button once that is gone.
-  const changesOpener = useRef<Element | null>(null);
-  const focusChangesOpener = () => {
-    const opener = changesOpener.current;
-    changesOpener.current = null;
-    const back = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : document.getElementById('changes-link');
-    back?.focus();
-  };
   // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
   const [terminalId, setTerminalId] = useState<string | null>(null);
   // The worktree Thread whose folder the shell started in instead of the Project's, or null.
@@ -405,20 +396,7 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth]);
 
-  // Esc closes the Changes sheet when no popup owns the key (popups and the drawer handle their own), and only
-  // from inside the panel or with nothing focused: Esc in the conversation or the composer is theirs.
-  useEffect(() => {
-    if (!sheetOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || popupOpen() || threadCovered()) return;
-      const at = document.activeElement;
-      if (at && at !== document.body && !at.closest('[aria-label="Changes"]')) return;
-      setSheetOpen(false);
-      focusChangesOpener();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [sheetOpen]);
+  const { sheetOpen, setSheetOpen, onSheet } = useChangesSheet();
 
   // Settings or Routines over the selected Task: the owner is not looking at it, as if the page were hidden.
   const viewOpen = settingsOpen || !!routinesFor;
@@ -753,11 +731,6 @@ export default function App() {
     setTerminalTask(to ? nextTerminalTask.current : null);
     if (!to) document.getElementById('terminal-link')?.focus();
   }, []);
-  const onSheet = useCallback((open: boolean, restoreFocus = true) => {
-    if (open) changesOpener.current = document.activeElement;
-    setSheetOpen(open);
-    if (!open && restoreFocus) focusChangesOpener();
-  }, []);
   const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
   const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);
 
@@ -805,7 +778,7 @@ export default function App() {
     setSettingsOpen(false);
     setRoutinesFor(null);
     setNewTask(null);
-  }, [recentTasks]);
+  }, [recentTasks, setSheetOpen]);
 
   const openTask = useCallback((id: string) => select(id), [select]);
   /** Opens one of the selected Thread's subagents in its Conversation pane, or (null) goes back to the Thread: a move between views. */
