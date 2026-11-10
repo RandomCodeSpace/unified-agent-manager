@@ -596,7 +596,7 @@ test('the Project filter lists every machine’s Projects under its name and fil
   expect(groups.map((group) => group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent)).toEqual(['Main Server', 'Workstation B', 'Workstation C']);
   const b = within(list.getByRole('group', { name: 'Workstation B' }));
   const project = b.getAllByRole('option')[0];
-  const name = project.querySelector('.truncate')?.textContent ?? '';
+  const name = project.querySelector('span > span')?.textContent ?? '';
   await user.click(project);
   await waitFor(() => expect(screen.getByRole('button', { name: `Project filter: ${name}` })).toBeTruthy());
   // Only B's Tasks of that Project remain.

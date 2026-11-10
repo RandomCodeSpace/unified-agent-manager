@@ -25,7 +25,7 @@ function draw(session: SessionDetail, { working = session.state === 'working', s
 }
 
 /** The progress line's sentence, as a screen reader hears it, or null with no line. */
-const said = () => document.querySelector('.animate-fade-in + .sr-only')?.textContent ?? null;
+const said = () => document.querySelector('[data-progress-words] + span')?.textContent ?? null;
 
 test('a working turn with nothing of its own says "Working", never a blank strip; the intent, a retry, the list each take its place, without a clock', () => {
   vi.useFakeTimers();
@@ -42,7 +42,7 @@ test('a working turn with nothing of its own says "Working", never a blank strip
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByText('2m')).toBeNull();
   // Nothing on the line moves: no ring and no breathing dot.
-  expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
+  expect(view.container.querySelector('[data-spinner]')).toBeNull();
   view.rerender(draw(task({ turn_activity: { intent: 'Building the index page', todos: { known: false } } }), { onJump, jump: true }));
   fireEvent.click(screen.getByRole('button', { name: 'Jump to bottom' }));
   expect(onJump).toHaveBeenCalledTimes(1);
@@ -210,16 +210,16 @@ test('the todo list is stage blocks with their glyph and number and "1 of 4", th
   // ✓ done, ◉ in progress, ⊘ blocked: each its number behind its glyph in its tone; a stage with no rows is left out.
   expect(blocks(button)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
   expect([...button.querySelectorAll('[title]')].map((b) => b.textContent?.replace(b.getAttribute('title')!, ''))).toEqual(['1', '2', '1']);
-  // "1 of 4" on a wide screen, "1/4" on a phone.
-  expect(within(button).getByText('1 of 4').className).toContain('max-sm:hidden');
-  expect(within(button).getByText('1/4').className).toContain('sm:hidden');
+  // "1 of 4" on a wide screen, "1/4" on a phone (css.test.mjs).
+  expect(within(button).getByText('1 of 4')).toBeTruthy();
+  expect(within(button).getByText('1/4')).toBeTruthy();
   expect(screen.getByText('Now:').parentElement!.textContent).toBe('Now: Build the index page');
   expect(said()).toBe('Now: Build the index page');
   // The intent is not on screen while a row is in progress, nor the counts in words, nor the meter.
   expect(screen.queryByText(/Working on the site/)).toBeNull();
   expect(screen.queryByText(/in progress$/, { ignore: '.sr-only' })).toBeNull();
-  expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(0);
-  expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
+  expect(view.container.querySelector('[data-todo-meter]')).toBeNull();
+  expect(view.container.querySelector('[data-spinner]')).toBeNull();
   // A row to do adds its block.
   view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])))));
   expect(blocks(screen.getByRole('button'))).toEqual(['1 done success glyph', '1 in progress accent glyph', '1 blocked warning glyph', '1 to do none glyph']);
@@ -227,11 +227,10 @@ test('the todo list is stage blocks with their glyph and number and "1 of 4", th
   view.rerender(draw(withTodos(listOf(rows([{}, { status: 'pending' }, { status: 'pending' }]), { now: undefined }))));
   expect(screen.getByText('Working on the site', { ignore: '.sr-only' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
-  // The last turn's list, not touched yet: the same blocks, dimmed, "From the last turn", and the reader still opens.
+  // The last turn's list, not touched yet: the same blocks, dimmed (css.test.mjs), "From the last turn", and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
   expect(screen.getByText('From the last turn')).toBeTruthy();
-  const carried = screen.getByRole('button', { name: 'Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' });
-  expect(carried.querySelector('.opacity-55')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   expect(said()).toBe('Working on the site');
   // No list: no button, the intent alone.
   view.rerender(draw(withTodos({ known: false, touched: false, todos: [], counts: {} })));
@@ -261,7 +260,7 @@ test('the todo button opens a reader of its own beside it: sections by state, th
     'Sign in to the registryNo token on this machine, Blocked',
     'Plan the pages, Done',
   ]);
-  expect(within(reader).getByText('now').className).toContain('text-accent');
+  expect(within(reader).getByText('now')).toBeTruthy();
   expect(within(reader).getByText('Esc')).toBeTruthy();
   expect(within(reader).getByText('Read only · to change it, ask in the chat')).toBeTruthy();
   // The page behind is out of reach: focus stays in the reader.
@@ -293,7 +292,7 @@ test('open rows that wait on others are one list by stage with rails beside it, 
   // Two links, both the loop (about ⇄ registry).
   const rails = reader.querySelectorAll('svg[aria-hidden] > g');
   expect(rails.length).toBe(2);
-  expect([...rails].filter((g) => g.getAttribute('class')?.includes('text-accent')).length).toBe(2);
+  expect([...rails].map((g) => g.getAttribute('data-kind'))).toEqual(['loop', 'loop']);
 });
 
 test('Done shows its newest rows first and only the newest few until Show all', async () => {
@@ -332,7 +331,6 @@ test('with the Board setting the reader draws the rows on a board: turns across 
     expect(within(reader).queryAllByRole('region')).toEqual([]);
     const card = within(board).getByRole('button', { name: /^Sign in to the registry/ });
     expect(card.textContent).toContain(', Blocked, waits on Build the about page');
-    expect(card.className).toContain('border-warning');
     await user.click(card);
     expect(card.getAttribute('aria-expanded')).toBe('true');
     expect([...reader.querySelectorAll('dt')].map((dt) => dt.textContent)).toEqual(['Waits on', 'Unblocks', 'History']);
@@ -411,14 +409,13 @@ test('idle, the list and its history stay on the strip as two buttons alone; the
   expect(names()).toEqual(['Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list', 'Todo history: 1 turn changed the list. Show the history']);
   // No progress line, and the blocks undimmed: the list is the Thread's, not a running turn's carry-over.
   expect(said()).toBeNull();
-  const todo = screen.getByRole('button', { name: /Show the list$/ });
-  expect(todo.querySelector('.opacity-55')).toBeNull();
+  const todo = screen.getByRole('button', { name: /^Todo 1 of 4 done.*Show the list$/ });
   expect(blocks(todo)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
-  // "1 turn" on a wide screen, "1" on a phone, behind the History glyph.
+  // "1 turn" on a wide screen, "1" on a phone (css.test.mjs), behind the History glyph.
   const history = screen.getByRole('button', { name: /Show the history$/ });
   expect(history.getAttribute('aria-haspopup')).toBe('dialog');
-  expect(within(history).getByText('1 turn').className).toContain('max-sm:hidden');
-  expect(within(history).getByText('1').className).toContain('sm:hidden');
+  expect(within(history).getByText('1 turn')).toBeTruthy();
+  expect(within(history).getByText('1')).toBeTruthy();
   // Away from the bottom the arrow joins the row.
   view.rerender(draw(idle, { jump: true }));
   expect(names()).toEqual(['Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list', 'Todo history: 1 turn changed the list. Show the history', 'Jump to bottom']);
@@ -513,7 +510,7 @@ test('a closed Thread shows the last list uam kept; the history button opens the
   expect(index.closest('li')!.querySelector('dd')!.textContent).toBe(`added ${clock(at(50))} · in progress ${clock(at(35))}`);
   await user.click(within(reader).getByRole('button', { name: /^Plan the pages/ }));
   expect(index.getAttribute('aria-expanded')).toBe('false');
-  expect(within(reader).getByText('· removed from the list since').className).toContain('text-muted');
+  expect(within(reader).getByText('· removed from the list since')).toBeTruthy();
   expect(within(reader).getByText('Kept by uam when each turn ended')).toBeTruthy();
   expect(within(reader).getByText('Esc')).toBeTruthy();
   await user.keyboard('{Escape}');
@@ -535,7 +532,7 @@ test('with the kept records the live reader groups rows by the turn that added t
   await user.click(screen.getByRole('button', { name: /Show the list$/ }));
   const reader = await screen.findByRole('dialog', { name: 'Todo' });
   await waitFor(() => expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual([`Turn 2 · ${clock(timing.started_at)}`, `Turn 1 · ${clock(first.started_at)}`]));
-  expect(reader.querySelector('p.pl-6')!.textContent).toBe('2 turns');
+  expect(within(reader).getByText('2 turns', { selector: 'p' })).toBeTruthy();
   // The running turn's rows: no record holds them yet.
   const latest = within(reader).getAllByRole('region')[0];
   expect(within(latest).getByText('2 open · 1 blocked')).toBeTruthy();

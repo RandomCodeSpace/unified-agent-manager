@@ -22,7 +22,7 @@ test('failed tests in the outcome stay Finished', async () => {
   await openTask('t-chart');
   const state = await screen.findByRole('group', { name: 'State: Finished' });
   expect(state.hasAttribute('title')).toBe(false);
-  expect(within(state).getByText('Finished').querySelector('svg')!.getAttribute('class')).toContain('text-success');
+  expect(within(state).getByText('Finished').getAttribute('data-rung')).toBe('done');
   await waitFor(() => expect(row().textContent).toMatch(/Review|Finished/));
   expect(row().textContent).not.toContain('Tests fail');
 });
@@ -42,7 +42,7 @@ test('failed commands alone are no state: the turn stays Finished, green', async
   withChart((t) => { t.outcome = 'Charted the commits; 2 commands failed'; });
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
-  expect(within(bar()).getByText('Finished').querySelector('svg')!.getAttribute('class')).toContain('text-success');
+  expect(within(bar()).getByText('Finished').getAttribute('data-rung')).toBe('done');
   expect(row().textContent).not.toContain('failed');
 });
 
@@ -50,6 +50,7 @@ test('a clean finished turn says Finished in the header, green on its glyph alon
   await openTask('t-chart');
   await screen.findByRole('group', { name: 'State: Finished' });
   const label = within(bar()).getByText('Finished');
-  expect(label.className).toContain('text-muted');
-  expect(label.querySelector('svg')!.getAttribute('class')).toContain('text-success');
+  // Done: the glyph alone in green, the word muted (css.test.mjs); read, so the check, not the unread eye.
+  expect(label.getAttribute('data-rung')).toBe('done');
+  expect(label.querySelector('.lucide-circle-check')).not.toBeNull();
 });

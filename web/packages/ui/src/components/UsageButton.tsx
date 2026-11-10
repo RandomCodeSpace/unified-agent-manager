@@ -106,7 +106,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
   const count = calls ? callsInFlight(calls) : undefined;
   const label = calls ? 'Usage and AI' : 'Usage';
   const tip = <><span className="block">Usage · {description}</span>{lines.map((line) => <span key={line} className="block text-on-primary/70">{line}</span>)}</>;
-  const opener = { ref: setAnchor, 'data-account-usage': true, 'data-model-calls': count, 'aria-label': label, 'aria-describedby': descriptionId, 'aria-haspopup': 'dialog' as const, 'aria-expanded': open, 'aria-controls': open ? id : undefined, onClick: show };
+  const opener = { ref: setAnchor, 'data-account-usage': true, 'data-model-calls': count, 'data-tone': pace.tone, 'aria-label': label, 'aria-describedby': descriptionId, 'aria-haspopup': 'dialog' as const, 'aria-expanded': open, 'aria-controls': open ? id : undefined, onClick: show };
   return <>
     <Tip label={tip} side={side} disabled={open}>
       {variant === 'chip' ? (

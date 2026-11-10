@@ -71,10 +71,9 @@ describe('Usage popover', () => {
     const button = screen.getByRole('button', { name: 'Usage', exact: true });
     expect(button.textContent).toBe('100%');
     // The meter's fill carries the pace tone; the share stays in words.
-    expect(button.querySelector('.bg-success')).not.toBeNull();
+    expect(button.getAttribute('data-tone')).toBe('healthy');
     view.rerender(renderQuota(true));
-    expect(button.querySelector('.bg-faint')).not.toBeNull();
-    expect(button.querySelector('.bg-success')).toBeNull();
+    expect(button.getAttribute('data-tone')).toBe('muted');
     expect(button.textContent).toBe('100%');
     await user.click(button);
     expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
@@ -169,8 +168,7 @@ describe('Usage popover', () => {
       await user.click(popover.getByRole('button', { name: period, exact: true }));
       const chosen = popover.getByRole('button', { name: period, exact: true });
       expect(chosen.getAttribute('aria-pressed')).toBe('true');
-      // The chosen fill is on the same `aria-pressed:` variant as the ghost tint, so it replaces it instead of losing to it.
-      expect(chosen.className.split(' ').filter((c) => c.startsWith('aria-pressed:bg-'))).toEqual(['aria-pressed:bg-raised']);
+      // The chosen fill replaces the ghost tint instead of losing to it (css.test.mjs).
     }
     expect(popover.getAllByText('1.6B').length).toBeGreaterThan(0);
     await user.click(popover.getByRole('button', { name: 'Close usage' }));

@@ -51,8 +51,9 @@ export function Collapse({ open, appear = false, onClosed, className, inner, chi
   const shown = open && appeared;
   // Closed, not yet stepped: the box keeps its room while the content fades on opacity alone.
   const fading = !open && !shut;
+  const settled = shown ? 'open' : 'closed';
   return (
-    <div ref={box} className={cn('grid', shown || fading ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', fading && 'motion-reduce:grid-rows-[0fr]', className)}>
+    <div ref={box} data-state={fading ? 'closing' : settled} className={cn('grid', shown || fading ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', fading && 'motion-reduce:grid-rows-[0fr]', className)}>
 
       <div className={cn('min-h-0 overflow-hidden', shown && 'transition-[opacity,translate] duration-240 ease-app', fading && 'opacity-0 transition-opacity duration-100 ease-app', !shown && !fading && '-translate-y-1 opacity-0', inner)} inert={!open} aria-hidden={!open}>
         {children}

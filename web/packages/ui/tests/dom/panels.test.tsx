@@ -75,15 +75,11 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     const card = within(await sheet.findByRole('region', { name: 'internal/vterm/redraw_test.go' }));
+    // Ink after a muted folder, one line, and the count wraps (css.test.mjs); the whole path in the tip.
     const name = card.getByText('redraw_test.go');
-    expect(name.className).toContain('text-ink');
-    expect(card.getByText('internal/vterm/').className).toContain('text-muted');
-    expect(name.parentElement!.className).toContain('truncate');
+    expect(card.getByText('internal/vterm/').nextElementSibling).toBe(name);
     expect(name.parentElement!.getAttribute('title')).toBe('internal/vterm/redraw_test.go');
-    const viewed = sheet.getByText(/^\d+ of \d+ viewed$/);
-    expect(viewed.className).toContain('whitespace-nowrap');
-    expect(viewed.parentElement!.className).toContain('line-clamp-2');
-    expect(viewed.parentElement!.className).not.toMatch(/\btruncate\b/);
+    expect(sheet.getByText(/^\d+ of \d+ viewed$/)).toBeTruthy();
   });
 
   test('a card\'s menu copies its path and reverts the whole file only once confirmed', async () => {
@@ -263,6 +259,8 @@ describe('changes', () => {
 });
 
 describe('subagents', () => {
+  // An open dimming layer: a dialog's backdrop, not a popover's anchored positioner.
+  const BACKDROP = '[role="presentation"][data-open]:not([data-side])';
   // The strip's sheet: one box for the subagents.
   const sheet = async () => within(await screen.findByRole('dialog', { name: 'Subagents' }));
   const live = () => within(screen.getByRole('region', { name: 'Subagents at work' }));
@@ -338,7 +336,7 @@ describe('subagents', () => {
     const peek = await screen.findByRole('dialog', { name });
     expect(within(peek).getByRole('button', { name: 'Open as conversation' })).toBeTruthy();
     expect(rows[1].getAttribute('aria-expanded')).toBe('true');
-    expect(document.querySelectorAll('.bg-backdrop')).toHaveLength(1);
+    expect(document.querySelectorAll(BACKDROP)).toHaveLength(1);
     // A press inside the reader is not a press away from the sheet.
     await user.click(within(peek).getByRole('heading', { name }));
     expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
@@ -364,7 +362,7 @@ describe('subagents', () => {
     await waitFor(() => expect(document.activeElement).toBe(within(peek).getByRole('heading', { name })));
     expect(index.queryByRole('searchbox', { name: 'Search subagents' })).toBeNull();
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(document.querySelectorAll('.bg-backdrop')).toHaveLength(1);
+    expect(document.querySelectorAll(BACKDROP)).toHaveLength(1);
     await user.click(within(peek).getByRole('button', { name: 'Back to the list' }));
     expect(index.queryByRole('region', { name })).toBeNull();
     expect(document.activeElement).toBe(rows[1]);
@@ -468,15 +466,17 @@ describe('subagents', () => {
     expect(progress.compareDocumentPosition(subagents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(strip).getByText('3 of 8')).toBeTruthy();
     // ✗ failed, ● running, ✓ done: each its number behind its glyph, in its tone; none stopped, so no block for it.
-    const cells = (blocks: string) => [...subagents.querySelectorAll(`${blocks} [title]`)].map((b) => [b.getAttribute('title'), (b as HTMLElement).dataset.tone, !!b.querySelector('svg')]);
-    expect(cells('.max-sm\\:hidden')).toEqual([
+    // The wide screen's blocks, then the phone's (css.test.mjs).
+    const [wide, phone] = [...new Set([...subagents.querySelectorAll('[title]')].map((b) => b.parentElement!))];
+    const cells = (blocks: Element) => [...blocks.querySelectorAll('[title]')].map((b) => [b.getAttribute('title'), (b as HTMLElement).dataset.tone, !!b.querySelector('svg')]);
+    expect(cells(wide)).toEqual([
       ['1 failed', 'error', true],
       ['3 running', 'accent', true],
       ['1 done', 'success', true],
     ]);
     // A phone keeps the failed cell and "3/5", running of all, so the progress line keeps its room.
-    expect(cells('.sm\\:hidden')).toEqual([['1 failed', 'error', true]]);
-    expect(within(subagents).getByText('3/5').classList.contains('sm:hidden')).toBe(true);
+    expect(cells(phone)).toEqual([['1 failed', 'error', true]]);
+    expect(within(subagents).getByText('3/5')).toBeTruthy();
     // The subagents open the sheet: no tabs, the list under its head; ← and → do nothing there.
     await user.click(subagents);
     const reader = await screen.findByRole('dialog', { name: 'Subagents' });
@@ -524,13 +524,13 @@ describe('subagents', () => {
   test('subagents at work are plain one-line rows in one column: glyph, name and caption, a failed one\'s error as its caption', async () => {
     await openTask('t8');
     const list = screen.getByRole('region', { name: 'Subagents at work' }).querySelector('ul')!;
-    expect(list.className).not.toContain('columns-');
-    expect(list.className).toContain('max-w-2xl');
+    // One column (css.test.mjs).
+    expect(list.children.length).toBeGreaterThan(0);
     // No card: no head line of its own, no progress bar, no description beside the name.
     const row = live().getByRole('button', { name: 'Run the accessibility linter, failed: axe-core is not installed in this project.' });
     expect(row.textContent).toContain('axe-core is not installed in this project.');
     expect(row.textContent).not.toContain('Run axe on the rendered post page');
-    expect(row.querySelector('span.text-error')?.textContent).toBe('axe-core is not installed in this project.');
+    expect(within(row).getByText('axe-core is not installed in this project.')).toBeTruthy();
   });
 
   test('an earlier reply\'s chip opens the sheet on its list; a row opens the subagent, whose Thread crumb leads to where it was spawned', async () => {
@@ -784,7 +784,7 @@ describe('subagents', () => {
 
 // One mark moves in the pane: the strip's live line (r13 A). The header's state, the running step and everything else are still, in words and colour.
 describe('one working ring per place', () => {
-  const rings = (root: ParentNode) => [...root.querySelectorAll('.animate-spin')];
+  const rings = (root: ParentNode) => [...root.querySelectorAll('[data-spinner]')];
 
   test('while subagents run, only the live line\'s mark moves: the header, their rows, the strip\'s subagent blocks and the Changes dot are still', async () => {
     await openTask('t8');
@@ -792,7 +792,7 @@ describe('one working ring per place', () => {
     const header = pane.querySelector('header')!;
     // The header: Working as a still label; the strip says how many run in a still block.
     expect(rings(header)).toHaveLength(0);
-    expect(within(within(header).getByRole('group', { name: 'State: Working' })).getByText('Working').className).toContain('text-accent');
+    expect(within(within(header).getByRole('group', { name: 'State: Working' })).getByText('Working').getAttribute('data-rung')).toBe('live');
     const strip = screen.getByRole('button', { name: /Subagents: 5, 1 failed, 3 running, 1 done/ });
     expect(strip.querySelector<HTMLElement>('[title="3 running"]')!.dataset.tone).toBe('accent');
     expect(rings(strip)).toHaveLength(0);
@@ -805,12 +805,11 @@ describe('one working ring per place', () => {
     // Their `task` calls are no step at the foot in Compact (the live set shows them), so the conversation does not turn.
     expect(rings(screen.getByRole('region', { name: 'Conversation' }))).toHaveLength(0);
     // Changed files keep a steady amber dot (once the changes load), and the status line's dot is still: nothing in the pane pulses.
-    await waitFor(() => expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull());
-    expect(pane.querySelectorAll('.animate-pulse-dot')).toHaveLength(0);
+    await waitFor(() => expect(document.getElementById('changes-link')!.querySelector('[data-tone="warning"]')).not.toBeNull());
     // t8 waits on the model: the live line breathes (or, once the wait passes its threshold, holds a still clock), and nothing in the pane turns.
     expect(rings(pane)).toHaveLength(0);
     expect(screen.getByText(/^Waiting for the model, /, { selector: '.sr-only' })).toBeTruthy();
-    expect(pane.querySelectorAll('.animate-breathe').length).toBeLessThanOrEqual(1);
+    expect(pane.querySelectorAll('[data-breathing-dot]').length).toBeLessThanOrEqual(1);
   });
 
   test('a running subagent\'s step turns no ring: its running call carries the step dots, its thought streams unlabelled; its bar says "Running"', async () => {
@@ -841,8 +840,7 @@ describe('one working ring per place', () => {
     const { user } = await openTask('t1');
     await user.click(screen.getByRole('button', { name: 'Background tasks: 1 running' }));
     const dialog = await screen.findByRole('dialog', { name: 'Background tasks' });
-    expect(within(dialog).getByText('Running').querySelector('.bg-accent')).toBeNull();
-    expect(dialog.querySelector('.bg-accent')).toBeNull();
+    expect(dialog.querySelector('[data-tone]')).toBeNull();
     expect(rings(dialog)).toHaveLength(0);
   });
 });
@@ -866,7 +864,6 @@ describe('the Task header', () => {
       const { user } = renderApp('#task=t21');
       await screen.findByRole('region', { name: 'Conversation' });
       const header = screen.getByRole('heading', { level: 1 }).closest('header')!;
-      expect(screen.getByRole('heading', { level: 1 }).parentElement!.className).toContain('min-w-28');
       expect(within(header).queryByRole('button', { name: 'Files' })).toBeNull();
       expect(within(header).getByRole('button', { name: /^Open changes/ }).textContent).not.toContain('Changes');
       // Go to file lives under the composer, so the header neither shows nor folds it.

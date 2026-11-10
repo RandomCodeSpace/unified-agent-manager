@@ -36,8 +36,8 @@ describe('Settings → Worktrees', () => {
     const { user, list } = await openWorktrees();
     const saved = rowOf(list, /Doctor/).getByRole('button', { name: 'Remove worktree uam/doctor-terminal-line' });
     const unsaved = rowOf(list, /Fix re-attach/).getByRole('button', { name: 'Remove worktree uam/fix-reattach-redraw' });
-    expect(unsaved.className).toContain('text-error');
-    expect(saved.className).not.toContain('text-error');
+    expect(unsaved.getAttribute('data-tone')).toBe('error');
+    expect(saved.hasAttribute('data-tone')).toBe(false);
 
     await user.click(saved);
     await waitFor(() => expect(list.queryByText('Doctor: add terminal line')).toBeNull());

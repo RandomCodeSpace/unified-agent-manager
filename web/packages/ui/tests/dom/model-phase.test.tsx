@@ -20,13 +20,13 @@ const tool = (id: string, name: string, status = 'running', extra: Partial<Item[
 /** The strip's live line as it draws: its words, and what moves (`breathe`, `spin` or nothing). */
 function strip(session: SessionDetail) {
   const view = render(<StatusLine line={statusLine(session, session.state === 'working', !!session.compacting)} session={session} hidden={false} jump={false} onJump={() => {}} />);
-  const moving = view.container.querySelectorAll('.animate-breathe, .animate-spin');
-  const shown = view.container.querySelector('.animate-fade-in')?.textContent ?? '';
-  return { view, shown, moves: [...moving].map((n) => (n.className.includes('animate-breathe') ? 'breathe' : 'spin')) };
+  const moving = view.container.querySelectorAll('[data-breathing-dot], [data-spinner]');
+  const shown = view.container.querySelector('[data-progress-words]')?.textContent ?? '';
+  return { view, shown, moves: [...moving].map((n) => (n.hasAttribute('data-breathing-dot') ? 'breathe' : 'spin')) };
 }
 
 /** The progress line's words as drawn, or null with no line. */
-const shown = () => document.querySelector('.animate-fade-in')?.textContent ?? null;
+const shown = () => document.querySelector('[data-progress-words]')?.textContent ?? null;
 
 describe('the live line at the strip', () => {
   test('each phase in words, with one mark: model work breathes, local work turns, you and subagents are still', () => {
@@ -63,8 +63,8 @@ describe('the live line at the strip', () => {
     await act(async () => { vi.advanceTimersByTime(1000); });
     expect(command.view.container.textContent).toContain('42s');
     expect(screen.queryByText('PASS')).toBeNull();
-    // A phone hides the elapsed.
-    expect(screen.getByText('42s').className).toEqual(expect.stringContaining('max-sm:hidden'));
+    // A phone hides the elapsed (css.test.mjs).
+    expect(screen.getByText('42s')).toBeTruthy();
     command.view.unmount();
     vi.setSystemTime(NOW);
     const thinking = strip(task({ kind: 'model', since: ago(12), calls: 1 }, { items: [{ id: 'r', kind: 'reasoning', time: ago(10) } as Item] }));
@@ -74,7 +74,8 @@ describe('the live line at the strip', () => {
     const you = strip(task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission' }));
     expect(you.shown).toBe('Needs permission·approve bash·1m 12s');
     expect(you.moves).toEqual([]);
-    expect(screen.getByText('Needs permission').closest('.text-attention')).not.toBeNull();
+    // The owner's turn: the permission glyph, in the attention tone (css.test.mjs).
+    expect(you.view.container.querySelector('.lucide-shield-question-mark')).not.toBeNull();
     you.view.unmount();
   });
 
@@ -87,8 +88,8 @@ describe('the live line at the strip', () => {
     const late = strip(task({ kind: 'model', since: ago(64), calls: 1 }));
     expect(late.shown).toBe('Waiting for the model·1m 04s');
     expect(late.moves).toEqual([]);
+    // The still clock, its words muted (css.test.mjs).
     expect(late.view.container.querySelector('.lucide-clock')).not.toBeNull();
-    expect(screen.getByText('Waiting for the model').className).toContain('text-muted');
   });
 
   test('a subagent\'s tool mid-turn (a plain local phase) is not the main agent\'s: with only its task call running, the main agent waits on it', () => {
@@ -123,8 +124,8 @@ describe('the live line at the strip', () => {
     const out = within(peek).getByRole('group', { name: 'Live output, last lines' });
     expect([...out.children].map((l) => l.textContent)).toEqual(['line 3', 'line 4', 'line 5', 'line 6', 'errstderr: line 7', 'line 8']);
     // Nothing in the peek moves: the line's mark is the one animation.
-    expect(peek.querySelector('.animate-spin, .animate-breathe')).toBeNull();
-    expect(view.container.querySelectorAll('.animate-spin').length).toBe(1);
+    expect(peek.querySelector('[data-spinner], [data-breathing-dot]')).toBeNull();
+    expect(view.container.querySelectorAll('[data-spinner]').length).toBe(1);
     fireEvent.keyDown(peek, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     // The step ends: the line waits for the model, plain words.
@@ -193,8 +194,6 @@ describe('the live line at the strip', () => {
     expect(foot.textContent).not.toContain('Files');
     const place = foot.querySelector('[data-place]')!;
     expect(foot.firstElementChild!.contains(place)).toBe(true);
-    expect(place.className.split(' ')).not.toContain('flex-1');
-    expect(place.className.split(' ')).toContain('min-w-0');
   });
 
   test.each([

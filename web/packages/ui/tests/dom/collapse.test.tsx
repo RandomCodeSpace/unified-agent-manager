@@ -11,14 +11,13 @@ test('a close keeps the room while the content fades, then steps to 0fr once and
   const onClosed = vi.fn();
   const { container, rerender } = render(<Collapse open onClosed={onClosed}>Body</Collapse>);
   rerender(<Collapse open={false} onClosed={onClosed}>Body</Collapse>);
-  // Under reduced motion the motion-reduce variant snaps the track at once.
-  expect(box(container).className).toContain('grid-rows-[1fr] motion-reduce:grid-rows-[0fr]');
-  expect(box(container).firstElementChild?.className).toContain('opacity-0 transition-opacity duration-100');
+  // Closing keeps the room while the content fades (css.test.mjs holds the classes, and the reduced-motion snap).
+  expect(box(container).dataset.state).toBe('closing');
+  expect(box(container).firstElementChild?.getAttribute('aria-hidden')).toBe('true');
   act(() => vi.advanceTimersByTime(100));
   expect(onClosed).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(20));
-  expect(box(container).className).not.toContain('grid-rows-[1fr]');
-  expect(box(container).className).toContain('grid-rows-[0fr]');
+  expect(box(container).dataset.state).toBe('closed');
   expect(onClosed).toHaveBeenCalledTimes(1);
 });
 
@@ -30,7 +29,6 @@ test('reopening during the fade keeps the room and never reports closed', () => 
   act(() => vi.advanceTimersByTime(50));
   rerender(<Collapse open onClosed={onClosed}>Body</Collapse>);
   act(() => vi.advanceTimersByTime(500));
-  expect(box(container).className).toContain('grid-rows-[1fr]');
-  expect(box(container).className).not.toContain('grid-rows-[0fr]');
+  expect(box(container).dataset.state).toBe('open');
   expect(onClosed).not.toHaveBeenCalled();
 });

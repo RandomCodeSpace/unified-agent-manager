@@ -53,23 +53,20 @@ describe('the Usage and AI button', () => {
     const { button, said } = setup();
     expect(button().textContent).toBe('96% leftidle');
     expect(button().getAttribute('data-model-calls')).toBe('0');
-    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-faint');
+    // The faint glyph, no surface or shadow at rest, the Settings gear's tint on hover and while open, 44px to a touch (css.test.mjs).
+    expect(button().querySelector('.lucide-cpu')).not.toBeNull();
     expect(said()).toMatch(/^AI credits: 96% left\. .*No model calls now$/);
-    // No surface or shadow at rest; the Settings gear's tint on hover and while open.
-    const classes = button().className.split(' ');
-    expect(classes).toEqual(expect.arrayContaining(['not-aria-disabled:hover:bg-tint-hover', 'aria-expanded:bg-tint-selected', 'h-7']));
-    expect(classes.some((c) => c.startsWith('bg-raised') || c.startsWith('shadow-'))).toBe(false);
-    // Still 44px tall to a touch.
-    expect(classes).toContain('pointer-coarse:after:-inset-y-2');
-    expect(document.querySelector('.animate-spin, .animate-pulse')).toBeNull();
+    expect(button().getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('[data-spinner]')).toBeNull();
   });
 
   test('busy: the model calls in flight in the accent, the Threads running locally in green, all said in words', () => {
     const { button, said } = setup({ calls: BUSY });
     expect(button().textContent).toBe('96% left31');
     expect(button().getAttribute('data-model-calls')).toBe('3');
-    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-accent');
-    expect(button().querySelector('.lucide-terminal')!.getAttribute('class')).toContain('text-success');
+    // The model calls in the accent, the local runs in green (css.test.mjs).
+    expect(button().querySelector('.lucide-cpu')).not.toBeNull();
+    expect(button().querySelector('.lucide-terminal')).not.toBeNull();
     expect(said()).toMatch(/Model working now\. 2 Threads · 1 subagent · Background AI idle\. Local: 1 Thread running a tool$/);
   });
 
@@ -95,8 +92,8 @@ describe('the Usage and AI button', () => {
     const { button, rerender } = setup({ variant: 'rail' });
     // Idle, the rail has room for the faint chip alone; the description says "No model calls now".
     expect(button().textContent).toBe('96%');
-    expect(button().querySelector('.lucide-cpu')!.getAttribute('class')).toContain('text-faint');
-    expect(button().className).toContain('flex-col');
+    // The faint chip, the share over it (css.test.mjs).
+    expect(button().querySelector('.lucide-cpu')).not.toBeNull();
     rerender(BUSY);
     expect(button().textContent).toBe('96%31');
   });

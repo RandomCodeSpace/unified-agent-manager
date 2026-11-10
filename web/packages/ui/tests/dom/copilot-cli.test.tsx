@@ -35,9 +35,9 @@ describe('Copilot CLI version and update', () => {
   test('an update on offer puts a dot on Settings and on GitHub Copilot, said in words, and names both versions', async () => {
     const { user } = renderApp('?cli=outdated#settings');
     const settings = await screen.findByRole('button', { name: 'Settings', description: NOTICE });
-    expect(settings.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
+    expect(settings.querySelector('[data-tone="warning"][aria-hidden="true"]')).toBeTruthy();
     const tab = screen.getByRole('button', { name: 'GitHub Copilot', description: NOTICE });
-    expect(tab.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
+    expect(tab.querySelector('[data-tone="warning"][aria-hidden="true"]')).toBeTruthy();
     const group = await cli(user);
     expect(await group.findByText('1.0.89')).toBeTruthy();
     expect(group.getByText(/^1\.0\.92 available · Checked/)).toBeTruthy();
@@ -56,7 +56,7 @@ describe('Copilot CLI version and update', () => {
     expect(group.getByText(/^Up to date/)).toBeTruthy();
     expect(group.queryByText(/^Still running/)).toBeNull();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull());
-    expect(screen.getByRole('button', { name: 'Settings' }).querySelector('.bg-warning')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' }).querySelector('[data-tone]')).toBeNull();
     expect(screen.queryByRole('button', { name: 'GitHub Copilot', description: NOTICE })).toBeNull();
   });
 

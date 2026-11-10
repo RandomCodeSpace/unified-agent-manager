@@ -41,14 +41,10 @@ describe('assist', () => {
     expect(box.placeholder).toBe('');
     expect(box.getAttribute('aria-describedby')).toBe('composer-suggestion');
     expect(ghost()!.textContent).toBe('Suggestion: Run the whole test suite, press Right Arrow to use it');
-    // The visible copy is hidden from screen readers and sits over the textarea, out of its flow, so the composer keeps its height.
+    // The visible copy is hidden from screen readers and sits beside the textarea (css.test.mjs: over it, out of its flow).
     const shown = screen.getByText('Run the whole test suite');
     expect(shown.getAttribute('aria-hidden')).toBe('true');
-    expect(shown.classList.contains('line-clamp-2')).toBe(true);
-    const layer = shown.parentElement!;
-    expect(layer.classList.contains('absolute')).toBe(true);
-    expect(layer.classList.contains('pointer-events-none')).toBe(true);
-    expect(layer.parentElement).toBe(box.parentElement);
+    expect(shown.parentElement!.parentElement).toBe(box.parentElement);
     // Only the first of the replies shows.
     expect(screen.queryByText('Show me the diff')).toBeNull();
   });
@@ -83,8 +79,7 @@ describe('assist', () => {
   test('the visible Use button at the end of the ghost text uses the suggestion', async () => {
     const { user, mock } = await openTask('t3');
     const use = await screen.findByRole('button', { name: 'Use suggestion' });
-    // Shown on every pointer, so the ghost is never only a keyboard affordance; an arrow alone, named for assistive tech.
-    expect(use.classList.contains('hidden')).toBe(false);
+    // Shown on every pointer (css.test.mjs), so the ghost is never only a keyboard affordance; an arrow alone, named for assistive tech.
     expect(use.textContent).toBe('');
     expect(use.querySelector('svg')).toBeTruthy();
     await user.click(use);

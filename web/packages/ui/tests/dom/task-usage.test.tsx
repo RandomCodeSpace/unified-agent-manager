@@ -87,11 +87,9 @@ test('the tab leads with the budget, then six figures for this Thread, then four
   await userEvent.click(budget.getByRole('button', { name: 'Change' }));
   expect((budget.getByLabelText(/Stop after/) as HTMLInputElement).value).toBe('20');
   expect(budget.getByRole('button', { name: 'Set budget' })).toBeTruthy();
-  // Six tiles, in order, with token counts in the one format and the code delta in two tones.
-  const tiles = [...panel.querySelectorAll('.grid-cols-3 > div')].map((el) => el.textContent);
+  // Six tiles, in order, with token counts in the one format and the code delta in two tones (css.test.mjs).
+  const tiles = [...within(panel).getByText('Model time', { selector: 'p' }).parentElement!.parentElement!.children].map((el) => el.textContent);
   expect(tiles).toEqual(['AI credits9.012 requests', 'Model time4m 12s47 calls · 38%', 'Local time6m 51s112 runs · 62%', 'Tokens in1.2M900.1K from cache', 'Tokens out41.9K12K reasoning', 'Code4 files+120 −33']);
-  expect(screen.getByText('+120').className).toContain('text-success');
-  expect(screen.getByText('−33').className).toContain('text-error');
   expect(screen.getByRole('region', { name: 'This Thread' }).textContent).toContain('2m 58s waiting on you (3 requests), not counted');
   // Four native details, closed, each with its table.
   const folds = [...panel.querySelectorAll(':scope > div > details')] as HTMLDetailsElement[];

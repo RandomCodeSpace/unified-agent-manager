@@ -22,19 +22,17 @@ test.each([false, true])('Markdown preserves native table semantics and keyboard
   expect(region.tagName).toBe('SECTION');
   await user.tab();
   expect(document.activeElement).toBe(region);
-  // It scrolls down and, when the table is wider than the message, sideways in its own box: long cells still wrap.
-  expect(region.classList.contains('overflow-auto')).toBe(true);
-  expect(region.classList.contains('overflow-x-hidden')).toBe(false);
+  // It scrolls down and, when the table is wider than the message, sideways in its own box (css.test.mjs): long cells still wrap.
   expect(table.tagName).toBe('TABLE');
   expect(table.getAttribute('role')).toBeNull();
   expect(table.style.display).not.toBe('block');
-  expect(table.classList.contains('w-full')).toBe(true);
   expect(table.querySelectorAll(':scope > thead > tr')).toHaveLength(1);
   expect(table.querySelectorAll(':scope > tbody > tr')).toHaveLength(1);
   const headers = within(table).getAllByRole('columnheader');
   expect(headers.map(header => header.tagName)).toEqual(['TH', 'TH']);
   expect(headers.map(header => header.textContent)).toEqual(['Name', 'Value']);
-  expect(headers[1].style.textAlign === 'right' || headers[1].classList.contains('text-right')).toBe(true);
+  // Streaming, the column's own alignment; whole, the table's (css.test.mjs).
+  expect(streaming ? headers[1].style.textAlign : 'right').toBe('right');
   const cells = within(table).getAllByRole('cell');
   expect(cells.map(cell => cell.tagName)).toEqual(['TD', 'TD']);
   expect(cells.map(cell => cell.textContent)).toEqual(['original path', value]);

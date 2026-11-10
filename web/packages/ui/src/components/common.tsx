@@ -144,7 +144,7 @@ export function WorkingMark({ className }: Readonly<{ className?: string }>) {
 
 /** Model work on the strip's live line: a 7px ink dot that breathes (opacity and scale only); still under reduced motion. */
 export function BreathingDot() {
-  return <span aria-hidden="true" className="inline-block size-[7px] shrink-0 animate-breathe rounded-full bg-ink motion-reduce:animate-none" />;
+  return <span aria-hidden="true" data-breathing-dot="" className="inline-block size-[7px] shrink-0 animate-breathe rounded-full bg-ink motion-reduce:animate-none" />;
 }
 
 /**
@@ -237,7 +237,7 @@ export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; clas
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
 export function Dot({ tone, className }: Readonly<{ tone: Tone; className?: string }>) {
-  return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], className)} />;
+  return <span aria-hidden="true" data-tone={tone} className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], className)} />;
 }
 
 import { Spinner, StepDots } from './ui/spinner';

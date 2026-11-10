@@ -41,10 +41,8 @@ test('one Tools button carries the context ring and opens a tab per tool, switch
   expect(panel.queryByText(/not reported yet/)).toBeNull();
   expect(panel.queryByText(/AI credits/)).toBeNull();
   expect(panel.getByText('switch tab')).toBeTruthy();
-  // One fixed height for every tab: the body never takes its content's height.
+  // One fixed height for every tab (css.test.mjs): the body never takes its content's height.
   const body = panel.getByRole('tabpanel');
-  expect(body.className).toMatch(/\bflex-none\b/);
-  expect(body.className).toMatch(/\bh-\[/);
   // Usage: the Thread's figures (the recorded AI credits first) and the native metrics.
   await userEvent.keyboard('{ArrowRight}');
   expect(panel.getByRole('tab', { name: 'Usage' }).getAttribute('aria-selected')).toBe('true');
@@ -125,7 +123,7 @@ test('skills the Thread loaded show on the Agent tab, even without custom agents
   const section = within(panel.getByRole('region', { name: 'Skills' }));
   expect(section.getByText('2 loaded')).toBeTruthy();
   const rows = within(section.getByRole('list', { name: 'Skills loaded' })).getAllByRole('listitem');
-  expect(rows.map((r) => r.querySelector('.font-mono')?.textContent)).toEqual(['tdd', 'unslop']);
+  expect(rows.map((r) => r.textContent)).toEqual([expect.stringMatching(/^tdd/), expect.stringMatching(/^unslop/)]);
   expect(within(rows[0]).getByText('Build the next change test-first')).toBeTruthy();
   expect(within(rows[0]).queryByText(/loads$/)).toBeNull();
   expect(within(rows[1]).getByText('2 loads')).toBeTruthy();
