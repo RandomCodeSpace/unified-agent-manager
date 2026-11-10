@@ -1,13 +1,13 @@
 // The notebook layout's live card (lib/layout): the one home of what the running turn does, drawn
 // in its cell's "did" track. Top to bottom, each a section that folds: Now (the progress line and
 // its peek), Todos (the todo list, each row's stage in a word), Subagents (the rows at work, under
-// their own line of counts) and Changed so far (the Thread's files, with Review). The status strip
+// their own line of counts) and Changed in this Thread (its files, with Review). The status strip
 // owns the state and hands the parts in (StatusLine), so nothing is kept twice: the card only says
 // where they stand. A section with nothing in it is absent, and so is the card with no section. It
 // never says that the Thread waits on you: the question in the cell does.
 
 import { ChevronRight } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { ChangeFile } from '../../api';
 import { cn } from '../../lib/cn';
@@ -19,12 +19,44 @@ import { Button } from '../ui/button';
 import { Collapse } from '../ui/collapse';
 import { useNotebookSlot, type NotebookSlot } from './slots';
 
-/** `children` in the running cell's slot while the notebook layout has one on screen, else where they were written; as a function they are told which. */
+/**
+ * `children` in the running cell's slot while the notebook layout has one on screen, else where they
+ * were written; as a function they are told which. In the notebook layout they live in one element
+ * that moves between the two places, so a half-typed answer and its focus outlast the cell leaving
+ * the loaded history. The current layout renders them in place, untouched.
+ */
 export function InNotebookSlot({ name, children }: Readonly<{ name: NotebookSlot; children: ReactNode | ((placed: boolean) => ReactNode) }>) {
   const slot = useNotebookSlot(name);
-  const placed = useLayout() === 'notebook' && !!slot;
+  const notebook = useLayout() === 'notebook';
+  const [host] = useState(() => Object.assign(document.createElement('div'), { className: 'contents' }));
+  const home = useRef<HTMLDivElement>(null);
+  // The field that held the focus: a removed element loses it without a focusout, a deliberate move away clears it.
+  const focused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const on = (e: FocusEvent) => { focused.current = e.type === 'focusin' ? (e.target as HTMLElement) : null; };
+    host.addEventListener('focusin', on);
+    host.addEventListener('focusout', on);
+    return () => {
+      host.removeEventListener('focusin', on);
+      host.removeEventListener('focusout', on);
+    };
+  }, [host]);
+  useLayoutEffect(() => {
+    const to = slot ?? home.current;
+    if (!notebook || !to || host.parentElement === to) return;
+    const back = focused.current;
+    to.appendChild(host);
+    if (back && host.contains(back) && (!document.activeElement || document.activeElement === document.body)) back.focus({ preventScroll: true });
+  }, [notebook, slot, host]);
+  const placed = notebook && !!slot;
   const content = typeof children === 'function' ? children(placed) : children;
-  return placed ? createPortal(content, slot) : content;
+  if (!notebook) return content;
+  return (
+    <>
+      <div ref={home} className="contents" />
+      {createPortal(content, host)}
+    </>
+  );
 }
 
 /** How many changed files the card lists before "and n more"; Review shows them all. */
@@ -94,7 +126,7 @@ export function LiveCard({ now, plan, changed }: Readonly<{
         </Section>
       )}
       {files.length > 0 && (
-        <Section label="Changed so far" meta={`· ${plural(files.length, 'file')}`} action={<Button variant="link" onClick={changed!.onReview}>Review</Button>}>
+        <Section label="Changed in this Thread" meta={`· ${plural(files.length, 'file')}`} action={<Button variant="link" onClick={changed!.onReview}>Review</Button>}>
           <ul className={cn('flex min-w-0 flex-col', PAD)}>
             {files.slice(0, FILE_ROWS).map((f) => (
               <li key={f.path} className="flex min-h-6 min-w-0 items-center gap-2">

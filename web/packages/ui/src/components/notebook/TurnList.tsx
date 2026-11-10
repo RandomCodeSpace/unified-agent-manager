@@ -18,9 +18,11 @@ export const TurnList = memo(function TurnList({ turns }: Readonly<{ turns: read
   const jump = useTurnJump();
   const list = useRef<HTMLOListElement>(null);
   // A long Thread's list opens on its latest turns, as its conversation does, and follows a new one.
+  // A queued message added or sent leaves the list where it was scrolled.
+  const ran = turns.filter((t) => !t.queued).length;
   useLayoutEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [turns.length]);
+  }, [ran]);
   if (!turns.length) return <p className="px-2 py-1 text-caption text-muted">No turns yet.</p>;
   return (
     <ol ref={list} className="flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

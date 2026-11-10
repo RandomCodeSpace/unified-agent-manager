@@ -72,7 +72,7 @@ test('with the running cell on screen, Now, Todos, Subagents and the changed fil
   expect(plan.getByText('1 of 3')).toBeTruthy();
   expect(plan.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['In progressBuild the index page', 'BlockedSign in to the registryNo token on this machine', 'DonePlan the pages']);
   expect(within(card.getByRole('region', { name: 'Subagents' })).getByRole('button', { name: /^Survey the templates \(explore\), running/ })).toBeTruthy();
-  fireEvent.click(within(card.getByRole('region', { name: 'Changed so far' })).getByRole('button', { name: 'Review' }));
+  fireEvent.click(within(card.getByRole('region', { name: 'Changed in this Thread' })).getByRole('button', { name: 'Review' }));
   expect(onReview).toHaveBeenCalledTimes(1);
   // One home per fact: the strip keeps no list, no progress line and no subagents.
   expect(stripButtons()).toEqual([]);
@@ -110,8 +110,7 @@ test('with no cell on screen the strip draws as before, and the current layout n
   expect(screen.getByRole('button', { name: /^Subagents: 1.*Show the subagents$/ })).toBeTruthy();
 });
 
-function asks(slots: boolean) {
-  return render(
+const asksTree = (slots: boolean) => (
     <NotebookSlots>
       <Cell slots={slots} />
       <div data-testid="place">
@@ -119,15 +118,31 @@ function asks(slots: boolean) {
           {(inCell) => <InteractionCard session={{ id: 't', capabilities: { permissions: true, questions: true } } as unknown as SessionDetail} interaction={question} onUpdate={() => {}} place={inCell ? 'cell' : undefined} />}
         </InNotebookSlot>
       </div>
-    </NotebookSlots>,
-  );
-}
+    </NotebookSlots>
+);
+const asks = (slots: boolean) => render(asksTree(slots));
+
+test('a half-typed answer and its focus outlast the cell leaving the loaded history and coming back', async () => {
+  applyLayout('notebook');
+  const view = asks(true);
+  const field = within(screen.getByTestId('asks')).getAllByRole('textbox')[0] as HTMLInputElement | HTMLTextAreaElement;
+  fireEvent.change(field, { target: { value: 'kitty and' } });
+  field.focus();
+  view.rerender(asksTree(false));
+  expect(within(screen.getByTestId('place')).getAllByRole('textbox')[0]).toBe(field);
+  expect(field.value).toBe('kitty and');
+  expect(document.activeElement).toBe(field);
+  view.rerender(asksTree(true));
+  expect(within(screen.getByTestId('asks')).getAllByRole('textbox')[0]).toBe(field);
+  expect(field.value).toBe('kitty and');
+  expect(document.activeElement).toBe(field);
+});
 
 test('a pending question renders in the cell when it gives the slot, and in its own place when it does not', async () => {
   applyLayout('notebook');
   const inCell = asks(true);
   expect(await within(screen.getByTestId('asks')).findByText('Which terminals?')).toBeTruthy();
-  expect(screen.getByTestId('place').childElementCount).toBe(0);
+  expect(within(screen.getByTestId('place')).queryByText('Which terminals?')).toBeNull();
   // The cell's gutter says "Asked you": the card in it carries no chip.
   expect(screen.queryByText('Needs answer')).toBeNull();
   inCell.unmount();

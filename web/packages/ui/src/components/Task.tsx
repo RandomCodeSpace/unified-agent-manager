@@ -10,6 +10,7 @@ import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
+import { useLayout } from '../lib/layout';
 import { threadTurns } from '../lib/turns';
 import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
@@ -1027,9 +1028,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useTurnJumpTarget((key) => void jumpToReply(key));
   // Its turns, numbered once (lib/turns) for the cells' gutters and the composer's cell; the Contents column lists the same.
   const { outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue } = session;
+  const notebook = useLayout() === 'notebook';
   const { turns, next: nextTurn } = useMemo(
-    () => threadTurns({ outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue, state: session.state }),
-    [outline, historyIndex, historyBefore, heldItems, turnTimings, queue, session.state],
+    // The current layout shows neither, and does not pay for them.
+    () => (notebook ? threadTurns({ outline, history_index: historyIndex, history_before: historyBefore, items: heldItems, turn_timings: turnTimings, queue, state: session.state }) : { turns: undefined, next: 0 }),
+    [notebook, outline, historyIndex, historyBefore, heldItems, turnTimings, queue, session.state],
   );
   const [settingsLine, setSettingsLine] = useState<HTMLElement | null>(null);
 

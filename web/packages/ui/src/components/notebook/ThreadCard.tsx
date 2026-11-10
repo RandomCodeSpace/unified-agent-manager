@@ -10,26 +10,28 @@ import { Button } from '../ui/button';
 
 /**
  * What another Thread waits on, answered from its card. The Thread list holds only the request's
- * title (`ask`); the request itself is in the Thread's detail, read once per request. A plan to
+ * title (`ask`); the request itself is in the Thread's detail. A plan to
  * review, or a detail that could not be read, is answered in the Thread.
  */
 function ThreadAsk({ session: s, text }: Readonly<{ session: SessionSummary; text: string }>) {
   const api = useApi();
   const a = useTaskActions();
-  const [read, setRead] = useState<{ ask: string; detail: SessionDetail | null } | null>(null);
-  const ask = `${s.id}\n${s.ask?.kind}\n${s.ask?.title}`;
+  // Undefined until first read; null when the read failed.
+  const [detail, setDetail] = useState<SessionDetail | null>();
+  // The list names a request by its kind and title only, which two requests can share: any news of
+  // the Thread reads it again, and the form on screen stays until that answer arrives.
   useEffect(() => {
     let current = true;
-    api.session(s.id).then((detail) => current && setRead({ ask, detail }), () => current && setRead({ ask, detail: null }));
+    api.session(s.id).then((next) => current && setDetail(next), () => current && setDetail((held) => held ?? null));
     return () => {
       current = false;
     };
-  }, [api, s.id, ask]);
-  const detail = read?.ask === ask ? read.detail : undefined;
+  }, [api, s.id, s.updated_at, s.ask?.kind, s.ask?.title]);
   const pending = detail?.interactions.find(awaitsUser);
-  const update = (next: Interaction) => setRead((held) => held?.detail ? { ...held, detail: { ...held.detail, interactions: held.detail.interactions.map((i) => (i.id === next.id ? next : i)) } } : held);
+  const update = (next: Interaction) => setDetail((held) => held && { ...held, interactions: held.interactions.map((i) => (i.id === next.id ? next : i)) });
   if (detail && pending && pending.kind !== 'plan_review') {
-    return <InteractionCard session={detail} interaction={pending} onUpdate={update} place="card" />;
+    // Keyed by the request, so what was typed for one never shows under the next.
+    return <InteractionCard key={pending.id} session={detail} interaction={pending} onUpdate={update} place="card" />;
   }
   // Answered here a moment ago: the Thread's next state arrives with the list.
   if (detail && !pending) return null;
@@ -60,13 +62,14 @@ export const ThreadCard = memo(function ThreadCard({ session: s, project, unread
   const line = finished ? s.outcome : !waits && status.text !== status.label ? status.text : undefined;
   return (
     <li className="flex flex-col gap-2 rounded-md bg-raised p-2.5 text-caption shadow-raised">
-      <button type="button" className="flex w-full flex-col gap-0.5 rounded-sm text-left font-medium text-ink" onClick={() => a.select(s.id)}>
+      <button type="button" tabIndex={-1} className="flex w-full flex-col gap-0.5 rounded-sm text-left font-medium text-ink" onClick={() => a.select(s.id)}>
         <TaskRowContent session={s} project={project} selected={false} unread={unread} />
       </button>
       {line && <p className="line-clamp-2 [overflow-wrap:anywhere] text-caption text-muted">{line}</p>}
       {waits && (asks ? <p className="line-clamp-2 [overflow-wrap:anywhere] text-caption text-body">{s.ask?.title ?? status.text}</p> : <ThreadAsk session={s} text={status.text} />)}
       <div className="flex gap-1.5">
         {asks && <Button size="sm" variant="secondary" className="flex-1" onClick={() => setAnswering(true)}>Answer here</Button>}
+        {/* The row above opens the Thread too: this one says so in a word, and is the one in the tab order. */}
         <Button size="sm" variant="secondary" className="flex-1" onClick={() => a.select(s.id)}>Open</Button>
         {settle && <Button size="sm" variant="secondary" className="flex-1" onClick={() => settle.onSelect()}>{settle.label}</Button>}
       </div>
