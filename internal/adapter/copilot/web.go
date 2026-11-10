@@ -2682,10 +2682,11 @@ func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 }
 
 // attachments maps a prompt's references to Copilot attachments. Uploads go
-// inline as blobs, except one with a named copy on the host (a PDF), which
-// goes as that file: the CLI passes a document to the model natively only
-// where the model client supports it, and otherwise gives the agent the
-// file's path, which a blob does not have.
+// inline as blobs, except one with a named copy on the host (a PDF, or a
+// large text file), which goes as that file: the CLI passes a document to the
+// model natively only where the model client supports it, and otherwise gives
+// the agent the file's path, which a blob does not have. A text file it lists
+// by path and line count only, without its content.
 func attachments(p agentapi.Prompt) []copilot.Attachment {
 	var out []copilot.Attachment
 	for _, f := range p.Files {
@@ -2717,7 +2718,7 @@ func blobAttachments(atts []copilot.Attachment, native, fallback []string) []age
 	for _, a := range atts {
 		if f, ok := a.(*rpc.AttachmentFile); ok {
 			if att, ok := uploadFile(f); ok {
-				att.NotNative = !slices.Contains(native, att.MIME) || slices.Contains(fallback, f.Path)
+				att.NotNative = att.MIME == "application/pdf" && (!slices.Contains(native, att.MIME) || slices.Contains(fallback, f.Path))
 				out = append(out, att)
 			}
 			continue
@@ -2751,8 +2752,9 @@ func blobAttachments(atts []copilot.Attachment, native, fallback []string) []age
 
 // uploadFile describes a file attachment that is an upload's named copy,
 // <task>/<id>.d/<name> in the web service's upload store, UploadsDir beside
-// the uam store; any other file is a reference, not an upload. A copy no
-// longer on disk keeps its name and type, without a hash.
+// the uam store; any other file is a reference, not an upload. The copy of a
+// PDF ends in .pdf and that of a text file does not. A copy no longer on disk
+// keeps its name and type, without a hash.
 func uploadFile(f *rpc.AttachmentFile) (agentapi.Attachment, bool) {
 	root, err := filepath.Abs(filepath.Join(filepath.Dir(store.DefaultPath()), agentapi.UploadsDir))
 	if err != nil {
@@ -2764,7 +2766,10 @@ func uploadFile(f *rpc.AttachmentFile) (agentapi.Attachment, bool) {
 	if err != nil || !filepath.IsLocal(rel) || len(parts) != 3 || !strings.HasSuffix(parts[1], ".d") {
 		return agentapi.Attachment{}, false
 	}
-	att := agentapi.Attachment{Name: f.DisplayName, MIME: "application/pdf"}
+	att := agentapi.Attachment{Name: f.DisplayName, MIME: "text/plain"}
+	if strings.EqualFold(filepath.Ext(rel), ".pdf") {
+		att.MIME = "application/pdf"
+	}
 	file, err := os.OpenInRoot(root, rel)
 	if err != nil {
 		return att, true

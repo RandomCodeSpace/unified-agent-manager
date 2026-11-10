@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TextCursorInput, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
@@ -9,6 +9,7 @@ import { usePreview } from '../lib/previewContext';
 import { Button, buttonVariants } from './ui/button';
 import { Chip } from './ui/chip';
 import { ViewerDialog } from './ui/dialog';
+import { Tip } from './ui/tooltip';
 
 /** One upload in the composer, from the moment it is chosen until it is sent or removed. */
 export interface Pending {
@@ -25,6 +26,8 @@ export interface Pending {
   id?: string;
   error?: string;
   abort?: () => void;
+  /** The pasted text a paste chip holds, for Keep as text. */
+  text?: string;
 }
 
 const KIND_LABEL: Record<Kind, string> = { image: 'Image', pdf: 'PDF', text: 'Text' };
@@ -56,7 +59,7 @@ function uploadState(item: Pending): string | undefined {
  * An upload in the composer: thumbnail or glyph, name, then its state (progress, size and
  * type, or the refusal). A well, not a box: the composer already has the hairline.
  */
-export function UploadChip({ item, onRemove }: Readonly<{ item: Pending; onRemove: () => void }>) {
+export function UploadChip({ item, onRemove, onKeepText }: Readonly<{ item: Pending; onRemove: () => void; onKeepText?: () => void }>) {
   const bar = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     bar.current?.style.setProperty('--fill', `${Math.round(item.progress * 100)}%`);
@@ -70,11 +73,18 @@ export function UploadChip({ item, onRemove }: Readonly<{ item: Pending; onRemov
     >
       <Thumb kind={item.kind} src={item.preview} name={item.name} className={cn(failed && 'opacity-60')} />
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-ui text-ink" title={item.name}>{item.name}</span>
+        <span className="truncate text-ui text-ink" title={item.text === undefined ? item.name : item.text.split('\n', 6).join('\n').slice(0, 400)}>{item.name}</span>
         <span className={cn('truncate text-caption tabular-nums text-muted', failed && 'text-error')} title={failed ? item.error : undefined}>
           {state}
         </span>
       </span>
+      {onKeepText && (
+        <Tip label="Keep as text: the whole paste goes in the message">
+          <Button size="icon" variant="subtle" className="text-muted" aria-label={`Keep ${item.name} as text`} onClick={onKeepText}>
+            <TextCursorInput />
+          </Button>
+        </Tip>
+      )}
       <Button size="icon" variant="subtle" className="text-muted" aria-label={`Remove ${item.name}`} onClick={onRemove}>
         <X />
       </Button>

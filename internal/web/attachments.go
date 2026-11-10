@@ -27,6 +27,10 @@ const (
 	maxImageBytes  = 3 << 20
 	maxPDFBytes    = 10 << 20
 	maxTextBytes   = maxPromptBytes
+	// largeTextBytes is the text upload size above which the agent gets the
+	// file's path to read in parts instead of the text inline: the same 8 KiB
+	// as the tool output cap.
+	largeTextBytes = 8 << 10
 	// maxUploadBytes caps the upload route's body; the other routes keep
 	// maxBodyBytes.
 	maxUploadBytes = maxPDFBytes
@@ -491,7 +495,7 @@ func (m *Manager) readBlobs(taskID string, uploads []*upload) ([]agentapi.Blob, 
 			return nil, newError(http.StatusConflict, "attachment %s is no longer stored", u.Name)
 		}
 		b := agentapi.Blob{Name: u.Name, MIME: u.MIME, Data: data}
-		if u.MIME == mimePDF {
+		if u.MIME == mimePDF || (u.MIME == mimeText && u.Size > largeTextBytes) {
 			if b.Path, err = namedCopy(m.taskUploadDir(taskID), u, data); err != nil {
 				log.Warn("name web attachment failed", "session", taskID, "error", err)
 			}
@@ -501,10 +505,26 @@ func (m *Manager) readBlobs(taskID string, uploads []*upload) ([]agentapi.Blob, 
 	return out, nil
 }
 
-// namedCopy links an upload to <id>.d/<name> beside it, the name ending in
-// .pdf, and returns that absolute path: Copilot passes a PDF to the model
-// only as a file it reads, recognised by its name, or failing that gives the
-// agent the path, which inline bytes do not have.
+// countLargeText counts what a prompt does with text over largeTextBytes: a
+// text attachment handed over as a path, or the prompt's own text sent
+// inline, as a paste kept as text is.
+func (m *Manager) countLargeText(text string, uploads []*upload) {
+	for _, u := range uploads {
+		if u.MIME == mimeText && u.Size > largeTextBytes {
+			m.count("large_text_files")
+		}
+	}
+	if len(text) > largeTextBytes {
+		m.count("large_prompt_text")
+	}
+}
+
+// namedCopy links an upload to <id>.d/<name> beside it and returns that
+// absolute path. A PDF's name ends in .pdf and a text file's does not:
+// Copilot passes a PDF to the model only as a file it reads, recognised by
+// its name, or failing that gives the agent the path, which inline bytes do
+// not have. A text file it lists by path and line count, for the agent to
+// read in parts.
 func namedCopy(dir string, u *upload, data []byte) (string, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -516,8 +536,11 @@ func namedCopy(dir string, u *upload, data []byte) (string, error) {
 	}
 	defer func() { _ = root.Close() }()
 	name := u.Name
-	if !strings.EqualFold(filepath.Ext(name), ".pdf") {
+	switch isPDF := strings.EqualFold(filepath.Ext(name), ".pdf"); {
+	case u.MIME == mimePDF && !isPDF:
 		name += ".pdf"
+	case u.MIME != mimePDF && isPDF:
+		name += ".txt"
 	}
 	sub := u.ID + ".d"
 	if err := root.MkdirAll(sub, 0o700); err != nil {

@@ -3914,10 +3914,12 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	case willQueue:
 		defer m.mu.Unlock()
 		m.count("prompt_queued")
+		m.countLargeText(in.text, uploads)
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
 		m.mu.Unlock()
 		m.count("prompt_steered")
+		m.countLargeText(in.text, uploads)
 		return m.steer(s, conv, in, uploads, reqID)
 	case busy(state) || s.queueSending != "":
 		m.mu.Unlock()
@@ -3929,6 +3931,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		// checks. A queued snapshot keeps settings for dispatch validation.
 		in.settings = nil
 	}
+	m.countLargeText(in.text, uploads)
 	return m.send(s, in, reqID)
 }
 

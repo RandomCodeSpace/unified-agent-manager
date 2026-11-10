@@ -705,7 +705,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     };
   }, []);
 
-  function addFiles(list: File[]) {
+  /** `text` is the paste a chip of a long paste holds, for Keep as text. */
+  function addFiles(list: File[], text?: string) {
     if (locked || !list.length) return;
     // An answer carries no files: a drop or paste while answering is refused with the Attach button's reason.
     if (answering) {
@@ -754,13 +755,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           patch(key, { status: 'error', error: sentence(describeError(e)), abort: undefined });
         });
     }
-    setUploads((u) => [...u, ...next]);
+    setUploads((u) => [...u, ...(text === undefined ? next : next.map((n) => ({ ...n, text })))]);
   }
 
   function removeUpload(key: string) {
     uploads.find((u) => u.key === key)?.abort?.();
     held.current.delete(key);
     setUploads((u) => u.filter((x) => x.key !== key));
+  }
+
+  /** Keep as text: the paste goes into the message at the caret, as the paste itself would have. */
+  function keepAsText(u: Pending) {
+    const pasted = u.text ?? '';
+    removeUpload(u.key);
+    pendingCaret.current = caret + pasted.length;
+    updateText(text.slice(0, caret) + pasted + text.slice(caret), caret + pasted.length);
+    textarea.current?.focus();
   }
 
   const uploadsFull = activeKinds.length >= LIMITS.count;
@@ -1696,7 +1706,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       {(uploads.length > 0 || files.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-3">
           {uploads.map((u) => (
-            <UploadChip key={u.key} item={u} onRemove={() => removeUpload(u.key)} />
+            <UploadChip key={u.key} item={u} onRemove={() => removeUpload(u.key)} onKeepText={u.text === undefined ? undefined : () => keepAsText(u)} />
           ))}
           {files.map((f) => (
             <FileRefChip key={f} path={f} onRemove={() => removeFile(f)} />
@@ -1724,10 +1734,19 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           if (triggerKey) setDismissed(triggerKey);
         }}
         onPaste={(e) => {
+          if (locked) return;
           const pasted = Array.from(e.clipboardData.files);
-          if (locked || !pasted.length) return;
+          if (pasted.length) {
+            e.preventDefault();
+            addFiles(pasted);
+            return;
+          }
+          // A long paste goes as a file the agent reads in parts; an answer carries no files, so it keeps the text.
+          const t = e.clipboardData.getData('text/plain');
+          const file = new File([t], 'pasted-text.txt', { type: 'text/plain' });
+          if (answering || file.size <= LIMITS.pasteFile) return;
           e.preventDefault();
-          addFiles(pasted);
+          addFiles([file], t);
         }}
         disabled={!!busy || locked}
         {...combo}

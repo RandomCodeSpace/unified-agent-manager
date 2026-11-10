@@ -503,6 +503,42 @@ describe('attachments', () => {
     expect(screen.queryByRole('button', { name: 'Resend last prompt' })).toBeNull();
   });
 
+  test('a paste over 8 KiB becomes a text attachment; a shorter one stays text', async () => {
+    const { user, mock } = await openTask('t3');
+    await user.click(composer());
+    await user.paste('short note');
+    expect(composer().value).toBe('short note');
+    expect(screen.queryByRole('button', { name: 'Remove pasted-text.txt' })).toBeNull();
+    await user.paste('a log line\n'.repeat(900));
+    expect(await screen.findByRole('button', { name: 'Remove pasted-text.txt' })).toBeTruthy();
+    expect(composer().value).toBe('short note');
+    await waitFor(() => expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(1));
+    const sent = mock.received.filter((r) => r.route === 'prompt')[0];
+    expect(sent.body.text).toBe('short note');
+    expect(sent.body.attachments).toHaveLength(1);
+    expect(await log().findByTitle('Open pasted-text.txt')).toBeTruthy();
+  });
+
+  test('Keep as text puts a long paste back in the message', async () => {
+    const { user } = await openTask('t3');
+    const long = 'a log line\n'.repeat(900);
+    await user.click(composer());
+    await user.paste(long);
+    await user.click(await screen.findByRole('button', { name: 'Keep pasted-text.txt as text' }));
+    expect(screen.queryByRole('button', { name: 'Remove pasted-text.txt' })).toBeNull();
+    expect(composer().value).toBe(long);
+  });
+
+  test('long typed text stays text', async () => {
+    await openTask('t3');
+    const long = 'a log line\n'.repeat(900);
+    fireEvent.change(composer(), { target: { value: long } });
+    expect(composer().value).toBe(long);
+    expect(screen.queryByRole('button', { name: 'Remove pasted-text.txt' })).toBeNull();
+  });
+
   test('a model without image input refuses an image before it uploads', async () => {
     const { user } = await openTask('t9');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;

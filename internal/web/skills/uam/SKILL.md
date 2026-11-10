@@ -84,6 +84,8 @@ needs, all in one step when it needs several:
 
 - A PDF the owner attaches reaches you natively only when the model supports
   PDFs. Otherwise you get its file path; read it with your own tools.
+- Text over 8 KiB the owner pastes or attaches arrives as a file path with its
+  line count; read the parts you need.
 
 ## When a uam tool is unavailable
 
