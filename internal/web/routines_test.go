@@ -262,6 +262,9 @@ func TestRoutineRunStartsATaskAndRecordsItsOutcome(t *testing.T) {
 	if slices.Contains(toolNames(conv.Request().Tools), createTaskToolName) {
 		t.Fatal("a routine's task got uam_create_task")
 	}
+	if stats := m.uamStats(); !slices.Contains(stats, SessionStat{"uam.routine_runs", "1"}) || !slices.Contains(stats, SessionStat{"uam.routine_runs_project_folder_no_budget", "1"}) {
+		t.Fatalf("stats = %v", stats)
+	}
 	m.checkRoutines()
 	if got := routine(t, m, project, r.ID).Runs[0]; got.Outcome != RunRunning {
 		t.Fatalf("run while working = %+v", got)
