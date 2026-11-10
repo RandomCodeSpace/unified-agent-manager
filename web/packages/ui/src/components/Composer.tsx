@@ -3,7 +3,7 @@ import { RadioGroup } from '@base-ui/react/radio-group';
 import { useApi } from '../ApiContext';
 import { Archive, ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, Gauge, ListEnd, Lock, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, taskName, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type Project, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type Submission, type TaskSettings, type ThreadPlace } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, taskName, type Command, type CommandResult, type FileEntry, type Interaction, type Item, type Model, type PermissionMode, type Project, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -349,16 +349,25 @@ interface ComposerProps {
   project?: Project;
 }
 
+/**
+ * The same rows as far as the composer reads them: the owner's prompts (Up-arrow history, Resend, an aside's turn) and
+ * which row comes last (a suggested reply). Text streamed into any other row is not a change here.
+ */
+function sameRows(a: Item[] | undefined, b: Item[] | undefined): boolean {
+  if (a === b) return true;
+  if (a?.length !== b?.length) return false;
+  return a!.every((x, i) => x === b![i] || (x.kind !== 'user' && x.id === b![i].id && x.kind === b![i].kind));
+}
+
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
   if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing || a.subagent !== b.subagent || a.onThread !== b.onThread || a.seed !== b.seed || a.project !== b.project) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
-  keys.delete('items');
+  // The window and the latest rows are new arrays on every streamed frame; the composer never reads the index.
+  for (const k of ['items', 'recent_items', 'history_index'] as const) keys.delete(k);
   for (const k of keys) if (a.session[k] !== b.session[k]) return false;
-  // Streamed text changes items in place and is ignored; a new item (a sent or steered prompt)
-  // re-renders, so Up-arrow history sees it.
-  return a.session.items?.length === b.session.items?.length;
+  return sameRows(a.session.items, b.session.items) && sameRows(a.session.recent_items, b.session.recent_items);
 }
 
 export const Composer = memo(ComposerView, sameComposerProps);
