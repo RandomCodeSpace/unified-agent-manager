@@ -69,6 +69,8 @@ export class SocketEventSource extends EventTarget {
   private timer: ReturnType<typeof setTimeout> | undefined;
   /** The silence watch: reset by every byte over the socket, by every heartbeat event over EventSource. */
   private quiet: ReturnType<typeof setTimeout> | undefined;
+  /** This stream's heartbeats have come as events over EventSource, so its silence there means a dead connection. */
+  private beats = false;
   private retry = 3000;
   private decoder = new TextDecoder();
   private buffer = '';
@@ -106,6 +108,8 @@ export class SocketEventSource extends EventTarget {
     const socket = new WebSocket(eventSocketUrl(window.location, this.url));
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
+    // Watched from the start: a socket that connects and never sends the stream's status is as dead as a silent one.
+    this.heard();
     socket.onmessage = (event: MessageEvent) => {
       if (this.socket !== socket || this.readyState === CLOSED) return;
       if (status === undefined) {
@@ -143,6 +147,8 @@ export class SocketEventSource extends EventTarget {
     native.onopen = this.forward('open');
     native.onerror = this.forward('error');
     for (const type of new Set([...this.types, 'message', 'keep-alive'])) if (!handled(type)) native.addEventListener(type, this.forward(type));
+    // Reopened after a silence: the next one counts from now, not from a first heartbeat that may never come.
+    if (this.beats) this.heard();
   }
 
   /** The native's events of `type` passed on as this source's (by the name they were listened for, which is the event's). */
@@ -151,7 +157,10 @@ export class SocketEventSource extends EventTarget {
       if (this.native === null || this.readyState === CLOSED) return;
       // EventSource never shows a comment, so the service sends its heartbeats as events; a stream whose heartbeats
       // are comments (an older service's, another instance's notices) is never taken for silent.
-      if (type === 'keep-alive') return this.heard();
+      if (type === 'keep-alive') {
+        this.beats = true;
+        return this.heard();
+      }
       if (handled(type)) {
         this.readyState = this.native.readyState;
         this.fire(new Event(type));
@@ -176,6 +185,7 @@ export class SocketEventSource extends EventTarget {
 
   /** Nothing for STREAM_SILENCE_MS: the connection is dead, however it looks. */
   private stalled(): void {
+    if (this.readyState === CLOSED) return;
     const { socket, native } = this;
     if (socket) {
       // Its close event, if it ever comes, is not this stream's any more.

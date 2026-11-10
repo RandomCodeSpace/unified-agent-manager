@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
-import { PROMPT_TIMEOUT_MS } from '../../src/api';
+import { PROMPT_TIMEOUT_MS, READ_TIMEOUT_MS } from '../../src/api';
 import { install } from '../../src/mock/install';
 import { composer, log, openTask, sidebar } from './render';
 
@@ -41,6 +41,27 @@ describe('a stalled event stream', () => {
     await act(() => vi.advanceTimersByTimeAsync(20_000));
     await sidebar();
     await waitFor(() => expect(screen.queryAllByText(RECONNECTING)).toHaveLength(0));
+  });
+});
+
+describe('a stalled read', () => {
+  test('the sign-in check at startup is given up on after 60 s, and the sign-in screen shows', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    install();
+    const answer = window.fetch;
+    let asked = 0;
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith('/api/auth')) return answer(input, init);
+      asked++;
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason)));
+    };
+    render(<StrictMode><UamApp /></StrictMode>);
+    await waitFor(() => expect(asked).toBeGreaterThan(0));
+    await act(() => vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1000));
+    expect(screen.queryByRole('heading', { name: 'Sign in to UAM' })).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(await screen.findByRole('heading', { name: 'Sign in to UAM' })).toBeTruthy();
   });
 });
 

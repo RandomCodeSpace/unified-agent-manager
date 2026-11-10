@@ -1886,6 +1886,8 @@ export const UPDATE_EVENTS = [
 
 /** How long a prompt waits for the service to take it (it answers once the message is sent or queued). */
 export const PROMPT_TIMEOUT_MS = 30_000;
+/** How long a read waits for its answer, headers and body: longer than any bound the service puts on one. */
+export const READ_TIMEOUT_MS = 60_000;
 
 export class ApiError extends Error {
   status: number;
@@ -2276,7 +2278,31 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
   function homeCall<T>(method: Method, path: string, body?: unknown): Promise<T> {
     return owner ? homeTransport<T>(method, path, body) : call<T>(method, path, body);
   }
-  async function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal): Promise<T> {
+  /**
+   * `run` is given up on after READ_TIMEOUT_MS: on a connection that died without a close it would wait for good,
+   * holding its place among the reads (lib/reads.ts). `signal` cancels it as before.
+   */
+  async function bounded<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const late = new AbortController();
+    const cancel = () => late.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
+    const timer = setTimeout(() => late.abort(), READ_TIMEOUT_MS);
+    try {
+      return await run(late.signal);
+    } catch (error) {
+      if (late.signal.aborted && !signal?.aborted) throw report(new ApiError(0, `The server did not answer in ${READ_TIMEOUT_MS / 1000} seconds`));
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    }
+  }
+  /** A read (every GET, and a POST that only reads) is bounded; a write may run long by design (a git push, a model's answer) and is not. */
+  function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal, read = method === 'GET'): Promise<T> {
+    return read ? bounded(signal, (limited) => exchange<T>(method, path, body, omitBody, limited)) : exchange<T>(method, path, body, omitBody, signal);
+  }
+  async function exchange<T>(method: Method, path: string, body: unknown, omitBody: boolean, signal?: AbortSignal): Promise<T> {
     // Existing DELETE routes are bodyless; revision-checked deletes carry JSON.
     const bodyless = method === 'GET' || (method === 'DELETE' && body === undefined);
     let res: Response;
@@ -2324,8 +2350,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
 
   /** `source` reads an HTML page's text too. */
-  async function filePreview(path: string, signal: AbortSignal, knownMetadata?: PreviewMetadata, source = false): Promise<PreviewMetadata & Partial<TextPreview>> {
-    return foregroundRead(async () => {
+  async function filePreview(path: string, cancelled: AbortSignal, knownMetadata?: PreviewMetadata, source = false): Promise<PreviewMetadata & Partial<TextPreview>> {
+    return foregroundRead(() => bounded(cancelled, async (signal) => {
       const request = async (method: 'HEAD' | 'GET'): Promise<Response> => {
         let response: Response;
         try {
@@ -2358,7 +2384,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
         throw new Error('The file type changed. Close and open the preview again.');
       }
       return { ...metadata, ...await readTextPreview(response, signal) };
-    }, signal);
+    }), cancelled);
   }
 
 
@@ -2590,7 +2616,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     filePreview,
     createFileGrant: (id: string, path: string, signal: AbortSignal) => call<FileGrant>('POST', `/api/sessions/${enc(id)}/file-grants`, { path }, false, signal),
     revokeFileGrant: (id: string, grantId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/file-grants/${enc(grantId)}`),
-    resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable'; target?: string }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal), signal, 'low'),
+    resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable'; target?: string }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal, true), signal, 'low'),
     attachmentUrl: (id: string, attachmentId: string) => url(`/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`),
     /** An image file of the Task's directory, by absolute path or one relative to it. */
     rawFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`),
