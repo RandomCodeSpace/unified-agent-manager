@@ -325,8 +325,9 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 			m.keepImages(s, &h.Items[i])
 		}
 	}
+	notes := notesOf(h.Items)
 	m.mu.Lock()
-	m.installHistoryLocked(s, h) // not listed yet: nobody is told
+	m.installHistoryLocked(s, h, notes) // not listed yet: nobody is told
 	s.historyUsed = now
 	m.mu.Unlock()
 	rec := store.SessionRecord{

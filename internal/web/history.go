@@ -62,6 +62,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 		defer m.wg.Done()
 		defer cancel()
 		h, err := m.readHistory(ctx, reader, convID, workdir)
+		var notes []itemNote
 		if err == nil {
 			m.mu.Lock()
 			current := !s.removed && s.historyGen == gen && s.history == HistoryLoading
@@ -73,6 +74,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 					}
 				}
 			}
+			notes = notesOf(h.Items)
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -91,7 +93,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 			m.historyUnavailableLocked(s, reason)
 			return
 		}
-		m.installHistoryLocked(s, h)
+		m.installHistoryLocked(s, h, notes)
 	}()
 }
 
@@ -131,14 +133,15 @@ func (m *Manager) readSlot(ctx context.Context) (func(), error) {
 // installHistoryLocked installs a record read without opening the
 // conversation and sends it to viewers in one history event. Nothing of a
 // conversation that is not open runs, so a subagent the record leaves running
-// shows as cancelled, as it does when a conversation closes.
-func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
+// shows as cancelled, as it does when a conversation closes. notes are the
+// record's, read outside mu (notesOf).
+func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History, notes []itemNote) {
 	before := m.summaryLocked(s)
 	s.historyRecordFailed = false
 	if len(s.items) == 0 {
 		s.truncated = false
 	}
-	m.noteHistoryLocked(s, h, true)
+	m.noteHistoryLocked(s, h, notes, true)
 	for i := range h.Subagents {
 		switch h.Subagents[i].Status {
 		case agentapi.SubagentRunning:

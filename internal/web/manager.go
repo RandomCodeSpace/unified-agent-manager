@@ -100,7 +100,10 @@ type Manager struct {
 	wg     sync.WaitGroup
 
 	// persistMu orders sessions.json writes: each write snapshots state after
-	// taking it, so a later write never carries older state.
+	// taking it, so a later write never carries older state. A write appends
+	// the queued turn records outside mu and then takes them from the queues'
+	// front, so anything else that removes queued records (a rewind) holds
+	// persistMu too. It is taken before mu, never while holding it.
 	persistMu sync.Mutex
 	wake      chan struct{}
 
@@ -446,6 +449,9 @@ type webSession struct {
 	ixIdx        map[string]*interaction
 	// ask is the summary's Ask, kept while unchanged (pendingAsk).
 	ask *Ask
+	// budgetView is the summary's Budget, kept while unchanged
+	// (budgetViewLocked).
+	budgetView *BudgetView
 	// planPath is the exact native scratch file, used only for edit attribution.
 	planPath    string
 	planVersion uint64
@@ -3584,6 +3590,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 			}
 		}
 	}
+	notes := notesOf(history.Items)
 
 	m.mu.Lock()
 	before = m.summaryLocked(s)
@@ -3596,7 +3603,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
 		}
-		m.noteHistoryLocked(s, history, withHistory && histErr == nil)
+		m.noteHistoryLocked(s, history, notes, withHistory && histErr == nil)
 		m.applyHistoryLocked(s, history, false)
 		m.openedHistoryLocked(s, withHistory, histErr)
 		if withHistory && histErr == nil {

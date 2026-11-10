@@ -426,3 +426,90 @@ func TestSendCancelsReadWithoutOverwritingLiveHistory(t *testing.T) {
 		t.Fatalf("detail after send = %+v", d)
 	}
 }
+
+// checkRecord is a provider record of n completed test commands, each with
+// about 4 KB of output and no exit code: the items that cost most to read.
+func checkRecord(n int) []agentapi.Item {
+	out := strings.Repeat("ok  \texample.com/pkg/thing\t0.123s\n--- PASS: TestThing (0.00s)\n", 80)[:4<<10]
+	items := make([]agentapi.Item, n)
+	for i := range items {
+		items[i] = agentapi.Item{ID: fmt.Sprint("t", i), Kind: agentapi.ItemTool, Time: usageT0.Add(time.Duration(i) * time.Second),
+			Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./internal/..."}`, Output: out}}
+	}
+	return items
+}
+
+// longestLockWait runs run and reports the longest anything waited for the
+// manager lock meanwhile, and how long run took.
+func longestLockWait(m *Manager, run func()) (waited, ran time.Duration) {
+	stop, result := make(chan struct{}), make(chan time.Duration)
+	go func() {
+		var longest time.Duration
+		for {
+			select {
+			case <-stop:
+				result <- longest
+				return
+			default:
+			}
+			start := time.Now()
+			m.mu.Lock()
+			_ = m.closed
+			m.mu.Unlock()
+			longest = max(longest, time.Since(start))
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+	start := time.Now()
+	run()
+	ran = time.Since(start)
+	close(stop)
+	return <-result, ran
+}
+
+// Reading a long record's evidence (commands, exit codes, test counts) is the
+// slow part of showing or reopening a Thread. It runs before the manager lock
+// is taken, so every other Thread's events and requests go on meanwhile.
+func TestLongRecordIsReadOutsideTheManagerLock(t *testing.T) {
+	m, prov, _, tasks := closedTasks(t, "", "")
+	// The record is sized to take about half a second to read however fast
+	// this run is (the race detector slows the read many times over), so
+	// reading it is most of what showing or reopening the Thread takes.
+	sample := checkRecord(8)
+	notesOf(sample)
+	start := time.Now()
+	notesOf(sample)
+	each := time.Since(start)/time.Duration(len(sample)) + 1
+	items := checkRecord(min(max(int(500*time.Millisecond/each), len(sample)), 1000))
+	// Not Detail: copying the whole transcript holds the lock too.
+	noted := func(id string) int {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.sessions[id].activity)
+	}
+	for i, tc := range []struct {
+		what string
+		run  func(id string)
+	}{
+		{"showing a closed Thread", func(id string) {
+			_ = detail(t, m, id)
+			waitUntil(t, "the record", func() bool { return noted(id) > 0 })
+		}},
+		{"reopening a Thread", func(id string) {
+			if sub, err := m.Submit(id, PromptRequest{Text: "go", RequestID: mustUUID(t)}); err != nil || sub.Status != SubmissionAccepted {
+				t.Fatalf("send = %+v, %v", sub, err)
+			}
+		}},
+	} {
+		id := tasks[i].ID
+		prov.SetHistory(tasks[i].ConversationID, agentapi.History{Items: items})
+		waited, ran := longestLockWait(m, func() { tc.run(id) })
+		if got := noted(id); got < len(items) {
+			t.Fatalf("%s noted %d of %d items", tc.what, got, len(items))
+		}
+		// Read under the lock, the record would hold it for most of the time.
+		if waited > ran/3 {
+			t.Errorf("%s took %v and held the manager lock for %v of it", tc.what, ran, waited)
+		}
+	}
+}

@@ -588,7 +588,7 @@ func TestDrawingWritesAreTheThreadsEdits(t *testing.T) {
 	}
 	g.m.mu.Lock()
 	s.edits = nil
-	g.m.noteHistoryLocked(s, agentapi.History{}, true)
+	g.m.noteHistoryLocked(s, agentapi.History{}, nil, true)
 	g.m.mu.Unlock()
 	if !listed() {
 		t.Fatal("the drawing left Changes once the record was read again")
@@ -618,7 +618,7 @@ func TestDrawingDeletionSurvivesARestart(t *testing.T) {
 		g.m.drawings.mu.Unlock()
 		g.m.mu.Lock()
 		s.edits = nil
-		g.m.noteHistoryLocked(s, agentapi.History{}, true)
+		g.m.noteHistoryLocked(s, agentapi.History{}, nil, true)
 		g.m.mu.Unlock()
 	}
 	convert := func(p string) {

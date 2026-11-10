@@ -74,12 +74,9 @@ func startsTurn(it agentapi.Item) bool {
 	return it.AgentID == "" && it.Kind == agentapi.ItemUser && it.Delivery != agentapi.DeliverySteer && it.Delivery != agentapi.DeliveryAutopilot
 }
 
-// noteActivity records what the evidence needs of one item.
-func (s *webSession) noteActivity(it agentapi.Item) {
-	if it.ID == "" {
-		return
-	}
-	key := itemKey(it.AgentID, it.ID)
+// activityOf is what the evidence keeps of one item. It reads the item
+// alone, so a long record's items are read before mu is taken (notesOf).
+func activityOf(it agentapi.Item) activity {
 	a := activity{at: it.Time, ended: it.EndedAt, kind: it.Kind, agent: it.AgentID}
 	switch it.Kind {
 	case agentapi.ItemAssistant:
@@ -108,6 +105,11 @@ func (s *webSession) noteActivity(it agentapi.Item) {
 			a.partial = it.Clipped || strings.Contains(tc.Output, truncatedMarker)
 		}
 	}
+	return a
+}
+
+// noteActivity records the evidence a of the item with key.
+func (s *webSession) noteActivity(key string, a activity) {
 	// An item keeps the time it began, as the held transcript does.
 	if prev, ok := s.activity[key]; ok && !prev.at.IsZero() && prev.at.Before(a.at) {
 		a.at = prev.at

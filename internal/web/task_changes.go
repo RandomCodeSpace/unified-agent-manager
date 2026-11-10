@@ -57,47 +57,85 @@ func (s *webSession) invalidateNativeDiff() {
 	}
 }
 
+// itemNote is what one item adds to a Task's evidence, edits and turn
+// start. noteOf reads it from the item alone, which is the costly part (it
+// parses the command and its output), so a provider's record is read before
+// mu is taken (notesOf) and only merged under it.
+type itemNote struct {
+	// key is the item's evidence key, "" for an item without an ID.
+	key      string
+	activity activity
+	// starts marks a prompt that starts a turn. at is when that prompt was
+	// sent; for any other item, when its edit of paths completed.
+	starts bool
+	at     time.Time
+	paths  []string
+}
+
+func noteOf(it agentapi.Item) itemNote {
+	n := itemNote{starts: startsTurn(it), at: it.Time}
+	if it.ID != "" {
+		n.key, n.activity = itemKey(it.AgentID, it.ID), activityOf(it)
+	}
+	if n.starts || it.Tool == nil || it.Tool.Status != agentapi.ToolCompleted {
+		return n
+	}
+	n.paths = editedPaths(it.Tool)
+	if it.EndedAt.After(n.at) {
+		n.at = it.EndedAt
+	}
+	return n
+}
+
+// notesOf reads a provider record's items. It takes no lock.
+func notesOf(items []agentapi.Item) []itemNote {
+	notes := make([]itemNote, len(items))
+	for i, it := range items {
+		notes[i] = noteOf(it)
+	}
+	return notes
+}
+
 // noteEdits records it in s's evidence, edits and turn start and reports
 // whether an edit completed, so the total needs a recount. An edit counts
 // once it completed, at when it ended: one still running may yet fail.
 func (s *webSession) noteEdits(it agentapi.Item) bool {
-	s.noteActivity(it)
-	if startsTurn(it) {
-		if it.Time.After(s.turnStart) {
-			s.turnStart = it.Time
+	return s.note(noteOf(it))
+}
+
+func (s *webSession) note(n itemNote) bool {
+	if n.key != "" {
+		s.noteActivity(n.key, n.activity)
+	}
+	if n.starts {
+		if n.at.After(s.turnStart) {
+			s.turnStart = n.at
 		}
 		return false
 	}
-	if it.Tool == nil || it.Tool.Status != agentapi.ToolCompleted {
-		return false
-	}
-	paths := editedPaths(it.Tool)
-	at := it.Time
-	if it.EndedAt.After(at) {
-		at = it.EndedAt
-	}
 	projectEdit := false
-	for _, p := range paths {
+	for _, p := range n.paths {
 		if s.isPlanPath(p) {
 			continue
 		}
 		projectEdit = true
-		if last, ok := s.edits[p]; !ok || at.After(last) {
+		if last, ok := s.edits[p]; !ok || n.at.After(last) {
 			if s.edits == nil {
 				s.edits = map[string]time.Time{}
 			}
-			s.edits[p] = at
+			s.edits[p] = n.at
 		}
 	}
 	return projectEdit
 }
 
-// noteHistoryLocked records a provider record's edits; whole says the
-// record was read, which makes the edits complete unless it was truncated.
-func (m *Manager) noteHistoryLocked(s *webSession, h agentapi.History, whole bool) {
+// noteHistoryLocked records a provider record's edits from notes, its items'
+// notes read outside mu (notesOf); whole says the record was read, which
+// makes the edits complete unless it was truncated.
+func (m *Manager) noteHistoryLocked(s *webSession, h agentapi.History, notes []itemNote, whole bool) {
 	changed := false
-	for _, it := range h.Items {
-		changed = s.noteEdits(it) || changed
+	for _, n := range notes {
+		changed = s.note(n) || changed
 	}
 	// The record does not hold the drawing files uam wrote; its index does.
 	for _, p := range m.drawingEditPaths(s.id) {
