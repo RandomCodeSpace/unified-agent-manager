@@ -1,7 +1,8 @@
-import { Suspense, lazy, useEffect, useEffectEvent, useState, type Ref } from 'react';
+import { Suspense, lazy, startTransition, useEffect, useEffectEvent, useState, type Ref } from 'react';
 import { SquareTerminal } from 'lucide-react';
-import type { Project } from '../api';
-import { BAR_BOX, Loading, Spinner, TranscriptSkeleton, VIEW_BAR } from './common';
+import type { Project, SessionDetail } from '../api';
+import type { State } from '../state';
+import { BAR_BOX, Loading, Spinner, TranscriptSkeleton, VIEW_BAR, useLate } from './common';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import { Appear } from './ui/appear';
@@ -118,4 +119,41 @@ export function LoadingPane({ leading }: Readonly<{ leading: React.ReactNode }>)
       <TranscriptSkeleton />
     </div>
   );
+}
+
+/** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
+const QUIET_MS = 600;
+
+/**
+ * The main pane while a Thread is on its way: the veil for a load that lasts (`loading`) and the banner for a lost
+ * connection that lasts (`connection`); the Thread whose first render, a transition, is done (`mountedId`, and
+ * `detailId` once its detail is the one on screen); the Thread the pane holds until then (`held`), and whether
+ * the wait has lasted (`lateLoad`).
+ */
+export function usePaneLoad({ state, settingsOpen, routinesFor }: { state: State; settingsOpen: boolean; routinesFor: string | null }) {
+  // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
+  const late = useLate(state.connection !== 'connected', QUIET_MS);
+  const loading = late && state.connection === 'connecting';
+  const connection = late && !loading ? state.connection : 'connected';
+  // A Thread's view first renders in a transition, which yields between rows: a long transcript is not one long task.
+  // Until then the pane shows what it showed while the detail was on its way; later frames of the Thread render at once.
+  const [mountedId, setMountedId] = useState<string | null>(null);
+  const arrivedId = state.detail?.id ?? null;
+  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way. A cached
+  // revisit is on screen before its detail arrives: the detail then replaces it in place, not in a second mount.
+  const cachedId = state.previousCached && state.previous?.id === state.selectedId ? state.selectedId : null;
+  if (!arrivedId && mountedId !== cachedId) setMountedId(cachedId);
+  useEffect(() => {
+    if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
+  }, [arrivedId, mountedId]);
+  // The snapshot and the detail drop the Thread select() froze as they land; the pane keeps it until the new Thread has rendered.
+  // Keyed to the selection, so one made from Home or a draft holds nothing; let go once the Thread is on screen.
+  const [held, setHeld] = useState<{ id: string | null; detail: SessionDetail | null }>({ id: null, detail: null });
+  if (held.id !== state.selectedId || (state.previous && state.previous !== held.detail)) setHeld({ id: state.selectedId, detail: state.previous });
+  else if (held.detail && arrivedId && arrivedId === mountedId) setHeld({ id: held.id, detail: null });
+
+  const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
+
+  const detailId = arrivedId === mountedId ? arrivedId : undefined;
+  return { loading, connection, mountedId, detailId, held, lateLoad };
 }

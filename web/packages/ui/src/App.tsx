@@ -7,7 +7,7 @@ import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, describeError, errorCode, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Changes as ChangesData, type GitPending, type Interaction, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from './api';
 import { initialState, loggedIn, reducer, type Auth } from './state';
-import { AppContext, Dot, useLate, useMedia } from './components/common';
+import { AppContext, Dot, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
 import { MessageOutcomesContext, MessagePairsContext } from './components/Messages';
 import { Login } from './components/Login';
@@ -44,7 +44,7 @@ import { useDrawer, useSidebar } from './lib/useSidebar';
 import { useTypeToCompose } from './lib/useTypeToCompose';
 import { Contained } from './components/VisualBoundary';
 import { editing, keysTaken, sessionsUpdate } from './lib/overlays';
-import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading } from './components/Panes';
+import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading, usePaneLoad } from './components/Panes';
 
 export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overlays';
 
@@ -69,8 +69,6 @@ const COARSE = '(pointer: coarse)';
 /** When this browser first ran the Task list's read tracking: a Task never opened here and changed since is unread. */
 
 const HASH_PREFIX = '#task=';
-/** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
-const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 /** Every Project's routines: `#routines` (or `#routines=all`); one Project's: `#routines=<project id>`. */
 const ROUTINES_HASH = '#routines';
@@ -239,29 +237,7 @@ export default function App() {
   const { setViewed, markViewed, hasNews, opened } = useReadMarks({ api, selectedId: state.selectedId, sessions: state.sessions, viewOpen, viewShown, LOOKED_KEY, VIEWED_KEY });
   const setStreamKey = useEventStream({ api, auth, selectedId: state.selectedId, dispatch, forwardEvent, recentTasks, sweptMembership, confirmedDetail, checkVersion, markViewed, setAuth, setNotice, setFilter, setViewed, FILTER_KEY, LOOKED_KEY, VIEWED_KEY });
 
-
-  // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
-  const late = useLate(state.connection !== 'connected', QUIET_MS);
-  const loading = late && state.connection === 'connecting';
-  const connection = late && !loading ? state.connection : 'connected';
-  // A Thread's view first renders in a transition, which yields between rows: a long transcript is not one long task.
-  // Until then the pane shows what it showed while the detail was on its way; later frames of the Thread render at once.
-  const [mountedId, setMountedId] = useState<string | null>(null);
-  const arrivedId = state.detail?.id ?? null;
-  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way. A cached
-  // revisit is on screen before its detail arrives: the detail then replaces it in place, not in a second mount.
-  const cachedId = state.previousCached && state.previous?.id === state.selectedId ? state.selectedId : null;
-  if (!arrivedId && mountedId !== cachedId) setMountedId(cachedId);
-  useEffect(() => {
-    if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
-  }, [arrivedId, mountedId]);
-  // The snapshot and the detail drop the Thread select() froze as they land; the pane keeps it until the new Thread has rendered.
-  // Keyed to the selection, so one made from Home or a draft holds nothing; let go once the Thread is on screen.
-  const [held, setHeld] = useState<{ id: string | null; detail: SessionDetail | null }>({ id: null, detail: null });
-  if (held.id !== state.selectedId || (state.previous && state.previous !== held.detail)) setHeld({ id: state.selectedId, detail: state.previous });
-  else if (held.detail && arrivedId && arrivedId === mountedId) setHeld({ id: held.id, detail: null });
-
-  const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
+  const { loading, connection, mountedId, detailId, held, lateLoad } = usePaneLoad({ state, settingsOpen, routinesFor });
 
   const openUsage = useCallback(() => {
     if (narrow) setDrawerOpen(true);
@@ -279,7 +255,6 @@ export default function App() {
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into,
   // and a rename the choosing double-click started keeps its input.
-  const detailId = arrivedId === mountedId ? arrivedId : undefined;
   const detailLocked = !!state.detail && readOnly(state.detail);
   useEffect(() => {
     if (!detailId || detailId !== focusTask.current) return;
@@ -909,6 +884,7 @@ export default function App() {
     }),
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter, setDrawerOpen],
   );
+
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
 
