@@ -45,6 +45,7 @@ const (
 	webTasksTimeout = 10 * time.Second
 	maxToolText     = 64 << 10
 	maxErrorText    = 512
+	maxErrorCode    = 64 // the provider's error code or remediation action
 	maxIntention    = 300
 	// subagentPromptBytes bounds the prompt a subagent's Utility name reads.
 	subagentPromptBytes = 2 << 10
@@ -2138,6 +2139,7 @@ type conversation struct {
 	tr               *transcript
 	subs             *subagentLog
 	turnErr          string
+	turnFailure      agentapi.TurnFailure // what came with turnErr; read only while it is set
 	idles            int
 	// Once the provider reports foreground idle, session.idle is only its
 	// broader background-work boundary and must not end another turn.
@@ -3880,6 +3882,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// arrives while a prompt is on its way belongs to that prompt's turn.
 		if agentID == "" && (c.turnRunning || c.sending > 0) {
 			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
+			c.turnFailure = turnFailure(d)
 		}
 	case *rpc.SessionTruncationData, *rpc.SessionContextClearedData, *rpc.SessionSnapshotRewindData:
 		// The agent's context lost earlier messages, its views among them.
@@ -4137,6 +4140,20 @@ func (c *conversation) startTurnLocked() {
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 }
 
+// turnFailure is what a session error says beside its message: its category
+// as an ErrorKind, and the provider's code, HTTP status and remediation
+// action when it sent them.
+func turnFailure(d *rpc.SessionErrorData) agentapi.TurnFailure {
+	f := agentapi.TurnFailure{Kind: agentapi.ErrorKindOf(d.ErrorType), Code: clip(displaytext.Sanitize(deref(d.ErrorCode)), maxErrorCode)}
+	if d.StatusCode != nil {
+		f.Status = int(*d.StatusCode)
+	}
+	if d.Remediation != nil {
+		f.Remediation = clip(displaytext.Sanitize(string(*d.Remediation)), maxErrorCode)
+	}
+	return f
+}
+
 func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	if c.foregroundIdle {
 		return
@@ -4158,7 +4175,8 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 		}
 		c.expireLocked()
 	case c.turnErr != "":
-		turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
+		failure := c.turnFailure
+		turn.State, turn.Error, turn.Failure = agentapi.TurnFailed, c.turnErr, &failure
 	}
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}

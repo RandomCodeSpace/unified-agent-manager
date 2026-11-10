@@ -165,7 +165,8 @@ func TestTurnFailureWhileSignedOutSaysToSignIn(t *testing.T) {
 	prov.set(false)
 	conv.EmitTurn(agentapi.TurnFailed, "Execution failed: InvalidArg, No GitHub OAuth token")
 	waitUntil(t, "signed-out failure detail", func() bool {
-		return detail(t, m, sum.ID).StateDetail == "Fake fake is signed out. Sign in in Settings."
+		d := detail(t, m, sum.ID)
+		return d.StateDetail == "Fake fake is signed out. Sign in in Settings." && d.FailureKind == string(agentapi.ErrorAuthentication)
 	})
 	if info := providerInfo(t, m, "fake"); info.Available || !info.SignedOut {
 		t.Fatalf("provider after the failed turn: %+v", info)

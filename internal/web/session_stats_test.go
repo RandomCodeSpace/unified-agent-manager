@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
 func TestSessionStatsCountsJournalsAndWritesKeyValueFile(t *testing.T) {
@@ -83,6 +86,54 @@ func TestSessionStatsCountsJournalsAndWritesKeyValueFile(t *testing.T) {
 	}
 	if strings.Contains(string(data), "secret") {
 		t.Fatalf("file holds journal text:\n%s", data)
+	}
+}
+
+// Session errors are also counted by kind. The rows come from the fixed list:
+// a category outside it is "other", and no error text reaches the file.
+func TestSessionStatsCountsErrorsByKind(t *testing.T) {
+	home := filepath.Join(t.TempDir(), ".copilot")
+	t.Setenv("COPILOT_HOME", home)
+	dir := filepath.Join(home, "session-state", "a")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journal := strings.Join([]string{
+		`{"type":"session.error","timestamp":"2026-10-03T09:00:01Z","data":{"errorType":"rate_limit","errorCode":"secret_code","message":"secret text /home/secret"}}`,
+		`{"type":"session.error","timestamp":"2026-10-03T09:00:02Z","data":{"errorType":"rate_limit","message":"secret again"}}`,
+		`{"type":"session.error","timestamp":"2026-10-03T09:00:03Z","data":{"errorType":"authentication","message":"secret"}}`,
+		`{"type":"session.error","timestamp":"2026-10-03T09:00:04Z","data":{"errorType":"brand_new","message":"secret"}}`,
+		`{"type":"session.error","timestamp":"2026-10-03T09:00:05Z","data":{"message":"secret"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(journal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, _, _ := newTestManager(t)
+	got, err := m.SessionStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := map[string]string{}
+	for _, s := range got.Stats {
+		stats[s.Key] = s.Value
+	}
+	want := map[string]string{"friction.session_errors": "5", "friction.session_errors_rate_limit": "2", "friction.session_errors_authentication": "1", "friction.session_errors_other": "2"}
+	for _, kind := range agentapi.ErrorKinds {
+		key := "friction.session_errors_" + string(kind)
+		if stats[key] != cmp.Or(want[key], "0") {
+			t.Errorf("%s = %q, want %q", key, stats[key], cmp.Or(want[key], "0"))
+		}
+	}
+	if stats["friction.session_errors"] != "5" {
+		t.Errorf("friction.session_errors = %q, want 5", stats["friction.session_errors"])
+	}
+	data, err := os.ReadFile(got.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Once for all time and once for the last seven days.
+	if strings.Contains(string(data), "secret") || strings.Count(string(data), "friction.session_errors_") != 2*len(agentapi.ErrorKinds) {
+		t.Fatalf("file holds journal text, or rows outside the fixed list:\n%s", data)
 	}
 }
 

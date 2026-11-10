@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
 // sessionStatsFile holds the last scan as key=value lines, beside the store.
@@ -547,6 +549,14 @@ func (t *sessionTally) stats(now time.Time) []SessionStat {
 	add("friction.tool_failure_pct", pct(sum(t.failures), t.events["tool.execution_start"]))
 	add("friction.permission_prompts", t.events["permission.requested"])
 	add("friction.session_errors", sum(t.errors))
+	// The same errors by kind: a fixed list, so no journal text names a row.
+	kinds := map[agentapi.ErrorKind]int{}
+	for category, n := range t.errors {
+		kinds[agentapi.ErrorKindOf(category)] += n
+	}
+	for _, kind := range agentapi.ErrorKinds {
+		add("friction.session_errors_"+string(kind), kinds[kind])
+	}
 	for _, kv := range ranked(t.aborts, 0) {
 		add("aborts."+kv.k, kv.n)
 	}

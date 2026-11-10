@@ -1044,6 +1044,39 @@ func TestWebErrorTheTurnRecoversFromDoesNotFailIt(t *testing.T) {
 	}
 }
 
+// A failed turn carries the error's category, code, status and remediation;
+// a category the SDK does not document, or none, is "other".
+func TestWebFailedTurnCarriesTheErrorKind(t *testing.T) {
+	kinds := map[string]agentapi.ErrorKind{"": agentapi.ErrorOther, "brand_new": agentapi.ErrorOther, "other": agentapi.ErrorOther}
+	for _, k := range agentapi.ErrorKinds {
+		kinds[string(k)] = k
+	}
+	for errorType, want := range kinds {
+		h := openWeb(t)
+		startTurn(t, h)
+		h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: errorType, Message: "boom"}))
+		h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+		if got := lastTurn(h.sink); got.State != agentapi.TurnFailed || got.Failure == nil || *got.Failure != (agentapi.TurnFailure{Kind: want}) {
+			t.Fatalf("errorType %q: turn = %+v, failure = %+v", errorType, got, got.Failure)
+		}
+	}
+	h := openWeb(t)
+	startTurn(t, h)
+	action, status := rpc.RemediationActionSignIn, int32(429)
+	h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "rate_limit", Message: "slow down", ErrorCode: copilot.String("user_weekly\x1b[31m_rate_limited"), StatusCode: &status, Remediation: &action}))
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	want := agentapi.TurnFailure{Kind: agentapi.ErrorRateLimit, Code: "user_weekly_rate_limited", Status: 429, Remediation: "sign_in"}
+	if got := lastTurn(h.sink); got.Failure == nil || *got.Failure != want {
+		t.Fatalf("failure = %+v, want %+v", got.Failure, want)
+	}
+	// A turn that did not fail carries none.
+	startTurn(t, h)
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Failure != nil {
+		t.Fatalf("completed turn = %+v", got)
+	}
+}
+
 // An error while no turn runs is a notice only: it fails no later turn.
 func TestWebErrorBetweenTurnsFailsNoTurn(t *testing.T) {
 	h := openWeb(t)

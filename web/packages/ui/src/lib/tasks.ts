@@ -1,4 +1,5 @@
 import type { GitPending, Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
+import { failureWords } from './failure.ts';
 import { stopWords } from './stop.ts';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
@@ -140,8 +141,9 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     }
     case 'completed':
       return finishedStatus(s, unread);
+    // It names the cause when the provider gave one (lib/failure).
     case 'failed':
-      return { label: 'Error', text: 'Stopped with an error', tone: 'error' };
+      return { label: 'Error', text: failureWords(s)?.cause ?? 'Stopped with an error', tone: 'error' };
     case 'interrupted':
       return { label: 'Interrupted', text: 'Interrupted', tone: 'warning' };
     // It names what stopped it when it was not you (a routine's time limit, autopilot's credit limit).

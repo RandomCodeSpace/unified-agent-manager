@@ -998,6 +998,8 @@ export interface SessionSummary {
   compact_threshold?: number;
   /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command or an MCP server; absent otherwise, also when the provider gave no reason. */
   stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'budget' | 'remote' | 'mcp';
+  /** Why the last turn failed, while the Task is Failed (lib/failure): the provider's category for the error in `state_detail`, `other` for one it does not name; absent when the failure has none. */
+  failure_kind?: 'authentication' | 'authorization' | 'policy' | 'quota' | 'rate_limit' | 'context_limit' | 'query' | 'other';
   queued?: number;
   state: SessionState;
   state_detail?: string;

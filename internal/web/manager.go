@@ -492,6 +492,9 @@ type webSession struct {
 	// stopCode is why the last turn was cancelled (SessionSummary.StopReason),
 	// until the next turn starts.
 	stopCode string
+	// failKind is the provider's category for the error in detail
+	// (SessionSummary.FailureKind); "" when the state has none.
+	failKind agentapi.ErrorKind
 	// turnActivity is the running turn's live activity (turn_activity.go);
 	// not persisted.
 	turnActivity TurnActivity
@@ -675,6 +678,7 @@ type persistKey struct {
 	settledBy                                                                                                        string
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
+	failKind                                                                                                         agentapi.ErrorKind
 	budget                                                                                                           store.Budget
 	handoff                                                                                                          store.WebHandoff
 	agent                                                                                                            string
@@ -697,6 +701,7 @@ func newSession(id, provider, name, workdir, convID string, created time.Time) *
 func (s *webSession) setBase(state, detail string) {
 	s.base = state
 	s.detail = detail
+	s.failKind = "" // it describes the detail just replaced
 	s.interruptedAt = time.Time{}
 	s.turnSeq++
 }
@@ -751,7 +756,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, budget: s.budget}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, failKind: s.failKind, budget: s.budget}
 	if s.handoff != nil {
 		k.handoff = *s.handoff
 	}
@@ -1039,6 +1044,9 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 			s.base = web.Turn
 		}
 		s.detail, s.stopCode = web.Detail, web.StopReason
+		if web.FailureKind != "" && s.base == StateFailed {
+			s.failKind = agentapi.ErrorKindOf(web.FailureKind)
+		}
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
@@ -1341,7 +1349,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactingBackground: s.compactingBackground && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:       s.diff,
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
-		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
+		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(), FailureKind: string(s.failKind),
 		ForkOf: forkOf, ForkUserItemID: forkUser, NotStarted: s.fork != nil && s.base == StateClosed && len(s.turnTimings) == 0, Rewind: s.rewindSummary(),
 		Branch:       s.branch,
 		TitlePending: s.titling || s.titleWait != nil,
@@ -2565,7 +2573,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
-				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
+				StopReason: key.stopReason, FailureKind: string(key.failKind), NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
 				MemoryNotes: slices.Clone(s.memoryNotes), SubagentLabels: maps.Clone(s.subagentLabels), NativePaths: nativePathsRecord(s), MessageOutcomes: slices.Clone(s.messageOutcomes),
 			},
 		})
@@ -2986,6 +2994,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 			detail = clipRunes(displaytext.Sanitize(turn.Error), maxDetailRunes)
 		}
 		s.setBase(StateFailed, detail)
+		if turn.Failure != nil {
+			s.failKind = agentapi.ErrorKindOf(string(turn.Failure.Kind))
+		}
 		s.stopReason, s.stopBy = "", ""
 		m.pauseQueueLocked(s)
 		m.kickSignedOutLocked(s, detail)
@@ -4014,7 +4025,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		}
 	}
 	before := m.summaryLocked(s)
-	prevBase, prevDetail := s.base, s.detail
+	prevBase, prevDetail, prevKind := s.base, s.detail, s.failKind
 	plan := m.titlePlanLocked(s, in, uploads)
 	if plan != nil && plan.afterReply {
 		// Set before the send, so a turn that ends at once still finds it.
@@ -4078,7 +4089,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		s.title, s.titleFallback = "", false
 	}
 	if s.turnSeq == mark {
-		s.base, s.detail = prevBase, prevDetail
+		s.base, s.detail, s.failKind = prevBase, prevDetail, prevKind
 	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()

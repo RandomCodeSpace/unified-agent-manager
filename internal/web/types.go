@@ -436,6 +436,11 @@ type SessionSummary struct {
 	// budget (the Thread's), remote (a remote command) or mcp (an MCP server). Omitted otherwise,
 	// also when the provider gave no reason.
 	StopReason string `json:"stop_reason,omitempty"`
+	// FailureKind is why the last turn failed, while the Task is Failed: the
+	// provider's category for the error in StateDetail (authentication,
+	// authorization, policy, quota, rate_limit, context_limit or query), or
+	// other. Omitted when the failure has none, as when it could not open.
+	FailureKind string `json:"failure_kind,omitempty"`
 }
 
 // TurnActivity is the open conversation's live activity in its running
