@@ -1,6 +1,7 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FilePen, FilePlus, Files, FileText, FolderSearch, GitBranch, Globe, Image as ImageIcon, MessageCircleQuestion, Minus, Pencil, Plug, RotateCcw, Search, ShieldQuestionMark, Signpost, Terminal, Workflow, X, type LucideIcon } from 'lucide-react';
 import { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
+import { Contained } from './VisualBoundary';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnPeer, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
@@ -235,7 +236,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     flush();
     userItemId = entry.item.id;
     ownMessage = true;
-    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} peer={agentId ? undefined : peers.get(entry.item.id)} />);
+    out.push(contained(entry.item, <UserBubble item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} peer={agentId ? undefined : peers.get(entry.item.id)} />));
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
@@ -277,35 +278,40 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
     if (entry.interaction?.state === 'pending' || !promoted(entry, { live: ctx.live, approvals: ctx.approvals }, own)) continue;
     if (entry.interaction) {
       const ix = entry.interaction;
-      push(<QuestionBlock key={ix.id} id={ix.id} asked={questionOf(undefined, ix, ctx.live)!} className={ctx.arrival(ix.id)} />);
+      push(contained(ix, <QuestionBlock id={ix.id} asked={questionOf(undefined, ix, ctx.live)!} className={ctx.arrival(ix.id)} />));
       continue;
     }
     const item = entry.item;
     if (item.kind === 'user') {
-      push(<UserBubble key={item.id} item={item} sessionId={ctx.sessionId} className={ctx.arrival(item.id)} />);
+      push(contained(item, <UserBubble item={item} sessionId={ctx.sessionId} className={ctx.arrival(item.id)} />));
       continue;
     }
     if (item.kind !== 'tool') {
       if (final && item.id !== final && isNote(item)) {
         if (notes.length === 0) firstNote = item.id;
         // No arrival class: the reply was on screen whole a moment ago, so it must not rise in again as a note.
-        notes.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={false} note />);
+        notes.push(contained(item, <Turn item={item} sessionId={ctx.sessionId} streaming={false} note />));
         continue;
       }
-      push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />);
+      push(contained(item, <Turn item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />));
       continue;
     }
     const node = special(item);
     if (node) {
-      push(node);
+      push(contained(item, node));
       continue;
     }
     const asked = askedOn(item, ctx.approvals, ctx.live);
-    if (asked && asked.outcome !== 'pending') push(<QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} />);
-    else push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />);
+    if (asked && asked.outcome !== 'pending') push(contained(item, <QuestionBlock id={item.id} asked={asked} className={ctx.arrival(item.id)} />));
+    else push(contained(item, <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />));
   }
   push(null);
   return out;
+}
+
+/** One transcript entry that fails alone; it draws again when the entry changes. */
+function contained(entry: { id: string }, node: ReactNode): ReactNode {
+  return <Contained key={entry.id} what="This message" of={entry}>{node}</Contained>;
 }
 
 /** Each reply's verdict, kept while its text is unchanged: the parse runs once per reply. */
