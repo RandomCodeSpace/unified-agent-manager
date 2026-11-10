@@ -156,7 +156,12 @@ type rejectedError struct{ err error }
 func (e rejectedError) Error() string { return e.err.Error() }
 func (e rejectedError) Unwrap() error { return e.err }
 
-type sdkClientAdapter struct{ c *copilot.Client }
+type sdkClientAdapter struct {
+	c *copilot.Client
+	// export is the CLI's usage export file, "" for none. One the CLI never
+	// wrote to is removed once the CLI has stopped.
+	export string
+}
 
 // ImportSupported probes optional CLI methods without opening a session.
 func (a sdkClientAdapter) ImportSupported(ctx context.Context) bool {
@@ -168,8 +173,14 @@ func (a sdkClientAdapter) ImportSupported(ctx context.Context) bool {
 }
 
 func (a sdkClientAdapter) Start(ctx context.Context) error { return a.c.Start(ctx) }
-func (a sdkClientAdapter) Stop() error                     { return a.c.Stop() }
-func (a sdkClientAdapter) ForceStop()                      { a.c.ForceStop() }
+func (a sdkClientAdapter) Stop() error {
+	err := a.c.Stop()
+	if err == nil {
+		removeEmptyExport(a.export)
+	}
+	return err
+}
+func (a sdkClientAdapter) ForceStop() { a.c.ForceStop(); removeEmptyExport(a.export) }
 
 func (a sdkClientAdapter) Ping(ctx context.Context) error {
 	_, err := a.c.Ping(ctx, "")
@@ -478,7 +489,11 @@ func sdkClientAt(path string, export bool) sdkClient {
 			log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
 		}
 	}
-	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+	if telemetry != nil && telemetry.FilePath != "" {
+		a.export = telemetry.FilePath
+	}
+	return a
 }
 
 // wsMaxAge caps the age (seconds) at which the CLI still reuses its model

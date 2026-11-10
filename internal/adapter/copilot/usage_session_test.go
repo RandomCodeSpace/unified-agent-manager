@@ -339,3 +339,52 @@ func TestUsageOwnershipFailureDoesNotWaitOnAHungDetach(t *testing.T) {
 		})
 	}
 }
+
+func TestUsageTelemetryPrunesOldEmptyExports(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".copilot", "otel")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-exportPruneAge - time.Hour)
+	files := map[string]string{"uam-old.jsonl": "", "uam-new.jsonl": "", "uam-kept.jsonl": "{}\n", "owner.jsonl": ""}
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if name != "uam-new.jsonl" {
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := usageTelemetry(nil, func() (string, error) { return home, nil }); err != nil {
+		t.Fatal(err)
+	}
+	for name := range files {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if gone := os.IsNotExist(err); gone != (name == "uam-old.jsonl") {
+			t.Fatalf("%s removed %t", name, gone)
+		}
+	}
+}
+
+func TestStoppedClientRemovesItsEmptyExport(t *testing.T) {
+	dir := t.TempDir()
+	empty, written := filepath.Join(dir, "uam-empty.jsonl"), filepath.Join(dir, "uam-written.jsonl")
+	for path, body := range map[string]string{empty: "", written: "{}\n"} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{empty, written} {
+		sdkClientAdapter{c: sdk.NewClient(&sdk.ClientOptions{Connection: sdk.URIConnection{URL: "localhost:1"}}), export: path}.ForceStop()
+	}
+	if _, err := os.Stat(empty); !os.IsNotExist(err) {
+		t.Fatalf("empty export kept: %v", err)
+	}
+	if _, err := os.Stat(written); err != nil {
+		t.Fatalf("written export removed: %v", err)
+	}
+}

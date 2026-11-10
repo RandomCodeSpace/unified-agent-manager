@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
@@ -112,6 +113,7 @@ func usageTelemetry(env []string, homeDir func() (string, error)) (*copilot.Tele
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create copilot usage directory: %w", err)
 	}
+	pruneEmptyExports(dir, time.Now().Add(-exportPruneAge))
 	file, err := os.CreateTemp(dir, "uam-*.jsonl")
 	if err != nil {
 		return nil, fmt.Errorf("create copilot usage export: %w", err)
@@ -121,4 +123,37 @@ func usageTelemetry(env []string, homeDir func() (string, error)) (*copilot.Tele
 		return nil, fmt.Errorf("close copilot usage export: %w", err)
 	}
 	return &copilot.TelemetryConfig{FilePath: file.Name(), ExporterType: "file", SourceName: "uam", CaptureContent: copilot.Bool(false)}, nil
+}
+
+// exportPruneAge is how old an empty usage export must be before a start
+// removes it: one a uam that did not stop its CLI left behind. A CLI that
+// writes nothing for a month has nothing to lose.
+const exportPruneAge = 30 * 24 * time.Hour
+
+// pruneEmptyExports removes uam's empty usage exports in dir last changed
+// before cutoff. Exports with content stay: they are usage history.
+func pruneEmptyExports(dir string, cutoff time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if ok, _ := filepath.Match("uam-*.jsonl", e.Name()); !ok || !e.Type().IsRegular() {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.Size() == 0 && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// removeEmptyExport removes the usage export at path if nothing was written
+// to it. Called only once its CLI has stopped.
+func removeEmptyExport(path string) {
+	if path == "" {
+		return
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Size() == 0 {
+		_ = os.Remove(path)
+	}
 }

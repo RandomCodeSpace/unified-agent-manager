@@ -177,7 +177,7 @@ func writeFrame(w io.Writer, msg any) error {
 // startFakeSDK connects the SDK client adapter to rt.
 func startFakeSDK(t *testing.T, rt *fakeRuntime) sdkClientAdapter {
 	t.Helper()
-	a := sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.URIConnection{URL: rt.addr}})}
+	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Connection: copilot.URIConnection{URL: rt.addr}})}
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
