@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	sdk "github.com/github/copilot-sdk/go"
@@ -298,5 +299,43 @@ func TestUsageOwnershipStoppedClientCannotReleaseReplacement(t *testing.T) {
 	}
 	if !slices.Equal(states["same-session"], []bool{true, true, false}) {
 		t.Fatalf("replacement release=%v", states)
+	}
+}
+
+// The SDK's detach has no deadline: an ownership failure returns by the
+// caller's deadline even when the CLI never answers the detach.
+func TestUsageOwnershipFailureDoesNotWaitOnAHungDetach(t *testing.T) {
+	for _, kind := range []string{"open", "utility"} {
+		t.Run(kind, func(t *testing.T) {
+			p, fc := titleProvider(func(context.Context, sdk.MessageOptions) (string, error) { return "", nil })
+			block := make(chan struct{})
+			t.Cleanup(func() { close(block); _ = p.Shutdown(context.Background()) })
+			fc.wrap = func(fs *fakeSession) sdkSession {
+				fs.disconnectHook = func() error { <-block; return nil }
+				return fs
+			}
+			failed := errors.New("ownership persistence failed")
+			p.SetUsageSessionRecorder(func(string, bool) error { return failed })
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				if kind == "utility" {
+					_, err = p.RunUtility(ctx, agentapi.UtilityRequest{Model: "test", Purpose: "title", Prompt: "synthetic"})
+				} else {
+					_, err = p.Open(ctx, agentapi.OpenRequest{SessionID: "uam-task", Model: "test", Events: &recSink{}})
+				}
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, failed) {
+					t.Fatalf("error=%v", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("the failure waited on the hung detach")
+			}
+		})
 	}
 }

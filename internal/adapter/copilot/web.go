@@ -989,7 +989,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	}
 	ready := time.Since(start)
 	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
-		_ = sess.Disconnect()
+		p.disconnectBounded(ctx, sess)
 		return "", fmt.Errorf("record copilot %s usage ownership: %w", purpose, err)
 	}
 	defer func() {
@@ -1317,7 +1317,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		if c.tools != nil {
 			c.tools.stop()
 		}
-		_ = sess.Disconnect()
+		p.disconnectBounded(ctx, sess)
 		return nil, fmt.Errorf("record copilot usage ownership: %w", err)
 	}
 	// Under mu: a subagent event may already start a task-list read.
@@ -3238,6 +3238,29 @@ func (c *conversation) release(ctx context.Context, perms []string, detached fun
 	case <-ctx.Done():
 		c.p.poke()
 		return fmt.Errorf("close copilot conversation: %w", ctx.Err())
+	}
+}
+
+// disconnectBounded detaches sess on an error path and waits until the
+// detach returns, ctx ends or webStopTimeout passes: the SDK's detach has no
+// deadline. A reopen of the session waits for a detach still in flight.
+func (p *webProvider) disconnectBounded(ctx context.Context, sess sdkSession) {
+	id := sess.ID()
+	detached := p.detachStarted(id)
+	done := make(chan struct{})
+	go func() {
+		defer log.Recover("copilot session disconnect", &p.mu)
+		defer detached()
+		defer close(done)
+		if err := sess.Disconnect(); err != nil {
+			log.Info("disconnect copilot session failed", "conversation", id, "error", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, webStopTimeout)
+	defer cancel()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }
 
