@@ -6,7 +6,7 @@ import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
-import { initialState, reducer, type Action } from './state';
+import { initialState, reducer, type Action, type Auth } from './state';
 import { AppContext, Dot, useLate, useMedia } from './components/common';
 import { ModelCallsContext } from './components/ModelPhase';
 import { MessageOutcomesContext, MessagePairsContext } from './components/Messages';
@@ -39,7 +39,9 @@ import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
 import { decodePath } from './lib/markdown';
+import { readJSON, writeJSON } from './lib/storage';
 import { useChangesSheet } from './lib/useChangesSheet';
+import { useDrawer, useSidebar } from './lib/useSidebar';
 import { Contained } from './components/VisualBoundary';
 import { keysTaken, popupOpen, sessionsUpdate } from './lib/overlays';
 import { EmptyPane, LoadingPane, LoadingVeil, PaneHeader, TerminalDock, ViewLoading } from './components/Panes';
@@ -50,7 +52,6 @@ export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overl
 const SettingsView = lazy(() => import('./components/Settings').then((m) => ({ default: m.SettingsView })));
 const RoutinesView = lazy(() => import('./components/Routines').then((m) => ({ default: m.RoutinesView })));
 
-type Auth = 'checking' | 'in' | 'out';
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
 /** `owner`: another machine's Task (connected instances), confirmed here and run against that machine. */
 type TaskDialog = { kind: 'delete' | 'close'; id: string; owner?: string } | null;
@@ -66,8 +67,6 @@ const COARSE = '(pointer: coarse)';
 /** When the owner last had each Task on screen, by this browser's clock: "Since you left" counts from it. */
 
 /** When this browser first ran the Task list's read tracking: a Task never opened here and changed since is unread. */
-
-const SIDEBAR_KEY = 'uam.sidebar';
 
 const HASH_PREFIX = '#task=';
 /** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
@@ -103,24 +102,6 @@ const conversation = () => {
   const section = document.querySelector<HTMLElement>('main section[aria-label="Conversation"]');
   return section && !section.closest('[inert]') ? section : document.querySelector<HTMLElement>('main');
 };
-
-function readJSON<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-/** Stores a value; full or blocked storage keeps it for this page only, never failing the caller. */
-function writeJSON(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage unavailable: kept for this page only.
-  }
-}
 
 /** The routines the fragment shows: a Project id, `all`, or null for another view. */
 function hashRoutines(path = window.location.hash): string | null {
@@ -190,22 +171,7 @@ export default function App() {
   const nextTerminalTask = useRef<string | null>(null);
   // Each opening is a dock of its own: one reopened while the last slides out starts a new shell.
   const [terminalOpens, setTerminalOpens] = useState(0);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  // Once opened, the drawer keeps its Thread list while closed (Sheet keepMounted): opening it again renders nothing new.
-  const [drawerKept, setDrawerKept] = useState(false);
-  if (drawerOpen && !drawerKept) setDrawerKept(true);
-  // On a narrow screen the list mounts in the closed drawer once the first snapshot is in and the page is idle, in a
-  // transition React renders in slices: the first opening then only slides it in, as later ones do.
-  useEffect(() => {
-    if (!narrow || drawerKept || !state.loaded) return;
-    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1000));
-    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
-    const handle = idle(() => startTransition(() => setDrawerKept(true)));
-    return () => cancel(handle);
-  }, [narrow, drawerKept, state.loaded]);
-  // The drawer itself takes focus as it opens, not its Hide button: focus moved there after a key press shows the
-  // button's tip, and Esc would close that tip instead of the drawer.
-  const drawer = useRef<HTMLDivElement>(null);
+  const { drawerOpen, setDrawerOpen, drawerKept, drawer } = useDrawer(narrow, state.loaded);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
@@ -217,13 +183,6 @@ export default function App() {
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const emptyWorkspace = state.loaded && state.sessions.length === 0;
-  const [sidebarState, setSidebarState] = useState(() => ({ emptyWorkspace, open: readJSON<boolean>(SIDEBAR_KEY, true) }));
-  // Apply the empty-workspace default only when entering it; subsequent snapshots preserve a manual toggle.
-  // The browser's saved preference still applies once a Task exists, and after signing in again.
-  if (sidebarState.emptyWorkspace !== emptyWorkspace) {
-    setSidebarState({ emptyWorkspace, open: emptyWorkspace ? false : readJSON<boolean>(SIDEBAR_KEY, true) });
-  }
-  const sidebarOpen = sidebarState.open;
   const [ownFilter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   // Under federation the filter is a Project on a machine (or a machine alone), kept by the owner; here it is that Project while its machine is on screen.
   const machineFilter = machines ? federation?.filter ?? null : undefined;
@@ -247,7 +206,6 @@ export default function App() {
   // `tick` refocuses its composer when New task is chosen again.
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
   const newTaskTick = useRef(0);
-  const aside = useRef<HTMLElement>(null);
   // A Task never opened in this browser counts as read up to the first visit, so a reload (the phone drops pages often) never forgets what finished meanwhile.
   const [loadedAt] = useState(() => {
     const since = readJSON<string | null>(VIEWED_SINCE_KEY, null);
@@ -352,31 +310,7 @@ export default function App() {
   }, [api, meta, federation?.homeVersion, federation?.homeLoadedVersion]);
   useEffect(() => { if (!api.owner && meta) onHomeVersion?.(meta.version); }, [api, meta, onHomeVersion]);
 
-  /**
-   * Collapses the sidebar to its icon rail or expands it (wide layout), remembered per browser.
-   * Focus on the sidebar or the rail moves to the other's toggle, so a keyboard user is never
-   * left on an inert or removed element; focus anywhere else (the composer) is left alone.
-   */
-  const toggleSidebar = useCallback(() => {
-    const next = !sidebarOpen;
-    setSidebarState((current) => ({ ...current, open: next }));
-    writeJSON(SIDEBAR_KEY, next);
-    if (aside.current?.contains(document.activeElement)) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
-  }, [sidebarOpen]);
-
-  // Ctrl/Cmd+B toggles the sidebar, or the drawer on a narrow screen.
-  useEffect(() => {
-    if (auth !== 'in') return;
-    const onKey = (e: KeyboardEvent) => {
-      const modifier = navigator.platform.startsWith('Mac') ? e.metaKey : e.ctrlKey;
-      if (!modifier || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b' || e.defaultPrevented || popupOpen()) return;
-      e.preventDefault();
-      if (narrow) setDrawerOpen((o) => !o);
-      else toggleSidebar();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [auth, narrow, toggleSidebar]);
+  const { sidebarOpen, toggleSidebar, aside } = useSidebar({ auth, narrow, emptyWorkspace, setDrawerOpen });
 
   // Start typing in the viewed Task without first clicking its message box.
   // Focus synchronously so the browser inserts the first character normally.
@@ -687,7 +621,7 @@ export default function App() {
       const buttons = document.querySelectorAll<HTMLElement>('[data-account-usage]');
       Array.from(buttons).find((button) => !button.closest('[inert], [aria-hidden="true"]'))?.click();
     });
-  }, [narrow]);
+  }, [narrow, setDrawerOpen]);
   const ownerSettings = useMemo(() => api.owner ? { ...state.settings, terminal: state.settings.terminal && api.supports('terminal-v1') } : state.settings, [api, state.settings]);
   const ctx = useMemo(
     () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage }),
@@ -739,7 +673,7 @@ export default function App() {
     setDrawerOpen(false);
     setDialog(d);
     setDialogOpen(true);
-  }, []);
+  }, [setDrawerOpen]);
   const openTaskDialog = useCallback((d: Exclude<TaskDialog, null>) => {
     setTaskDialog(d);
     setTaskDialogOpen(true);
@@ -778,7 +712,7 @@ export default function App() {
     setSettingsOpen(false);
     setRoutinesFor(null);
     setNewTask(null);
-  }, [recentTasks, setSheetOpen]);
+  }, [recentTasks, setSheetOpen, setDrawerOpen]);
 
   const openTask = useCallback((id: string) => select(id), [select]);
   /** Opens one of the selected Thread's subagents in its Conversation pane, or (null) goes back to the Thread: a move between views. */
@@ -811,7 +745,7 @@ export default function App() {
       setRoutinesFor(null);
       setNewTask(null);
     });
-  }, [noteOpener]);
+  }, [noteOpener, setDrawerOpen]);
   // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
   const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
   // A provider signed in as another account than the one this server is linked to blocks the app: only Settings stays open.
@@ -832,7 +766,7 @@ export default function App() {
       setSettingsOpen(false);
       setNewTask(null);
     });
-  }, [noteOpener]);
+  }, [noteOpener, setDrawerOpen]);
   // What gets focus back once a closed view has left the screen (undefined: no close pending).
   const restoreTo = useRef<HTMLElement | null | undefined>(undefined);
   /** Closes Settings or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
@@ -1324,7 +1258,7 @@ export default function App() {
         });
       },
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter, setDrawerOpen],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -1334,7 +1268,7 @@ export default function App() {
   const needsYouTasks = localNeedsYouTasks + (federation?.otherAttention ?? 0);
   // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
   // Held across renders, so the memoised Task header holds while the Task streams.
-  const leading = useMemo(() => (narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1 pointer-coarse:-ml-2.5" /> : null), [narrow, drawerOpen, needsYouTasks]);
+  const leading = useMemo(() => (narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1 pointer-coarse:-ml-2.5" /> : null), [narrow, drawerOpen, needsYouTasks, setDrawerOpen]);
   const attention = needsYouTasks;
   // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
   let shownName: string | null = null;
