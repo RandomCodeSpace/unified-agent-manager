@@ -541,6 +541,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     kept, and so is one another active Thread runs in. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
+  - A Thread whose branch has landed on the default branch settles itself
+    and its `uam/…` branch is removed with the worktree (see Settle below).
+    Using that Thread again, or branching from it, starts the branch again
+    from origin's default branch, which holds its work.
   - Worktrees earlier versions made in `~/.uam/worktrees` or the folder
     Settings named (`worktrees_dir` in `PATCH /api/settings`, still
     accepted) stay where they are and are still listed, removed on settling
@@ -555,7 +559,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
     20 worktrees removed on settling (one recreated since is listed only
-    with the others). Sizes are measured in the background.
+    with the others), each with its Thread and branch; "merged, branch
+    removed" (`branch_removed`) marks one whose branch went too. Sizes are measured in the background.
     Remove takes a worktree with nothing uncommitted at once and asks first
     when changes would be lost; it is refused while the Thread works.
   - Below 10% free space the Worktrees page in the Settings rail and the
@@ -1137,7 +1142,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   read-once hits, fuse trips, web_fetch hosts blocked, tool calls uam refused, Auto fallback
   questions asked and answered, Threads `uam_create_task` started or refused
   and their end notes, forks, rewinds, hunk reverts, settles (by you,
-  auto-settle or review), archives, budgets set and reached, handoffs,
+  auto-settle, merged work or review), branches removed once merged
+  (`merged_removed`) and Threads whose commits were kept because no merge
+  could be proven (`merged_kept`, once per Thread per run of uam), archives, budgets set and reached, handoffs,
   trail notes, suggested replies shown, manual compactions, notices by kind
   and pushes, CLI updates, update failures and restarts, and terminals
   opened; with the Utility log's calls by purpose and outcome (abstained and
@@ -1267,7 +1274,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   started with `uam_create_task` is readable in any Project. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
   Results carry compact summaries and outcomes, framed as data; a Thread row
-  has `settled_by` `"auto"` or `"reviewed"` when the Thread settled itself. They
+  has `settled_by` `"auto"`, `"merged"` or `"reviewed"` when the Thread settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
   positive. `who_touched` lists, first, the Threads whose edit-tool records
@@ -2337,6 +2344,31 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   doesn't count as activity, so the Thread keeps its last activity time. Its record says `settled_by: "auto"`; Reopen clears that and
   starts the 7 days again. Threads the removed done-check settle moved keep
   `settled_by: "reviewed"`.
+
+  A Thread in its own worktree whose work has landed on the Project's
+  default branch settles without waiting the 7 days (`settled_by:
+  "merged"`), and its worktree and its `uam/…` branch are removed; Settings
+  → Projects & worktrees lists the removal. The same hourly check does this,
+  under the same rule for what it skips. It reads only the refs already on
+  disk and fetches nothing: the default branch is origin's
+  (`refs/remotes/origin/HEAD`), as of the last fetch anyone made, and a
+  Project without one is left alone. The proof is one of two. Either the
+  branch's commit is in the default branch's history (a merge or a
+  fast-forward). Or, for a squash or a rebase, the branch differs from where
+  it left the default branch, and merging it into the default branch
+  (`git merge-tree`, nothing is checked out) is clean and changes nothing,
+  so the default branch already holds every change the branch made. Work
+  that never landed, commits made after the merge, and changes the default
+  branch reverted or changed again in the same lines do not pass; a
+  reverted merge still passes, as the default branch's history keeps its
+  commits. Everything is kept, and the Thread stays active, when the branch
+  never got a commit of its own, the worktree is on another branch or has a
+  changed or untracked file (ignored ones aside), a stash was made on the
+  branch, or git fails or cannot tell. Only the local `uam/…` branch made
+  for the Thread is removed, with `git branch -D` after the worktree is
+  gone and only while it is still at the proven commit; git refuses one
+  checked out in another worktree, which then stays. Settling by hand keeps
+  the branch as before.
 
   A Thread whose conversation is not open, such as a settled, archived or
   closed Thread, or any Thread after the service restarts, still shows its whole

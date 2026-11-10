@@ -407,8 +407,9 @@ type webSession struct {
 	stage                 string
 	settledAt, archivedAt time.Time
 	// settledBy is settledByAuto when the quiet-Task sweep settled it,
-	// settledByReviewed when the former done check's sweep did, "" when the
-	// owner did or it is not settled.
+	// settledByMerged when the merged-work sweep did, settledByReviewed when
+	// the former done check's sweep did, "" when the owner did or it is not
+	// settled.
 	settledBy string
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
@@ -1069,7 +1070,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
-			if web.SettledBy == settledByAuto || web.SettledBy == settledByReviewed {
+			if web.SettledBy == settledByAuto || web.SettledBy == settledByMerged || web.SettledBy == settledByReviewed {
 				s.settledBy = web.SettledBy
 			}
 		}
@@ -4870,7 +4871,8 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 
 // restageLocked moves s to stage to and returns the conversation to close
 // outside mu, or nil. by is who settles it: "" for the owner, settledByAuto
-// for the quiet-Task sweep, whose settle is not Task activity. The caller
+// for the quiet-Task sweep and settledByMerged for the merged-work sweep,
+// whose settles are not Task activity. The caller
 // holds s.op and mu and checked the stage s leaves.
 func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversation, error) {
 	before := m.summaryLocked(s)

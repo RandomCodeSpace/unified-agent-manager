@@ -16,9 +16,11 @@ Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
   files its edit tools touched and those its session tracking lists
   (`session_tracked: true`; shell writes included), still changed since the
   Thread started, its commits included. A row with
-  `settled_by: "auto"` settled itself after 7 days with no activity, and one
-  with `settled_by: "reviewed"` was settled by an older uam after the owner
-  saw it checked done. A Thread with unsaved git work of its own (files it
+  `settled_by: "auto"` settled itself after 7 days with no activity, one
+  with `settled_by: "merged"` settled itself once its `uam/…` branch was
+  merged into the default branch (its worktree and that branch are removed),
+  and one with `settled_by: "reviewed"` was settled by an older uam after the
+  owner saw it checked done. A Thread with unsaved git work of its own (files it
   changed that still differ from HEAD; in its own worktree, any uncommitted
   or unpushed work there) never settles itself, and the owner is asked
   before settling or archiving it.

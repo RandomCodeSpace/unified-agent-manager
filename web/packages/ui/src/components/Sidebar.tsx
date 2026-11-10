@@ -335,7 +335,7 @@ function shelfTip(s: SessionSummary, project: Project) {
 }
 
 /** Why the service settled a Task, in a Settled row's tip. */
-const SETTLED_BY = { auto: 'Settled automatically after 7 quiet days', reviewed: 'Settled after you reviewed it' } as const;
+const SETTLED_BY = { auto: 'Settled automatically after 7 quiet days', merged: 'Settled automatically once its branch was merged', reviewed: 'Settled after you reviewed it' } as const;
 
 /** This Task's own changes (contract C1), when the service reports them. */
 type DiffStat = { files: number; additions: number; deletions: number };
