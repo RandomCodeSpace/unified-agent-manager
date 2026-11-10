@@ -155,7 +155,7 @@ function WorktreeList({ list, total, measuring, onChanged }: Readonly<{ list: Wo
                   <span className="truncate font-mono text-code-sm text-muted" title={w.path}>{w.branch || w.path}</span>
                 </div>
                 <Pending w={w} />
-                <Button size="sm" variant={loses ? 'danger' : 'subtle'} aria-label={`Remove worktree ${w.branch || w.path}`} disabled={busy !== null} onClick={() => (loses ? confirm.ask(w) : void remove(w, false))}>
+                <Button size="sm" variant={loses ? 'danger' : 'subtle'} data-tone={loses ? 'error' : undefined} aria-label={`Remove worktree ${w.branch || w.path}`} disabled={busy !== null} onClick={() => (loses ? confirm.ask(w) : void remove(w, false))}>
                   Remove
                 </Button>
               </li>

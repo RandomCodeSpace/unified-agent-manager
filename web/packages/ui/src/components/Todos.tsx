@@ -38,7 +38,7 @@ const GLYPH: Record<TodoStatus, LucideIcon> = { in_progress: CircleDot, blocked:
 /** One short segment per row in its state's colour; the words beside it always say the same. */
 export function TodoMeter({ statuses, className }: Readonly<{ statuses: readonly TodoStatus[]; className?: string }>) {
   return (
-    <span aria-hidden="true" className={cn('flex shrink-0 items-center gap-0.5', className)}>
+    <span aria-hidden="true" data-todo-meter="" className={cn('flex shrink-0 items-center gap-0.5', className)}>
       {statuses.map((status, i) => (
         <span key={i} className={cn('h-1 w-3 rounded-full', TONE[status].fill)} />
       ))}
@@ -232,7 +232,7 @@ function Rails({ rows, links, lanes, focus, children }: Readonly<{ rows: readonl
             const end = gutter + 2;
             const lit = focus === null || focus === l.from || focus === l.to;
             return (
-              <g key={`${l.from}>${l.to}`} stroke="currentColor" className={cn(RAIL[l.kind], 'transition-opacity duration-100', !lit && 'opacity-25')}>
+              <g key={`${l.from}>${l.to}`} data-kind={l.kind} stroke="currentColor" className={cn(RAIL[l.kind], 'transition-opacity duration-100', !lit && 'opacity-25')}>
                 <path d={`M${end} ${from} H${x + r} Q${x} ${from} ${x} ${from + dir * r} V${to - dir * r} Q${x} ${to} ${x + r} ${to} H${end}`} />
                 <path d={`M${end - 3} ${to - 2.5} L${end} ${to} L${end - 3} ${to + 2.5}`} />
               </g>

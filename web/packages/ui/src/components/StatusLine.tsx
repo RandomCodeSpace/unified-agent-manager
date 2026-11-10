@@ -557,7 +557,7 @@ function Progress({ line, since }: Readonly<{ line: Line; since?: string }>) {
   const item = live?.item;
   const words = (
     <>
-      <span key={line.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
+      <span key={line.kind} aria-hidden="true" data-progress-words="" className="flex min-w-0 animate-fade-in items-center gap-2 sm:gap-2.5">
         {line.kind === 'working' ? <Working line={line} since={since} /> : line.kind === 'stopped' ? <Stopped line={line} /> : <Paused text={line.text} />}
       </span>
       <span className="sr-only">

@@ -96,8 +96,7 @@ describe('evidence inside Changes', () => {
     expect(vcs.getAllByRole('button')).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
     expect(log().queryByText('Ran the tests')).toBeNull();
-    expect(trigger.querySelector('.bg-warning')).not.toBeNull();
-    expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
+    expect(trigger.querySelector('[data-tone="warning"]')).not.toBeNull();
     await user.click(trigger);
     const card = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
     expect(card.queryByRole('region', { name: 'Commit' })).toBeNull();
@@ -207,7 +206,7 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByText('No tests, builds or linters ran in this turn.')).toBeNull();
     const trigger = within(screen.getByRole('group', { name: 'Version control' })).getByRole('button');
     // Nothing to review is no dot at all, not a grey one: the state never rests on colour alone.
-    expect(trigger.querySelector('.rounded-full')).toBeNull();
+    expect(trigger.querySelector('[data-tone]')).toBeNull();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
     evidence.mockRestore();
@@ -320,8 +319,7 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
     // The count is the Thread's own changed files, never its folder's; the dot is that there is something to look at.
     const trigger = await screen.findByRole('button', { name: /^Open changes, \d+ files?$/ });
-    await waitFor(() => expect(trigger.querySelector('.bg-warning')).not.toBeNull());
-    expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
+    await waitFor(() => expect(trigger.querySelector('[data-tone="warning"]')).not.toBeNull());
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });

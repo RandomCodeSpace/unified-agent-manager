@@ -98,7 +98,7 @@ test('a path with a cited line links to the file and marks the line in the previ
   expect(link.textContent).toBe('a.go:3');
   fireEvent.click(link);
   await screen.findByRole('button', { name: 'Close preview' });
-  await waitFor(() => expect(document.querySelector('li.font-medium')?.textContent).toBe('3'));
+  await waitFor(() => expect(document.querySelector('li[data-marked]')?.textContent).toBe('3'));
 });
 
 test('a bare name opens the one file the server says it means', async () => {

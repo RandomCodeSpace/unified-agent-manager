@@ -86,21 +86,20 @@ describe('the Task list', () => {
       const second = button.children[1] as HTMLElement;
       const status = first.lastElementChild as HTMLElement;
       expect(first.querySelector('[aria-hidden="true"]')).toBeTruthy();
-      expect(first.querySelector('.truncate')?.classList.contains('sr-only')).toBe(false);
+      // The Project's name after its badge is shown, not only read out.
+      expect(first.querySelector('[aria-hidden="true"] + span')?.classList.contains('sr-only')).toBe(false);
       expect(first.querySelector('time')).toBeNull();
       expect(second.querySelector('time')?.getAttribute('dateTime')).toBeTruthy();
       expect(status.textContent!.replace(/^, /, '')).toMatch(/^(Needs answer|Needs permission|Starting|Working|Compacting|Review|Finished|Error|Interrupted|Stopped|Closed|Idle)$/);
       expect(status.querySelector('svg[aria-hidden="true"], span[aria-hidden="true"]')).toBeTruthy();
-      expect(el.querySelector('[class*="line-clamp"]')).toBeNull();
       expect(button.hasAttribute('title')).toBe(false);
     }
     const example = row('t1').getByRole('button', { name: /Fix re-attach redraw regression/ });
     const [projectLine, taskLine] = Array.from(example.children) as HTMLElement[];
     expect(within(projectLine).getByText('unified-agent-manager')).toBeTruthy();
     expect(within(taskLine).getByText('Fix re-attach redraw regression')).toBeTruthy();
-    const branch = within(taskLine).getByText('feat/web-project-defaults-and-sidebar-revamp').parentElement!;
-    expect(branch.classList.contains('text-muted')).toBe(true);
-    expect(branch.classList.contains('font-normal')).toBe(true);
+    // The branch, quiet (css.test.mjs), with its whole name in the tip.
+    expect(within(taskLine).getByText('feat/web-project-defaults-and-sidebar-revamp')).toBeTruthy();
     expect(await tipOf(user, example)).toContain('feat/web-project-defaults-and-sidebar-revamp');
     // A project without a branch omits it, without adding a placeholder or third line.
     const noBranch = row('t6').getByRole('button', { name: /Tidy zsh startup/ });
@@ -139,14 +138,8 @@ describe('the Task list', () => {
     {
       const rows = side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]');
       expect(rows.length).toBeGreaterThan(0);
-      for (const el of rows) {
-        const card = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
-        expect(el.classList.contains('lift')).toBe(false);
-        expect(card.className).not.toMatch(/shadow-|ring-|bg-raised/);
-        const selected = card.getAttribute('aria-current') === 'true';
-        expect(card.classList.contains('bg-tint-selected')).toBe(selected);
-        expect(card.classList.contains('group-hover/row:bg-tint-hover')).toBe(!selected);
-      }
+      // Flat on the rail, only the open one tinted (css.test.mjs): the open one is the one current row.
+      expect([...rows].filter((el) => el.querySelector('button[data-nav]')!.getAttribute('aria-current') === 'true')).toHaveLength(1);
     }
     expect(document.querySelector('[data-task-row="t17"] button[data-nav]')!.getAttribute('aria-current')).toBe('true');
   });

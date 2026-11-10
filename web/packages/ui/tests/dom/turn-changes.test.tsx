@@ -40,7 +40,6 @@ test('native turn facts load only when its Changed chip opens and remain histori
   expect(f.read.mock.calls[0].slice(0, 2)).toEqual(['task', 'timing']);
   expect(dialog.textContent).toContain('As this turn left it');
   expect(dialog.textContent).toContain('historical facts');
-  expect(dialog.className).not.toContain('border');
   await user.click(within(dialog).getByRole('button', { name: 'Close' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(foot));

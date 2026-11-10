@@ -31,9 +31,9 @@ describe('UAM version and restart', () => {
   test('a newer version installed puts a dot on Settings and UAM and access, names both versions and offers Restart', async () => {
     const { user } = renderApp('?uam=installed#settings');
     const settings = await screen.findByRole('button', { name: 'Settings', description: NOTICE });
-    expect(settings.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
+    expect(settings.querySelector('[data-tone="warning"][aria-hidden="true"]')).toBeTruthy();
     const tab = screen.getByRole('button', { name: 'UAM and access', description: 'Restart available' });
-    expect(tab.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
+    expect(tab.querySelector('[data-tone="warning"][aria-hidden="true"]')).toBeTruthy();
     const group = await card();
     expect(await group.findByText('UAM v0.16.0 is installed (running dev-mock).')).toBeTruthy();
     await user.click(group.getByRole('button', { name: 'Restart' }));

@@ -55,7 +55,7 @@ describe('/btw', () => {
     expect(shown.getByText('did the tests pass?')).toBeTruthy();
     expect(shown.getByText('Waiting for the answer…')).toBeTruthy();
     // The wait is words here; the ring is the chip's alone.
-    expect(dialog.querySelector('.animate-spin')).toBeNull();
+    expect(dialog.querySelector('[data-spinner]')).toBeNull();
     expect(await shown.findByText(/TestDoctorDumbTerminal/)).toBeTruthy();
     expect(shown.getByRole('button', { name: 'About Asides', description: 'Never sent to the agent.' })).toBeTruthy();
     expect(questions(dialog)).toEqual([...KEPT, 'did the tests pass?']);
@@ -148,7 +148,7 @@ describe('/btw', () => {
     const chip = chips().find((c) => c.item === 'i6')!.chip;
     expect(chip.getAttribute('aria-label')).toBe('2 asides in this turn, one waiting for its answer');
     // The turn's ring is enough: the waiting aside is a still hourglass.
-    expect(chip.querySelector('.animate-spin')).toBeNull();
+    expect(chip.querySelector('[data-spinner]')).toBeNull();
     expect(chip.querySelector('.lucide-hourglass')).not.toBeNull();
     // One question waits at a time; the history still opens.
     await user.type(composer(), '/btw another{Enter}');

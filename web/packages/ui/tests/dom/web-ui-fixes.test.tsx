@@ -20,17 +20,11 @@ describe('sidebar shelves', () => {
   test('Settled sits under the Task list\'s scroller and scrolls on its own within 40% of the screen; there is no Done section', async () => {
     renderApp();
     const side = await sidebar();
+    // Each list scrolls in its own box, and a settled row is quiet by colour, not opacity (css.test.mjs).
     const tasks = document.querySelector('ul[aria-label="Unsettled threads"]')!.parentElement!;
-    expect(tasks.className).toContain('overflow-y-auto');
     expect(tasks.contains(side.getByRole('button', { name: /^Settled/ }))).toBe(false);
     expect(side.queryByRole('button', { name: /^Done/ })).toBeNull();
-    const rows = document.querySelector('nav[aria-label="Threads"] [data-task-row="t11"]')!.closest('ul')!.parentElement!;
-    expect(rows.className).toContain('overflow-y-auto');
-    expect(rows.className).toContain('max-h-[40dvh]');
-    // A settled row is quiet by colour, not opacity, so its title keeps AA.
-    const row = document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-task-row="t11"] button')!;
-    expect(row.className).not.toMatch(/(^|\s)opacity-/);
-    expect(row.className.split(' ')).toContain('text-muted');
+    expect(document.querySelector('nav[aria-label="Threads"] [data-task-row="t11"] button')).not.toBeNull();
   });
 });
 
@@ -168,16 +162,14 @@ describe('lightbox', () => {
     render(<Lightbox open onOpenChange={() => {}} title="Diagram" src={svg} alt="Diagram" size={{ width: 110, height: 160 }} />);
     // As wide as the room allows, and no wider than 78dvh tall at its aspect ratio.
     const image = screen.getByRole('img', { name: 'Diagram' });
+    // The box's width follows --fit, and a short window squeezes its height first, keeping the shape (css.test.mjs).
     expect(image.style.getPropertyValue('--fit')).toBe('53.625dvh');
-    expect(image.className).toContain('w-[min(94vw,1400px,var(--fit))]');
-    // A short window squeezes the box's height before its width: the drawing keeps its shape inside it.
-    expect(image.className).toContain('object-contain');
   });
 
   test('a picture without a size shows at most at its own size, so it never blurs', () => {
     render(<Lightbox open onOpenChange={() => {}} title="shot.png" src="/shot.png" alt="shot.png" />);
     const image = screen.getByRole('img', { name: 'shot.png' });
+    // No --fit: its own width (css.test.mjs).
     expect(image.style.getPropertyValue('--fit')).toBe('');
-    expect(image.className).toContain('w-auto');
   });
 });

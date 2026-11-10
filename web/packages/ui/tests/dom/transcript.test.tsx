@@ -186,14 +186,8 @@ describe('messages', () => {
     // The foot holds the copy button beside it, under the bubble.
     const foot = time.parentElement!;
     expect(within(foot).getByRole('button', { name: 'Copy message' })).toBeTruthy();
-    expect(bubble.querySelector('.bg-bubble')!.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Hover only, out of the flow: the row sits on the gap under the block and fades in with the pointer over the block.
-    expect(foot.className).toContain('absolute');
-    // The stamp keeps its size through the class merge, in the muted tone (faint is under AA for words).
-    expect(foot.className).toContain('text-stamp');
-    expect(foot.className).toContain('text-muted');
-    expect(foot.className).toContain('opacity-0');
-    expect(foot.className).toContain('group-hover/copy:opacity-100');
+    expect(within(bubble).getByText('Add a line to', { exact: false }).compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Hover only, out of the flow, in the muted stamp (css.test.mjs): the row sits on the gap under the block.
   });
 
   test("the turn's head carries when it ended, its time split, its tokens out and generation speed", async () => {
@@ -297,16 +291,14 @@ describe('messages', () => {
     const block = (title: string) => within(button).getByTitle(title);
     for (const [title, tone] of [['1 done', 'success'], ['1 blocked', 'warning'], ['1 to do', 'none']]) {
       expect(block(title).dataset.tone).toBe(tone);
-      // A fact: its fill is neutral, the tone is on its glyph.
-      expect(block(title).className).toContain('bg-tint-hover');
+      // A fact: its fill is neutral (css.test.mjs), the tone is on its glyph.
       expect(block(title).querySelector('svg')).toBeTruthy();
     }
     // The turn has ended, so nothing is in progress any more: that block keeps its glyph without the accent.
-    expect(block('1 in progress').className).not.toContain('accent');
+    expect(block('1 in progress').dataset.tone).not.toBe('accent');
     expect(block('1 in progress').querySelector('svg')).toBeTruthy();
-    // In the turn card's outcome row, in the flow and always in view.
-    const row = button.closest('[data-outcome]')!;
-    expect(row.className).not.toMatch(/absolute|opacity-0/);
+    // In the turn card's outcome row, in the flow and always in view (css.test.mjs).
+    expect(button.closest('[data-outcome]')).not.toBeNull();
 
     await user.click(button);
     const reader = await screen.findByRole('dialog', { name: 'Todo at the end of this turn' });
@@ -456,7 +448,7 @@ describe('messages', () => {
     const header = screen.getByRole('group', { name: /^State: / });
     const crumb = within(header).getByRole('button', { name: 'Doctor: add terminal line' });
     expect(within(header).getByRole('heading', { level: 1 }).textContent).toBe('Bump GitHub Actions pins');
-    expect(within(header).getByText('Error').className).toContain('text-error');
+    expect(within(header).getByText('Error').getAttribute('data-rung')).toBe('bad');
     expect(log().queryByText(/Started by another thread/)).toBeNull();
     await user.click(crumb);
     expect(await screen.findByRole('heading', { level: 1, name: 'Doctor: add terminal line' })).toBeTruthy();
@@ -673,8 +665,8 @@ describe('activity', () => {
     const failing = render(<ToolRow item={run('b1', { passed: 12, failed: 2 })} live={false} />);
     const counts = failing.getByTitle('12 passed · 2 failed');
     expect(counts.dataset.tone).toBe('error');
-    // A phone keeps the failures alone.
-    expect(counts.querySelector('.max-sm\\:hidden')?.textContent).toBe('12 passed · ');
+    // A phone keeps the failures alone (css.test.mjs).
+    expect(counts.textContent).toContain('12 passed · 2 failed');
     expect(failing.queryByText(/\d+\/\d+/)).toBeNull();
     failing.unmount();
     const passing = render(<ToolRow item={run('b2', { passed: 15, failed: 0 })} live={false} />);
@@ -764,8 +756,6 @@ describe('turn card', () => {
     const row = bar.querySelector('[data-outcome]') as HTMLElement;
     const head = headOf(view.getByText('Fixed both.'));
     expect(row.parentElement).toBe(head);
-    expect(`${head.className} ${row.className}`).not.toMatch(/\babsolute\b|opacity-0|whitespace-nowrap|\bh-6\b/);
-    expect(head.className).toContain('flex-wrap');
     expect(within(head).getByRole('button', { name: /activity of this turn/ }).compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(row).getByRole('button', { name: /^Changed/ })).toBeTruthy();
     expect(within(bar).getAllByRole('button', { name: /^Changed/ }).map((b) => b.getAttribute('aria-label'))).toEqual(['Changed 2 files +52 −3']);
@@ -802,8 +792,8 @@ describe('turn card', () => {
     const draw = (list: Item[]) => <Transcript sessionId="s" items={list} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" onOpenChanges={vi.fn()} />;
     const view = render(draw([items[0], patched(items[1], 12, 3), patched(items[2], 40, 0), items[3]]));
     const chip = within(outcomeOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files +52 −3' });
-    expect(within(chip).getByText('+52').className).toContain('text-success');
-    expect(within(chip).getByText('−3').className).toContain('text-error');
+    expect(within(chip).getByText('+52')).toBeTruthy();
+    expect(within(chip).getByText('−3')).toBeTruthy();
     // One call without recorded counts: the files alone, no guessed lines.
     view.rerender(draw([items[0], patched(items[1], 12, 3), items[2], items[3]]));
     expect(within(outcomeOf(view.getByText('Fixed both.')) as HTMLElement).getByRole('button', { name: 'Changed 2 files' })).toBeTruthy();
@@ -825,7 +815,7 @@ describe('turn card', () => {
     const running = card.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
     expect(within(running).queryByRole('button', { name: /^Changed/ })).toBeNull();
     expect(running.querySelector('[data-outcome], [data-no-record]')).toBeNull();
-    expect(card.querySelector('[data-outcome]')!.className).toContain('flex-wrap');
+    expect(card.querySelector('[data-outcome]')).not.toBeNull();
     view.rerender(<Transcript sessionId="s" items={[items[0], items[3]]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
     const bar = outcomeOf(view.getByText('Fixed both.')) as HTMLElement;
     expect(within(headOf(view.getByText('Fixed both.'))).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter(Boolean)).toEqual(['940 tokens, 235 tok/s', 'Copy message']);
@@ -846,7 +836,6 @@ describe('turn card', () => {
     await user.click(line);
     const claims = within(head).getByRole('list', { name: 'Claims with no record in this turn' });
     expect(claims.textContent).toContain('npm test');
-    expect(claims.className).toContain('basis-full');
     // `make build` exited 2: its red stamp is under the reply, not on the head.
     const stamps = view.getByRole('list', { name: 'Receipts' });
     expect(stamps.textContent).toContain('make build');
@@ -877,29 +866,23 @@ describe('turn card', () => {
       // Each run of notes shares one rail: the reply with a list between them stands whole and splits the runs.
       const runs = [...view.container.querySelectorAll('[data-notes]')];
       expect(runs.map((run) => [...run.querySelectorAll('[data-note]')].map((note) => note.getAttribute('data-history-anchor')))).toEqual([['n1', 'n2'], ['n4']]);
-      expect(runs[0].className).toContain('before:fade-rule-y');
-      // 13px and `muted`, never `faint`, under the words.
+      // 13px and `muted`, never `faint`, under the words (css.test.mjs).
       const note = noteOf(view, /Confirmed the bug/)!;
-      expect(note.className).toContain('text-ui');
-      expect(note.className).toContain('text-muted');
-      expect(note.className).not.toMatch(/text-faint|text-chat/);
       // Nothing of a note is folded away: both paragraphs, its code span and its link are there to read and use.
       expect(within(note as HTMLElement).getByText('Fixing it now:')).toBeTruthy();
       expect(within(noteOf(view, /I will start with/) as HTMLElement).getByText('secret-a.go').tagName).toBe('CODE');
       expect(within(noteOf(view, /I will start with/) as HTMLElement).getByRole('link', { name: 'the guide' }).getAttribute('href')).toBe('https://example.com/guide');
       const list = view.getByText('Two things are left:').closest('[data-history-anchor="n3"]')!;
       expect(list.hasAttribute('data-note')).toBe(false);
-      expect(list.className).toContain('text-chat');
       expect(list.closest('[data-notes]')).toBeNull();
       const last = view.getByText('Fixed both.').closest('[data-history-anchor="n5"]')!;
       expect(last.hasAttribute('data-note')).toBe(false);
-      expect(last.className).toContain('text-chat');
     });
 
     test('while the turn runs every reply keeps its size; the notes come only once it has ended', () => {
       const view = render(draw({ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }, true));
       expect(view.container.querySelector('[data-note], [data-notes]')).toBeNull();
-      expect(view.getByText('Checked the other file too.').closest('[data-history-anchor="n4"]')!.className).toContain('text-chat');
+      expect(view.getByText('Checked the other file too.').closest('[data-history-anchor="n4"]')!.hasAttribute('data-note')).toBe(false);
       view.rerender(draw(ended, false));
       expect(view.container.querySelectorAll('[data-note]')).toHaveLength(3);
     });
@@ -916,7 +899,7 @@ describe('turn card', () => {
     ])('an earlier reply with %s keeps its full treatment', (_, text) => {
       const view = render(<Transcript sessionId="s" items={[items[0], say('n1', 1, text), say('n2', 2, 'Looking further.'), say('n5', 8, 'Fixed both.')]} turnTimings={[ended]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
       expect([...view.container.querySelectorAll('[data-note]')].map((note) => note.getAttribute('data-history-anchor'))).toEqual(['n2']);
-      expect(view.container.querySelector('[data-history-anchor="n1"]')!.className).toContain('text-chat');
+      expect(view.container.querySelector('[data-history-anchor="n1"]')!.hasAttribute('data-note')).toBe(false);
     });
   });
 
@@ -936,7 +919,7 @@ describe('turn card', () => {
     const head = view.container.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
     expect(head.textContent).toMatch(/^Working/);
     expect(head.textContent).toContain('4,100 tokens · 52 tok/s');
-    expect(within(head).getByText('1 failed').className).toContain('text-error');
+    expect(within(head).getByText('1 failed')).toBeTruthy();
     expect(head.textContent).not.toContain('go test');
     // One step mark: the running step's dots, at the foot.
     expect(view.container.querySelectorAll('[data-step-mark]')).toHaveLength(1);
@@ -957,7 +940,6 @@ describe('turn card', () => {
     expect(counts().getAttribute('aria-label')).toBe('1 thought, 1 command, 1 failed. Show the activity of this turn');
     const head = view.container.querySelector('[data-history-anchor^="turn-head-"]') as HTMLElement;
     const failure = within(head).getByText('1 failed: --- FAIL: TestRedraw (0.01s)');
-    expect(failure.className).toContain('text-error');
     expect(failure.getAttribute('title')).toBe('--- FAIL: TestRedraw (0.01s)');
     expect(view.getByText('go vet ./...', { exact: false })).toBeTruthy();
   });

@@ -193,7 +193,6 @@ describe('pickers', () => {
     await user.type(composer(), '/share');
     const row = await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/share/ });
     expect(row.getAttribute('aria-disabled')).toBe('true');
-    expect(row.className).toContain('opacity-45');
     expect(await screen.findAllByText('Publishing and remote sessions are not supported by the web client')).not.toHaveLength(0);
   });
 
@@ -358,9 +357,8 @@ describe('settings in the toolbar', () => {
     };
     render(<UamApp />);
     const line = (await screen.findByText('Loading the model catalog…')).closest('output')!;
-    // Out of the flow over a bar in the pickers' 28px height, so the row, and the composer, do not move when they land.
-    expect(line.className).toContain('absolute');
-    expect(line.parentElement!.className).toContain('h-7');
+    // Out of the flow over a bar in the pickers' 28px height (css.test.mjs), so the row, and the composer, do not move when they land.
+    expect(line.parentElement!.firstElementChild!.getAttribute('aria-hidden')).toBe('true');
     release();
     expect(await screen.findByRole('button', { name: /^Model: Auto/ })).toBeTruthy();
     expect(screen.queryByText('Loading the model catalog…')).toBeNull();
@@ -378,20 +376,13 @@ describe('settings in the toolbar', () => {
       const model = await screen.findByRole('button', { name: /^Model: Auto/ });
       const row = model.parentElement!;
       await waitFor(() => expect(row.dataset.fold).toBe('execution tuning permissions more'));
-      // Each control names the fold that shortens it: the mode loses its execution word, then its label; effort and
-      // context its label; both move into More; the model's name goes last and may truncate only to a few letters.
+      // Each control names the fold that shortens it (css.test.mjs holds which): the mode loses its execution word, then its label;
+      // effort and context its label; both move into More; the model's name goes last and may truncate only to a few letters.
       const mode = document.getElementById('composer-mode')!;
-      expect(within(mode).getByText('· Interactive', { exact: false }).className).toContain('in-data-[fold~=execution]:hidden');
-      expect(within(mode).getByText('Safe', { exact: false }).className).toContain('in-data-[fold~=permissions]:hidden');
-      expect(mode.className).toContain('in-data-[fold~=more]:hidden');
-      const effort = document.getElementById('composer-effort-context')!;
-      expect(within(effort).getByText('Default').className).toContain('in-data-[fold~=tuning]:hidden');
-      expect(effort.className).toContain('in-data-[fold~=more]:hidden');
-      expect(document.getElementById('composer-more')!.className).toContain('sm:in-data-[fold~=more]:inline-flex');
-      const name = within(model).getByText('Auto');
-      expect(name.hasAttribute('data-squeeze')).toBe(true);
-      expect(name.className).toContain('in-data-[fold~=model]:hidden');
-      expect(row.className).toContain('data-[fold~=wrap]:flex-wrap');
+      expect(within(mode).getByText('· Interactive', { exact: false })).toBeTruthy();
+      expect(within(document.getElementById('composer-effort-context')!).getByText('Default')).toBeTruthy();
+      expect(document.getElementById('composer-more')).toBeTruthy();
+      expect(within(model).getByText('Auto').hasAttribute('data-squeeze')).toBe(true);
       expect(screen.getByRole('button', { name: 'Send now' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'More send options' })).toBeTruthy();
     } finally {

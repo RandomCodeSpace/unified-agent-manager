@@ -18,7 +18,7 @@ test('the live reader groups the rows by the turn that added them, newest first,
   const { reader } = await openReader();
   const regions = within(reader).getAllByRole('region');
   expect(regions.map((r) => r.getAttribute('aria-label')!.replace(/ · .*/, ''))).toEqual(['Turn 4', 'Turn 2', 'Turn 1']);
-  expect(reader.querySelector('p.pl-6')!.textContent).toBe('3 turns');
+  expect(within(reader).getByText('3 turns', { selector: 'p' })).toBeTruthy();
   // One gutter across the sections links the open rows: the linter's two waits and the summary's three (a wait on a done row is met).
   await waitFor(() => expect(reader.querySelectorAll('svg[aria-hidden] > g')).toHaveLength(5));
   const [latest, second, first] = regions.map((r) => within(r));

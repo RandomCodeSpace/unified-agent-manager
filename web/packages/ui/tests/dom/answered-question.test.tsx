@@ -19,8 +19,6 @@ describe('a settled question', () => {
     expect(card().getByText('8000')).toBeTruthy();
     expect(card().getByText('8080')).toBeTruthy();
     expect(card().queryByRole('button')).toBeNull();
-    // Only a settled question takes the darker tint-well surface; waiting, it stays raised.
-    expect(screen.getByRole('region', { name: 'Question' }).classList).toContain('bg-raised');
   });
 
   test('a chosen option reads "You chose" with its label; the button names the whole question and answer', () => {
@@ -80,7 +78,7 @@ describe('a settled question', () => {
 
   test('a call left open by a stopped turn reads "Not answered"', () => {
     draw(ask('Which port?', ['8000'], { status: 'running' }), undefined, false);
-    expect(card().getByText('Not answered').className).toContain('text-muted');
+    expect(card().getByText('Not answered')).toBeTruthy();
   });
 
   test('the service\'s bare "answered" is not shown as the answer', () => {

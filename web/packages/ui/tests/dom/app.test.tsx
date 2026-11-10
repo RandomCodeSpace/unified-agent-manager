@@ -385,7 +385,7 @@ describe('new task', () => {
     await user.keyboard('{Alt>}n{/Alt}');
     const palette = within(await screen.findByRole('dialog'));
     const last = palette.getAllByRole('option').at(-1)!;
-    const name = last.querySelector('.text-ink')!.textContent!;
+    const name = last.querySelector('[title]')!.previousElementSibling!.textContent!;
     const key = within(last).getByText(/^Alt\+\d$/).textContent;
     const search = palette.getByRole('combobox', { name: 'Search projects' });
     await user.type(search, name);
@@ -533,13 +533,12 @@ describe('phone drawer', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Projects' })).toBeNull());
     expect(drawer.isConnected).toBe(true);
     expect(drawer.getAttribute('aria-hidden')).toBe('true');
-    expect(drawer.className).toContain('[content-visibility:hidden]');
     // Closed, it is no open popup: the page's shortcuts work again.
     expect(drawer.hasAttribute('data-popup')).toBe(false);
     expect(rows()).toBe(all);
     await user.click(toggle);
     expect(await screen.findByRole('dialog', { name: 'Projects' })).toBe(drawer);
-    expect(drawer.className).not.toContain('[content-visibility:hidden]');
+    expect(drawer.hasAttribute('aria-hidden')).toBe(false);
   });
 
   test('Esc closes it every time and focus goes back to its toggle', async () => {

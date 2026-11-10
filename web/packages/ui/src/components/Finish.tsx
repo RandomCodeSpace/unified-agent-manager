@@ -117,7 +117,7 @@ export function ChangesButton({ label, compact, sheetOpen, changes, evidenceAvai
       {label && !compact && <span>Changes</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
       {/* A dot only when there is something to review: its presence, not its colour, carries the state. */}
-      {needsReview && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />}
+      {needsReview && <span aria-hidden="true" data-tone="warning" className="size-1.5 shrink-0 rounded-full bg-warning" />}
     </Button>
   );
 }
