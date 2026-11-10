@@ -16,7 +16,7 @@ import { NewTaskPalette } from './components/ProjectPicker';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { newTaskKey, parseDraft, serializeDraft } from './lib/drafts';
-import { needsYouCount, newTaskProject as paletteStart, pageTitle, putAwayWork, tasksOf } from './lib/tasks';
+import { needsYouCount, newTaskProject as paletteStart, putAwayWork, tasksOf } from './lib/tasks';
 import { setViewing, startNotifications } from './lib/notify';
 import { clearArchive, forgetArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -35,6 +35,7 @@ import { useEventStream, type SweptMembership } from './lib/useEventStream';
 import { useMachineActions } from './lib/useMachineActions';
 import { useMeta } from './lib/useMeta';
 import { COARSE, useNewTask, type NewTaskDraft } from './lib/useNewTask';
+import { usePageTitle } from './lib/usePageTitle';
 import { useReadMarks } from './lib/useReadMarks';
 import { ALL_ROUTINES, HASH_PREFIX, SETTINGS_HASH, hashAgent, hashRoutines, hashSelection, useHashRoute } from './lib/useHashRoute';
 import { useDrawer, useSidebar } from './lib/useSidebar';
@@ -370,7 +371,6 @@ export default function App() {
   }, [mismatched, select, onlyProject, projectCount, pickProject]);
   useThreadKeys({ auth, openNewTask, federation, machines, machineFilter, here, projects: state.projects, sessions: state.sessions, filter, hasNews, selectedId: state.selectedId, select });
 
-
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
   const runTask = useCallback(async (id: string, op: () => Promise<SessionSummary | void>, verb: string) => {
     setBusyTasks((b) => ({ ...b, [id]: true }));
@@ -509,19 +509,7 @@ export default function App() {
   else if (selected) shownName = taskName(selected);
   // The sign-in screen has the plain title, also when the session ended under an open view.
   const loggedOut = auth === 'out';
-  useEffect(() => {
-    document.title = loggedOut ? pageTitle(0, null) : pageTitle(attention, shownName);
-    // The badge is this page's count while it is visible; otherwise the service worker sets the service's count with each push (public/sw.js).
-    const badge = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
-      else navigator.clearAppBadge?.().catch(() => {});
-    };
-    badge();
-    document.addEventListener('visibilitychange', badge);
-    return () => document.removeEventListener('visibilitychange', badge);
-  }, [attention, shownName, loggedOut]);
-
+  usePageTitle(attention, shownName, loggedOut);
 
   if (auth === 'checking') {
     return (
