@@ -386,7 +386,7 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	if entry == nil {
 		return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not a changed file in this working tree")
 	}
-	args := []string{"diff", noExtDiff, noTextconv, noColor}
+	args := []string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor}
 	if entry.untracked || !repo.hasHead {
 		args = append(args, "--no-index", "--", "/dev/null", entry.path)
 	} else {

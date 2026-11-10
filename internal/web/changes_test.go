@@ -255,6 +255,32 @@ func TestWorkspaceDiffTreatsGitReportedNamesAsPaths(t *testing.T) {
 	}
 }
 
+// A changed tracked file whose name reads as a pattern is diffed alone.
+func TestWorkspaceDiffOfATrackedFileIsLiteral(t *testing.T) {
+	repo := gitRepoFixture(t)
+	for _, name := range []string{"*", "[ab].ts", "a.ts", ":(glob)*"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("old\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, repo, "add", "--", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "patterns")
+	for _, name := range []string{"*", "[ab].ts", "a.ts", ":(glob)*"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("new "+name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"*", "[ab].ts", ":(glob)*"} {
+		diff, err := workspaceFileDiff(t.Context(), repo, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(diff.Patch, "diff --git ") != 1 || !strings.Contains(diff.Patch, "+new "+name+"\n") {
+			t.Fatalf("%s: diff = %q", name, diff.Patch)
+		}
+	}
+}
+
 // gitIn runs git in dir without the user's configuration.
 func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
