@@ -254,3 +254,100 @@ func TestWebStallWatchIgnoresAToolLeftOverFromAnEarlierTurn(t *testing.T) {
 	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "0"}))
 	waitFor(t, "the abort of the stalled request", func() bool { return h.fs.abortCount() == before+1 })
 }
+
+// adaptiveStall makes the adaptive stall bound test-sized: floor once a
+// request has answered quickly, ceiling before that.
+func adaptiveStall(t *testing.T, floor, ceiling time.Duration) {
+	t.Helper()
+	shortStop(t)
+	after, low := webStallAfter, webStallMin
+	webStallAfter, webStallMin = ceiling, floor
+	t.Cleanup(func() { webStallAfter, webStallMin = after, low })
+}
+
+// quickAnswer runs a turn whose model request answers at once, which brings
+// the stall bound down to its floor.
+func quickAnswer(t *testing.T, h webHarness) {
+	t.Helper()
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-quick", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("msg-quick", &rpc.AssistantMessageData{Content: "quick", MessageID: "m-quick"}))
+	h.fs.onEvent(ev("idle-quick", &rpc.AssistantIdleData{}))
+}
+
+func stallBound(h webHarness) time.Duration {
+	conv := h.conv.(*conversation)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	return conv.stallBoundLocked()
+}
+
+// A request slower than the adapted bound is aborted once. Its retry gets
+// the full bound, so a slow but healthy request is not aborted a second time
+// and the turn goes on; its answer then raises the bound.
+func TestWebRetriedRequestGetsTheFullStallBound(t *testing.T) {
+	adaptiveStall(t, 150*time.Millisecond, 3*time.Second)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the abort at the adapted bound", func() bool { return h.fs.abortCount() == 1 })
+	abortedIdle(h, 1)
+	waitFor(t, "the continuation", func() bool { return len(h.fs.sentMessages()) == 3 })
+	continuation(h, "retry-1")
+	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	time.Sleep(4 * webStallMin)
+	if n := h.fs.abortCount(); n != 1 {
+		t.Fatalf("the retried request was aborted too: aborts = %d", n)
+	}
+	h.fs.onEvent(ev("msg-1", &rpc.AssistantMessageData{Content: "slow but here", MessageID: "m-1"}))
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCompleted || turn.StallGaveUp {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got <= webStallMin {
+		t.Fatalf("bound after the slow answer = %v, want above the floor %v", got, webStallMin)
+	}
+}
+
+// The abort that gives a twice-stalled turn up is no answer: it does not
+// raise the bound for the rest of the conversation.
+func TestWebGivenUpStallDoesNotSizeTheBound(t *testing.T) {
+	adaptiveStall(t, 50*time.Millisecond, 800*time.Millisecond)
+	h := openWeb(t)
+	quickAnswer(t, h)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	waitFor(t, "the first abort", func() bool { return h.fs.abortCount() == 1 })
+	abortedIdle(h, 1)
+	waitFor(t, "the continuation", func() bool { return len(h.fs.sentMessages()) == 3 })
+	continuation(h, "retry-1")
+	h.fs.onEvent(ev("ts-2", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	waitFor(t, "the second abort", func() bool { return h.fs.abortCount() == 2 })
+	abortedIdle(h, 2)
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled || !turn.StallGaveUp {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got >= webStallAfter {
+		t.Fatalf("bound after a give-up = %v, the ceiling", got)
+	}
+}
+
+// A Stop while the model is silent is no answer either: a conversation no
+// request has answered in keeps the full bound.
+func TestWebStopDoesNotSizeTheStallBound(t *testing.T) {
+	adaptiveStall(t, 50*time.Millisecond, 3*time.Second)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("ts-1", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	abortedIdle(h, 1)
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if got := stallBound(h); got != webStallAfter {
+		t.Fatalf("bound after a Stop = %v, want %v", got, webStallAfter)
+	}
+}

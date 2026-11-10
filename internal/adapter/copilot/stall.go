@@ -31,9 +31,11 @@ var webStallMin = time.Minute
 // silent before it counts as stalled: webStallAfter until the conversation
 // has seen a request answered, then four times the longest silence an
 // answered request showed, within webStallMin and webStallAfter. A Thread
-// whose requests answer in seconds no longer waits three minutes.
+// whose requests answer in seconds no longer waits three minutes. After a
+// stall uam retried, the turn's requests get webStallAfter again: the request
+// may have been slow and not stalled, and its answer then sizes the bound.
 func (c *conversation) stallBoundLocked() time.Duration {
-	if c.modelGapMax <= 0 {
+	if c.modelGapMax <= 0 || c.stall.retries > 0 {
 		return webStallAfter
 	}
 	return min(webStallAfter, max(webStallMin, 4*c.modelGapMax))

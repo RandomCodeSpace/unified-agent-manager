@@ -3702,9 +3702,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	// An event while the main agent waits on the model is an answer of
-	// sorts; the silence before it sizes the stall bound. The abort of a
-	// stalled request is not one.
-	if !c.modelWaitAt.IsZero() && !c.stall.aborting {
+	// sorts; the silence before it sizes the stall bound. An abort is not
+	// one: uam's of a stalled request, retried or given up, or a Stop's.
+	if !c.modelWaitAt.IsZero() && !c.stall.aborting && c.stall.note == "" && !c.stopPendingLocked() {
 		c.modelGapMax = max(c.modelGapMax, time.Since(c.lastEventAt))
 	}
 	c.lastEvent, c.lastEventAt = string(ev.Type()), time.Now()
