@@ -158,6 +158,8 @@
 
   --spacing-rail: 384px;
   --spacing-rail-collapsed: 48px;
+  /* The notebook layout's gutter (lib/layout): a turn's number, state and time; the composer's cell keeps the same one. */
+  --spacing-gutter: 6.5rem;
   --spacing-drawer: 300px;
   --spacing-header: 44px;
   --spacing-sheet: 440px;
