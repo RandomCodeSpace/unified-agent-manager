@@ -1894,6 +1894,10 @@ export const UPDATE_EVENTS = [
 export const PROMPT_TIMEOUT_MS = 30_000;
 /** How long a read waits for its answer, headers and body: longer than any bound the service puts on one. */
 export const READ_TIMEOUT_MS = 60_000;
+/** How long a write waits: longer than the steps the service runs for one (30 s a control step, a few in a row; 45 s for MCP; 75 s for a draft). */
+export const WRITE_TIMEOUT_MS = 120_000;
+/** The same for a write that opens or starts a session, sends to it, or runs git with hooks or an installer: up to 2 minutes a step, two in a row. */
+export const LONG_WRITE_TIMEOUT_MS = 300_000;
 
 export class ApiError extends Error {
   status: number;
@@ -2285,28 +2289,35 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     return owner ? homeTransport<T>(method, path, body) : call<T>(method, path, body);
   }
   /**
-   * `run` is given up on after READ_TIMEOUT_MS: on a connection that died without a close it would wait for good,
-   * holding its place among the reads (lib/reads.ts). `signal` cancels it as before.
+   * `run` is given up on after `limit`: on a connection that died without a close it would wait for good,
+   * holding its place among the reads (lib/reads.ts). `signal` cancels it as before. The service may still
+   * finish a `write` given up on, so its error says the outcome is not known, and nothing here sends it again.
    */
-  async function bounded<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async function bounded<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>, limit = READ_TIMEOUT_MS, write = false): Promise<T> {
     const late = new AbortController();
     const cancel = () => late.abort(signal?.reason);
     if (signal?.aborted) cancel();
     else signal?.addEventListener('abort', cancel, { once: true });
-    const timer = setTimeout(() => late.abort(), READ_TIMEOUT_MS);
+    const timer = setTimeout(() => late.abort(), limit);
     try {
       return await run(late.signal);
     } catch (error) {
-      if (late.signal.aborted && !signal?.aborted) throw report(new ApiError(0, `The server did not answer in ${READ_TIMEOUT_MS / 1000} seconds`));
+      if (late.signal.aborted && !signal?.aborted) {
+        throw report(new ApiError(0, write ? `The server did not answer in ${limit / 60_000} minutes, so it is not known whether this was done` : `The server did not answer in ${limit / 1000} seconds`));
+      }
       throw error;
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', cancel);
     }
   }
-  /** A read (every GET, and a POST that only reads) is bounded; a write may run long by design (a git push, a model's answer) and is not. */
-  function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal, read = method === 'GET'): Promise<T> {
-    return read ? bounded(signal, (limited) => exchange<T>(method, path, body, omitBody, limited)) : exchange<T>(method, path, body, omitBody, signal);
+  /** A read is every GET, and a POST that only reads; anything else is a write, bounded by `limit`. */
+  function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal, read = method === 'GET', limit = read ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS): Promise<T> {
+    return bounded(signal, (limited) => exchange<T>(method, path, body, omitBody, limited), limit, !read);
+  }
+  /** A write that may run long by design (see LONG_WRITE_TIMEOUT_MS). */
+  function slow<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    return call<T>('POST', path, body, false, signal, false, LONG_WRITE_TIMEOUT_MS);
   }
   async function exchange<T>(method: Method, path: string, body: unknown, omitBody: boolean, signal?: AbortSignal): Promise<T> {
     // Existing DELETE routes are bodyless; revision-checked deletes carry JSON.
@@ -2490,9 +2501,9 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     gitlabPipelineDetail: (id: string, pipelineId: number, signal?: AbortSignal) => call<GitLabPipelineDetail>('GET', `/api/sessions/${enc(id)}/gitlab/pipelines/${pipelineId}`, undefined, false, signal),
     postGitlabComment: (id: string, iid: number, body: { commit_sha: string; discussion_id?: string; body: string }) => call<{ discussion_id?: string; note_id?: number }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/comments`, body),
     resolveGitlabThread: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; resolved: boolean }) => call<{ resolved: boolean }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/resolve`, body),
-    gitlabReviewAction: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; action: GitLabReviewAction; request_id: string; mode: 'send' | 'queue' }) => call<Submission>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/actions`, body),
+    gitlabReviewAction: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; action: GitLabReviewAction; request_id: string; mode: 'send' | 'queue' }) => slow<Submission>(`/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/actions`, body),
     refreshGitlabPipeline: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('POST', `/api/sessions/${enc(id)}/gitlab/refresh`, undefined, false, signal),
-    investigateGitlabPipeline: (id: string, commitSHA: string, pipelineId: number) => call<{ task_id: string }>('POST', `/api/sessions/${enc(id)}/gitlab/investigate`, { commit_sha: commitSHA, pipeline_id: pipelineId }),
+    investigateGitlabPipeline: (id: string, commitSHA: string, pipelineId: number) => slow<{ task_id: string }>(`/api/sessions/${enc(id)}/gitlab/investigate`, { commit_sha: commitSHA, pipeline_id: pipelineId }),
     /** Without a commit: a job of any pipeline of the Thread's project (`gitlab-items-v1`). */
     gitlabJobTrace: (id: string, jobId: number, commitSHA: string | undefined, pipelineId: number, signal?: AbortSignal) => call<{ text: string; truncated: boolean }>('GET', `/api/sessions/${enc(id)}/gitlab/jobs/${jobId}/trace?${commitSHA ? `commit_sha=${enc(commitSHA)}&` : ''}pipeline_id=${pipelineId}`, undefined, false, signal),
     /** Without `bodies`, agents and skills are listed without `content` (hook and instruction files keep theirs). */
@@ -2511,8 +2522,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     deleteConfiguration: (kind: ConfigurationKind, name: string, revision: string, projectId = '', path?: string) => call<void>('DELETE', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { revision, ...(path ? { path } : {}) }),
     /** Copilot's global disabled-skills setting for one name; applies to every skill with that name and changes no file. */
     setSkillGloballyDisabled: (name: string, disabled: boolean, projectId = '') => call<void>('POST', `/api/configuration/skills/global-disabled${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { name, disabled }),
-    listSkills: (source: string, projectId = '') => call<{ output: string }>('POST', `/api/configuration/skills/list${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source }),
-    installSkills: (source: string, skills: string[], projectId = '') => call<{ output: string; installed: string[] }>('POST', `/api/configuration/skills/install${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source, skills }),
+    listSkills: (source: string, projectId = '') => slow<{ output: string }>(`/api/configuration/skills/list${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source }),
+    installSkills: (source: string, skills: string[], projectId = '') => slow<{ output: string; installed: string[] }>(`/api/configuration/skills/install${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source, skills }),
     /** The service refuses an unknown key or value with 400 and changes nothing. */
     updateWebSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
     /** The model IDs an OpenAI-compatible endpoint lists; the service fetches them with the named key variable. */
@@ -2527,7 +2538,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Settings → Worktrees: the Thread worktrees, the disk and the ones removed on settling. */
     worktrees: () => call<Worktrees>('GET', '/api/worktrees'),
     /** Removes a listed worktree, keeping its branch; one with changes needs `force` (409 `worktree_unsaved` without). */
-    removeWorktree: (path: string, force: boolean) => call<void>('POST', '/api/worktrees/remove', { path, force }),
+    removeWorktree: (path: string, force: boolean) => slow<void>('/api/worktrees/remove', { path, force }),
     /** Settings → Session stats: scans every Copilot session journal on the server and rewrites its key=value file. */
     sessionStats: () => call<SessionStats>('GET', '/api/session-stats'),
     pushKey: () => call<{ public_key: string }>('GET', '/api/push'),
@@ -2550,7 +2561,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       request_id: string;
       /** Where the Thread runs; absent is the Project's current branch. */
       place?: ThreadPlace;
-    }) => call<SessionSummary>('POST', '/api/sessions', body),
+    }) => slow<SessionSummary>('/api/sessions', body),
 
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
@@ -2560,7 +2571,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     taskAgents: (projectId: string, provider: string) =>
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
     /** `force`: settle or archive even though the Thread has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
-    stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`, body),
+    stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => slow<SessionSummary>(`/api/sessions/${enc(id)}/${action}`, body),
     /** Archive's dry run: the 409 `unsaved_work` an unforced Archive would meet now (see `unsavedRefusal`), else nothing; nothing moves. */
     archiveCheck: (id: string) => call<void>('GET', `/api/sessions/${enc(id)}/archive`),
     messagePair: (id: string, action: 'allow' | 'deny' | 'reset', link = false) => call<MessagePair | undefined>('POST', `/api/message-pairs/${enc(id)}/${action}`, action === 'allow' ? { link } : undefined),
@@ -2571,19 +2582,19 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Replies to send next for the Task's last completed turn; the service asks the Utility model once per state. */
     suggestions: (id: string, signal?: AbortSignal) => call<Suggestions>('POST', `/api/sessions/${enc(id)}/suggestions`, undefined, false, signal),
     /** A new Task in the same Project with the same settings (or `model`) whose first message is this Task's last one. */
-    rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
-    fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/fork`, body),
+    rerun: (id: string, body: { model?: string; request_id: string }) => slow<SessionSummary>(`/api/sessions/${enc(id)}/rerun`, body),
+    fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => slow<SessionSummary>(`/api/sessions/${enc(id)}/fork`, body),
     /** Clears the unresolved branch request for this reply and model; a Copilot session may still exist for it. */
     dismissFork: (id: string, body: { user_item_id: string; model: string }) => call<void>('POST', `/api/sessions/${enc(id)}/fork/dismiss`, body),
     /** Readonly: what rewinding to before this owner message would remove and restore. */
     rewindPreview: (id: string, userItemId: string, signal?: AbortSignal) => call<RewindPreview>('GET', `/api/sessions/${enc(id)}/rewind/preview?user_item_id=${enc(userItemId)}`, undefined, false, signal),
     /** Executes a confirmed preview once; a repeated request ID returns its receipt. */
-    rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind`, body),
+    rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => slow<RewindReceipt>(`/api/sessions/${enc(id)}/rewind`, body),
     /** Rereads the conversation and releases a Task held by an applied or uncertain rewind; never rewinds again. */
     /** Rewinds to before an owner prompt, then sends the edited prompt once; nothing is sent unless history was truncated. */
     resend: (id: string, body: { rewind: { user_item_id: string; mode: RewindMode; token: string; request_id: string }; prompt: { text: string; request_id: string; files?: string[]; attachments?: string[]; settings?: PromptSettings } }) =>
-      call<ResendResult>('POST', `/api/sessions/${enc(id)}/resend`, body),
-    reconcileRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
+      slow<ResendResult>(`/api/sessions/${enc(id)}/resend`, body),
+    reconcileRewind: (id: string, requestId: string) => slow<RewindReceipt>(`/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
     /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
     releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
@@ -2606,7 +2617,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     },
     /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */
     command: (id: string, name: string, args: string, request_id: string, extras: PromptExtras = {}) =>
-      call<Submission>('POST', `/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),
+      slow<Submission>(`/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),
     commands: async (id: string) => (await call<{ commands: Command[] }>('GET', `/api/sessions/${enc(id)}/commands`)).commands,
     files: (id: string, q: string, limit = 50, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`, undefined, false, signal),
     /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
@@ -2615,7 +2626,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The branches a new worktree can start from, local and remote, most recently committed first. */
     projectBranches: (id: string, signal?: AbortSignal) => call<BranchList>('GET', `/api/projects/${enc(id)}/branches`, undefined, false, signal),
     /** Switches the Project folder a started Thread runs in to a new `uam/…` branch or an existing one, at once; 409 with the reason while it cannot (`branch_busy`, `branch_dirty`). */
-    switchBranch: (id: string, place: { mode: 'branch' } | { mode: 'switch'; branch: string; remote?: boolean }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/git/branch`, place),
+    switchBranch: (id: string, place: { mode: 'branch' } | { mode: 'switch'; branch: string; remote?: boolean }) => slow<SessionSummary>(`/api/sessions/${enc(id)}/git/branch`, place),
     /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */
     tree: (id: string, dir: string, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files/tree?dir=${enc(dir)}`, undefined, false, signal),
     upload: uploadFile,
@@ -2654,7 +2665,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Puts back one hunk (as the task scope's patch shows it, from its @@ line), or without one the whole file; 409 when the file changed since. */
     revertChange: (id: string, path: string, hunk?: string, signal?: AbortSignal) =>
       call<void>('POST', `/api/sessions/${enc(id)}/changes/revert`, { path, hunk }, false, signal),
-    gitInit: (id: string) => call<GitState>('POST', `/api/sessions/${enc(id)}/git/init`),
+    gitInit: (id: string) => slow<GitState>(`/api/sessions/${enc(id)}/git/init`),
     search: (q: string, signal?: AbortSignal) => call<SearchResults>('GET', `/api/search?q=${enc(q)}`, undefined, false, signal),
     subagent: (id: string, agentId: string, signal?: AbortSignal) =>
       foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
@@ -2691,7 +2702,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     taskUsageMetrics: (id: string, signal?: AbortSignal) => call<TaskUsageMetrics>('GET', `/api/sessions/${enc(id)}/usage-metrics`, undefined, false, signal),
     taskTimeSplit: (id: string, signal?: AbortSignal) => call<TimeSplit>('GET', `/api/sessions/${enc(id)}/time-split`, undefined, false, signal),
     /** `question` goes to the model; `typed`, what the owner asked, is what the Task keeps. */
-    askAside: (id: string, question: string, typed: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question, typed }, false, signal),
+    askAside: (id: string, question: string, typed: string, signal?: AbortSignal) => slow<AsideAnswer>(`/api/sessions/${enc(id)}/aside`, { question, typed }, signal),
     asides: (id: string) => call<{ asides: Aside[] }>('GET', `/api/sessions/${enc(id)}/asides`).then((r) => r.asides),
     taskMcp: (id: string, summary = false) => call<McpTaskStatus>('GET', `/api/sessions/${enc(id)}/mcp${summary ? '?summary=1' : ''}`),
     taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}?summary=1`),

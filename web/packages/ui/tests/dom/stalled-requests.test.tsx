@@ -3,14 +3,18 @@ import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
-import { PROMPT_TIMEOUT_MS, READ_TIMEOUT_MS } from '../../src/api';
+import { ApiError, createApiClient, LONG_WRITE_TIMEOUT_MS, PROMPT_TIMEOUT_MS, READ_TIMEOUT_MS, WRITE_TIMEOUT_MS } from '../../src/api';
 import { install } from '../../src/mock/install';
 import { composer, log, openTask, sidebar } from './render';
 
 const RECONNECTING = 'Connection lost, reconnecting. Work continues on the server.';
 
+let restoreFetch: (() => void) | undefined;
+
 afterEach(() => {
   vi.useRealTimers();
+  restoreFetch?.();
+  restoreFetch = undefined;
 });
 
 describe('a stalled event stream', () => {
@@ -92,5 +96,69 @@ describe('a stalled send', () => {
     expect(await log().findByText('Cover TERM=vt100 too')).toBeTruthy();
     await waitFor(() => expect(composer().value).toBe(''));
     expect(sent).toEqual([sent[0], sent[0]]);
+  });
+});
+
+describe('a stalled write', () => {
+  /** A service that takes every request and answers none; the requests it was sent. */
+  function silent(): string[] {
+    const asked: string[] = [];
+    const before = window.fetch;
+    restoreFetch = () => { window.fetch = before; };
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      asked.push(`${init?.method} ${String(input)}`);
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason)));
+    };
+    return asked;
+  }
+  /** What the write ended with, once it has. */
+  function ending(write: Promise<unknown>): { error?: unknown } {
+    const end: { error?: unknown } = {};
+    write.catch((error: unknown) => { end.error = error; });
+    return end;
+  }
+
+  test('is given up on after 2 minutes with the outcome not known, and is not sent again', async () => {
+    vi.useFakeTimers();
+    const asked = silent();
+    const reported: ApiError[] = [];
+    const end = ending(createApiClient(null, () => true, (error) => reported.push(error)).rename('t3', 'New name'));
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS - 1);
+    expect(end.error).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(end.error).toBeInstanceOf(ApiError);
+    expect(end.error).toMatchObject({ status: 0, message: 'The server did not answer in 2 minutes, so it is not known whether this was done' });
+    expect(reported).toEqual([end.error]);
+    await vi.advanceTimersByTimeAsync(LONG_WRITE_TIMEOUT_MS);
+    expect(asked).toEqual(['PATCH /api/sessions/t3']);
+  });
+
+  test('one that may run long by design keeps its 5 minutes', async () => {
+    vi.useFakeTimers();
+    const asked = silent();
+    const end = ending(createApiClient().stage('t3', 'settle'));
+    await vi.advanceTimersByTimeAsync(LONG_WRITE_TIMEOUT_MS - 1);
+    expect(end.error).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(end.error).toMatchObject({ status: 0, message: 'The server did not answer in 5 minutes, so it is not known whether this was done' });
+    await vi.advanceTimersByTimeAsync(LONG_WRITE_TIMEOUT_MS);
+    expect(asked).toEqual(['POST /api/sessions/t3/settle']);
+  });
+
+  test("the caller's own abort still ends it, with the caller's reason", async () => {
+    vi.useFakeTimers();
+    const asked = silent();
+    const reported: ApiError[] = [];
+    const controller = new AbortController();
+    const end = ending(createApiClient(null, () => true, (error) => reported.push(error)).suggestions('t3', controller.signal));
+    await vi.advanceTimersByTimeAsync(1000);
+    const reason = new Error('left the thread');
+    controller.abort(reason);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(end.error).toBe(reason);
+    await vi.advanceTimersByTimeAsync(LONG_WRITE_TIMEOUT_MS);
+    expect(reported).toEqual([]);
+    expect(asked).toEqual(['POST /api/sessions/t3/suggestions']);
   });
 });

@@ -8,7 +8,7 @@ const hooks = registerHooks({
     return nextResolve(['./lib/models', './lib/reads', './lib/preview'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
-const { api, ApiError, PAGE_ID, READ_TIMEOUT_MS, UPDATE_EVENTS } = await import('../src/api.ts');
+const { api, ApiError, PAGE_ID, READ_TIMEOUT_MS, UPDATE_EVENTS, WRITE_TIMEOUT_MS } = await import('../src/api.ts');
 hooks.deregister();
 
 test('selected task streams request and listen for incremental tool output', () => {
@@ -39,7 +39,7 @@ test('transcript, history and body reads carry their cancellation', async () => 
   } finally { globalThis.fetch = original; }
 });
 
-test('a read the service never answers is given up on and frees its place; a write keeps waiting', async (t) => {
+test('a read the service never answers is given up on and frees its place; a write waits longer', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const original = globalThis.fetch, started = [];
   globalThis.fetch = (path, options) => {
@@ -64,11 +64,15 @@ test('a read the service never answers is given up on and frees its place; a wri
     await new Promise((resolve) => setImmediate(resolve));
     t.mock.timers.tick(READ_TIMEOUT_MS);
     await lookup;
-    // A write may run long by design: it has no bound of its own.
-    let signal = 'unset';
-    globalThis.fetch = async (_path, options) => { signal = options.signal; return new Response('{}'); };
-    await api.rename('task', 'name');
-    assert.equal(signal, undefined);
+    // A write may take longer than a read: it has a longer bound, and its outcome is not known when that passes.
+    let ended = false;
+    const write = assert.rejects(api.rename('task', 'name').finally(() => { ended = true; }), (error) => error instanceof ApiError && error.status === 0 && error.message === 'The server did not answer in 2 minutes, so it is not known whether this was done');
+    t.mock.timers.tick(WRITE_TIMEOUT_MS - 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ended, false);
+    t.mock.timers.tick(1);
+    await write;
+    assert.equal(started.filter((path) => path === '/api/sessions/task').length, 1);
   } finally { globalThis.fetch = original; }
 });
 
