@@ -48,7 +48,8 @@ func (c *conversation) readOnceLocked(in copilot.PostToolUseHookInput) any {
 }
 
 // forgetViewsLocked forgets the views of agent ("" for the main agent),
-// whose context no longer holds them after a compaction or its end.
+// whose context no longer holds them after a compaction, a truncation, a
+// cleared context, a rewind or its end.
 func (c *conversation) forgetViewsLocked(agent string) {
 	maps.DeleteFunc(c.views, func(k readKey, _ [sha256.Size]byte) bool { return k.agent == agent })
 }

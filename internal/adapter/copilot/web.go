@@ -3881,6 +3881,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if agentID == "" && (c.turnRunning || c.sending > 0) {
 			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
 		}
+	case *rpc.SessionTruncationData, *rpc.SessionContextClearedData, *rpc.SessionSnapshotRewindData:
+		// The agent's context lost earlier messages, its views among them.
+		c.forgetViewsLocked(agentID)
 	case *rpc.SessionCompactionStartData:
 		// Manual (/compact) and automatic compaction both report here.
 		c.forgetViewsLocked(agentID)
