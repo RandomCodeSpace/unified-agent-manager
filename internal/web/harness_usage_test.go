@@ -27,9 +27,7 @@ func harnessTestManager(t *testing.T, now time.Time) (*Manager, *corestore.Ledge
 	m := NewManager(openTestStore(t), nil)
 	m.now = func() time.Time { return now }
 	m.usageHome = t.TempDir()
-	if err := m.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	m.loadTokenLedger()
 	ledger, err := m.prepareHarnessUsage()
 	if err != nil || ledger == nil {
 		t.Fatalf("prepare: %v", err)
@@ -101,9 +99,7 @@ func TestHarnessUsageOwnershipPersistenceAndPrivacy(t *testing.T) {
 	again := NewManager(m.store, nil)
 	again.now = m.now
 	again.usageHome = m.usageHome
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	if len(again.tokens.CopilotSessions) != 2 || !again.tokens.CopilotSince.Equal(now) {
 		t.Fatal("ownership or cutoff lost")
 	}
@@ -199,9 +195,7 @@ func TestHarnessUsageTerminalHandoff(t *testing.T) {
 		t.Fatalf("terminal handoff: %+v", got)
 	}
 	again := NewManager(m.store, nil)
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	if len(again.tokens.CopilotSessions["shared-session"]) != 2 || again.copilotOwnedAtLocked("shared-session", now.Add(7*time.Minute)) || !again.copilotOwnedAtLocked("shared-session", now.Add(time.Minute)) {
 		t.Fatal("ownership intervals did not survive restart")
 	}
@@ -242,9 +236,7 @@ func TestHarnessUsageFailedOwnershipDoesNotHideTerminalUsage(t *testing.T) {
 		t.Fatalf("terminal tokens after failed ownership: %d", got)
 	}
 	again := NewManager(m.store, nil)
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	if len(again.tokens.CopilotSessions) != 0 {
 		t.Fatal("failed ownership persisted after recovery")
 	}

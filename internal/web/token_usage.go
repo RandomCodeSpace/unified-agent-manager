@@ -14,6 +14,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // TokenCounts includes cache reads and writes in Input. Total preserves the
@@ -63,12 +64,15 @@ type tokenDay struct {
 
 // Daily aggregates have no transcript or task dependency, so removing a
 // task cannot subtract its usage. There is no retention cutoff for Lifetime.
+// CopilotPruned is the time before which Copilot ownership was dropped
+// (pruneCopilotOwnership); zero while none was.
 type tokenLedger struct {
 	Version             int                           `json:"version"`
 	Since               time.Time                     `json:"since"`
 	Days                map[string]tokenDay           `json:"days"`
 	CopilotSince        time.Time                     `json:"copilot_since,omitzero"`
 	CopilotSessions     map[string][]copilotOwnership `json:"copilot_sessions,omitempty"`
+	CopilotPruned       time.Time                     `json:"copilot_pruned,omitzero"`
 	CopilotUnattributed bool                          `json:"copilot_unattributed,omitempty"`
 	revision, saved     uint64
 }
@@ -77,25 +81,34 @@ func (m *Manager) tokenLedgerPath() string {
 	return filepath.Join(filepath.Dir(m.store.Path()), "web-token-usage.json")
 }
 
-func (m *Manager) loadTokenLedger() error {
-	data, err := os.ReadFile(m.tokenLedgerPath())
+// loadTokenLedger reads the saved totals. A file that cannot be read or is not
+// a ledger this version knows is set aside under a .bak name and a fresh
+// ledger starts: statistics never keep the service from starting.
+func (m *Manager) loadTokenLedger() {
+	path := m.tokenLedgerPath()
+	fresh := tokenLedger{Version: 1, Since: m.now(), Days: map[string]tokenDay{}, revision: 1}
+	data, err := os.ReadFile(path) // #nosec G304 -- uam's own file beside the store.
 	if errors.Is(err, os.ErrNotExist) {
-		m.tokens = tokenLedger{Version: 1, Since: m.now(), Days: map[string]tokenDay{}, revision: 1}
-		return nil
+		m.tokens = fresh
+		return
 	}
+	var loaded tokenLedger
 	if err == nil {
-		err = json.Unmarshal(data, &m.tokens)
+		err = json.Unmarshal(data, &loaded)
 	}
-	if err != nil {
-		return fmt.Errorf("load token usage: %w", err)
+	known := loaded.Version == 1 || (loaded.Version == 2 && !loaded.CopilotSince.IsZero())
+	if err == nil && known && !loaded.Since.IsZero() && loaded.Days != nil {
+		m.tokens = loaded
+		return
 	}
-	if (m.tokens.Version != 1 && m.tokens.Version != 2) || m.tokens.Since.IsZero() || m.tokens.Days == nil {
-		return fmt.Errorf("load token usage: unsupported or incomplete ledger")
+	// The decode error can quote the file, so only the paths are logged. If
+	// the move fails, the next save replaces the file with the fresh ledger.
+	backup := fmt.Sprintf("%s.bak.%d", path, time.Now().UnixNano())
+	if err := os.Rename(path, backup); err != nil {
+		backup = ""
 	}
-	if m.tokens.Version == 2 && m.tokens.CopilotSince.IsZero() {
-		return fmt.Errorf("load token usage: missing Copilot history boundary")
-	}
-	return nil
+	log.Error("token usage file could not be read; started a fresh ledger", "path", path, "backup", backup)
+	m.tokens = fresh
 }
 
 // Called under m.mu. Disk writes stay in the existing persistence worker.

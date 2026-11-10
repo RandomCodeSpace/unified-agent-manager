@@ -19,9 +19,7 @@ func TestTokenUsagePeriodsAndPersistence(t *testing.T) {
 	m := NewManager(st, nil)
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
 	m.now = func() time.Time { return now }
-	if err := m.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	m.loadTokenLedger()
 	for _, days := range []int{0, 1, 6, 7, 29, 30} {
 		m.recordTokensLocked("copilot", agentapi.TokenUsage{Model: "model-a", Time: now.AddDate(0, 0, -days), Input: 100, Output: 20, CacheRead: 70, CacheWrite: 10})
 	}
@@ -44,9 +42,7 @@ func TestTokenUsagePeriodsAndPersistence(t *testing.T) {
 	}
 	again := NewManager(st, nil)
 	again.now = m.now
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	if actual := again.TokenUsage(); !actual.Since.Equal(got.Since) || !reflect.DeepEqual(actual.Periods, got.Periods) {
 		t.Fatalf("restart: %+v != %+v", actual, got)
 	}
@@ -74,9 +70,7 @@ func TestTokenUsageSinkAndUtility(t *testing.T) {
 func TestTokenUsageWriteFailureAndInvalidLedger(t *testing.T) {
 	st := openTestStore(t)
 	m := NewManager(st, nil)
-	if err := m.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	m.loadTokenLedger()
 	path := m.tokenLedgerPath()
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
@@ -92,17 +86,54 @@ func TestTokenUsageWriteFailureAndInvalidLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	again := NewManager(st, nil)
-	if err := again.loadTokenLedger(); err != nil {
-		t.Fatal(err)
-	}
+	again.loadTokenLedger()
 	if again.TokenUsage().Periods["lifetime"].Total.Input != 1 {
 		t.Fatal("failed write lost tokens")
 	}
 	if err := os.WriteFile(filepath.Clean(path), []byte("{bad"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewManager(st, nil).loadTokenLedger(); err == nil {
-		t.Fatal("invalid ledger accepted")
+	damaged := NewManager(st, nil)
+	damaged.loadTokenLedger()
+	if damaged.tokens.Version != 1 || len(damaged.tokens.Days) != 0 {
+		t.Fatalf("invalid ledger accepted: %+v", damaged.tokens)
+	}
+}
+
+// A ledger that cannot be read never keeps the service from starting: it is
+// set aside whole and a fresh one takes its place.
+func TestDamagedTokenLedgerIsSetAsideAndTheServiceStarts(t *testing.T) {
+	for name, content := range map[string]string{
+		"not JSON":        "{bad",
+		"unknown version": `{"version":9,"since":"2026-01-01T00:00:00Z","days":{}}`,
+		"no boundary":     `{"version":2,"since":"2026-01-01T00:00:00Z","days":{}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := openTestStore(t)
+			path := filepath.Join(filepath.Dir(st.Path()), "web-token-usage.json")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			m := startManager(t, st)
+			backups, _ := filepath.Glob(path + ".bak.*")
+			if len(backups) != 1 {
+				t.Fatalf("backups = %v", backups)
+			}
+			if kept, err := os.ReadFile(backups[0]); err != nil || string(kept) != content {
+				t.Fatalf("backup = %q, %v", kept, err)
+			}
+			m.mu.Lock()
+			m.recordTokensLocked("p", agentapi.TokenUsage{Model: "m", Input: 1})
+			m.mu.Unlock()
+			if err := m.flush(); err != nil {
+				t.Fatal(err)
+			}
+			again := NewManager(st, nil)
+			again.loadTokenLedger()
+			if again.TokenUsage().Periods["lifetime"].Total.Input != 1 {
+				t.Fatal("the fresh ledger was not saved")
+			}
+		})
 	}
 }
 

@@ -81,3 +81,34 @@ func TestSaveDoesNotUsePredictablePidTempName(t *testing.T) {
 		t.Fatalf("Load after Save: %v", err)
 	}
 }
+
+// A save killed mid-write leaves its temp file; the next Load removes it and
+// nothing else.
+func TestLoadRemovesTempOrphansOfKilledSaves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.Save(DefaultConfig()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	backup := path + ".bak.1"
+	for _, p := range []string{path + ".tmp.578666143", backup} {
+		if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, err := os.Stat(path + ".tmp.578666143"); !os.IsNotExist(err) {
+		t.Fatalf("temp orphan survived Load: %v", err)
+	}
+	for _, p := range []string{path, backup} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("Load removed %s: %v", filepath.Base(p), err)
+		}
+	}
+}

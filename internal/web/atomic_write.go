@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // writeFileAtomic replaces path with data, owner-only (0600). It writes a
@@ -24,4 +26,21 @@ func writeFileAtomic(path, pattern string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// removeTempFiles removes the files in dir that writeFileAtomic left when the
+// process was killed mid-write: a name of one of prefixes and the digits
+// os.CreateTemp adds. The caller is the only writer of those files and writes
+// none meanwhile.
+func removeTempFiles(dir string, prefixes ...string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		temp := slices.ContainsFunc(prefixes, func(p string) bool {
+			digits, ok := strings.CutPrefix(e.Name(), p)
+			return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
+		})
+		if temp && e.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }

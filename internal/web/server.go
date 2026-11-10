@@ -1089,7 +1089,7 @@ func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, d)
 		return
 	}
-	detail, err := s.m.Subagent(id, r.PathValue("agent_id"))
+	detail, err := s.m.subagent(r.Context(), id, r.PathValue("agent_id"))
 	if err != nil {
 		writeFailure(w, err)
 		return

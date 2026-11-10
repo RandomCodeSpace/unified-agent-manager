@@ -2272,8 +2272,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     from the repository's top as Changes names them, with their line counts. A long list scrolls
     inside the section.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
-  the provider process ends, when you close the session, and when the
-  provider refuses a message or may not have received it. A paused queue
+  the provider process ends, when you close the session, when the
+  provider refuses a message or may not have received it, and when uam
+  starts again with messages still queued. A paused queue
   sends nothing until you act on it. Resume sends the next message, at once
   if no turn is running. Clear drops every queued message.
 - **Stop turn** cancels the running turn. The conversation stays open. A
@@ -3056,8 +3057,11 @@ uam web stop
 ```
 
 This ends running turns, stops the provider processes the service started,
-and marks those sessions interrupted. Queued messages are dropped without
-being sent; queues are kept in memory only. Session records and the exact
+and marks those sessions interrupted. Queued messages are not sent. They are
+saved with their Thread, and after the next start the queue is back, paused:
+nothing in it is sent until you resume it, and you can remove messages or
+clear it first. A message another Thread sent is not kept; it ends as
+interrupted. Session records and the exact
 provider conversation IDs are kept. After `uam web` starts again, sending a prompt to a
 session reopens the same provider conversation. The Thread's selected model,
 effort and context size are restored before the prompt is sent. If Copilot

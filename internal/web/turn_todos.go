@@ -120,6 +120,7 @@ func (m *Manager) appendTurnTodos(k keptTodos) {
 	}
 	path := filepath.Join(dir, turnTodosFile)
 	size, err := appendPrivate(m.uploadRoot(), dir, path, data)
+	failed := err != nil
 	if err == nil && size > maxTurnTodosBytes {
 		err = compactTurnTodos(path, k.timings)
 	}
@@ -134,11 +135,35 @@ func (m *Manager) appendTurnTodos(k keptTodos) {
 	}
 	m.mu.Lock()
 	// Only flush, one at a time, takes from the queue's front.
-	k.s.turnTodos = slices.Delete(k.s.turnTodos, 0, len(k.records))
+	k.s.turnTodos = afterAppend(k.s.turnTodos, len(k.records), failed)
 	removed := k.s.removed
+	m.retryAppendLocked(k.s, failed)
 	m.mu.Unlock()
 	if removed {
 		removeUploads(dir)
+	}
+}
+
+// maxQueuedTurnRecords bounds each queue of records a Task holds for flush
+// while their appends keep failing.
+const maxQueuedTurnRecords = 64
+
+// afterAppend returns queue without the n records flush took from its front.
+// Records whose append failed stay queued, and readable, for the next flush,
+// the newest maxQueuedTurnRecords of them.
+func afterAppend[T any](queue []T, n int, failed bool) []T {
+	if !failed {
+		return slices.Delete(queue, 0, n)
+	}
+	return slices.Delete(queue, 0, max(0, len(queue)-maxQueuedTurnRecords))
+}
+
+// retryAppendLocked has the next flush append s's records again after a
+// failed append. It does not wake the flush: a disk that refuses writes is
+// tried again with the next change.
+func (m *Manager) retryAppendLocked(s *webSession, failed bool) {
+	if failed && !s.removed {
+		m.dirty[s.id] = struct{}{}
 	}
 }
 

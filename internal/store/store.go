@@ -608,6 +608,10 @@ type WebState struct {
 	// delivered because settling or archiving one of the pair dropped their
 	// pair, oldest first; the other Thread keeps the same records.
 	MessageOutcomes []WebPeerMessage `json:"message_outcomes,omitempty"`
+	// Queue is the owner's prompts that wait for the Thread's turn, oldest
+	// first, as the web service holds them: the text, the files and stored
+	// attachments by reference, and the settings chosen when each was queued.
+	Queue json.RawMessage `json:"queue,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -720,6 +724,7 @@ var knownWebStateFields = map[string]struct{}{
 	"context":             {},
 	"native_paths":        {},
 	"message_outcomes":    {},
+	"queue":               {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.
@@ -1302,6 +1307,8 @@ type Store struct {
 	// setAside is the backup path of a file set aside after loaded was set;
 	// non-empty makes every write fail with ErrSetAside.
 	setAside string
+	// swept is set once Load removed the temp files of killed saves.
+	swept bool
 }
 
 func Open(path string) (*Store, error) {
@@ -1382,7 +1389,28 @@ func (s *Store) Load() (Config, error) {
 		return Config{}, err
 	}
 	defer unlock()
+	s.sweepTemp()
 	return s.loadNoLock()
+}
+
+// sweepTemp removes, once per Store, the temp files that saves killed
+// mid-write left beside the config file: only names saveNoLock's CreateTemp
+// can have made. The caller holds the file lock, so no save is writing one.
+func (s *Store) sweepTemp() {
+	s.mu.Lock()
+	done := s.swept
+	s.swept = true
+	s.mu.Unlock()
+	if done {
+		return
+	}
+	entries, _ := os.ReadDir(filepath.Dir(s.path))
+	for _, e := range entries {
+		suffix, ok := strings.CutPrefix(e.Name(), filepath.Base(s.path)+".tmp.")
+		if ok && suffix != "" && strings.Trim(suffix, "0123456789") == "" && e.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(filepath.Dir(s.path), e.Name()))
+		}
+	}
 }
 
 func (s *Store) Save(cfg Config) error {

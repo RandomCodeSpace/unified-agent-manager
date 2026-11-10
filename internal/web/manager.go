@@ -523,8 +523,9 @@ type webSession struct {
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
 
-	// queue holds prompts waiting for the running turn, oldest first. It
-	// lives in memory only: stopping the service drops it.
+	// queue holds prompts waiting for the running turn, oldest first. The
+	// owner's prompts are saved with the Task (savedQueue) and come back
+	// paused after a restart; another Thread's message is not.
 	queue []QueuedPrompt
 	// queueSending is the head removed for a send whose outcome is pending.
 	queueSending string
@@ -815,9 +816,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
-	if err := m.loadTokenLedger(); err != nil {
-		return err
-	}
+	// What a killed run left mid-write; only this service writes these files.
+	removeTempFiles(filepath.Dir(m.store.Path()), ".token-usage-", ".worktrees-", ".uam-counts-", ".fetch-fuses-", utilityLogFile+".tmp.")
+	m.loadTokenLedger()
 	usageLedger, err := m.prepareHarnessUsage()
 	if err != nil {
 		return err
@@ -1090,6 +1091,12 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
+		}
+		if s.stage == StageActive {
+			// Nothing is sent again without the owner seeing it: the queue
+			// waits, paused, until they resume or clear it.
+			s.queue = loadedQueue(web.Queue)
+			s.queuePaused = len(s.queue) > 0
 		}
 		if web.RequestID != "" {
 			sub := Submission{RequestID: web.RequestID, Status: web.RequestStatus, Time: web.UpdatedAt}
@@ -1470,11 +1477,17 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 
 // Subagent returns one subagent of a session with its retained transcript.
 func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
+	return m.subagent(m.ctx, id, agentID)
+}
+
+// subagent is Subagent for a caller that may leave: ctx ends its wait for an
+// evicted transcript.
+func (m *Manager) subagent(ctx context.Context, id, agentID string) (SubagentDetail, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SubagentDetail{}, err
 	}
-	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
 		return SubagentDetail{}, err
 	}
 	var fresh *archiveWindow
@@ -2540,6 +2553,8 @@ type recordPatch struct {
 	mode                       store.Mode
 	updated                    time.Time
 	web                        store.WebState
+	// queue becomes web.Queue outside mu.
+	queue []QueuedPrompt
 }
 
 // flush writes the durable state of every dirty session.
@@ -2574,7 +2589,7 @@ func (m *Manager) flush() (err error) {
 			commandResult, _ = json.Marshal(key.commandResult)
 		}
 		patches = append(patches, recordPatch{
-			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
+			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt, queue: s.savedQueue(),
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Title: key.title,
@@ -2602,6 +2617,11 @@ func (m *Manager) flush() (err error) {
 	m.mu.Unlock()
 	if len(patches) == 0 && !writePairs {
 		return nil
+	}
+	for i := range patches {
+		if len(patches[i].queue) > 0 {
+			patches[i].web.Queue, _ = json.Marshal(patches[i].queue)
+		}
 	}
 	// Turn todo snapshots land before the counts that point at them.
 	for _, k := range kept {
@@ -4236,6 +4256,39 @@ func (s *webSession) queueSnapshot() []QueuedPrompt {
 	return append([]QueuedPrompt{}, s.queue...)
 }
 
+// savedQueue is the part of the queue that is saved with the Task: the
+// owner's prompts. Another Thread's message ends as interrupted when the
+// service starts again (loadPairsLocked), so it is left out.
+func (s *webSession) savedQueue() []QueuedPrompt {
+	var out []QueuedPrompt
+	for _, q := range s.queue {
+		if q.From == nil {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// loadedQueue is a saved queue made safe to hold: the owner's prompts, in
+// order, each within the bounds it had to meet when it was queued. Its files,
+// attachments and settings are checked again when it is sent.
+func loadedQueue(saved json.RawMessage) []QueuedPrompt {
+	var stored, queue []QueuedPrompt
+	if len(saved) == 0 || json.Unmarshal(saved, &stored) != nil {
+		return nil
+	}
+	for _, q := range stored {
+		empty := strings.TrimSpace(q.Text) == "" && len(q.Files) == 0 && len(q.Attachments) == 0
+		known := slices.ContainsFunc(queue, func(k QueuedPrompt) bool { return k.RequestID == q.RequestID })
+		if len(queue) == maxQueue || !validRequestID(q.RequestID) || known || q.From != nil || empty ||
+			len(q.Text) > maxPromptBytes || len(q.Files) > maxFileRefs || len(q.Attachments) > maxAttachments {
+			continue
+		}
+		queue = append(queue, q)
+	}
+	return queue
+}
+
 // enqueueLocked adds a prompt to the queue. Nothing reaches the provider
 // before the running turn completes.
 func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, reqID string) (Submission, error) {
@@ -4334,8 +4387,9 @@ func (m *Manager) drain(s *webSession) {
 	if err != nil {
 		// Nothing was sent: a turn is running after all, the service is
 		// stopping, or another client holds the conversation. The prompt waits
-		// at the front for the next completed turn.
-		if !m.closed && !s.removed {
+		// at the front for the next completed turn, or, when the service is
+		// stopping, for its last save.
+		if !s.removed {
 			before := m.summaryLocked(s)
 			s.queue = slices.Insert(s.queue, 0, head)
 			s.queueChanged = true
@@ -5560,8 +5614,7 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 		m.expirePendingLocked(s, "the uam web service stopped")
 		m.endSubagentsLocked(s)
 		m.forgetBackgroundTaskStateLocked(s)
-		// The queue lives in memory only; the prompts in it are not sent.
-		s.queue, s.queuePaused = nil, false
+		// The queue stays for the last save; the next start loads it paused.
 		m.changedLocked(s, before)
 	}
 	for sub := range m.subs {
