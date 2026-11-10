@@ -16,10 +16,12 @@
 
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { ArrowDown, Ban, Check, Circle, CircleDot, CircleSmall, CircleStop, Clock as ClockIcon, History, ListChecks, Minus, Pause, RotateCw, ShieldQuestionMark, Workflow, X, type LucideProps } from 'lucide-react';
-import { forwardRef, useCallback, useEffect, useId, useRef, useState, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
-import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type SessionDetail, type Subagent, type TodoHistory, type TodoView } from '../api';
+import { forwardRef, useCallback, useEffect, useId, useRef, useState, type MouseEvent, type MouseEventHandler, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { ATTENTION, LIVE, describeError, readOnly, type ChangeFile, type Item, type Retry, type SessionDetail, type Subagent, type TodoHistory, type TodoView } from '../api';
 import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
+import { useLayout } from '../lib/layout';
 import { retryWords, stopWords } from '../lib/stop';
 import { countSubagents } from '../lib/subagents';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
@@ -28,8 +30,10 @@ import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './
 import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
 import { LiveOutput } from './LiveOutput';
+import { LiveCard } from './notebook/LiveCard';
+import { useNotebookSlot } from './notebook/slots';
 import { SubagentSheetBody, useSheetRequest, useStopConfirming, useSubagentIndex, type SheetTo } from './Subagents';
-import { Reader, type ReaderParts } from './Todos';
+import { Reader, TodoRows, type ReaderParts } from './Todos';
 import { Appear } from './ui/appear';
 import { Blocks, type Block } from './ui/blocks';
 import { Button } from './ui/button';
@@ -209,8 +213,15 @@ const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text
  * itself opens in the Conversation pane. Each lights and lifts alone. `hidden` gives its place to another strip (the sheet then
  * opens from the bottom, and the arrow stands alone). `error`: why the last jump to a subagent
  * did not land, said in the sheet.
+ *
+ * In the notebook layout (lib/layout), while the Thread works, waits on you or holds running
+ * subagents and its running turn's cell is on screen, the three sections stand in that cell's
+ * live card instead (notebook/LiveCard), with the Thread's changed files (`changed`): one home
+ * per fact. The strip keeps the arrow, and the readers and the sheet open as before, from the
+ * card's words. With no cell to draw in (the turn is outside the loaded window, a subagent is
+ * shown) the strip is as it is in the current layout.
  */
-export function StatusLine({ line: given, session, since, hidden, hideTodos = false, error, jump, onJump, onKept }: Readonly<{
+export function StatusLine({ line: given, session, since, hidden, hideTodos = false, error, jump, onJump, onKept, changed, onReview }: Readonly<{
   line: Line | null;
   session: SessionDetail;
   /** When the subagents that outlived the turn started, which the clock then counts from. */
@@ -224,6 +235,9 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   onJump: MouseEventHandler<HTMLButtonElement>;
   /** The kept list that stands in for an unknown live one, as it changes: a reply's plan ticks off from it too. */
   onKept?: (view: TodoView | undefined) => void;
+  /** The Thread's changed files and what opens Changes, for the notebook layout's live card. */
+  changed?: readonly ChangeFile[];
+  onReview?: () => void;
 }>) {
   // A working line with nothing of its own (no list, no stated intent, no compaction, no retry) says "Working":
   // the strip is never blank while a turn works. Subagents that outlived the turn (`since`) also count their time.
@@ -305,6 +319,18 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   };
   const closed = () => setReader(null);
   const rowShown = !!(shownLine || subagents || (!hidden && (view || turns.length)));
+  const slot = useNotebookSlot('live');
+  const notebook = useLayout() === 'notebook';
+  const carded = notebook && !!slot && !hideTodos && (given?.kind === 'working' || ATTENTION.includes(session.state) || session.subagents.some((s) => s.status === 'running'));
+  const openTodo = (e: MouseEvent<HTMLButtonElement>) => {
+    setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
+    // The reader groups the rows by the turn that added each, which only the kept records say.
+    read(session.id);
+  };
+  const openHistory = (e: MouseEvent<HTMLButtonElement>) => {
+    setHistoryReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
+    read(session.id);
+  };
   const arrow = (
     <Appear show={jump} className={cn('shrink-0', !rowShown && 'ml-auto')}>
       <Tip label="Jump to bottom">
@@ -364,17 +390,38 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {spoken ? cue : ''}
       </div>
-      {rowShown ? (
+      {carded ? (
+        <>
+          {/* The sheet still hangs off the strip's right end, and the arrow keeps its place there. */}
+          <div ref={row} className="min-w-0 flex-1" />
+          {arrow}
+          {createPortal(
+            <LiveCard
+              // A wait on you is the question's to say, in the cell: the card does not repeat it.
+              now={line?.kind === 'working' && line.live?.mark !== 'you' && !ATTENTION.includes(session.state) ? <Progress line={line} since={since} /> : undefined}
+              plan={parts || turns.length ? {
+                done: tally?.done ?? 0,
+                total: tally?.total ?? 0,
+                rows: parts ? <TodoRows parts={parts} /> : undefined,
+                links: (
+                  <>
+                    {parts && <Button variant="link" aria-haspopup="dialog" aria-expanded={todoReader?.open === true} aria-controls={todoReader?.open ? todoId : undefined} onClick={openTodo}>Open the list</Button>}
+                    {turns.length > 0 && <Button variant="link" aria-haspopup="dialog" aria-expanded={historyReader?.open === true} aria-controls={historyReader?.open ? historyId : undefined} onClick={openHistory}>Earlier turns</Button>}
+                  </>
+                ),
+              } : undefined}
+              changed={changed && onReview ? { files: changed, onReview } : undefined}
+            />,
+            slot,
+          )}
+        </>
+      ) : rowShown ? (
         // Three sections on one row: the list and its history, the progress line, then the arrow and the subagents, each lit and lifted on its own.
         <div ref={row} className="flex h-8 min-w-0 flex-1 items-center gap-1 bg-canvas pointer-coarse:h-11">
           {view && tally && (
             <button
               type="button"
-              onClick={(e) => {
-                setTodoReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
-                // The reader groups the rows by the turn that added each, which only the kept records say.
-                read(session.id);
-              }}
+              onClick={openTodo}
               aria-haspopup="dialog"
               aria-expanded={todoReader?.open === true}
               aria-controls={todoReader?.open ? todoId : undefined}
@@ -395,10 +442,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
           {turns.length > 0 && (
             <button
               type="button"
-              onClick={(e) => {
-                setHistoryReader({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget });
-                read(session.id);
-              }}
+              onClick={openHistory}
               aria-haspopup="dialog"
               aria-expanded={historyReader?.open === true}
               aria-controls={historyReader?.open ? historyId : undefined}
