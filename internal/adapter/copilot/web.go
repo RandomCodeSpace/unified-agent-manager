@@ -2794,6 +2794,11 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer func() {
 		c.mu.Lock()
 		c.sending--
+		// An error recorded for a prompt that started no turn belongs to
+		// none: it must not fail a later one.
+		if c.sending == 0 && !c.turnRunning {
+			c.turnErr = ""
+		}
 		c.sendEndedLocked()
 		c.mu.Unlock()
 	}()

@@ -1135,6 +1135,32 @@ func TestWebErrorAndIdleBeforeTheSendReturnsFailTheTurn(t *testing.T) {
 	}
 }
 
+// erringSendSession is a session whose Send reports a session error and
+// then fails, as when the CLI loses the prompt.
+type erringSendSession struct{ *fakeSession }
+
+func (s erringSendSession) Send(context.Context, copilot.MessageOptions) (string, error) {
+	s.onEvent(ev("send-err", &rpc.SessionErrorData{ErrorType: "query", Message: "prompt lost"}))
+	return "", errors.New("connection reset")
+}
+
+// An error that arrives during a send that then fails started no turn: it
+// fails no later one.
+func TestWebErrorOfAFailedSendFailsNoLaterTurn(t *testing.T) {
+	h := openWeb(t)
+	useSession(h.conv, erringSendSession{h.fs})
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "lost"}); err == nil {
+		t.Fatal("the failed send reported no error")
+	}
+	useSession(h.conv, h.fs)
+	// The next turn ends without one progress event of its own.
+	startTurn(t, h)
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if got := lastTurn(h.sink); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("turn after a failed send = %+v", got)
+	}
+}
+
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
