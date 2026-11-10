@@ -1272,6 +1272,9 @@ export interface BackgroundTasks {
  */
 export interface BackgroundOutput { text: string; cursor: string; more: boolean; done: boolean }
 
+/** Prefixed to a background output cursor, the read skips to the newest chunk of the output. */
+export const BACKGROUND_OUTPUT_LATEST = 'latest:';
+
 /**
  * The open conversation's native schedules, display only: no prompts, and nothing UAM runs. `known`
  * false with rows is a partial list (`truncated`); without rows the list is unknown, never empty.

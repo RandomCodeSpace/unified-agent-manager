@@ -1425,11 +1425,13 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       return new Response(u.bytes.slice(), { status: 200, headers: { 'Content-Type': u.mime, 'X-Content-Type-Options': 'nosniff' } });
     }
 
-    // A background shell's output: two chunks, then nothing new; a running shell is never done.
+    // A background shell's output: two chunks, then nothing new; a running shell is never done. A jump
+    // to the newest output answers with lines 961 to 1000, as if the log had 1000 lines.
     if ((r = m(/^\/api\/sessions\/([^/]+)\/background-tasks\/([^/]+)\/output$/)) && method === 'GET') {
       const task = find(decodeURIComponent(r[1]))?.background_tasks?.tasks.find((item) => item.id === decodeURIComponent(r![2]));
       if (!task) return fail(404, 'background shell task not found');
       if (task.output_unreadable) return fail(404, "this command's output is not kept");
+      if (url.searchParams.get('cursor')?.startsWith('latest:')) return json(200, { text: Array.from({ length: 40 }, (_, i) => `${task.id} output line ${961 + i}\n`).join(''), cursor: '2', more: false, done: task.status !== 'running' });
       const at = Number(url.searchParams.get('cursor') || 0);
       const text = at < 2 ? Array.from({ length: 40 }, (_, i) => `${task.id} output line ${at * 40 + i + 1}\n`).join('') : '';
       return json(200, { text, cursor: String(Math.min(at + 1, 2)), more: at < 1, done: at >= 1 && task.status !== 'running' });

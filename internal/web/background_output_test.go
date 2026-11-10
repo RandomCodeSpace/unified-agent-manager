@@ -51,7 +51,11 @@ func TestBackgroundOutputRouteScopesAndBoundsReads(t *testing.T) {
 	if w := ts.do(http.MethodGet, path+"?cursor=5:", "", auth); w.Code != http.StatusOK {
 		t.Fatalf("continued read=%d %s", w.Code, w.Body)
 	}
-	if got := strings.Join(reads, " "); got != "server@ server@5:" || countOf(ts.m, "background_output_opened") != 1 {
+	// A jump to the newest output reaches the provider as asked and is not an open.
+	if w := ts.do(http.MethodGet, path+"?cursor="+agentapi.BackgroundOutputLatest+"5:", "", auth); w.Code != http.StatusOK {
+		t.Fatalf("jump read=%d %s", w.Code, w.Body)
+	}
+	if got := strings.Join(reads, " "); got != "server@ server@5: server@latest:5:" || countOf(ts.m, "background_output_opened") != 1 {
 		t.Fatalf("reads=%q opened=%d", got, countOf(ts.m, "background_output_opened"))
 	}
 	// Only a shell this Thread lists is read: not an unlisted ID, not another Thread's shell.
@@ -63,7 +67,7 @@ func TestBackgroundOutputRouteScopesAndBoundsReads(t *testing.T) {
 	if w := ts.do(http.MethodGet, path+"?cursor="+strings.Repeat("9", maxBackgroundCursor+1), "", auth); w.Code != http.StatusBadRequest {
 		t.Fatalf("long cursor=%d", w.Code)
 	}
-	if len(reads) != 2 {
+	if len(reads) != 3 {
 		t.Fatalf("a refused request reached the provider: %q", reads)
 	}
 	readErr = agentapi.ErrBackgroundOutputUnavailable

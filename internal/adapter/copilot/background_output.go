@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/github/copilot-sdk/go/rpc"
 
@@ -34,7 +35,9 @@ func (a sdkSessionAdapter) ReadTaskOutput(ctx context.Context, id, cursor string
 // from one CLI read, a colon, then the CLI's own cursor for that read: the CLI
 // cannot be asked for less, so the same read is repeated until it is used up.
 // The CLI refuses a shell it does not keep output for (an attached one, or one
-// it no longer lists) and a cursor its log no longer reaches.
+// it no longer lists) and a cursor its log no longer reaches. A cursor behind
+// agentapi.BackgroundOutputLatest reads on to the end, holding two CLI reads
+// at most, and returns the newest chunk.
 func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor string) (agentapi.BackgroundOutput, error) {
 	c.mu.Lock()
 	sess, closed := c.sess, c.closed
@@ -42,6 +45,7 @@ func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor stri
 	if closed || sess == nil {
 		return agentapi.BackgroundOutput{}, agentapi.ErrClosed
 	}
+	cursor, jump := strings.CutPrefix(cursor, agentapi.BackgroundOutputLatest)
 	skip, from := 0, ""
 	if cursor != "" {
 		n, rest, ok := strings.Cut(cursor, ":")
@@ -52,6 +56,18 @@ func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor stri
 		skip, from = used, rest
 	}
 	res, err := sess.ReadTaskOutput(ctx, id, from)
+	// shortcut: a shell printing faster than this reads ends at the request's timeout; bound the reads if that shows up.
+	for jump && err == nil && res != nil && skip <= len(res.Text) && res.Text != "" && res.Exit == nil {
+		next, nerr := sess.ReadTaskOutput(ctx, id, res.Cursor)
+		if nerr != nil || next == nil || next.Text == "" && next.Exit == nil {
+			err = nerr
+			break
+		}
+		// The newest chunk of the read before stays, so a short last read still fills one.
+		kept := res.Text[skip:]
+		next.Text = kept[backgroundTail(kept):] + next.Text
+		res, skip = next, 0
+	}
 	var rejected rejectedError
 	switch {
 	case errors.As(err, &rejected):
@@ -60,6 +76,9 @@ func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor stri
 		return agentapi.BackgroundOutput{}, fmt.Errorf("read shell output: %s", errText(err))
 	case res == nil || skip > len(res.Text):
 		return agentapi.BackgroundOutput{}, agentapi.ErrBackgroundOutputUnavailable
+	}
+	if jump {
+		skip += backgroundTail(res.Text[skip:])
 	}
 	rest := res.Text[skip:]
 	chunk := rest
@@ -76,4 +95,20 @@ func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor stri
 		out.Cursor, out.Done = "0:"+res.Cursor, res.Exit != nil
 	}
 	return out, nil
+}
+
+// backgroundTail returns where the newest backgroundOutputCap bytes of text
+// start: after a line break when there is one, else on a character.
+func backgroundTail(text string) int {
+	if len(text) <= backgroundOutputCap {
+		return 0
+	}
+	at := len(text) - backgroundOutputCap
+	if i := strings.IndexByte(text[at:len(text)-1], '\n'); i >= 0 {
+		return at + i + 1
+	}
+	for at < len(text) && !utf8.RuneStart(text[at]) {
+		at++
+	}
+	return at
 }
