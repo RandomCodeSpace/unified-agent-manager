@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ApiError, api, type GitLabReview as Review, type SessionDetail } from '../../src/api';
@@ -287,13 +287,17 @@ test('GitLab HTML is sanitized and regular Markdown still escapes raw HTML', () 
     '<sup style="position:fixed" id="location">Safe superscript</sup>',
     '<a href="javascript:alert(1)">Bad link</a>',
     '<img src="https://evil.example/track.png" onerror="alert(1)" />',
+    '<picture><source srcset="https://evil.example/source.png" /><img src="https://evil.example/fallback.png" /></picture>',
     '</details>',
   ].join('\n')} />);
   expect(container.querySelector('details summary')?.textContent).toBe('Safe summary');
   expect(container.querySelector('sup')?.textContent).toBe('Safe superscript');
   expect(container.querySelector('script, iframe, style, [onclick], [ontoggle], [onerror], [style], [id="location"], [href^="javascript:"]')).toBeNull();
-  // An https image loads, with no referrer and none of its handlers.
+  // An https image from another site waits for a click, and a picture's sources are dropped.
+  expect(container.querySelector('img, source')).toBeNull();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Load image from evil.example' })[0]!);
   expect(container.querySelector('img')?.getAttribute('referrerpolicy')).toBe('no-referrer');
+  expect(container.querySelector('img')?.getAttribute('src')).toBe('https://evil.example/track.png');
   unmount();
   const plain = render(<Markdown text="Text <sup>2</sup> <!-- a hidden note -->" />);
   expect(plain.container.querySelector('sup')).toBeNull();

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Archive, Ban, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, Check, CircleDashed, Clock, Copy, CornerDownLeft, ExternalLink, Eye, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, ShieldQuestionMark, SkipForward, Square, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { Archive, Ban, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, Check, CircleDashed, Clock, Copy, CornerDownLeft, ExternalLink, Eye, ImageIcon, ImageOff, Info, Lightbulb, MessageCircleQuestion, Minimize2, Minus, OctagonAlert, Pause, ShieldQuestionMark, SkipForward, Square, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, createContext, isValidElement, memo, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -19,6 +19,7 @@ import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
 import { gitLabWords, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
 import { GitLabItemsContext, plainClick } from './GitLabStrip';
+import { useFederation, type Machine } from '../FederationContext';
 import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
@@ -638,6 +639,8 @@ export const MdBaseContext = createContext('');
 /** Natural sizes of local images that loaded, by URL, so a block parsed again reserves the same box before the bytes arrive. */
 const imageSizes = new Map<string, { width: number; height: number }>();
 
+const IMAGE_NOTE = 'inline-flex max-w-full items-center gap-1.5 rounded-sm bg-sunken px-2 py-1 align-middle text-caption text-body';
+
 /** A compact stand-in where an image cannot show: the alt text and the path, never a broken-image glyph. */
 function ImageNote({ alt, detail, href }: { alt: string; detail: string; href?: string }) {
   const body = (
@@ -647,13 +650,12 @@ function ImageNote({ alt, detail, href }: { alt: string; detail: string; href?: 
       <span className="truncate text-muted">{detail}</span>
     </>
   );
-  const className = 'inline-flex max-w-full items-center gap-1.5 rounded-sm bg-sunken px-2 py-1 align-middle text-caption text-body';
   return href ? (
-    <a href={href} rel="noopener noreferrer" target="_blank" className={cn(className, 'hover:underline')}>
+    <a href={href} rel="noopener noreferrer" target="_blank" className={cn(IMAGE_NOTE, 'hover:underline')}>
       {body}
     </a>
   ) : (
-    <span className={className}>{body}</span>
+    <span className={IMAGE_NOTE}>{body}</span>
   );
 }
 
@@ -782,10 +784,48 @@ function LocalImage({ sessionId, path, alt }: Readonly<{ sessionId: string; path
   );
 }
 
-/** A web image (`img-src https:`): loaded from its host with no referrer, and a link to it; one that fails to load is the link card. */
+/** Web images the owner chose to load: kept in memory for the page's lifetime, so a remounted row keeps them. */
+const loadedImages = new Set<string>();
+
+/** Whether a web image's address is this uam server, an enabled connected uam server (scheme, host and port), or the Thread's GitLab host (exactly). */
+function trustedImage(url: URL, gitlabHost: string | undefined, machines: Machine[] | undefined): boolean {
+  if (url.origin === window.location.origin) return true;
+  if (gitlabHost && url.host === gitlabHost.toLowerCase()) return true;
+  return !!machines?.some(m => m.connection && httpsUrl(m.connection.base_url)?.origin === url.origin);
+}
+
+/** An https address, or null when it does not parse or is not https. */
+function httpsUrl(src: string): URL | null {
+  try {
+    const url = new URL(src);
+    return url.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A web image (`img-src https:`): one from a trusted origin loads at once from its host with no referrer, and links to itself; any other waits for a click; one that fails to load is the link card. */
 function RemoteImage({ src, alt }: Readonly<{ src: string; alt: string }>) {
+  const gitlabHost = useContext(GitLabItemsContext)?.origin.host;
+  const machines = useFederation()?.machines;
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(() => loadedImages.has(src));
+  const url = httpsUrl(src);
+  if (!url) return <ImageNote alt={alt} detail={src} />;
   if (failed) return <ImageNote alt={alt} detail={src} href={src} />;
+  if (!loaded && !trustedImage(url, gitlabHost, machines)) {
+    return (
+      <span className={IMAGE_NOTE}>
+        <ImageIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        <span>{alt || 'Image'}</span>
+        <a href={src} rel="noopener noreferrer" target="_blank" title={src} className="truncate text-muted hover:underline">{url.host}</a>
+        <button type="button" aria-label={`Load image from ${url.host}`} title="Images from other sites load only when you ask" className="shrink-0 rounded-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current" onClick={() => {
+          loadedImages.add(src);
+          setLoaded(true);
+        }}>Load image</button>
+      </span>
+    );
+  }
   return (
     <a href={src} rel="noopener noreferrer" target="_blank" className="inline-block max-w-full">
       <img src={src} alt={alt} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={() => setFailed(true)} className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm" />
@@ -793,7 +833,7 @@ function RemoteImage({ src, alt }: Readonly<{ src: string; alt: string }>) {
   );
 }
 
-/** A markdown image: by path from the Task's directory; `data:` inline; an https address loads from its host; anything else is a link card. */
+/** A markdown image: by path from the Task's directory; `data:` inline; an https address loads from its host (`RemoteImage`); anything else is a link card. */
 function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
   const preview = usePreview();
   const tempRoots = useContext(TempRootContext);
@@ -1279,6 +1319,8 @@ function CommandRows({ commands }: Readonly<{ commands: Command[] }>) {
 const mdComponents: Components = {
   a: MdLink,
   img: MdImage,
+  // GitLab HTML may carry `<picture><source srcset>`: drop the sources so every image goes through MdImage.
+  source: () => null,
   table: MdTable,
   blockquote: MdQuote,
   ul: MdList,
