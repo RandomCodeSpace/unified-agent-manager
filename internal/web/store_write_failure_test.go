@@ -132,3 +132,31 @@ func TestStoreRefusingWritesAtStartAndShutdown(t *testing.T) {
 	}
 	wantUnchanged(t, st, frozen)
 }
+
+// A state file that becomes unreadable while the service runs is set aside;
+// the next flush must report the failure instead of saving defaults that hold
+// none of the Threads.
+func TestFlushReportsAStateFileSetAsideWhileRunning(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.Path(), []byte(`{"sessions": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		m.mu.Lock()
+		m.dirty[sum.ID] = struct{}{}
+		m.mu.Unlock()
+		if err := m.flush(); !errors.Is(err, store.ErrSetAside) {
+			t.Fatalf("flush %d = %v, want %v", i, err, store.ErrSetAside)
+		}
+	}
+	m.mu.Lock()
+	saveError := m.saveError
+	m.mu.Unlock()
+	if saveError == "" {
+		t.Fatal("the failed save was not reported")
+	}
+}
