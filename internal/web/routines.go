@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -22,7 +23,9 @@ import (
 // the service's local time, a routine starts a normal Task with its prompt and
 // model. A run never overlaps the previous one, a day allows at most
 // MaxRunsPerDay runs, and a turn still running after MaxMinutes is cancelled.
-// A firing missed while the service was down runs once when it starts.
+// A run in a new worktree waits while maxRoutineWorktrees of the routine's
+// earlier ones are on disk. A firing missed while the service was down runs
+// once when it starts.
 
 // Run outcomes. A run is running from its firing until its Task's turn ends.
 const (
@@ -51,6 +54,10 @@ const (
 	// routineCancelRetry is how long a run over its time limit waits before
 	// asking again to cancel a turn that is still running.
 	routineCancelRetry = time.Minute
+	// maxRoutineWorktrees is how many worktrees of a routine's earlier runs
+	// may still be on disk when a run of it starts in a new one: at that many
+	// the firing is skipped. Nothing is removed to make room.
+	maxRoutineWorktrees = 10
 )
 
 // routineTick is how often the scheduler checks for due firings and ended
@@ -431,8 +438,9 @@ func endRun(r *store.WebRoutine, runID, outcome, reason string, now time.Time) {
 }
 
 // fireLocked records a firing of r: skipped while its previous run, or its
-// last run's Task, is still working, or once the day's runs reached the
-// limit; else running, to be started. The caller holds routines.mu.
+// last run's Task, is still working, once the day's runs reached the limit,
+// or while maxRoutineWorktrees worktrees of its earlier runs are on disk;
+// else running, to be started. The caller holds routines.mu.
 func (m *Manager) fireLocked(r *store.WebRoutine, trigger string, now time.Time) (routineStart, bool) {
 	id, err := newUUID()
 	if err != nil {
@@ -445,6 +453,8 @@ func (m *Manager) fireLocked(r *store.WebRoutine, trigger string, now time.Time)
 		run.Outcome, run.Reason, run.EndedAt = RunSkipped, "still running", now
 	case runsToday(r, now) >= r.MaxRunsPerDay:
 		run.Outcome, run.Reason, run.EndedAt = RunSkipped, fmt.Sprintf("the limit of %d %s a day was reached", r.MaxRunsPerDay, plural(r.MaxRunsPerDay, "run", "runs")), now
+	case r.Place != nil && m.routineWorktrees(r.ID) >= maxRoutineWorktrees:
+		run.Outcome, run.Reason, run.EndedAt = RunSkipped, fmt.Sprintf("%d earlier runs still have worktrees. Settle those threads, or remove the worktrees in Settings → Projects & worktrees.", maxRoutineWorktrees), now
 	default:
 		run.Outcome = RunRunning
 		m.routines.active[r.ID] = &activeRun{runID: run.ID, started: now}
@@ -470,6 +480,31 @@ func (m *Manager) lastRunBusy(r *store.WebRoutine) bool {
 		return s != nil && busy(s.state())
 	}
 	return false
+}
+
+// routineWorktrees counts the worktrees of the routine's runs that are on
+// disk, whatever the stage of their Threads: a settled Thread's worktree that
+// could not be removed counts, a Thread whose worktree is gone does not. A
+// run's Thread keeps the routine's id and its worktree's path until it is
+// deleted, so the count does not depend on the runs still listed. A deleted
+// Thread's leftover worktree is not counted: nothing ties it to the routine.
+// The folders are read after Manager.mu is released.
+func (m *Manager) routineWorktrees(id string) int {
+	var paths []string
+	m.mu.Lock()
+	for _, s := range m.sessions {
+		if !s.removed && s.routineID == id && s.place != nil && s.place.Worktree != "" {
+			paths = append(paths, s.place.Worktree)
+		}
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, path := range paths {
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			n++
+		}
+	}
+	return n
 }
 
 // startRun creates a run's Task as Create would, in the routine's place and
@@ -792,8 +827,8 @@ func (m *Manager) DeleteRoutine(id string) error {
 }
 
 // RunRoutine fires a routine now, paused or not, under the same rules as its
-// schedule: it is skipped while the previous run is still running or once
-// the day's runs reached the limit. Its next scheduled run does not move.
+// schedule (fireLocked): a firing that may not start is recorded as skipped.
+// Its next scheduled run does not move.
 func (m *Manager) RunRoutine(id string) (Routine, error) {
 	if m.isClosed() {
 		return Routine{}, errShuttingDown

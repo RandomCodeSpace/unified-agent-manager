@@ -1570,7 +1570,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or "Git is not installed"). A run whose worktree cannot be made (the
   source branch is gone, or the folder is no longer a repository) is
   recorded as Failed with the reason and starts no Thread; it never moves
-  to the Project folder. Each card says where its routine runs. The API
+  to the Project folder. While 10 worktrees of a routine's earlier runs are
+  still on disk, settled Threads' leftover ones included, a firing or Run
+  now is skipped with a reason that says so: settle those Threads, or
+  remove the worktrees in Settings → Projects & worktrees. UAM removes
+  nothing to make room. Each card says where its routine runs. The API
   takes `place` (`{"mode": "current"}`, or `{"mode": "worktree", "base":
   "<branch>"}` with `base` optional) and lists it only for a worktree;
   connected instances advertise `routine-place-v1`, and the form leaves
