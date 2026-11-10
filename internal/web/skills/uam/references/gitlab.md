@@ -1,7 +1,9 @@
 # uam: GitLab via glab
 
 In a GitLab Project with glab installed and signed in, uam bounds supported
-`glab` shell calls. Use `issue list`, `incident list`, `mr list` or `ci list`
+`glab` shell calls. For your own commit's pipeline and merge requests, read
+`uam` `pipeline {}` first instead of polling `ci status`. Use `issue list`,
+`incident list`, `mr list` or `ci list`
 with `-P 10`; request another page with `-p 2`. `work-items list` pages by
 cursor instead: request `-F json` and pass its end cursor as `--after <cursor>`;
 `-p` does not page work items. Missing page sizes become 10, and explicit
