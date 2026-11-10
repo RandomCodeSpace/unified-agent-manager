@@ -507,7 +507,8 @@ func mustJSON(t *testing.T, fields map[string]json.RawMessage) []byte {
 	return b
 }
 
-func TestServiceStopDropsTheQueue(t *testing.T) {
+// The restart itself is covered by queue_restart_test.go.
+func TestServiceStopSendsNothingAndKeepsTheQueuePaused(t *testing.T) {
 	st := openTestStore(t)
 	prov := agenttest.NewProvider("fake", allCaps)
 	m := NewManager(st, []agentapi.Provider{prov})
@@ -523,7 +524,7 @@ func TestServiceStopDropsTheQueue(t *testing.T) {
 		t.Fatalf("stopping sent the queue: %q", conv.Sends())
 	}
 	m2 := startManager(t, st, agenttest.NewProvider("fake", allCaps))
-	if d := detail(t, m2, sum.ID); d.State != StateInterrupted || d.Queued != 0 || len(d.Queue) != 0 || d.QueuePaused {
+	if d := detail(t, m2, sum.ID); d.State != StateInterrupted || d.Queued != 1 || queueTexts(d) != "B" || !d.QueuePaused {
 		t.Fatalf("after restart: state=%s queued=%d queue=%+v", d.State, d.Queued, d.Queue)
 	}
 }

@@ -607,6 +607,10 @@ type WebState struct {
 	// delivered because settling or archiving one of the pair dropped their
 	// pair, oldest first; the other Thread keeps the same records.
 	MessageOutcomes []WebPeerMessage `json:"message_outcomes,omitempty"`
+	// Queue is the owner's prompts that wait for the Thread's turn, oldest
+	// first, as the web service holds them: the text, the files and stored
+	// attachments by reference, and the settings chosen when each was queued.
+	Queue json.RawMessage `json:"queue,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -719,6 +723,7 @@ var knownWebStateFields = map[string]struct{}{
 	"context":             {},
 	"native_paths":        {},
 	"message_outcomes":    {},
+	"queue":               {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.
