@@ -87,7 +87,7 @@ func (m *Manager) tokenLedgerPath() string {
 func (m *Manager) loadTokenLedger() {
 	path := m.tokenLedgerPath()
 	fresh := tokenLedger{Version: 1, Since: m.now(), Days: map[string]tokenDay{}, revision: 1}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- uam's own file beside the store.
 	if errors.Is(err, os.ErrNotExist) {
 		m.tokens = fresh
 		return
