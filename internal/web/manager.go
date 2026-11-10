@@ -1463,11 +1463,17 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 
 // Subagent returns one subagent of a session with its retained transcript.
 func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
+	return m.subagent(m.ctx, id, agentID)
+}
+
+// subagent is Subagent for a caller that may leave: ctx ends its wait for an
+// evicted transcript.
+func (m *Manager) subagent(ctx context.Context, id, agentID string) (SubagentDetail, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SubagentDetail{}, err
 	}
-	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
 		return SubagentDetail{}, err
 	}
 	var fresh *archiveWindow
