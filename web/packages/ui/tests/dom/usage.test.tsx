@@ -167,7 +167,10 @@ describe('Usage popover', () => {
     expect(list.queryByText('copilot', { exact: true })).toBeNull();
     for (const period of ['7 days', '30 days', 'Lifetime']) {
       await user.click(popover.getByRole('button', { name: period, exact: true }));
-      expect(popover.getByRole('button', { name: period, exact: true }).getAttribute('aria-pressed')).toBe('true');
+      const chosen = popover.getByRole('button', { name: period, exact: true });
+      expect(chosen.getAttribute('aria-pressed')).toBe('true');
+      // The chosen fill is on the same `aria-pressed:` variant as the ghost tint, so it replaces it instead of losing to it.
+      expect(chosen.className.split(' ').filter((c) => c.startsWith('aria-pressed:bg-'))).toEqual(['aria-pressed:bg-raised']);
     }
     expect(popover.getAllByText('1.6B').length).toBeGreaterThan(0);
     await user.click(popover.getByRole('button', { name: 'Close usage' }));

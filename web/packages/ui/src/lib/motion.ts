@@ -35,6 +35,11 @@ export function applyMotion(motion: Motion): void {
   else delete document.documentElement.dataset.motion;
 }
 
+/** Motion is off now: the setting matches the system and the system asks for reduced motion. For script-driven motion the CSS rules cannot reach (an explicit smooth scroll). */
+export function motionReduced(): boolean {
+  return document.documentElement.dataset.motion === 'system' && !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
 /** Stores the choice and applies it at once; storage that refuses still changes this page. */
 export function saveMotion(motion: Motion): void {
   try {

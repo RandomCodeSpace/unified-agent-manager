@@ -57,7 +57,8 @@ export function Button({ className, variant, size, loading = false, type = 'butt
     <button type={type} className={cn(buttonVariants({ variant, size, loading }), className)} disabled={disabled || !!loading} aria-busy={loading || undefined} {...props}>
       {loading ? (
         <>
-          <span className="invisible contents">{children}</span>
+          {/* Transparent, not `invisible`: hidden content leaves the accessible name, and the button would go unnamed. */}
+          <span className="inline-flex items-center justify-center gap-[inherit] opacity-0">{children}</span>
           <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center">
             <Spinner className="border-current border-r-transparent" />
           </span>

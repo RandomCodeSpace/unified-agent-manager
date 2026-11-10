@@ -84,3 +84,17 @@ test('faint never colours words: text that reads as faint is muted', () => {
   const rules = [...css.matchAll(/([^{}]+)\{[^}]*\bcolor: var\(--color-faint\)/g)].map((m) => m[1].trim());
   assert.deepEqual(rules, ['.md-arrow']);
 });
+
+test('a control that hides the outline and styles its focus draws the ring itself', () => {
+  // A tint or a shadow is below 3:1 and reads as hover; the focus mark is the 2px outline (on `::after` for a stretched card) or a ring.
+  const src = new URL('../src/', import.meta.url);
+  const literal = /(["'`])((?:(?!\1).)*?(?<![\w:-])outline-(?:hidden|none)(?![\w-])(?:(?!\1).)*)\1/g;
+  const bad = [];
+  for (const file of readdirSync(src, { recursive: true }).filter((f) => f.endsWith('.tsx'))) {
+    for (const [, , classes] of readFileSync(new URL(file, src), 'utf8').matchAll(literal)) {
+      const focus = classes.split(/\s+/).filter((c) => c.startsWith('focus-visible:') && !/^focus-visible:outline-(?:none|hidden)$/.test(c));
+      if (focus.length && !focus.some((c) => /^focus-visible:(?:after:)?(?:-?outline-|ring)/.test(c))) bad.push(`${file}: ${focus.join(' ')}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
