@@ -800,3 +800,33 @@ func TestRefusedRequestWithAWithheldBodyIsBounded(t *testing.T) {
 		})
 	}
 }
+
+// A request may carry several session cookies; the first that verifies and is
+// not signed out counts, whatever comes before it.
+func TestSessionCookieIsFoundAmongSeveral(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	host := "127.0.0.1:8260"
+	signedOut, live := validCookie(ts.srv, host), validCookie(ts.srv, host)
+	with := func(values ...string) reqOpt {
+		return func(r *http.Request) {
+			for _, v := range values {
+				r.AddCookie(&http.Cookie{Name: cookieName, Value: v})
+			}
+		}
+	}
+	if w := ts.do(http.MethodPost, "/api/logout", "", with(signedOut)); w.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions", "", with("junk", signedOut, live)); w.Code != http.StatusOK {
+		t.Fatalf("valid cookie after others = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions", "", with("junk", signedOut)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no valid cookie = %d", w.Code)
+	}
+	if w := ts.do(http.MethodPost, "/api/logout", "", with("junk", live)); w.Code != http.StatusNoContent {
+		t.Fatalf("logout after another cookie = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions", "", with(live)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("signed-out cookie = %d", w.Code)
+	}
+}

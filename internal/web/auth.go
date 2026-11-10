@@ -264,23 +264,31 @@ func (s *Server) validFileCookie(r *http.Request, id string) bool {
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
-	mac, _, ok := s.sessionMAC(r)
-	return ok && !s.revoked.revoked(mac)
+	_, _, ok := s.sessionMAC(r)
+	return ok
 }
 
-// sessionMAC verifies r's session cookie and returns its MAC, which names
-// the session, and its expiry (Unix seconds). ok is false for a missing,
-// malformed, expired or forged cookie; revocation is authenticated's check.
+// sessionMAC finds r's first session cookie that verifies and is not
+// revoked, and returns its MAC, which names the session, and its expiry
+// (Unix seconds). Every uam_web cookie is checked, since a browser may send
+// more than one.
 func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return "", 0, false
+	for _, c := range r.CookiesNamed(cookieName) {
+		if mac, exp, ok := s.verifySession(r.Host, c.Value); ok && !s.revoked.revoked(mac) {
+			return mac, exp, true
+		}
 	}
-	e, rest, ok := strings.Cut(c.Value, ".")
+	return "", 0, false
+}
+
+// verifySession checks one session cookie value for host. ok is false for a
+// malformed, expired or forged value.
+func (s *Server) verifySession(host, value string) (mac string, exp int64, ok bool) {
+	e, rest, ok := strings.Cut(value, ".")
 	if !ok {
 		return "", 0, false
 	}
-	exp, err = strconv.ParseInt(e, 10, 64)
+	exp, err := strconv.ParseInt(e, 10, 64)
 	if err != nil || time.Now().Unix() >= exp {
 		return "", 0, false
 	}
@@ -291,8 +299,8 @@ func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
 	// A cookie signed with the token itself is from before signKey; accept it
 	// until it expires so the upgrade signs nobody out. Drop that fallback
 	// cookieMaxAge after 2026-11-10.
-	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, r.Host, e, nonce))) != 1 &&
-		subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC([]byte(s.token), r.Host, e, nonce))) != 1 {
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, host, e, nonce))) != 1 &&
+		subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC([]byte(s.token), host, e, nonce))) != 1 {
 		return "", 0, false
 	}
 	return mac, exp, true
