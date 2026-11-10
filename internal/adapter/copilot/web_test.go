@@ -1161,6 +1161,35 @@ func TestWebErrorOfAFailedSendFailsNoLaterTurn(t *testing.T) {
 	}
 }
 
+// Tool calls whose end was never reported are forgotten when the next turn
+// starts, so they do not pile up; a late end before that still finds its
+// call, and a running subagent's call stays.
+func TestWebUnendedToolCallsAreForgottenAtTheNextTurn(t *testing.T) {
+	h := openWeb(t)
+	subagentWaiting(t, h)
+	h.fs.onEvent(agentEv("sub-tool", "agent-1", &rpc.ToolExecutionStartData{ToolCallID: "sub-call", ToolName: "bash"}))
+	h.fs.onEvent(ev("tool-1", &rpc.ToolExecutionStartData{ToolCallID: "call-1", ToolName: "bash"}))
+	h.fs.onEvent(ev("tool-2", &rpc.ToolExecutionStartData{ToolCallID: "call-2", ToolName: "bash"}))
+	h.fs.onEvent(ev("i1", &rpc.AssistantIdleData{}))
+	h.fs.onEvent(ev("late-1", &rpc.ToolExecutionCompleteData{ToolCallID: "call-1", Success: true}))
+	var late *agentapi.Item
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventItem && e.Item.ID == "call-1" {
+			late = e.Item
+		}
+	}
+	if late == nil || late.Tool == nil || late.Tool.Name != "bash" || late.Tool.Status != agentapi.ToolCompleted {
+		t.Fatalf("late end = %+v", late)
+	}
+	startTurn(t, h)
+	conv := h.conv.(*conversation)
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	if _, kept := conv.tr.tools["sub-call"]; !kept || len(conv.tr.tools) != 1 || len(conv.tr.toolAgents) != 1 {
+		t.Fatalf("running calls after the next turn's start = %v", conv.tr.toolAgents)
+	}
+}
+
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}

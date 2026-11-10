@@ -4144,6 +4144,7 @@ func (c *conversation) startTurnLocked() {
 		c.planEpoch++
 		c.planStopped = false
 		c.turnAt = time.Now()
+		c.forgetUnendedToolsLocked()
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
@@ -4156,6 +4157,22 @@ func (c *conversation) startTurnLocked() {
 	// starts a turn does.
 	c.emitPhaseLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+}
+
+// forgetUnendedToolsLocked drops, when a turn starts, the transcript's
+// running calls of the main agent and of subagents no longer running. Their
+// end was never reported (a call an abort interrupted), and nothing else
+// would drop them. At the start and not the earlier turn's end: an end
+// reported late still finds its call.
+func (c *conversation) forgetUnendedToolsLocked() {
+	for id, agent := range c.tr.toolAgents {
+		if !c.subagentRunsLocked(agent) {
+			delete(c.tr.tools, id)
+			delete(c.tr.toolAgents, id)
+			delete(c.tr.shells, id)
+			delete(c.tr.clippedInput, id)
+		}
+	}
 }
 
 // turnFailure is what a session error says beside its message: its category
