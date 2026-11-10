@@ -332,13 +332,13 @@ func (s *Server) Close() {
 	}
 }
 
-func grantKey(token, host, taskID, grantID string, exp int64) string {
+func grantKey(key []byte, host, taskID, grantID string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + grantKeyMAC(token, host, taskID, grantID, e)
+	return e + "." + grantKeyMAC(key, host, taskID, grantID, e)
 }
 
-func grantKeyMAC(token, host, taskID, grantID, exp string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func grantKeyMAC(key []byte, host, taskID, grantID, exp string) string {
+	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte("uam-web-temp-file-v1|" + strings.ToLower(host) + "|" + taskID + "|" + grantID + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -347,7 +347,7 @@ func (s *Server) validGrantKey(key, host, taskID, grantID string) bool {
 	exp, mac, ok := strings.Cut(key, ".")
 	until, err := strconv.ParseInt(exp, 10, 64)
 	return ok && err == nil && time.Now().Unix() < until &&
-		subtle.ConstantTimeCompare([]byte(mac), []byte(grantKeyMAC(s.token, host, taskID, grantID, exp))) == 1
+		subtle.ConstantTimeCompare([]byte(mac), []byte(grantKeyMAC(s.signKey, host, taskID, grantID, exp))) == 1
 }
 
 func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +383,7 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
-	key := grantKey(s.token, r.Host, r.PathValue("id"), grant.ID, grant.ExpiresAt.Unix())
+	key := grantKey(s.signKey, r.Host, r.PathValue("id"), grant.ID, grant.ExpiresAt.Unix())
 	grant.URL = "/api/sessions/" + url.PathEscape(r.PathValue("id")) + "/file-grants/" + grant.ID + "/" + key
 	writeJSON(w, http.StatusCreated, grant)
 }

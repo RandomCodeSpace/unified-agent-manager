@@ -28,7 +28,7 @@ func TestToolOutputStreamNegotiationAndPayload(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/events?session="+sum.ID+query, nil)
-			req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(req.Host)})
+			req.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(ts.srv, req.Host)})
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatal(err)

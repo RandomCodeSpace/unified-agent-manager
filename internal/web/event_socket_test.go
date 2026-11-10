@@ -26,7 +26,7 @@ func dialEventSocket(t *testing.T, httpSrv *httptest.Server, stream string, sign
 		header = http.Header{}
 	}
 	if signedIn {
-		header.Set("Cookie", cookieName+"="+validCookie(u.Host))
+		header.Set("Cookie", cookieName+"="+validCookie(httpSrv.Config.Handler.(*Server), u.Host))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -84,7 +84,7 @@ func TestEventSocketCarriesAConnectedInstanceStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, "wss://"+u.Host+"/api/events/socket?path="+url.QueryEscape(stream), &websocket.DialOptions{
-		HTTPClient: f.client, HTTPHeader: http.Header{"Cookie": {cookieName + "=" + validCookie(u.Host)}},
+		HTTPClient: f.client, HTTPHeader: http.Header{"Cookie": {cookieName + "=" + validCookie(f.home.srv, u.Host)}},
 	})
 	if err != nil {
 		t.Fatal(err)

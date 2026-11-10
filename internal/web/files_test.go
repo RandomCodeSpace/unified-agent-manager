@@ -369,7 +369,7 @@ func TestViewFileOverHTTPSNeedsTheCompanionCookie(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	sum, _ := viewTask(t, ts)
 	other, _ := createSession(t, ts.m, ts.prov)
-	https := withHeader("X-Forwarded-Proto", "https")
+	https := reqOpt(behindHTTPSProxy)
 	auth := withCookie(ts)
 
 	w := ts.do(http.MethodGet, viewURL(sum.ID, "out/report.html"), "", auth, https)
@@ -402,10 +402,10 @@ func TestViewFileOverHTTPSNeedsTheCompanionCookie(t *testing.T) {
 		"sibling in another folder":        {prefix + key + "/shot.png", []reqOpt{https, withFile(companion.Value)}, http.StatusOK},
 		"key without the cookie":           {loc, []reqOpt{https}, http.StatusUnauthorized},
 		"key with the sign-in cookie only": {loc, []reqOpt{https, auth}, http.StatusUnauthorized},
-		"cookie of another Task":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", other.ID, exp))}, http.StatusUnauthorized},
-		"cookie of another host":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "evil.example", sum.ID, exp))}, http.StatusUnauthorized},
-		"expired cookie":                   {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Second).Unix()))}, http.StatusUnauthorized},
-		"cookie of another secret":         {loc, []reqOpt{https, withFile(fileCookie("another-secret-token-0123456789", "127.0.0.1:8260", sum.ID, exp))}, http.StatusUnauthorized},
+		"cookie of another Task":           {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "127.0.0.1:8260", other.ID, exp))}, http.StatusUnauthorized},
+		"cookie of another host":           {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "evil.example", sum.ID, exp))}, http.StatusUnauthorized},
+		"expired cookie":                   {loc, []reqOpt{https, withFile(fileCookie(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Second).Unix()))}, http.StatusUnauthorized},
+		"cookie of another secret":         {loc, []reqOpt{https, withFile(fileCookie([]byte("another-secret-token-0123456789"), "127.0.0.1:8260", sum.ID, exp))}, http.StatusUnauthorized},
 		"tampered cookie":                  {loc, []reqOpt{https, withFile(companion.Value + "0")}, http.StatusUnauthorized},
 		"file key as the cookie":           {loc, []reqOpt{https, withFile(key)}, http.StatusUnauthorized},
 		// Plain HTTP (loopback, SSH) cannot hold a Secure cookie: the key alone opens.
@@ -474,7 +474,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 		t.Fatalf("keyed outside link = %d", w.Code)
 	}
 
-	expired := fileKey(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
+	expired := fileKey(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
 	// The last hex digit changed, never replaced by itself.
 	flip := "0"
 	if strings.HasSuffix(key, "0") {
@@ -487,7 +487,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 		"tampered":     keyURL(sum.ID, key[:len(key)-1]+flip, "notes.md"),
 		"extended":     keyURL(sum.ID, strconv.FormatInt(valid, 10)+key[strings.IndexByte(key, '.'):], "notes.md"),
 		"no mac":       keyURL(sum.ID, strconv.FormatInt(valid, 10), "notes.md"),
-		"other secret": keyURL(sum.ID, fileKey("another-token-of-24-chars-plus", "127.0.0.1:8260", sum.ID, valid), "notes.md"),
+		"other secret": keyURL(sum.ID, fileKey([]byte("another-token-of-24-chars-plus"), "127.0.0.1:8260", sum.ID, valid), "notes.md"),
 	}
 	for name, target := range refused {
 		if w := ts.do(http.MethodGet, target, ""); w.Code != http.StatusUnauthorized {
@@ -515,7 +515,7 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 func TestViewFileRedirectTargetIsBuiltFromTheRoute(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	https := withHeader("X-Forwarded-Proto", "https")
+	https := reqOpt(behindHTTPSProxy)
 	for _, c := range []struct{ name, id, escapedID, path, want string }{
 		{"plain", "task", "task", "out/report.html", "out/report.html"},
 		{"escaped name", "task", "task", "a%20b.txt", "a%20b.txt"},
@@ -548,5 +548,47 @@ func TestViewFileRedirectTargetIsBuiltFromTheRoute(t *testing.T) {
 		if w := ts.do(http.MethodGet, loc, ""); w.Code != http.StatusNotFound {
 			t.Errorf("%s: following %q = %d", c.name, loc, w.Code)
 		}
+	}
+}
+
+// HTTPS is the request's own TLS, a Host among the https public origins, or
+// X-Forwarded-Proto from a proxy on loopback; another peer's header is not
+// believed.
+func TestSecureRequestSources(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}})
+	sum, _ := viewTask(t, ts)
+	for _, tc := range []struct {
+		name   string
+		opts   []reqOpt
+		secure bool
+	}{
+		{"plain", nil, false},
+		{"header from a remote peer", []reqOpt{withHeader("X-Forwarded-Proto", "https")}, false},
+		{"header from a loopback proxy", []reqOpt{behindHTTPSProxy}, true},
+		{"https public origin without the header", []reqOpt{withHost("uam.example.com")}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, tc.opts...)
+			if c := w.Result().Cookies(); len(c) != 1 || c[0].Secure != tc.secure {
+				t.Fatalf("session cookie = %+v, want Secure %v", c, tc.secure)
+			}
+			w = ts.do(http.MethodGet, viewURL(sum.ID, "notes.md"), "", append(append([]reqOpt{}, tc.opts...), withCookie(ts))...)
+			companion := false
+			for _, c := range w.Result().Cookies() {
+				companion = companion || c.Name == fileCookieName
+			}
+			if w.Code != http.StatusFound || companion != tc.secure {
+				t.Fatalf("view = %d, companion cookie %v, want %v", w.Code, companion, tc.secure)
+			}
+			// Without its companion a key opens the file only where HTTPS
+			// cannot set one.
+			want := http.StatusOK
+			if tc.secure {
+				want = http.StatusUnauthorized
+			}
+			if got := ts.do(http.MethodGet, w.Header().Get("Location"), "", tc.opts...).Code; got != want {
+				t.Fatalf("key without companion = %d, want %d", got, want)
+			}
+		})
 	}
 }

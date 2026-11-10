@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,5 +208,27 @@ func TestGlabFailedPipeline(t *testing.T) {
 	}
 	if len(got.Jobs) != 2 || len(failed) != 1 || failed[0].Name != "unit" || failed[0].Stage != "test" || failed[0].FailureReason != "script_failure" {
 		t.Fatalf("jobs = %+v", got.Jobs)
+	}
+}
+
+// glabGit runs git with the package's read-only flags: a repository's own
+// fsmonitor command never runs, and a failing command is an error.
+func TestGlabGitUsesTheReadOnlyGitFlags(t *testing.T) {
+	repo := gitRepoFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := filepath.Join(t.TempDir(), "monitor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "config", "core.fsmonitor", script)
+	out, err := glabGit(t.Context(), repo, "diff", "--name-only", "-z", "--")
+	if err != nil || out != "tracked.txt\x00" {
+		t.Fatalf("diff = %q, %v", out, err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository fsmonitor ran: %v", err)
+	}
+	if _, err := glabGit(t.Context(), repo, "show-ref", "--verify", "--quiet", "refs/remotes/origin/none"); err == nil {
+		t.Fatal("failing git command reported success")
 	}
 }

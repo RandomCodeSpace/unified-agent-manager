@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ const (
 	tokenFileName = "web-token"
 	tokenBytes    = 32
 	cookieName    = "uam_web"
+	// signingKeyFileName holds the random secret cookies and file keys are
+	// signed with (signingKey), next to the token and created the same way.
+	signingKeyFileName = "web-signing-key"
 	// fileCookieName is the companion of file keys over HTTPS (fileCookie).
 	fileCookieName = "uam_file"
 	cookieMaxAge   = 30 * 24 * 60 * 60
@@ -158,6 +162,16 @@ func SetToken(path, token string) error {
 	return nil
 }
 
+// signingKey is the HMAC key for session cookies, file keys and file
+// cookies: the random secret, bound to the token so a new token still
+// invalidates every cookie. Signing with the secret keeps the token itself
+// out of every signed value.
+func signingKey(secret, token string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("uam-web-signing-key-v1|" + token))
+	return mac.Sum(nil)
+}
+
 // sessionCookie derives a session cookie bound to the request host and valid
 // until exp (Unix seconds). The cookie never carries the token itself and
 // survives service restarts; replacing the token file invalidates every
@@ -166,18 +180,18 @@ func SetToken(path, token string) error {
 // one, and the expiry bounds how long a leaked cookie stays usable. The
 // nonce makes each sign-in its own session, so Log out can revoke one
 // cookie (by its MAC, see revokedSessions) and no other.
-func sessionCookie(token, host string, exp int64) string {
+func sessionCookie(key []byte, host string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
 	nonce := rand.Text()
-	return e + "." + nonce + "." + cookieMAC(token, host, e, nonce)
+	return e + "." + nonce + "." + cookieMAC(key, host, e, nonce)
 }
 
 // cookieMAC signs a session cookie. An empty nonce is a cookie issued before
 // the nonce existed; those are still accepted until they expire, so an
 // upgrade signs nobody out. Drop that label once they are all expired
 // (cookieMaxAge after 2026-10-13).
-func cookieMAC(token, host, exp, nonce string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func cookieMAC(key []byte, host, exp, nonce string) string {
+	mac := hmac.New(sha256.New, key)
 	if nonce == "" {
 		mac.Write([]byte("uam-web-session-v3|" + strings.ToLower(host) + "|" + exp))
 	} else {
@@ -191,13 +205,13 @@ func cookieMAC(token, host, exp, nonce string) string {
 // from the Task's directory is sandboxed, so its requests for its sibling
 // files carry no cookie; under a key in the path its relative links still
 // resolve, and the key opens no other route and no other Task.
-func fileKey(token, host, id string, exp int64) string {
+func fileKey(key []byte, host, id string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileKeyMAC(token, host, id, e)
+	return e + "." + fileKeyMAC(key, host, id, e)
 }
 
-func fileKeyMAC(token, host, id, exp string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func fileKeyMAC(key []byte, host, id, exp string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("uam-web-file-v2|" + strings.ToLower(host) + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -211,7 +225,7 @@ func (s *Server) validFileKey(key, host, id string) bool {
 	if err != nil || time.Now().Unix() >= until {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.token, host, id, exp))) == 1
+	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.signKey, host, id, exp))) == 1
 }
 
 // fileCookie derives the companion a file key needs over HTTPS: the view route
@@ -219,13 +233,13 @@ func (s *Server) validFileKey(key, host, id string) bool {
 // path, so the key in a view URL opens nothing without the browser that
 // opened it. SameSite=None lets the sandboxed page's own requests carry it;
 // plain HTTP cannot set such a cookie, so there the key alone is checked.
-func fileCookie(token, host, id string, exp int64) string {
+func fileCookie(key []byte, host, id string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileCookieMAC(token, host, id, e)
+	return e + "." + fileCookieMAC(key, host, id, e)
 }
 
-func fileCookieMAC(token, host, id, exp string) string {
-	mac := hmac.New(sha256.New, []byte(token))
+func fileCookieMAC(key []byte, host, id, exp string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("uam-web-file-cookie-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -242,7 +256,7 @@ func (s *Server) validFileCookie(r *http.Request, id string) bool {
 		if err != nil || time.Now().Unix() >= until {
 			continue
 		}
-		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.token, r.Host, id, exp))) == 1 {
+		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.signKey, r.Host, id, exp))) == 1 {
 			return true
 		}
 	}
@@ -250,23 +264,31 @@ func (s *Server) validFileCookie(r *http.Request, id string) bool {
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
-	mac, _, ok := s.sessionMAC(r)
-	return ok && !s.revoked.revoked(mac)
+	_, _, ok := s.sessionMAC(r)
+	return ok
 }
 
-// sessionMAC verifies r's session cookie and returns its MAC, which names
-// the session, and its expiry (Unix seconds). ok is false for a missing,
-// malformed, expired or forged cookie; revocation is authenticated's check.
+// sessionMAC finds r's first session cookie that verifies and is not
+// revoked, and returns its MAC, which names the session, and its expiry
+// (Unix seconds). Every uam_web cookie is checked, since a browser may send
+// more than one.
 func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return "", 0, false
+	for _, c := range r.CookiesNamed(cookieName) {
+		if mac, exp, ok := s.verifySession(r.Host, c.Value); ok && !s.revoked.revoked(mac) {
+			return mac, exp, true
+		}
 	}
-	e, rest, ok := strings.Cut(c.Value, ".")
+	return "", 0, false
+}
+
+// verifySession checks one session cookie value for host. ok is false for a
+// malformed, expired or forged value.
+func (s *Server) verifySession(host, value string) (mac string, exp int64, ok bool) {
+	e, rest, ok := strings.Cut(value, ".")
 	if !ok {
 		return "", 0, false
 	}
-	exp, err = strconv.ParseInt(e, 10, 64)
+	exp, err := strconv.ParseInt(e, 10, 64)
 	if err != nil || time.Now().Unix() >= exp {
 		return "", 0, false
 	}
@@ -274,14 +296,30 @@ func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
 	if !ok {
 		nonce, mac = "", rest
 	}
-	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.token, r.Host, e, nonce))) != 1 {
+	// A cookie signed with the token itself is from before signKey; accept it
+	// until it expires so the upgrade signs nobody out. Drop that fallback
+	// cookieMaxAge after 2026-11-10.
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.signKey, host, e, nonce))) != 1 &&
+		subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC([]byte(s.token), host, e, nonce))) != 1 {
 		return "", 0, false
 	}
 	return mac, exp, true
 }
 
-func secureRequest(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+// secureRequest reports whether the browser sent r over HTTPS: its own
+// TLS, a Host that is one of the https public origins, or X-Forwarded-Proto
+// from a reverse proxy on loopback. Another peer's header is ignored, as
+// signInClient ignores its X-Forwarded-For.
+func (s *Server) secureRequest(r *http.Request) bool {
+	if r.TLS != nil || s.mcpCallbackOrigins[strings.ToLower(r.Host)] != "" {
+		return true
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	return peer != nil && peer.IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
@@ -294,6 +332,6 @@ func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
 func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set for TLS/proxy HTTPS; loopback/SSH HTTP is supported, with HttpOnly and SameSiteStrict always set.
 		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureRequest(r),
+		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secureRequest(r),
 	})
 }

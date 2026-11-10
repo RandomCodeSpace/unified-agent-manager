@@ -54,7 +54,7 @@ func dialTerminal(t *testing.T, httpSrv *httptest.Server, project, query string,
 	if header == nil {
 		header = http.Header{}
 	}
-	header.Set("Cookie", cookieName+"="+validCookie(u.Host))
+	header.Set("Cookie", cookieName+"="+validCookie(httpSrv.Config.Handler.(*Server), u.Host))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	conn, resp, err := websocket.Dial(ctx, "ws://"+u.Host+"/api/projects/"+project+"/terminal"+query, &websocket.DialOptions{HTTPHeader: header})

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -196,7 +198,7 @@ func (b *glabOutput) Write(p []byte) (int, error) {
 func glabExec(ctx context.Context, timeout time.Duration, dir, bin string, discard bool, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 G702 -- fixed git or resolved glab, structured argv; API data uses escaped endpoints and literal --raw-field values, no shell.
+	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 G702 -- resolved glab, structured argv; API data uses escaped endpoints and literal --raw-field values, no shell.
 	cmd.Dir, cmd.Env = dir, append(os.Environ(), "NO_COLOR=1")
 	cmd.WaitDelay = time.Second
 	var out glabOutput
@@ -215,6 +217,22 @@ func glabExec(ctx context.Context, timeout time.Duration, dir, bin string, disca
 	return out.buf.String(), err
 }
 
+// glabGit runs a read-only git command through runGit, so it gets the same
+// resolved binary and read-only flags as every other git call. A non-zero
+// exit is an error.
 func glabGit(ctx context.Context, dir string, args ...string) (string, error) {
-	return glabExec(ctx, glabTimeout, dir, "git", false, args...)
+	git, err := execpath.Resolve("git")
+	if err != nil {
+		return "", err
+	}
+	out, code, stderr, err := runGit(ctx, git, dir, glabOutputLimit+1, args...)
+	switch {
+	case err != nil:
+		return "", err
+	case len(out) > glabOutputLimit:
+		return "", errors.New("git output limit exceeded")
+	case code != 0:
+		return string(out), fmt.Errorf("git %s exited %d: %s", args[0], code, gitMessage(stderr))
+	}
+	return string(out), nil
 }

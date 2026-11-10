@@ -382,3 +382,41 @@ func TestLoopbackCallback(t *testing.T) {
 		}
 	}
 }
+
+type addressConversation struct {
+	*statusConversation
+	address string
+}
+
+func (c *addressConversation) MCPSignIn(context.Context, string, bool) (string, error) {
+	return c.address, nil
+}
+
+// The paste relay is offered only for a sign-in address with exactly one
+// redirect_uri and one state, as the public callback path requires.
+func TestMCPSignInRelayNeedsOneRedirectAndState(t *testing.T) {
+	ts, _, _ := newMCPServer(t)
+	sum, conv := createSession(t, ts.m, ts.prov)
+	cb := url.QueryEscape("http://127.0.0.1:4567/callback")
+	for _, tc := range []struct {
+		query string
+		relay bool
+	}{
+		{"redirect_uri=" + cb + "&state=s1", true},
+		{"redirect_uri=" + cb + "&redirect_uri=" + url.QueryEscape("http://127.0.0.1:1/other") + "&state=s1", false},
+		{"redirect_uri=" + cb + "&state=s1&state=s2", false},
+		{"redirect_uri=" + cb, false},
+	} {
+		c := &addressConversation{statusConversation: &statusConversation{Conversation: conv}, address: "https://auth.example/authorize?" + tc.query}
+		ts.m.mu.Lock()
+		ts.m.sessions[sum.ID].conv = c
+		ts.m.mu.Unlock()
+		out, err := ts.m.StartMCPSignIn(sum.ID, "notes", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Relay != tc.relay || out.URL != c.address {
+			t.Fatalf("%s: sign-in = %+v, want relay %v", tc.query, out, tc.relay)
+		}
+	}
+}

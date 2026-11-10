@@ -569,12 +569,18 @@ func (m *Manager) StartMCPSignIn(id, name string, again bool) (MCPSignIn, error)
 		return MCPSignIn{}, newError(http.StatusBadGateway, "the provider returned an unusable sign-in address")
 	}
 	out := MCPSignIn{URL: address}
-	callback, err := url.Parse(auth.Query().Get("redirect_uri"))
+	// Relay only an address with one redirect_uri and one state, as
+	// startMCPSignIn requires, so the relay target is never ambiguous.
+	q, qErr := url.ParseQuery(auth.RawQuery)
+	if qErr != nil || len(q["redirect_uri"]) != 1 || len(q["state"]) != 1 {
+		return out, nil
+	}
+	callback, err := url.Parse(q.Get("redirect_uri"))
 	if err == nil && loopbackCallback(callback) {
 		if m.signIns.pending == nil {
 			m.signIns.pending = map[string]*signIn{}
 		}
-		m.signIns.pending[key] = &signIn{callback: callback, state: auth.Query().Get("state"), expires: time.Now().Add(signInTTL)}
+		m.signIns.pending[key] = &signIn{callback: callback, state: q.Get("state"), expires: time.Now().Add(signInTTL)}
 		out.Relay = true
 	}
 	return out, nil
