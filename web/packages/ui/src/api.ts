@@ -1272,6 +1272,9 @@ export interface BackgroundTasks {
  */
 export interface BackgroundOutput { text: string; cursor: string; more: boolean; done: boolean }
 
+/** Prefixed to a background output cursor, the read skips to the newest chunk of the output. */
+export const BACKGROUND_OUTPUT_LATEST = 'latest:';
+
 /**
  * The open conversation's native schedules, display only: no prompts, and nothing UAM runs. `known`
  * false with rows is a partial list (`truncated`); without rows the list is unknown, never empty.
@@ -2348,22 +2351,26 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
   }
 
 
-  async function download(path: string): Promise<{ blob: Blob; name: string }> {
-    let res: Response;
-    try {
-      admit(path);
-      res = await fetch(url(path), { credentials: 'same-origin' });
-    } catch (error) {
-      if (error instanceof ApiError) throw report(error);
-      throw report(new ApiError(0, 'Could not reach the server'));
-    }
-    if (res.status === 401) notifyUnauthorized();
-    if (!res.ok) {
-      const parsed = await errorBody(res);
-      throw report(failure(res.status, parsed.message, parsed.body));
-    }
-    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'download';
-    return { blob: await res.blob(), name };
+  /** A file read whole, headers and body, bounded as a read. */
+  function download(path: string, signal?: AbortSignal): Promise<{ blob: Blob; name: string }> {
+    return bounded(signal, async (limited) => {
+      let res: Response;
+      try {
+        admit(path);
+        res = await fetch(url(path), { credentials: 'same-origin', signal: limited });
+      } catch (error) {
+        if (limited.aborted) throw error;
+        if (error instanceof ApiError) throw report(error);
+        throw report(new ApiError(0, 'Could not reach the server'));
+      }
+      if (res.status === 401) notifyUnauthorized();
+      if (!res.ok) {
+        const parsed = await errorBody(res);
+        throw report(failure(res.status, parsed.message, parsed.body));
+      }
+      const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'download';
+      return { blob: await res.blob(), name };
+    });
   }
 
 
@@ -2599,7 +2606,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
     releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
-    exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
+    exportMarkdown: (id: string, signal?: AbortSignal) => download(`/api/sessions/${enc(id)}/export`, signal),
     /**
      * A send that has no answer in PROMPT_TIMEOUT_MS fails, so the composer shows it instead of waiting for good. The service
      * may still take it; sending again with the same `request_id` returns that outcome instead of a second message.

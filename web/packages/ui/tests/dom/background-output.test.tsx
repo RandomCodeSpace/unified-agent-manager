@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { openTask, type User } from './render';
 
 /** The output lines the panel shows. */
@@ -7,6 +7,11 @@ const lines = () => (document.querySelector('[data-command-output] pre')?.textCo
 
 /** The `cursor` of each output read so far, in order. */
 const cursors = (fetch: { mock: { calls: unknown[][] } }) => fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/background-tasks/')).map((url) => new URL(url, location.href).searchParams.get('cursor'));
+
+// A fetch spy outlives the setup's restore of window.fetch, so a test's stubbed answers would reach the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 async function openOutput(user: User, running: number, task: string, command: string) {
   await user.click(screen.getByRole('button', { name: `Background tasks: ${running} running` }));
@@ -70,4 +75,17 @@ test('a finished background command stays readable to its end, and one whose out
   expect(other.queryByRole('button', { name: 'Load more' })).toBeNull();
   // The ended command was not read again after its end.
   expect(cursors(fetch).filter(Boolean)).toHaveLength(continued);
+});
+
+test('Jump to latest skips the waiting output, says so, and shows the newest lines', async () => {
+  const { user } = await openTask('t1');
+  const fetch = vi.spyOn(window, 'fetch');
+  const panel = await openOutput(user, 1, 'Serve the docs preview', 'npx vite --host 127.0.0.1 --port 8765 docs');
+  await user.click(await panel.findByRole('button', { name: 'Jump to latest' }));
+  expect(await panel.findByText('End of output.')).toBeTruthy();
+  expect(panel.getByText('Earlier output was skipped.')).toBeTruthy();
+  expect(lines()).toEqual(Array.from({ length: 40 }, (_, i) => `bg-docs output line ${961 + i}`));
+  expect(cursors(fetch).filter(Boolean)).toEqual(['latest:1']);
+  expect(panel.queryByRole('button', { name: 'Load more' })).toBeNull();
+  expect(panel.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
 });

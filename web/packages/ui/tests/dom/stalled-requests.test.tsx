@@ -162,3 +162,43 @@ describe('a stalled write', () => {
     expect(asked).toEqual(['POST /api/sessions/t3/suggestions']);
   });
 });
+
+describe('a stalled download', () => {
+  /** A service that takes every request and answers none. */
+  function silent() {
+    const before = window.fetch;
+    restoreFetch = () => { window.fetch = before; };
+    window.fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason)));
+    };
+  }
+
+  test('the Markdown export is given up on after 60 s like any read', async () => {
+    vi.useFakeTimers();
+    silent();
+    const reported: ApiError[] = [];
+    let end: unknown;
+    createApiClient(null, () => true, (error) => reported.push(error)).exportMarkdown('t3').catch((error: unknown) => { end = error; });
+    await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
+    expect(end).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(end).toBeInstanceOf(ApiError);
+    expect(end).toMatchObject({ status: 0, message: 'The server did not answer in 60 seconds' });
+    expect(reported).toEqual([end]);
+  });
+
+  test("the caller's own abort still ends it, with the caller's reason", async () => {
+    vi.useFakeTimers();
+    silent();
+    const reported: ApiError[] = [];
+    const controller = new AbortController();
+    let end: unknown;
+    createApiClient(null, () => true, (error) => reported.push(error)).exportMarkdown('t3', controller.signal).catch((error: unknown) => { end = error; });
+    const reason = new Error('closed the menu');
+    controller.abort(reason);
+    await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+    expect(end).toBe(reason);
+    expect(reported).toEqual([]);
+  });
+});

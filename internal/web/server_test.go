@@ -727,7 +727,7 @@ func TestLoginBodyIsSmall(t *testing.T) {
 
 // Cookies and file keys are signed with a separate secret kept in its own
 // owner-only file, not with the access token; a cookie signed with the token
-// by an earlier release still signs in until it expires.
+// by an earlier release no longer signs in.
 func TestSigningUsesASeparateSecret(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	path := filepath.Join(filepath.Dir(ts.m.store.Path()), signingKeyFileName)
@@ -751,8 +751,8 @@ func TestSigningUsesASeparateSecret(t *testing.T) {
 		t.Fatalf("file key = %d", w.Code)
 	}
 	old := sessionCookie([]byte(testToken), "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())
-	if w := ts.do(http.MethodGet, "/api/sessions", "", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: old}) }); w.Code != http.StatusOK {
-		t.Fatalf("session cookie from before the signing key = %d", w.Code)
+	if w := ts.do(http.MethodGet, "/api/sessions", "", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: old}) }); w.Code != http.StatusUnauthorized {
+		t.Fatalf("session cookie signed with the token = %d", w.Code)
 	}
 	again, err := NewServer(ServerConfig{Manager: ts.m, Token: testToken, Assets: fstest.MapFS{"index.html": {Data: []byte("x")}}})
 	if err != nil {

@@ -1786,10 +1786,15 @@ type BackgroundOutput struct {
 }
 
 // BackgroundOutputReader reads a provider-owned shell's output in bounded
-// chunks: an empty cursor reads from the start, a returned one continues.
+// chunks: an empty cursor reads from the start, a returned one continues, and
+// one behind BackgroundOutputLatest skips to the newest chunk.
 type BackgroundOutputReader interface {
 	ReadBackgroundOutput(ctx context.Context, id, cursor string) (BackgroundOutput, error)
 }
+
+// BackgroundOutputLatest prefixes a read's cursor to skip what is between it
+// and the end of the output and read the newest chunk instead.
+const BackgroundOutputLatest = "latest:"
 
 var (
 	ErrBackgroundTaskNotFound = errors.New("background shell task not found")

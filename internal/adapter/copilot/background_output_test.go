@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -160,5 +161,57 @@ func TestWebBackgroundTasksMarkAttachedShellOutputUnreadable(t *testing.T) {
 	got := h.sink.last().BackgroundTasks
 	if got == nil || len(got.Tasks) != 3 || !got.Tasks[0].OutputUnreadable || got.Tasks[1].OutputUnreadable || got.Tasks[2].OutputUnreadable {
 		t.Fatalf("background tasks = %+v", got)
+	}
+}
+
+func TestWebBackgroundOutputJumpsToTheNewestChunk(t *testing.T) {
+	h := openWeb(t)
+	reader := h.conv.(agentapi.BackgroundOutputReader)
+	ctx := context.Background()
+	var lines strings.Builder
+	for i := range 10003 {
+		fmt.Fprintf(&lines, "line %05d\n", i)
+	}
+	text, ended := lines.String(), false
+	var reads []string
+	h.fs.readOutput = shellLog(&text, &ended, 20000, &reads)
+
+	first, err := reader.ReadBackgroundOutput(ctx, "server", "")
+	if err != nil || !first.More {
+		t.Fatalf("first read = %v, more %v", err, first.More)
+	}
+	reads = nil
+	out, err := reader.ReadBackgroundOutput(ctx, "server", agentapi.BackgroundOutputLatest+first.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The newest lines, whole, filling one chunk although the CLI's last read is short.
+	if !strings.HasSuffix(text, out.Text) || !strings.HasPrefix(out.Text, "line ") || len(out.Text) > backgroundOutputCap || len(out.Text) <= backgroundOutputCap-11 {
+		t.Fatalf("jump = %d bytes starting %q", len(out.Text), out.Text[:12])
+	}
+	if out.More || out.Done || len(reads) != 7 || reads[0] != "server@" {
+		t.Fatalf("jump = more %v done %v after %d reads", out.More, out.Done, len(reads))
+	}
+	// It follows on from the end like any read.
+	text += "next\n"
+	ended = true
+	if out, err = reader.ReadBackgroundOutput(ctx, "server", out.Cursor); err != nil || out.Text != "next\n" || !out.Done {
+		t.Fatalf("after the jump = %+v, %v", out, err)
+	}
+
+	// One long line of an ended shell: the newest bytes, cut on a character.
+	text = strings.Repeat("é", 9000)
+	if out, err = reader.ReadBackgroundOutput(ctx, "server", agentapi.BackgroundOutputLatest); err != nil || !strings.HasSuffix(text, out.Text) || len(out.Text) != backgroundOutputCap || !out.Done {
+		t.Fatalf("long line jump = %d bytes, done %v, %v", len(out.Text), out.Done, err)
+	}
+	// A failing read on the way is reported, not skipped over.
+	h.fs.readOutput = func(_, cursor string) (*rpc.TasksReadOutputResult, error) {
+		if cursor == "" {
+			return &rpc.TasksReadOutputResult{Text: "one\n", Cursor: "at:x"}, nil
+		}
+		return nil, rejectedError{errors.New("JSON-RPC Error -32602: invalid tasks.readOutput cursor")}
+	}
+	if _, err := reader.ReadBackgroundOutput(ctx, "server", agentapi.BackgroundOutputLatest); !errors.Is(err, agentapi.ErrBackgroundOutputUnavailable) {
+		t.Fatalf("failed jump = %v, want unavailable", err)
 	}
 }

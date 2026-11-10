@@ -1754,8 +1754,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the finished ones stay listed); click it to see each shell's status and command
   and to stop one. **Output** on a row opens what that command has printed in
   the command output panel: the first 8 KB at once, **Load more** for the
-  next, and once you have caught up with a running command, what it prints
-  next (read every two seconds while the panel is open). A finished command
+  next or **Jump to latest** to skip to the newest 8 KB (the panel then says
+  earlier output was skipped), and once you have caught up with a running
+  command, what it prints next (read every two seconds while the panel is
+  open). A finished command
   stays readable while the CLI keeps its output; when it does not, the panel
   says so in one line. A shell the agent holds attached has no **Output**:
   the CLI keeps no output to read for it.
