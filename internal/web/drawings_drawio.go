@@ -69,10 +69,11 @@ type mxRoot struct {
 	Items []mxItem `xml:",any"`
 }
 
-// drawioDiagram models a .drawio file: an <mxfile> whose first <diagram>
-// holds the model, plain or in draw.io's compressed form (base64 of a raw
-// deflate of the URL-encoded XML), or a bare <mxGraphModel>.
-func drawioDiagram(content []byte) (*diagram, error) {
+// drawioItems is the cells of a .drawio file: an <mxfile> whose first
+// <diagram> holds the model, plain or in draw.io's compressed form (base64
+// of a raw deflate of the URL-encoded XML), or a bare <mxGraphModel>. An
+// <object> or <UserObject> is its cell with the wrapper's id and label.
+func drawioItems(content []byte) ([]mxItem, error) {
 	var doc struct {
 		XMLName  xml.Name
 		Diagrams []struct {
@@ -109,11 +110,7 @@ func drawioDiagram(content []byte) (*diagram, error) {
 	default:
 		return nil, bad
 	}
-	d := &diagram{}
-	// An edge's label may be its own value or a child cell with edgeLabel
-	// style, which parents the edge.
-	labels := map[string]string{}
-	var cells []mxItem
+	cells := items[:0]
 	for _, it := range items {
 		switch it.XMLName.Local {
 		case "mxCell":
@@ -127,6 +124,23 @@ func drawioDiagram(content []byte) (*diagram, error) {
 		default:
 			continue
 		}
+		cells = append(cells, it)
+	}
+	return cells, nil
+}
+
+// drawioDiagram models a .drawio file's first page.
+func drawioDiagram(content []byte) (*diagram, error) {
+	items, err := drawioItems(content)
+	if err != nil {
+		return nil, err
+	}
+	d := &diagram{}
+	// An edge's label may be its own value or a child cell with edgeLabel
+	// style, which parents the edge.
+	labels := map[string]string{}
+	var cells []mxItem
+	for _, it := range items {
 		if strings.Contains(it.Style, "edgeLabel") {
 			labels[it.Parent] = drawioText(it.Value)
 			continue

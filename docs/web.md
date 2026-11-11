@@ -1220,9 +1220,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   part of a drawing, select shapes or arrows on the canvas and press Use
   selection in message: the editor closes, the composer's chip says how many
   are selected (its × takes them back), and your next message names them to
-  the agent, so "make this red" has a target. The agent can then rename,
-  recolour or remove elements of an Excalidraw drawing in place, with your
-  layout kept; the card shows its version, and an editor you had open
+  the agent, so "make this red" has a target. With the draw.io editor the
+  button asks the page what is selected when you press it; a draw.io page
+  older than 30.1 cannot say, and the button is then disabled. The agent can
+  then rename, recolour or remove elements of a drawing in place, Excalidraw
+  or draw.io, with your layout kept; the card shows its version, and an editor you had open
   refuses its next save until you press Reload. It cannot add shapes or
   arrows in place: for those it writes a new diagram. The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
@@ -1526,16 +1528,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   selected in docs/flow.excalidraw: "Cache", edge "API" → "Cache" (id e7).
   Their message refers to these." (a node gets its id only when another
   shares its name), sent once, also when the drawing itself did not change.
-  The agent's `uam_diagram_edit` tool changes an `.excalidraw` drawing in
+  The agent's `uam_diagram_edit` tool changes a drawing in
   place: each edit names one element (`node` by its label, or `id`) and
   gives `rename`, `stroke`, `fill` or `remove`; the edits apply together or
   not at all. Only the named elements change (a removed node takes its
   label and arrows; a new label is wrapped to its shape and centred in it,
-  and a shape too low for it grows about its centre), the result is the agent's next version, so no note
+  and a shape too low for it grows about its centre; in a `.drawio` file,
+  whose first page it edits, a removed cell also takes the cells it contains,
+  the label goes on the cell that holds it, as HTML where that cell is HTML,
+  colours become `strokeColor` and `fillColor` in its style, and a
+  compressed page is written back plain), the result is the agent's next version, so no note
   comes back for it, and the call answers with the changes. It is refused
-  while you have changes the agent has not read, for a `.drawio` drawing,
-  for a name two nodes share, and for an element without a label to rename;
-  it adds nothing. It writes without a permission request in every mode,
+  while you have changes the agent has not read, for a name two nodes
+  share, and in an `.excalidraw` drawing for an element without a label to
+  rename; it adds no shape or arrow. It writes without a permission request in every mode,
   and only to a drawing of the Thread's record. The draw.io editor is opt-in: Settings holds
   `drawio: {origin, enabled}`, and `POST /api/settings/drawio/check` with
   `{"origin"}` probes an origin as the editor frame would load it

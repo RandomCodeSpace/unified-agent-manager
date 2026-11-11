@@ -8,7 +8,7 @@ import { ArrowUp, Maximize2, Minimize2, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus } from '../api';
 import { cn } from '../lib/cn';
-import { drawioEmbedUrl, drawioMessage, drawioOrigin, DRAWIO_SANDBOX } from '../lib/drawio';
+import { drawioEmbedUrl, drawioMessage, drawioOrigin, drawioSelection, DRAWIO_SANDBOX, DRAWIO_SELECTION, EXPORT_TIMEOUT } from '../lib/drawio';
 import { changesWord, drawioOverlayXml, excalidrawFile, overlay, parseExcalidraw, type DrawnElement } from '../lib/drawings';
 import { useScheme } from '../lib/theme';
 import { Note, Spinner } from './common';
@@ -49,6 +49,9 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   // The shapes and arrows selected on the canvas, and why sending them failed.
   const [picked, setPicked] = useState<string[]>([]);
   const [pickError, setPickError] = useState('');
+  // draw.io reports no selection as it changes: once its page has loaded, how to ask for it, or null when the page cannot say.
+  const [drawioPick, setDrawioPick] = useState<{ ask: (() => Promise<string[]>) | null }>();
+  const onDrawioSelection = useCallback((ask: (() => Promise<string[]>) | null) => setDrawioPick({ ask }), []);
   const state = d.doc(target.path);
   const doc = state?.doc;
   const error = state?.error;
@@ -134,8 +137,13 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
     }, () => {});
   };
   const sendSelection = () => {
-    d.select(target.path, picked).then(onClose, (err: unknown) => setPickError(describeError(err)));
+    const ids = doc?.format === 'drawio' ? (drawioPick?.ask?.() ?? Promise.resolve([])) : Promise.resolve(picked);
+    ids.then((list) => (list.length ? d.select(target.path, list).then(onClose) : setPickError('Select shapes or arrows in the drawing first.'))).catch((err: unknown) => setPickError(describeError(err)));
   };
+  // The button's state: Excalidraw says what is selected as it changes; draw.io is asked on the press.
+  const pick = doc?.format === 'drawio'
+    ? drawioPick && { ready: !!drawioPick.ask, why: 'This draw.io page cannot report a selection: it needs draw.io 30.1 or later' }
+    : { ready: picked.length > 0, why: 'Select shapes or arrows first' };
   const revert = () => {
     if (!doc || doc.baseline === null) return;
     loadScene.current(doc.baseline);
@@ -179,8 +187,8 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             ]}
           />
         )}
-        {view === 'mine' && editable && doc?.format === 'excalidraw' && (
-          <Button size="sm" disabled={picked.length === 0} title={picked.length === 0 ? 'Select shapes or arrows first' : 'Your next message names what is selected'} onClick={sendSelection}>Use selection in message</Button>
+        {view === 'mine' && editable && doc && pick && (
+          <Button size="sm" disabled={!pick.ready} title={pick.ready ? 'Your next message names what is selected' : pick.why} onClick={sendSelection}>Use selection in message</Button>
         )}
         <Button variant="primary" size="sm" onClick={onClose}>Done</Button>
         {close}
@@ -199,7 +207,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   const canvas = doc && editable && (
     <div className={cn('absolute inset-0', view !== 'mine' && 'invisible [&_*]:invisible!')}>
       {doc.format === 'drawio' && d.drawio ? (
-        <DrawioFrame origin={d.drawio} xml={doc.content} onSave={(xml) => { if (xml !== lastSaved.current) saveContent(xml); }} onReady={(l) => { loadScene.current = l; }} />
+        <DrawioFrame origin={d.drawio} xml={doc.content} version={doc.version} onSave={(xml) => { if (xml !== lastSaved.current) saveContent(xml); }} onReady={(l, version) => { loadScene.current = l; shownVersion.current ??= version; }} onSelection={onDrawioSelection} />
       ) : current ? (
         <Suspense fallback={<div className="flex h-full items-center justify-center"><Spinner className="border-muted" /></div>}>
           <ExcalidrawCanvas
@@ -377,30 +385,51 @@ function Legend() {
 /**
  * The draw.io embed in Yours: loads the file once the page says `init`, saves on its `autosave`
  * and `save` events, and hands the owner `load` for Reload and Revert (an embed keeps autosaving
- * what it shows, so a version the owner takes back must reach it). Messages count only from
- * this frame's window.
+ * what it shows, so a version the owner takes back must reach it; `version` is the one of the
+ * file it loaded first). Once the file is in, it finds out whether the page can name its
+ * selected cells (`onSelection`: how to ask, or null). Messages count only from this frame's
+ * window.
  */
-function DrawioFrame({ origin, xml, onSave, onReady }: Readonly<{ origin: string; xml: string; onSave: (xml: string) => void; onReady: (load: (xml: string) => void) => void }>) {
+function DrawioFrame({ origin, xml, version, onSave, onReady, onSelection }: Readonly<{ origin: string; xml: string; version: number; onSave: (xml: string) => void; onReady: (load: (xml: string) => void, version: number) => void; onSelection: (ask: (() => Promise<string[]>) | null) => void }>) {
   const frame = useRef<HTMLIFrameElement>(null);
   // draw.io enabled after this page loaded: the page's security policy does not admit the frame until a reload.
   const [blocked, setBlocked] = useState(false);
-  const first = useRef(xml);
-  const latest = useRef({ onSave, onReady });
+  const first = useRef({ xml, version });
+  const latest = useRef({ onSave, onReady, onSelection });
   useEffect(() => {
-    latest.current = { onSave, onReady };
-  }, [onSave, onReady]);
+    latest.current = { onSave, onReady, onSelection };
+  }, [onSave, onReady, onSelection]);
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
     const from = drawioOrigin(origin);
     const load = (xml: string) => el.contentWindow?.postMessage(JSON.stringify({ action: 'load', xml, autosave: 1 }), from);
+    // The one question out at a time: the page's next export answers it.
+    let answer: ((ids: string[] | null) => void) | null = null;
+    const ask = () => new Promise<string[]>((resolve, reject) => {
+      const timer = setTimeout(() => answer?.(null), EXPORT_TIMEOUT);
+      answer = (ids) => {
+        clearTimeout(timer);
+        answer = null;
+        if (ids) resolve(ids);
+        else reject(new Error('draw.io did not report the selection'));
+      };
+      el.contentWindow?.postMessage(DRAWIO_SELECTION, from);
+    });
+    let probed = false;
     const onMessage = (e: MessageEvent) => {
       if (e.source !== el.contentWindow || e.origin !== from) return;
       const m = drawioMessage(e.data);
       if (!m) return;
       if (m.event === 'init') {
-        load(first.current);
-        latest.current.onReady(load);
+        load(first.current.xml);
+        latest.current.onReady(load, first.current.version);
+      }
+      if (m.event === 'export') answer?.(drawioSelection(e.data));
+      // Nothing is selected in a file just loaded: a page that knows the question answers with no cells, an older one with the whole page or a picture.
+      if (m.event === 'load' && !probed) {
+        probed = true;
+        ask().then((ids) => latest.current.onSelection(ids.length === 0 ? ask : null), () => latest.current.onSelection(null));
       }
       if ((m.event === 'autosave' || m.event === 'save') && m.xml) latest.current.onSave(m.xml);
     };

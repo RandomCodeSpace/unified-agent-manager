@@ -22,14 +22,15 @@
   gives an id for an arrow, and for a node whose name another node shares.
 - Call `uam_diagram_read` for the full drawing as text (one line per node
   and edge); without `path` it lists the drawings.
-- Call `uam_diagram_edit` to change an `.excalidraw` drawing in place, with
-  the owner's layout kept: each edit names one element (`node` by its
-  label, or `id` from a selection note) and gives `rename`, `stroke`,
-  `fill` or `remove`. Removing a node removes its arrows; a long new label
-  wraps inside its shape, which grows taller if it must. It refuses while
-  the owner has changes you have not read: read the drawing, then edit.
-- It cannot add a node, an arrow or a label, and it does not change
-  `.drawio` files. For those, write a new mermaid block and say the owner
-  can convert it.
+- Call `uam_diagram_edit` to change a drawing in place, `.excalidraw` or
+  `.drawio`, with the owner's layout kept: each edit names one element
+  (`node` by its label, or `id` from a selection note) and gives `rename`,
+  `stroke`, `fill` or `remove`. Removing a node removes its arrows, and in
+  a `.drawio` drawing what it contains; a long new label wraps inside its
+  shape. It refuses while the owner has changes you have not read: read
+  the drawing, then edit.
+- It cannot add a node or an arrow, and in an `.excalidraw` drawing it
+  cannot label an element that has no label. For those, write a new
+  mermaid block and say the owner can convert it.
 - Do not edit a drawing file with your file tools: its layout is the
   owner's.

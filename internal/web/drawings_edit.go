@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -19,10 +22,10 @@ import (
 )
 
 // The agent's edits of a drawing (uam_diagram_edit) and the owner's
-// selection (docs/web.md "Drawings"). An edit changes the elements an
-// Excalidraw file already has, so the owner's layout stays: rename,
-// recolour, remove. Adding a shape or an arrow needs geometry that only the
-// browser's converter builds, so that still takes a new mermaid block.
+// selection (docs/web.md "Drawings"). An edit changes the elements a
+// drawing already has, so the owner's layout stays: rename, recolour,
+// remove. Adding a shape or an arrow needs geometry that only the browser's
+// converter builds, so that still takes a new mermaid block.
 
 const (
 	diagramEditToolName = "uam_diagram_edit"
@@ -37,14 +40,14 @@ const (
 
 var diagramEditTool = agentapi.HostTool{
 	Name: diagramEditToolName,
-	Description: "Change an .excalidraw drawing in place, keeping the owner's layout: rename, recolour or remove its nodes and arrows. " +
+	Description: "Change a drawing in place, keeping the owner's layout: rename, recolour or remove its nodes and arrows. " +
 		"The edits apply together or not at all. To add a node or an arrow, write a new mermaid block.",
 	Parameters: toolSchema([]string{"path", "edits"}, map[string]any{
 		"path": stringProp("The drawing's path, such as docs/flow.excalidraw."),
 		"edits": listProp(fmt.Sprintf("The changes, one per element, 1 to %d. Each names its element by node or by id.", maxDiagramEdits), toolSchema(nil, map[string]any{
 			"node":   stringProp("The node as uam_diagram_read names it: its label."),
 			"id":     stringProp("The element's id, where a selection note gives one. Arrows go by id."),
-			"rename": stringProp("The new label."),
+			"rename": stringProp("The new label. An .excalidraw element needs a label already."),
 			"stroke": stringProp("The outline or text colour, as #rrggbb."),
 			"fill":   stringProp("The fill colour, as #rrggbb or transparent."),
 			"remove": map[string]any{"type": "boolean", "description": "Remove it with its label; a node's arrows go with it."},
@@ -226,8 +229,33 @@ func (e diagramEdit) check(name string) error {
 		return fmt.Errorf("stroke %q is not a colour: use #rrggbb", e.Stroke)
 	case e.Fill != "" && e.Fill != "transparent" && !diagramColour.MatchString(e.Fill):
 		return fmt.Errorf("fill %q is not a colour: use #rrggbb or transparent", e.Fill)
+	case e.Rename != nil && (strings.TrimSpace(*e.Rename) == "" || len(*e.Rename) > maxDiagramLabel):
+		return fmt.Errorf("a label takes 1 to %d characters", maxDiagramLabel)
 	}
 	return nil
+}
+
+// editTargets checks edits against the drawing d and returns the id of the
+// element each one names, in their order.
+func editTargets(d *diagram, edits []diagramEdit) ([]string, error) {
+	ids := make([]string, 0, len(edits))
+	seen := map[string]bool{}
+	for _, e := range edits {
+		id, err := d.target(e)
+		if err != nil {
+			return nil, err
+		}
+		name := d.ref(id)
+		if seen[id] {
+			return nil, fmt.Errorf("two edits name %s; put its changes in one edit", name)
+		}
+		seen[id] = true
+		if err := e.check(name); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // apply makes the edit's rename and colours on the element el, named name,
@@ -238,14 +266,10 @@ func (e diagramEdit) apply(name string, el, label map[string]any) error {
 		if el["type"] == "text" {
 			text, container = el, nil
 		}
-		to := strings.TrimSpace(*e.Rename)
-		switch {
-		case text == nil:
-			return fmt.Errorf("%s has no label to rename, and uam cannot add text to a drawing yet", name)
-		case to == "" || len(to) > maxDiagramLabel:
-			return fmt.Errorf("a label takes 1 to %d characters", maxDiagramLabel)
+		if text == nil {
+			return fmt.Errorf("%s has no label to rename, and uam cannot add text to an .excalidraw drawing yet", name)
 		}
-		relabel(text, container, to)
+		relabel(text, container, strings.TrimSpace(*e.Rename))
 	}
 	if e.Stroke != "" {
 		el["strokeColor"] = e.Stroke
@@ -283,6 +307,10 @@ func dropElements(elements []map[string]any, gone map[string]bool) []map[string]
 // is d, and returns the new file. Elements it does not touch, and fields it
 // does not know, are kept as they are.
 func editExcalidraw(content []byte, d *diagram, edits []diagramEdit) ([]byte, error) {
+	ids, err := editTargets(d, edits)
+	if err != nil {
+		return nil, err
+	}
 	var file map[string]json.RawMessage
 	if err := json.Unmarshal(content, &file); err != nil {
 		return nil, errors.New("not an Excalidraw file")
@@ -307,23 +335,11 @@ func editExcalidraw(content []byte, d *diagram, edits []diagramEdit) ([]byte, er
 		}
 	}
 	gone := map[string]bool{}
-	seen := map[string]bool{}
-	for _, e := range edits {
-		id, err := d.target(e)
-		if err != nil {
-			return nil, err
-		}
-		name := d.ref(id)
-		if seen[id] {
-			return nil, fmt.Errorf("two edits name %s; put its changes in one edit", name)
-		}
-		seen[id] = true
-		if err := e.check(name); err != nil {
-			return nil, err
-		}
+	for i, e := range edits {
+		id := ids[i]
 		if e.Remove {
 			gone[id] = true
-		} else if err := e.apply(name, byID[id], label[id]); err != nil {
+		} else if err := e.apply(d.ref(id), byID[id], label[id]); err != nil {
 			return nil, err
 		}
 	}
@@ -344,6 +360,202 @@ func editExcalidraw(content []byte, d *diagram, edits []diagramEdit) ([]byte, er
 	}
 	file["elements"] = data
 	return json.Marshal(file)
+}
+
+// mxChange is what an edit makes of one draw.io cell: a new value, new
+// colours in its style, or both.
+type mxChange struct {
+	value        *string
+	stroke, fill string
+}
+
+// setStyle sets key=value in a draw.io style string.
+func setStyle(style, key, value string) string {
+	parts := strings.Split(strings.TrimSuffix(style, ";"), ";")
+	for i, part := range parts {
+		if strings.HasPrefix(part, key+"=") {
+			parts[i] = key + "=" + value
+			return strings.Join(parts, ";") + ";"
+		}
+	}
+	if style == "" {
+		return key + "=" + value + ";"
+	}
+	return strings.Join(parts, ";") + ";" + key + "=" + value + ";"
+}
+
+// setAttr sets the attribute name of an element's start tag.
+func setAttr(start *xml.StartElement, name, value string) {
+	for i, a := range start.Attr {
+		if a.Name.Local == name && a.Name.Space == "" {
+			start.Attr[i].Value = value
+			return
+		}
+	}
+	start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: name}, Value: value})
+}
+
+func attrOf(start xml.StartElement, name string) string {
+	for _, a := range start.Attr {
+		if a.Name.Local == name && a.Name.Space == "" {
+			return a.Value
+		}
+	}
+	return ""
+}
+
+// apply makes the change on an <mxCell> start tag.
+func (c mxChange) apply(start *xml.StartElement) {
+	if c.value != nil {
+		setAttr(start, "value", *c.value)
+	}
+	style := attrOf(*start, "style")
+	if c.stroke != "" {
+		style = setStyle(style, "strokeColor", c.stroke)
+	}
+	if c.fill != "" {
+		style = setStyle(style, "fillColor", strings.Replace(c.fill, "transparent", "none", 1))
+	}
+	if style != attrOf(*start, "style") {
+		setAttr(start, "style", style)
+	}
+}
+
+// copyDrawio copies a .drawio document from dec to enc: the gone cells of
+// its first page are left out and the changes made to the others; every
+// other token passes as it is. A compressed page is written plain, which
+// draw.io reads as well.
+func copyDrawio(dec *xml.Decoder, enc *xml.Encoder, gone map[string]bool, change map[string]mxChange) error {
+	var stack []string
+	pages := 0
+	// The id of the <object> or <UserObject> whose own <mxCell> comes next.
+	wrapper := ""
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		parent := ""
+		if len(stack) > 0 {
+			parent = stack[len(stack)-1]
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			if name == "diagram" {
+				pages++
+			}
+			cell := name == "mxCell" || name == "object" || name == "UserObject"
+			switch {
+			case pages > 1:
+			case cell && parent == "root":
+				id := attrOf(t, "id")
+				if gone[id] {
+					if err := dec.Skip(); err != nil {
+						return err
+					}
+					continue
+				}
+				if c := change[id]; name == "mxCell" {
+					c.apply(&t)
+				} else {
+					if c.value != nil {
+						setAttr(&t, "label", *c.value)
+					}
+					wrapper = id
+				}
+			case name == "mxCell" && (parent == "object" || parent == "UserObject"):
+				c := change[wrapper]
+				c.value = nil
+				c.apply(&t)
+			}
+			stack = append(stack, name)
+			tok = t
+		case xml.EndElement:
+			stack = stack[:len(stack)-1]
+		case xml.CharData:
+			if pages == 1 && parent == "diagram" && len(bytes.TrimSpace(t)) > 0 {
+				if inner, err := inflateDrawio(string(t)); err == nil {
+					if err := copyDrawio(xml.NewDecoder(bytes.NewReader(inner)), enc, gone, change); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+		}
+		if err := enc.EncodeToken(tok); err != nil {
+			return err
+		}
+	}
+}
+
+// editDrawio applies edits to the .drawio file content, whose model is d,
+// and returns the new file. A removed cell takes its children and the edges
+// that end at it; draw.io lays a new label out itself, so a rename also
+// labels a cell that had none.
+func editDrawio(content []byte, d *diagram, edits []diagramEdit) ([]byte, error) {
+	ids, err := editTargets(d, edits)
+	if err != nil {
+		return nil, err
+	}
+	items, err := drawioItems(content)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]mxItem{}
+	// An edge's label when it is a child cell, not the edge's own value.
+	edgeLabel := map[string]string{}
+	for _, it := range items {
+		byID[it.ID] = it
+		if strings.Contains(it.Style, "edgeLabel") {
+			edgeLabel[it.Parent] = it.ID
+		}
+	}
+	gone := map[string]bool{}
+	change := map[string]mxChange{}
+	for i, e := range edits {
+		id := ids[i]
+		if e.Remove {
+			gone[id] = true
+			continue
+		}
+		if e.Rename != nil {
+			at := id
+			if child, ok := edgeLabel[id]; ok && drawioText(byID[id].Value) == "" {
+				at = child
+			}
+			value := strings.TrimSpace(*e.Rename)
+			if strings.Contains(byID[at].Style, "html=1") {
+				value = strings.ReplaceAll(html.EscapeString(value), "\n", "<br>")
+			}
+			c := change[at]
+			c.value = &value
+			change[at] = c
+		}
+		c := change[id]
+		c.stroke, c.fill = e.Stroke, e.Fill
+		change[id] = c
+	}
+	for grew := true; grew; {
+		grew = false
+		for _, it := range items {
+			if it.ID != "" && !gone[it.ID] && (gone[it.Parent] || it.Edge == "1" && (gone[it.Source] || gone[it.Target])) {
+				gone[it.ID], grew = true, true
+			}
+		}
+	}
+	var out bytes.Buffer
+	enc := xml.NewEncoder(&out)
+	if err := copyDrawio(xml.NewDecoder(bytes.NewReader(content)), enc, gone, change); err != nil {
+		return nil, errors.New("not a draw.io file")
+	}
+	if err := enc.Flush(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // diagramEditCall runs a uam_diagram_edit call of the Task taskID.
@@ -384,9 +596,6 @@ func (m *Manager) editDiagram(taskID string, call agentapi.HostToolCall) (string
 	if err != nil {
 		return "", "", err
 	}
-	if format != "excalidraw" {
-		return "", "", fmt.Errorf("uam_diagram_edit changes .excalidraw drawings only; for %s write a new mermaid block", rel)
-	}
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
 	idx := m.drawingsLocked(taskID)
@@ -412,7 +621,11 @@ func (m *Manager) editDiagram(taskID string, call agentapi.HostToolCall) (string
 	if err != nil {
 		return "", "", err
 	}
-	edited, err := editExcalidraw(content, current, in.Edits)
+	editFile := editExcalidraw
+	if format == "drawio" {
+		editFile = editDrawio
+	}
+	edited, err := editFile(content, current, in.Edits)
 	if err != nil {
 		return "", "", err
 	}

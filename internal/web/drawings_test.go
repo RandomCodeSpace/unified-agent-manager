@@ -1062,7 +1062,6 @@ func TestDiagramEditTool(t *testing.T) {
 		`{"path":"docs/flow.excalidraw","edits":[{"id":"w","fill":"#fff"},{"id":"w","stroke":"#000"}]}`: "two edits name",
 		`{"path":"docs/flow.excalidraw","edits":[]}`:                                                    "edits takes 1 to",
 		`{"path":"docs/none.excalidraw","edits":[{"id":"w","remove":true}]}`:                            "there is no drawing",
-		`{"path":"docs/b.drawio","edits":[{"id":"w","remove":true}]}`:                                   ".excalidraw drawings only",
 		`{"path":"docs/flow.excalidraw","edits":[{"id":"w","remove":true}],"force":true}`:               "invalid arguments",
 	} {
 		if res := edit(args); !res.Failed || !strings.Contains(res.Text, why) {
@@ -1199,5 +1198,84 @@ func TestDrawingNamesEscapeQuotes(t *testing.T) {
 	d := mustDiagram(t, "excalidraw", exScene(t, exBox("a", 0, "A\" renamed \"B\nC"), exBox("b", 300, "Plain")))
 	if got, want := d.describe(), "2 nodes, 0 edges\nnode \"A\\\" renamed \\\"B\\nC\"\nnode \"Plain\""; got != want {
 		t.Fatalf("describe =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// uam_diagram_edit changes a .drawio file's first page in place: the label
+// on the cell that holds it (a value, an <object>'s label, an edge's label
+// cell; HTML where the cell is HTML), the colours in the style, and a
+// removal with the cell's children and the edges that end at it. Geometry,
+// other attributes and a second page stay; a compressed page is read too.
+func TestDiagramEditDrawio(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	second := `<diagram id="p2" name="Page-2"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="Other page" vertex="1" parent="1"><mxGeometry x="1" y="2" width="3" height="4" as="geometry"/></mxCell></root></mxGraphModel></diagram>`
+	two := strings.Replace(drawioPlain, "</mxfile>", second+"</mxfile>", 1)
+	model := drawioPlain[strings.Index(drawioPlain, "<mxGraphModel>"):strings.Index(drawioPlain, "</diagram>")]
+	compressed := `<mxfile host="test"><diagram id="p1" name="Page-1">` + compressDrawio(t, model) + `</diagram>` + second + `</mxfile>`
+	edits := []diagramEdit{
+		{Node: "API", Rename: ptr("Gate & way"), Fill: "#ffc9c9"},
+		{Node: "DB", Rename: ptr("Data <base>\nv2"), Stroke: "#e03131", Fill: "transparent"},
+		{Node: "Worker", Rename: ptr("Queue"), Stroke: "#1971c2"},
+		{ID: "e1", Rename: ptr("loads")},
+	}
+	for name, content := range map[string]string{"plain": two, "compressed": compressed} {
+		out, err := editDrawio([]byte(content), mustDiagram(t, "drawio", content), edits)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := mustDiagram(t, "drawio", string(out))
+		want := "3 nodes, 2 edges\nnode \"Gate & way\"\nnode \"Data <base> v2\" (ellipse)\nnode \"Queue\" (diamond)\nedge \"Gate & way\" → \"Data <base> v2\" \"loads\"\nedge \"Gate & way\" → \"Queue\" \"queues\""
+		if got.describe() != want {
+			t.Fatalf("%s =\n%s\nwant\n%s", name, got.describe(), want)
+		}
+		if a, d := got.node("a"), got.node("d"); a.Fill != "#ffc9c9" || a.Stroke != "#000000" || a.W != 100 || d.Stroke != "#e03131" || d.Fill != "none" || d.X != 200 || got.node("w").Stroke != "#1971c2" {
+			t.Fatalf("%s: nodes = %+v %+v", name, a, d)
+		}
+		text := string(out)
+		for _, part := range []string{
+			`style="rounded=1;strokeColor=#000000;fillColor=#ffc9c9;"`,                  // the style keeps its other keys
+			`value="Data &amp;lt;base&amp;gt;&lt;br&gt;v2"`,                             // an HTML cell takes HTML
+			`<object label="Queue" id="w"><mxCell style="rhombus;strokeColor=#1971c2;"`, // the wrapper holds the label, its cell the style
+			`id="e1-l" value="loads"`,                                                   // the edge's label is its label cell
+			`<mxCell id="a" value="Other page" vertex="1" parent="1">`,                  // the second page is as it was
+			`<mxfile host="test">`,
+		} {
+			if !strings.Contains(text, part) {
+				t.Fatalf("%s: no %s in\n%s", name, part, text)
+			}
+		}
+	}
+	// Removing a node takes the edges that end at it and their label cells; an
+	// unlabelled edge can be given a label.
+	out, err := editDrawio([]byte(two), mustDiagram(t, "drawio", two), []diagramEdit{{Node: "DB", Remove: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustDiagram(t, "drawio", string(out)).describe(); got != "2 nodes, 1 edges\nnode \"API\"\nnode \"Worker\" (diamond)\nedge \"API\" → \"Worker\" \"queues\"" || strings.Contains(string(out), `id="e1-l"`) || !strings.Contains(string(out), "Other page") {
+		t.Fatalf("after remove =\n%s\n%s", got, out)
+	}
+	bare := strings.Replace(model, ` value="queues"`, "", 1)
+	out, err = editDrawio([]byte(bare), mustDiagram(t, "drawio", bare), []diagramEdit{{ID: "e2", Rename: ptr("sends")}})
+	if err != nil || !strings.Contains(mustDiagram(t, "drawio", string(out)).describe(), `edge "API" → "Worker" "sends"`) {
+		t.Fatalf("labelled edge = %v\n%s", err, out)
+	}
+}
+
+// The tool edits a .drawio drawing as it does an Excalidraw one: the agent's
+// next version, with the change lines as its answer.
+func TestDiagramEditToolTakesDrawio(t *testing.T) {
+	ts, sum, conv, dir := drawingTask(t)
+	putDrawing(ts, sum.ID, "docs/b.drawio", map[string]any{"content": drawioPlain, "format": "drawio", "origin": "convert"})
+	res, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: diagramEditToolName, CallID: "c1", Arguments: json.RawMessage(`{"path":"docs/b.drawio","edits":[{"node":"API","rename":"Gateway","fill":"#ffc9c9"},{"node":"Worker","remove":true}]}`)})
+	want := "docs/b.drawio is now v2:\n~ node \"API\" renamed \"Gateway\"\n~ node \"Gateway\" restyled\n- node \"Worker\"\n- edge \"API\" → \"Worker\" \"queues\""
+	if err != nil || res.Failed || res.Text != want {
+		t.Fatalf("edit = %+v, %v\nwant\n%s", res, err, want)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "docs", "b.drawio"))
+	if err != nil || !strings.Contains(string(data), `value="Gateway"`) || strings.Contains(string(data), `id="w"`) {
+		t.Fatalf("file = %s, %v", data, err)
+	}
+	if list, _ := ts.m.Drawings(sum.ID); list[0].Version != 2 || list[0].AgentVersion != 2 || list[0].ChangesCount != 0 {
+		t.Fatalf("after edit = %+v", list[0])
 	}
 }
