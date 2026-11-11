@@ -63,7 +63,7 @@ export function model(content: string, format: Drawing['format']): Model {
 function name(m: Model, id: string | null): string {
   const n = id ? m.nodes.get(id) : undefined;
   if (!n) return '(nothing)';
-  return n.label ? `"${n.label}"` : `unlabelled ${n.type === 'rectangle' ? 'box' : n.type} ${near(m, n)}`;
+  return n.label ? JSON.stringify(n.label) : `unlabelled ${n.type === 'rectangle' ? 'box' : n.type} ${near(m, n)}`;
 }
 
 // An unlabelled shape has only its place to go by: name it by the closest labelled one.
@@ -80,10 +80,10 @@ function near(m: Model, n: Node): string {
   if (!best) return 'on its own';
   const { o, dx, dy } = best;
   const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'left of' : 'right of') : dy > 0 ? 'above' : 'below';
-  return `${side} "${o.label}"`;
+  return `${side} ${JSON.stringify(o.label)}`;
 }
 
-const edgeText = (m: Model, e: Edge) => `${name(m, e.from)} → ${name(m, e.to)}${e.label ? ` "${e.label}"` : ''}`;
+const edgeText = (m: Model, e: Edge) => `${name(m, e.from)} → ${name(m, e.to)}${e.label ? ` ${JSON.stringify(e.label)}` : ''}`;
 
 /** Changes from the agent's version (a) to the user's (b). status: id → added|changed|moved|removed. */
 export function diff(a: Model, b: Model): { changes: DrawingChange[]; status: Record<string, DrawingStatus> } {
@@ -124,7 +124,7 @@ export function diff(a: Model, b: Model): { changes: DrawingChange[]; status: Re
       changes.push({ kind: '~', text: `edge ${edgeText(a, o)} now ${edgeText(b, e)}` });
       status[id] = 'changed';
     } else if (o.label !== e.label) {
-      changes.push({ kind: '~', text: `edge ${edgeText(b, e)} label was "${o.label}"` });
+      changes.push({ kind: '~', text: `edge ${edgeText(b, e)} label was ${JSON.stringify(o.label)}` });
       status[id] = 'changed';
     }
   }

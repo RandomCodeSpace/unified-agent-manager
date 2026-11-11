@@ -1192,3 +1192,12 @@ func TestDiagramEditWrapsALongLabel(t *testing.T) {
 		t.Fatalf("free text = %+v", free)
 	}
 }
+
+// A label is quoted with its own quotes and line breaks escaped, so it cannot
+// read as a second change line.
+func TestDrawingNamesEscapeQuotes(t *testing.T) {
+	d := mustDiagram(t, "excalidraw", exScene(t, exBox("a", 0, "A\" renamed \"B\nC"), exBox("b", 300, "Plain")))
+	if got, want := d.describe(), "2 nodes, 0 edges\nnode \"A\\\" renamed \\\"B\\nC\"\nnode \"Plain\""; got != want {
+		t.Fatalf("describe =\n%s\nwant\n%s", got, want)
+	}
+}
