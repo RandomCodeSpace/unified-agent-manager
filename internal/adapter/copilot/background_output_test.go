@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/github/copilot-sdk/go/rpc"
@@ -213,5 +214,38 @@ func TestWebBackgroundOutputJumpsToTheNewestChunk(t *testing.T) {
 	}
 	if _, err := reader.ReadBackgroundOutput(ctx, "server", agentapi.BackgroundOutputLatest); !errors.Is(err, agentapi.ErrBackgroundOutputUnavailable) {
 		t.Fatalf("failed jump = %v, want unavailable", err)
+	}
+}
+
+// A shell that prints between any two reads is never caught up with: the jump
+// stops at backgroundJumpLimit with the newest chunk it has, and the next
+// read follows on from there.
+func TestWebBackgroundOutputJumpStopsChasingAShellThatKeepsPrinting(t *testing.T) {
+	limit := backgroundJumpLimit
+	backgroundJumpLimit = 30 * time.Millisecond
+	t.Cleanup(func() { backgroundJumpLimit = limit })
+	h := openWeb(t)
+	reader := h.conv.(agentapi.BackgroundOutputReader)
+	text, ended := strings.Repeat("line\n", 4000), false
+	var reads []string
+	log := shellLog(&text, &ended, 20000, &reads)
+	h.fs.readOutput = func(id, cursor string) (*rpc.TasksReadOutputResult, error) {
+		if len(reads) > 2000 {
+			return nil, errors.New("the jump is still reading")
+		}
+		time.Sleep(time.Millisecond)
+		text += fmt.Sprintf("more %d\n", len(reads))
+		return log(id, cursor)
+	}
+	out, err := reader.ReadBackgroundOutput(context.Background(), "server", agentapi.BackgroundOutputLatest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Text == "" || !strings.HasSuffix(text, out.Text) || len(out.Text) > backgroundOutputCap || out.More || out.Done || len(reads) < 2 {
+		t.Fatalf("jump = %d bytes, more %v, done %v, after %d reads", len(out.Text), out.More, out.Done, len(reads))
+	}
+	next, err := reader.ReadBackgroundOutput(context.Background(), "server", out.Cursor)
+	if want := fmt.Sprintf("more %d\n", len(reads)-1); err != nil || next.Text != want {
+		t.Fatalf("after the jump = %+v, %v, want %q", next, err, want)
 	}
 }

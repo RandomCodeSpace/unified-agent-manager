@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -800,6 +801,108 @@ func TestRoutineRunFailsWhenItsWorktreeCannotBeMade(t *testing.T) {
 	}
 	if list := m.List(); len(list) != 0 || folderRuns(m) != "0" {
 		t.Fatalf("failed runs left threads %+v, project folder runs %s", list, folderRuns(m))
+	}
+}
+
+// A routine whose runs each get a worktree starts no run while
+// maxRoutineWorktrees of those worktrees are on disk, on its schedule and on
+// Run now alike, and removes nothing to make room. Folders are counted, not
+// Threads: a settled Thread's worktree that stayed counts, a removed one does
+// not. Runs in the Project's folder are never limited.
+func TestRoutineWorktreeLimit(t *testing.T) {
+	m, prov, _, project, _, _ := worktreeRoutineManager(t)
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "caller"}); err != nil {
+		t.Fatal(err)
+	}
+	caller := prov.Last()
+	in := hourly("Deps check")
+	in.Place = &PlaceRequest{Mode: placeWorktree}
+	r := mustRoutine(t, m, project, in)
+	// start runs r now and ends the run's turn, so that the next firing is not
+	// skipped as still running.
+	start := func(what string) SessionSummary {
+		t.Helper()
+		run := runNow(t, m, project, r.ID)
+		if run.TaskID == "" {
+			t.Fatalf("%s: run = %+v, want a Thread", what, run)
+		}
+		taskConv(t, prov, run.TaskID).EmitTurn(agentapi.TurnCompleted, "")
+		m.checkRoutines()
+		return mustSummary(t, m, run.TaskID)
+	}
+	var threads []SessionSummary
+	for range maxRoutineWorktrees {
+		threads = append(threads, start("below the limit"))
+	}
+	want := fmt.Sprintf("%d earlier runs still have worktrees. Settle those threads, or remove the worktrees in Settings → Projects & worktrees.", maxRoutineWorktrees)
+	listed, opens := len(m.List()), len(prov.Opens())
+	skipped := func(what string, run store.WebRoutineRun, trigger string) {
+		t.Helper()
+		if run.Trigger != trigger || run.Outcome != RunSkipped || run.Reason != want || run.TaskID != "" || run.EndedAt.IsZero() {
+			t.Fatalf("%s: run = %+v, want skipped with %q", what, run, want)
+		}
+		if len(m.List()) != listed || len(prov.Opens()) != opens {
+			t.Fatalf("%s: a run at the limit started a Thread", what)
+		}
+	}
+
+	due := m.now().Add(-time.Second)
+	m.routines.mu.Lock()
+	m.routines.started = due.Add(-time.Minute)
+	m.routines.list[r.ID].NextRun = due
+	m.routines.mu.Unlock()
+	m.checkRoutines()
+	skipped("a scheduled firing", routine(t, m, project, r.ID).Runs[0], TriggerSchedule)
+	now, err := m.RunRoutine(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skipped("Run now", now.Runs[0], TriggerManual)
+	// The uam tool's routines list gives an agent the whole reason.
+	var page uamTestPage
+	uamReadJSON(t, caller, `{"op":"routines"}`, &page)
+	if got := page.Rows[0]["runs"].([]any)[0].(map[string]any); got["outcome"] != RunSkipped || got["reason"] != want {
+		t.Fatalf("the routines list gives %+v, want %q", got, want)
+	}
+
+	// Settled, with an untracked file git will not remove: the folder stays.
+	kept := threads[0]
+	writeRepoFile(t, kept.Worktree.Path, "notes.txt", "kept\n")
+	if _, err := m.Settle(kept.ID); err != nil {
+		t.Fatal(err)
+	}
+	if now, err = m.RunRoutine(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	skipped("beside a settled Thread's kept worktree", now.Runs[0], TriggerManual)
+	for _, thread := range threads {
+		if worktreeGone(thread.Worktree.Path) {
+			t.Fatalf("the worktree of %s was removed to make room", thread.Name)
+		}
+	}
+
+	// In the Project's folder the same routine runs whatever is on disk.
+	if _, err := m.UpdateRoutine(r.ID, RoutineInput{Place: &PlaceRequest{Mode: placeCurrent}}); err != nil {
+		t.Fatal(err)
+	}
+	if inFolder := start("in the Project folder"); inFolder.Worktree != (WorktreeInfo{}) {
+		t.Fatalf("a Project folder run worked in %+v", inFolder.Worktree)
+	}
+	if _, err := m.UpdateRoutine(r.ID, RoutineInput{Place: &PlaceRequest{Mode: placeWorktree}}); err != nil {
+		t.Fatal(err)
+	}
+	listed, opens = len(m.List()), len(prov.Opens())
+	if now, err = m.RunRoutine(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	skipped("back in worktrees", now.Runs[0], TriggerManual)
+
+	// One worktree removed, as Settings does: the next run starts.
+	if err := m.RemoveWorktree(t.Context(), kept.Worktree.Path, true); err != nil {
+		t.Fatal(err)
+	}
+	if next := start("after one worktree was removed"); next.Worktree.Path == "" || worktreeGone(next.Worktree.Path) {
+		t.Fatalf("the run after a removal worked in %+v", next.Worktree)
 	}
 }
 

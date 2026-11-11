@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/github/copilot-sdk/go/rpc"
@@ -17,6 +18,12 @@ import (
 // backgroundOutputCap bounds the text of one ReadBackgroundOutput, like
 // toolOutputCap; the CLI itself returns up to 64 KiB a read (CLI 1.0.108).
 const backgroundOutputCap = int(toolOutputCap)
+
+// backgroundJumpLimit is how long a read behind
+// agentapi.BackgroundOutputLatest follows a shell that keeps printing before
+// it returns the newest chunk it has: a third of the 30 s a caller's request
+// is given, so one more slow CLI read still ends inside it. A var for tests.
+var backgroundJumpLimit = 10 * time.Second
 
 func (a sdkSessionAdapter) ReadTaskOutput(ctx context.Context, id, cursor string) (*rpc.TasksReadOutputResult, error) {
 	req := &rpc.TasksReadOutputRequest{ID: id}
@@ -37,7 +44,9 @@ func (a sdkSessionAdapter) ReadTaskOutput(ctx context.Context, id, cursor string
 // The CLI refuses a shell it does not keep output for (an attached one, or one
 // it no longer lists) and a cursor its log no longer reaches. A cursor behind
 // agentapi.BackgroundOutputLatest reads on to the end, holding two CLI reads
-// at most, and returns the newest chunk.
+// at most, and returns the newest chunk; a shell it has not caught up with
+// after backgroundJumpLimit gets the newest chunk read so far, with a cursor
+// that continues from there.
 func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor string) (agentapi.BackgroundOutput, error) {
 	c.mu.Lock()
 	sess, closed := c.sess, c.closed
@@ -56,8 +65,8 @@ func (c *conversation) ReadBackgroundOutput(ctx context.Context, id, cursor stri
 		skip, from = used, rest
 	}
 	res, err := sess.ReadTaskOutput(ctx, id, from)
-	// shortcut: a shell printing faster than this reads ends at the request's timeout; bound the reads if that shows up.
-	for jump && err == nil && res != nil && skip <= len(res.Text) && res.Text != "" && res.Exit == nil {
+	// A shell printing faster than this reads is followed for backgroundJumpLimit, then the newest chunk so far is returned.
+	for until := time.Now().Add(backgroundJumpLimit); jump && err == nil && res != nil && skip <= len(res.Text) && res.Text != "" && res.Exit == nil && time.Now().Before(until); {
 		next, nerr := sess.ReadTaskOutput(ctx, id, res.Cursor)
 		if nerr != nil || next == nil || next.Text == "" && next.Exit == nil {
 			err = nerr
