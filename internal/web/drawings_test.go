@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -975,5 +976,219 @@ func TestDrawIOSettingNeedsAPassingCheck(t *testing.T) {
 	}
 	if encoded, _ := json.Marshal(again.Settings()); strings.Contains(string(encoded), "drawio") {
 		t.Fatalf("unset draw.io is not omitted: %s", encoded)
+	}
+}
+
+// uam_diagram_edit renames, recolours and removes in place as the agent's
+// next version: the layout and unknown fields stay, a removed node takes its
+// label and arrows, no note comes back to the agent, and an open editor's
+// stale save is refused.
+func TestDiagramEditTool(t *testing.T) {
+	ts, sum, conv, dir := drawingTask(t)
+	id := sum.ID
+	edit := func(args string) agentapi.HostToolResult {
+		t.Helper()
+		res, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: diagramEditToolName, CallID: "c1", Arguments: json.RawMessage(args)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	api := exBox("a", 0, "API")
+	api[0]["boundElements"] = []any{map[string]any{"id": "a-t", "type": "text"}, map[string]any{"id": "e1", "type": "arrow"}, map[string]any{"id": "e2", "type": "arrow"}}
+	api[0]["seed"] = 1234567890123
+	scene := exScene(t, api, exBox("d", 200, "DB"), exBox("w", 400, "Worker"), exBox("w2", 600, "Worker"), exArrow("e1", "a", "d"), exArrow("e2", "a", "w"),
+		map[string]any{"id": "ink", "type": "freedraw", "x": 5, "y": 5})
+	putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": scene, "format": "excalidraw", "origin": "convert"})
+
+	res := edit(`{"path":"docs/flow.excalidraw","edits":[{"node":"API","rename":"Gateway","fill":"#ffc9c9"},{"node":"DB","remove":true},{"id":"e2","stroke":"#e03131"}]}`)
+	want := "docs/flow.excalidraw is now v2:\n~ node \"API\" renamed \"Gateway\"\n~ node \"Gateway\" restyled\n- node \"DB\"\n- edge \"API\" → \"DB\""
+	if res.Failed || res.Text != want {
+		t.Fatalf("edit =\n%s\nwant\n%s", res.Text, want)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "docs", "flow.excalidraw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Elements []map[string]any `json:"elements"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]map[string]any{}
+	for _, el := range file.Elements {
+		byID[el["id"].(string)] = el
+	}
+	for _, gone := range []string{"d", "d-t", "e1"} {
+		if byID[gone] != nil {
+			t.Fatalf("%s is still in the file", gone)
+		}
+	}
+	a := byID["a"]
+	if a["backgroundColor"] != "#ffc9c9" || a["x"] != 0.0 || a["width"] != 100.0 || byID["a-t"]["text"] != "Gateway" || byID["a-t"]["originalText"] != "Gateway" || byID["e2"]["strokeColor"] != "#e03131" || byID["ink"] == nil {
+		t.Fatalf("file = %s", data)
+	}
+	if bound, _ := json.Marshal(a["boundElements"]); string(bound) != `[{"id":"a-t","type":"text"},{"id":"e2","type":"arrow"}]` || !strings.Contains(string(data), `"seed":1234567890123`) {
+		t.Fatalf("bound = %s in %s", bound, data)
+	}
+	list, _ := ts.m.Drawings(id)
+	if list[0].Version != 2 || list[0].AgentVersion != 2 || list[0].ChangesCount != 0 {
+		t.Fatalf("after edit = %+v", list[0])
+	}
+	if note := conv.Request().Hooks.Prompt(t.Context()); note != "" {
+		t.Fatalf("note after the agent's own edit = %q", note)
+	}
+	if countOf(ts.m, "drawing.edit") != 1 {
+		t.Fatalf("drawing.edit = %d", countOf(ts.m, "drawing.edit"))
+	}
+	// The editor still holds v1: its save is refused, so the owner reloads.
+	if w, _ := putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": scene, "format": "excalidraw", "base_version": 1}); w.Code != http.StatusConflict {
+		t.Fatalf("stale save = %d", w.Code)
+	}
+	if res := edit(`{"path":"docs/flow.excalidraw","edits":[{"id":"e2","stroke":"#e03131"}]}`); res.Failed || !strings.Contains(res.Text, "nothing changed") {
+		t.Fatalf("same again = %+v", res)
+	}
+	for args, why := range map[string]string{
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Worker","remove":true}]}`:                     `"Worker" names 2 nodes; name one by id: w, w2`,
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Nope","remove":true}]}`:                       `no node "Nope"`,
+		`{"path":"docs/flow.excalidraw","edits":[{"id":"zz","remove":true}]}`:                           `no element with id "zz"`,
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Gateway","id":"a","remove":true}]}`:           "by node or by id, not both",
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Gateway"}]}`:                                  "changes nothing",
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Gateway","remove":true,"fill":"#fff"}]}`:      "takes no other change",
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Gateway","fill":"red"}]}`:                     "is not a colour",
+		`{"path":"docs/flow.excalidraw","edits":[{"node":"Gateway","rename":" "}]}`:                     "a label takes",
+		`{"path":"docs/flow.excalidraw","edits":[{"id":"e2","rename":"calls"}]}`:                        "has no label to rename",
+		`{"path":"docs/flow.excalidraw","edits":[{"id":"w","fill":"#fff"},{"id":"w","stroke":"#000"}]}`: "two edits name",
+		`{"path":"docs/flow.excalidraw","edits":[]}`:                                                    "edits takes 1 to",
+		`{"path":"docs/none.excalidraw","edits":[{"id":"w","remove":true}]}`:                            "there is no drawing",
+		`{"path":"docs/b.drawio","edits":[{"id":"w","remove":true}]}`:                                   ".excalidraw drawings only",
+		`{"path":"docs/flow.excalidraw","edits":[{"id":"w","remove":true}],"force":true}`:               "invalid arguments",
+	} {
+		if res := edit(args); !res.Failed || !strings.Contains(res.Text, why) {
+			t.Fatalf("%s = %+v, want %q", args, res, why)
+		}
+	}
+	// A refused call wrote nothing.
+	if list, _ := ts.m.Drawings(id); list[0].Version != 2 {
+		t.Fatalf("after refusals = %+v", list[0])
+	}
+	// The owner's unseen changes come first: the agent reads them, then edits.
+	var saved struct {
+		Content string `json:"content"`
+	}
+	_ = json.Unmarshal(ts.do(http.MethodGet, "/api/sessions/"+id+"/drawings/docs/flow.excalidraw", "", withCookie(ts)).Body.Bytes(), &saved)
+	putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": strings.Replace(saved.Content, `"x":400`, `"x":460`, 1), "format": "excalidraw", "base_version": 2})
+	if res := edit(`{"path":"docs/flow.excalidraw","edits":[{"id":"w2","remove":true}]}`); !res.Failed || !strings.Contains(res.Text, "the owner changed docs/flow.excalidraw since your version (v2 → v3); call uam_diagram_read") {
+		t.Fatalf("edit over unseen changes = %+v", res)
+	}
+	if res, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: diagramReadToolName, CallID: "c2", Arguments: json.RawMessage(`{"path":"docs/flow.excalidraw"}`)}); err != nil || res.Failed {
+		t.Fatalf("read = %+v, %v", res, err)
+	}
+	if res := edit(`{"path":"docs/flow.excalidraw","edits":[{"id":"w2","remove":true}]}`); res.Failed || res.Text != "docs/flow.excalidraw is now v4:\n- node \"Worker\"" {
+		t.Fatalf("edit after the read = %+v", res)
+	}
+}
+
+// The elements the owner selects ride their next prompt once, with or
+// without edits: nodes by name (with the id when two share it), edges with
+// their id, ids the drawing no longer has dropped.
+func TestDrawingSelectionRidesTheNextPrompt(t *testing.T) {
+	ts, sum, conv, _ := drawingTask(t)
+	id := sum.ID
+	sel := func(p string, ids ...string) int {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"selected": ids})
+		return ts.do(http.MethodPatch, "/api/sessions/"+id+"/drawings/"+p, string(body), withCookie(ts)).Code
+	}
+	scene := exScene(t, exBox("a", 0, "API"), exBox("w", 400, "Worker"), exBox("w2", 600, "Worker"), exArrow("e2", "a", "w"))
+	putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": scene, "format": "excalidraw", "origin": "convert"})
+	if code := sel("docs/flow.excalidraw", "a", "w2", "e2", "a-t", "ghost"); code != http.StatusNoContent {
+		t.Fatalf("select = %d", code)
+	}
+	list, _ := ts.m.Drawings(id)
+	if list[0].SelectedCount != 5 || list[0].ChangesCount != 0 {
+		t.Fatalf("after select = %+v", list[0])
+	}
+	want := `The user selected in docs/flow.excalidraw: "API", "Worker" (id w2), edge "API" → "Worker" (id e2). Their message refers to these.`
+	var view DrawingView
+	_ = json.Unmarshal(ts.do(http.MethodGet, "/api/sessions/"+id+"/drawings/docs/flow.excalidraw", "", withCookie(ts)).Body.Bytes(), &view)
+	if view.Note != want {
+		t.Fatalf("view note = %q", view.Note)
+	}
+	if note := conv.Request().Hooks.Prompt(t.Context()); note != want {
+		t.Fatalf("note =\n%s\nwant\n%s", note, want)
+	}
+	if again := conv.Request().Hooks.Prompt(t.Context()); again != "" {
+		t.Fatalf("second note = %q", again)
+	}
+	if list, _ := ts.m.Drawings(id); list[0].SelectedCount != 0 || list[0].AgentVersion != 1 {
+		t.Fatalf("after the note = %+v", list[0])
+	}
+	// With an edit, the change note comes first; an emptied selection sends nothing.
+	putDrawing(ts, id, "docs/flow.excalidraw", map[string]any{"content": strings.Replace(scene, `"API"`, `"Gateway"`, 2), "format": "excalidraw"})
+	sel("docs/flow.excalidraw", "a")
+	if note := conv.Request().Hooks.Prompt(t.Context()); !strings.HasPrefix(note, "The user edited docs/flow.excalidraw since your version (v1 → v2):") || !strings.HasSuffix(note, "\n\nThe user selected in docs/flow.excalidraw: \"Gateway\". Their message refers to these.") {
+		t.Fatalf("note with an edit = %q", note)
+	}
+	sel("docs/flow.excalidraw", "a")
+	if code := sel("docs/flow.excalidraw"); code != http.StatusNoContent {
+		t.Fatalf("clear = %d", code)
+	}
+	if note := conv.Request().Hooks.Prompt(t.Context()); note != "" {
+		t.Fatalf("note after clearing = %q", note)
+	}
+	if countOf(ts.m, "drawing.select") != 3 {
+		t.Fatalf("drawing.select = %d", countOf(ts.m, "drawing.select"))
+	}
+	if code := sel("docs/none.excalidraw", "a"); code != http.StatusNotFound {
+		t.Fatalf("select of no drawing = %d", code)
+	}
+	if code := sel("docs/flow.excalidraw", make([]string, maxDrawingSelection+1)...); code != http.StatusBadRequest {
+		t.Fatalf("too many = %d", code)
+	}
+	if code := sel("docs/flow.excalidraw", ""); code != http.StatusBadRequest {
+		t.Fatalf("empty id = %d", code)
+	}
+}
+
+// A renamed label is wrapped to its shape and centred in it; a shape too low
+// for the lines grows about its centre, and the label's own words are kept
+// apart from the wrapped text.
+func TestDiagramEditWrapsALongLabel(t *testing.T) {
+	scene := exScene(t,
+		map[string]any{"id": "a", "type": "rectangle", "x": 0, "y": 100, "width": 120, "height": 54},
+		map[string]any{"id": "a-t", "type": "text", "containerId": "a", "text": "API", "originalText": "API", "x": 40, "y": 116, "width": 40, "height": 21.6, "fontSize": 16, "lineHeight": 1.35, "textAlign": "center"},
+		map[string]any{"id": "n", "type": "text", "text": "Note", "originalText": "Note", "x": 300, "y": 10, "width": 30, "height": 20, "fontSize": 16, "lineHeight": 1.25, "textAlign": "left"})
+	long, note := "Browser (Chromium on the owner's desktop)", "A longer note"
+	out, err := editExcalidraw([]byte(scene), mustDiagram(t, "excalidraw", scene), []diagramEdit{{Node: "API", Rename: &long}, {Node: "Note", Rename: &note}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Raw []map[string]any `json:"elements"`
+	}
+	if err := json.Unmarshal(out, &file); err != nil {
+		t.Fatal(err)
+	}
+	box, label, free := file.Raw[0], file.Raw[1], file.Raw[2]
+	f := func(el map[string]any, key string) float64 { return el[key].(float64) }
+	if label["text"] != "Browser\n(Chromium on\nthe owner's\ndesktop)" || label["originalText"] != long {
+		t.Fatalf("label = %q / %q", label["text"], label["originalText"])
+	}
+	// Four lines of 21.6 need 96.4 of height: the 54 box grows about y 127.
+	if h := f(box, "height"); math.Abs(h-96.4) > 0.01 || math.Abs(f(box, "y")+h/2-127) > 0.01 || f(box, "x") != 0 || f(box, "width") != 120 {
+		t.Fatalf("box = %+v", box)
+	}
+	for _, line := range strings.Split(label["text"].(string), "\n") {
+		if labelEm(line)*16 > 110 {
+			t.Fatalf("line %q is wider than the box's 110", line)
+		}
+	}
+	if math.Abs(f(label, "x")+f(label, "width")/2-60) > 0.01 || math.Abs(f(label, "y")+f(label, "height")/2-127) > 0.01 {
+		t.Fatalf("label is not centred: %+v", label)
+	}
+	if free["text"] != note || f(free, "x") != 300 || f(free, "y") != 10 || f(free, "width") <= 30 {
+		t.Fatalf("free text = %+v", free)
 	}
 }

@@ -274,3 +274,65 @@ test('with draw.io enabled a converted fence opens the embed, and a frame the pa
     put.mockRestore();
   }
 });
+
+test('after the agent’s edit, the open editor’s saves are refused until Reload, though the doc was read again', async () => {
+  const { user } = await openTask('t-chart');
+  const path = 'docs/diagram-d4-0.excalidraw';
+  const { canvas, restored } = await openEditor(user);
+  // The agent's edit: another writer takes the file to v3 while the canvas shows v2.
+  await api.putDrawing('t-chart', path, { content: (await api.drawing('t-chart', path)).content, format: 'excalidraw', base_version: 2 });
+  const put = vi.spyOn(api, 'putDrawing');
+  try {
+    fireEvent.keyDown(canvas, { key: 'Shift' });
+    act(() => emit!([{ ...restored[0], x: 50 }], {}, {}));
+    const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
+    expect(await editor.findByText(/The agent changed this drawing/)).toBeTruthy();
+    // The conflict read the doc again (v3); a save based on it would put the stale scene over the agent's change.
+    await sleep(300);
+    act(() => emit!([{ ...restored[0], x: 90 }], {}, {}));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2));
+    expect(put.mock.calls.map((c) => c[2].base_version)).toEqual([2, 2]);
+    await user.click(await editor.findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(updateScene).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(canvas, { key: 'Shift' });
+    act(() => emit!([{ ...restored[0], x: 120 }], {}, {}));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(3));
+    expect(put.mock.calls[2][2].base_version).toBe(3);
+  } finally {
+    put.mockRestore();
+  }
+});
+
+test('Use selection in message names the picked shapes to the agent: a chip that takes them back, then one notice line', async () => {
+  const { user } = await openTask('t-chart');
+  const path = 'docs/diagram-d4-0.excalidraw';
+  const select = vi.spyOn(api, 'selectDrawing');
+  const dialog = () => screen.queryByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' });
+  /** Opens the editor and selects the Browser box with its bound label; only the box can be named to the agent. */
+  const pick = async () => {
+    const { restored } = await openEditor(user);
+    const use = within(dialog()!).getByRole<HTMLButtonElement>('button', { name: 'Use selection in message' });
+    expect(use.disabled).toBe(true);
+    const scene = [{ ...restored[0], id: 'browser' }, { type: 'text', id: 'browser-label', containerId: 'browser', x: 0, y: 0, width: 10, height: 10 }];
+    act(() => emit!(scene, { selectedElementIds: { browser: true, 'browser-label': true } }, {}));
+    await waitFor(() => expect(use.disabled).toBe(false));
+    await user.click(use);
+    await waitFor(() => expect(dialog()).toBeNull());
+  };
+  try {
+    await pick();
+    expect(select).toHaveBeenLastCalledWith('t-chart', path, ['browser']);
+    expect(await screen.findByText('· 1 selected')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Remove the selection in diagram-d4-0.excalidraw' }));
+    await waitFor(() => expect(screen.queryByText('· 1 selected')).toBeNull());
+    expect(select).toHaveBeenLastCalledWith('t-chart', path, []);
+    await pick();
+    await screen.findByText('· 1 selected');
+    await user.type(composer(), 'Make this red');
+    await user.keyboard('{Enter}');
+    await log().findByText((_, el) => el?.tagName === 'P' && el.textContent === 'You selected "Browser" in docs/diagram-d4-0.excalidraw.');
+    await waitFor(() => expect(screen.queryByText('· 1 selected')).toBeNull());
+  } finally {
+    select.mockRestore();
+  }
+});

@@ -1301,15 +1301,19 @@ const TRAIL_NOTE = /^uam trail: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\) edited (.
 /** The head of a drawing change note (drawings_diff.go): the owner made the changes, so only the agent gets their list. */
 const DRAWING_NOTE = /^The user edited (.+?) since your version \((v\d+ → v\d+)\):/;
 
+/** A drawing selection note (drawings_edit.go): the file after the head, the picked elements up to the tail. */
+const SELECTION_NOTE = 'The user selected in ';
+const SELECTION_TAIL = '. Their message refers to these.';
+
 /** A `uam memory:` note (memory.go): its first sentence, then what uam pinned after a compaction. */
 const MEMORY_NOTE = /^uam memory: ([^.]*\.)\s*([\s\S]*)$/;
 
 /** Where each uam note of a notice starts, the line breaks between them gone or not. */
 // One whitespace character, and a file name without spaces: patterns that cannot backtrack (Sonar S8786).
-const NOTE_START = /\s(?=uam (?:thread|trail|budget|memory): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):)/;
+const NOTE_START = /\s(?=uam (?:thread|trail|budget|memory): |The user edited [^\s()]+ since your version \(v\d+ → v\d+\):|The user selected in [^\s()]+: )/;
 
 /** A notice that starts with a uam note UamNotes shows. */
-const UAM_NOTES = /^(?:uam (?:thread|trail|memory): |The user edited )/;
+const UAM_NOTES = /^(?:uam (?:thread|trail|memory): |The user edited |The user selected in )/;
 
 /** The Copilot CLI's warning after a resume found tool calls with no result (a `session.warning`, as noticeText words it). */
 const RESUME_WARNING = /^Warning: (\d+) tool call\(s\) had no recorded result at resume\./;
@@ -1352,6 +1356,10 @@ function UamNotes({ text, className }: Readonly<{ text: string; className?: stri
         if (trail) return <p key={index} className="m-0">Thread {thread(trail[1], trail[2])} edited <FileRef text={trail[3]} /> {trail[4]} and is still running.</p>;
         const drawing = DRAWING_NOTE.exec(part);
         if (drawing) return <p key={index} className="m-0">You edited <FileRef text={drawing[1]} /> ({drawing[2]}).</p>;
+        if (part.startsWith(SELECTION_NOTE) && part.endsWith(SELECTION_TAIL)) {
+          const colon = part.indexOf(': ');
+          return <p key={index} className="m-0">You selected {part.slice(colon + 2, -SELECTION_TAIL.length)} in <FileRef text={part.slice(SELECTION_NOTE.length, colon)} />.</p>;
+        }
         const memory = MEMORY_NOTE.exec(part);
         if (memory) {
           return (

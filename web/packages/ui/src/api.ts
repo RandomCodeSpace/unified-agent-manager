@@ -649,6 +649,8 @@ export interface Drawing {
   fence_index?: number;
   /** Changes since the agent's version; 0 when the two are the same. */
   changes_count: number;
+  /** Elements the user picked for their next message; absent on a server without selections. */
+  selected_count?: number;
 }
 
 export interface DrawingChange {
@@ -2692,6 +2694,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     drawing: (id: string, path: string, signal?: AbortSignal) => call<DrawingDoc>('GET', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, undefined, false, signal),
     /** Saves a drawing (409 when `base_version` is behind); `origin: 'convert'` creates it as the agent's v1. */
     putDrawing: (id: string, path: string, body: DrawingPut) => call<DrawingSaved>('PUT', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, body),
+    /** Keeps the elements the user picked for their next message; an empty list forgets them. */
+    selectDrawing: (id: string, path: string, selected: string[]) => call<void>('PATCH', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`, { selected }),
     /** Deletes a drawing uam created (its file and entry). */
     deleteDrawing: (id: string, path: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/drawings/${path.split('/').map(enc).join('/')}`),
     /** Checks a draw.io origin on the server: errors forbid enabling it, warnings are said. */

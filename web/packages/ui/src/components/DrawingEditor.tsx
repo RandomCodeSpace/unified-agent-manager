@@ -46,6 +46,9 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   const [view, setView] = useState<DrawingView>(target.view);
   const [full, setFull] = useState(false);
   const [save, setSave] = useState<Save>({ state: 'saved' });
+  // The shapes and arrows selected on the canvas, and why sending them failed.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [pickError, setPickError] = useState('');
   const state = d.doc(target.path);
   const doc = state?.doc;
   const error = state?.error;
@@ -74,8 +77,12 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
   // The text the next change compares against: what was saved last, or the scene as the editor
   // restored it (Excalidraw adds defaults, so the restored file is not the saved text).
   const lastSaved = useRef(doc?.content ?? '');
+  // The version the canvas shows. The doc moves on when the agent edits the drawing, and a save
+  // based on the doc's version would then put the stale scene over the agent's change.
+  const shownVersion = useRef<number | undefined>(undefined);
   const onRestored = useCallback((elements: DrawnElement[], files: Record<string, unknown>) => {
     lastSaved.current = excalidrawFile(elements, files);
+    shownVersion.current ??= latest.current.doc?.version;
   }, []);
   const onChange = useCallback((elements: DrawnElement[], files: Record<string, unknown>) => {
     const content = excalidrawFile(elements, files);
@@ -97,10 +104,11 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
     q.busy = true;
     setSave({ state: 'saving' });
     void (async () => {
-      let version = latest.current.doc?.version;
+      let version = shownVersion.current ?? latest.current.doc?.version;
       for (let next: string | null = content; next !== null && version !== undefined; next = q.pending, q.pending = null) {
         try {
           version = (await latest.current.save(target.path, next, version)).version;
+          shownVersion.current = version;
           lastSaved.current = next;
           setSave({ state: 'saved' });
         } catch (err) {
@@ -121,8 +129,12 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
     void load(target.path).then((doc) => {
       loadScene.current(doc.content);
       lastSaved.current = doc.content;
+      shownVersion.current = doc.version;
       setSave({ state: 'saved' });
     }, () => {});
+  };
+  const sendSelection = () => {
+    d.select(target.path, picked).then(onClose, (err: unknown) => setPickError(describeError(err)));
   };
   const revert = () => {
     if (!doc || doc.baseline === null) return;
@@ -167,6 +179,9 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             ]}
           />
         )}
+        {view === 'mine' && editable && doc?.format === 'excalidraw' && (
+          <Button size="sm" disabled={picked.length === 0} title={picked.length === 0 ? 'Select shapes or arrows first' : 'Your next message names what is selected'} onClick={sendSelection}>Use selection in message</Button>
+        )}
         <Button variant="primary" size="sm" onClick={onClose}>Done</Button>
         {close}
       </div>
@@ -175,6 +190,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
         <p className="flex flex-wrap gap-1.5 text-caption text-muted">
           {facts.map((f) => <span key={f} className="rounded-xs bg-tint-well px-1.5">{f}</span>)}
           {save.state === 'failed' && <span className="text-error">{save.error}</span>}
+          {pickError && <span className="text-error">{pickError}</span>}
         </p>
       )}
     </PanelHead>
@@ -192,6 +208,7 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
             theme={scheme}
             background={background}
             onChange={onChange}
+            onSelection={setPicked}
             onRestored={onRestored}
             onApi={(a, l) => {
               canvasApi.current = a;
