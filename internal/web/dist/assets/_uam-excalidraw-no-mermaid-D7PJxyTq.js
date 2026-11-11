@@ -1,0 +1,1 @@
+var e=()=>Promise.reject(Error(`Mermaid conversion runs in the diagram frame`));export{e as parseMermaidToExcalidraw};
