@@ -33,9 +33,9 @@ type decisionClient interface {
 // RunDecision asks the account's default decision model through
 // decisions.ask, which the CLI offers behind its DECISIONS_API feature flag.
 // A choice question always picks an option, so a second question in the same
-// request asks whether any fits: the answer abstains unless that is likelier
-// than not and one option leads. req.Input goes as the request's context,
-// apart from the questions.
+// request asks whether any is a reasonable answer: the answer abstains unless
+// that is likelier than not and one option leads. req.Input goes as the
+// request's context, apart from the questions.
 func (p *webProvider) RunDecision(ctx context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
 	client, done, err := p.startUtility(ctx)
 	if err != nil {
@@ -59,9 +59,12 @@ func (p *webProvider) RunDecision(ctx context.Context, req agentapi.DecisionRequ
 		Questions: []rpc.DecisionQuestion{
 			&rpc.DecisionQuestionChoice{Name: "choice", Instructions: req.Instructions, Options: options},
 			&rpc.DecisionQuestionBoolean{Name: "fits",
-				Instructions: "Does the context give enough evidence that one of these options fits? Task: " + req.Instructions + "\nOptions:" + listed.String(),
-				WhenTrue:     copilot.String("One option clearly fits the evidence."),
-				WhenFalse:    copilot.String("The evidence is insufficient, or no option fits.")},
+				// Asking whether the evidence shows which option fits reads as
+				// no for a prediction with two plausible answers, such as a
+				// reply of yes or no; asking whether any is reasonable does not.
+				Instructions: "Is at least one of these options a reasonable answer to the task for this context? Task: " + req.Instructions + "\nOptions:" + listed.String(),
+				WhenTrue:     copilot.String("At least one option is a reasonable answer."),
+				WhenFalse:    copilot.String("None of the options is a reasonable answer, or the context is unrelated to the task.")},
 		},
 	})
 	if err != nil {
