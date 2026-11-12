@@ -126,7 +126,7 @@ func TestCompletionBoundsReleaseOversizedBacking(t *testing.T) {
 func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	decides(prov, "yes")
+	suggests(prov, "Yes, commit it")
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 	conv.EmitItem(agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Completion accepted: Fixed it", Completion: c})
 	conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Completion: c}})
 	got, err := m.SuggestReplies(context.Background(), sum.ID)
-	if err != nil || got.ItemID != "a" || len(got.Replies) != 1 || got.Replies[0] != "Yes, go ahead" {
+	if err != nil || got.ItemID != "a" || len(got.Replies) != 1 || got.Replies[0] != "Yes, commit it" {
 		t.Fatalf("completion hid suggestions: %+v %v", got, err)
 	}
 }

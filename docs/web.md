@@ -1915,31 +1915,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   box with the cursor at its end, ready to edit or send; nothing is sent
   until you send it. On a touch screen an arrow button at the end of the
   ghost text does the same. Typing replaces it, and clearing the box brings
-  it back. Screen readers hear it as the box's description. It is one of a fixed
-  set, chosen by what the turn did, the first time a composer shows that
-  turn:
-  "Commit this" (the turn edited files, the folder has uncommitted changes,
-  and no test or command failed), "Push it" (the turn ran `git commit` and
-  the folder has unpushed commits), "Run the tests" (the turn edited files
-  and ran no test with a clear result), "Fix the failing tests" (its last
-  test run failed), "Fix the failed command" (a command failed, tests aside),
-  "Follow your recommendation" (the final reply says "I recommend", "I'd
-  recommend", "I would recommend", "my recommendation", "Recommended:" or
-  "(recommended)", outside code), "Show me the status" (a background shell
-  or subagent of the Thread still runs, or a GitLab pipeline the GitLab
-  strip last saw is still running for a commit the turn pushed), and "Yes,
-  go ahead" and "No, leave it" (the final reply's last sentence is a
-  question). The uncommitted and unpushed counts are read again as the turn
-  left them. When none fits there is no suggestion; when one fits it is the
-  suggestion, with no model call; when more fit, one call to Copilot's
-  decision model (logged as "decision-suggest-reply") picks one of them or none, from your
-  last message and the agent's final reply. Messages longer than 2,000
+  it back. Screen readers hear it as the box's description. The Utility model
+  writes it, in one call (logged as "suggest-replies") the first time a
+  composer shows that turn, from your last message and the agent's final
+  reply: one line of at most 120 characters, such as "Run the tests" or the
+  likely answer to a question the reply ends with, or none when no next
+  message is clearly likely. It is asked not to write thanks or other
+  filler, and to treat both messages as material, not instructions; an
+  answer that is not one such line counts as unusable and shows nothing.
+  The call never runs on the Thread's own model. Messages longer than 2,000
   characters are shortened to their first and last 1,000 characters, with an
   ellipsis between them. Tool calls and earlier agent messages are excluded.
   The service keeps the result with the Thread, so opening it again, in any
   browser or after a restart, asks for nothing more. None shows while the
   Thread works, waits for you, has queued messages, or is read-only. When
-  more than one reply fits and there is no Utility model, or past today's
+  there is no Utility model, or past today's
   Background AI limit or while suggested replies are paused (see Background
   AI), there is none, and the next look asks again; a Thread settled or
   archived is not asked. Settings → Conversation → **Suggest replies** turns it
@@ -2134,7 +2124,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   what it was for ("Thread title", "Suggested replies",
   "Merge request description";
   older versions also logged "Subagent summary", "Thread done check" and
-  "Outcome line", and their suggested replies as `suggest-replies`), the
+  "Outcome line", and for a time their suggested replies as
+  `decision-suggest-reply`), the
   Thread (a click opens
   it) or Project, the model
   (marked "the thread's model" for a title an older version made with the Thread's own model, `session_model` in the log),

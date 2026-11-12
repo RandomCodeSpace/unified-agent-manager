@@ -26,8 +26,6 @@ A missing decision model reports `utility_unavailable`, and budget/purpose
 pauses retain UAM's existing error codes. The function is an internal Go API with no HTTP route.
 
 Callers:
-- `suggest-reply` (`assist.go`) picks the suggested reply when more than one
-  reply fits a turn.
 - `ci-failure-kind` (`gitlab_failure.go`) labels a failed GitLab job
   whose log the failure patterns miss. It runs once per job, in the
   background, with the job name, stage and the last 8 KB of the log as input
@@ -56,7 +54,8 @@ Callers:
   0.5 likely and one option leads: a tie, a refused question or a missing
   answer abstains. The wording matters: asking whether the evidence shows
   which option fits scored about 0.1 for a reply of yes or no the model was
-  0.98 sure of, so every such suggestion abstained.
+  0.98 sure of, so every such pick abstained. (That caller, the suggested
+  reply, is now written by the Utility model instead; see docs/web.md.)
   Only an allowed ID or an abstention is accepted. A valid abstention is a
   successful answer.
 - The decision model returns probabilities, not text, so there is no reply to
@@ -134,8 +133,15 @@ shutdown waiting for provider cleanup. `go test ./internal/adapter/copilot -run
 '^TestRunDecision'` covers the request sent and how its answers are read.
 
 `UAM_DECISION_LIVE_PROBE=1 go test ./internal/web -run '^TestDecisionLiveProbe$' -v`
-asks the signed-in account's real decision model twelve questions with both
-callers' instructions and options (six with a fitting option, six with none,
-two of those a planted instruction). On 2026-11-12 all twelve were right at
+asks the signed-in account's real decision model five questions with its
+caller's instructions and options (three with a fitting option, two with none,
+one of those a planted instruction). On 2026-11-12 all five were right at
 about 600 ms and 420 to 610 input tokens each. Run it after changing either
 question's wording or a caller's instructions.
+
+Suggested replies were a caller for a day and are written by the Utility
+model again. Their probe is
+`UAM_SUGGEST_LIVE_PROBE=1 go test ./internal/web -run '^TestSuggestReplyLiveProbe$' -v`:
+ten turns on `gpt-6-luna` with the prompt `SuggestReplies` sends (six that
+invite a reply, four that do not, one of those a planted instruction). On
+2026-11-12 all ten were right at about 2 s each.

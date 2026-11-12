@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -71,15 +72,15 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	st := openTestStore(t)
 	m, project := assistManager(t, st, prov)
 	release := make(chan struct{})
-	prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
-		if req.Purpose != purposeSuggestReply {
-			return agentapi.DecisionAnswer{}, fmt.Errorf("no %s here", req.Purpose)
+	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		if req.Purpose != purposeSuggestReplies {
+			return "", fmt.Errorf("no %s here", req.Purpose)
 		}
 		<-release
-		if !strings.Contains(req.Input, "make the test pass") || !strings.Contains(req.Input, "Fixed it. Shall I commit it?") {
-			return agentapi.DecisionAnswer{}, fmt.Errorf("unexpected request %+v", req)
+		if !strings.Contains(req.Prompt, "make the test pass") || !strings.Contains(req.Prompt, "Fixed it. Shall I commit it?") {
+			return "", fmt.Errorf("unexpected request %+v", req)
 		}
-		return agentapi.DecisionAnswer{Choice: "yes"}, nil
+		return `Sure: {"reply":"Yes, commit it"}`, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -106,18 +107,18 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 			results[i] = got
 		})
 	}
-	waitUntil(t, "the suggestion call", func() bool { return utilityCalls(prov, suggestReplyLog) == 1 })
+	waitUntil(t, "the suggestion call", func() bool { return utilityCalls(prov, purposeSuggestReplies) == 1 })
 	close(release)
 	wg.Wait()
-	// The picked reply is shared by concurrent callers.
-	want := []string{"Yes, go ahead"}
+	// The reply is shared by concurrent callers.
+	want := []string{"Yes, commit it"}
 	for _, got := range results {
 		if got.ItemID != "a-make the test pass" || !slices.Equal(got.Replies, want) {
 			t.Fatalf("suggestions = %+v", got)
 		}
 	}
-	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, want) || utilityCalls(prov, suggestReplyLog) != 1 {
-		t.Fatalf("a second look = %+v after %d calls", got, utilityCalls(prov, suggestReplyLog))
+	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, want) || utilityCalls(prov, purposeSuggestReplies) != 1 {
+		t.Fatalf("a second look = %+v after %d calls", got, utilityCalls(prov, purposeSuggestReplies))
 	}
 
 	// They survive a restart without another call.
@@ -133,8 +134,8 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the recorded history", func() bool { d, _ := m2.Detail(sum.ID); return d.History == HistoryLoaded })
-	if got, _ := m2.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, want) || utilityCalls(prov, suggestReplyLog) != 1 {
-		t.Fatalf("after a restart = %+v after %d calls", got, utilityCalls(prov, suggestReplyLog))
+	if got, _ := m2.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, want) || utilityCalls(prov, purposeSuggestReplies) != 1 {
+		t.Fatalf("after a restart = %+v after %d calls", got, utilityCalls(prov, purposeSuggestReplies))
 	}
 
 	// Turned off, nothing is suggested.
@@ -153,7 +154,7 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	decides(prov, "fix-tests")
+	suggests(prov, "Commit it")
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -171,138 +172,101 @@ func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 
 	got, err := m.SuggestReplies(context.Background(), sum.ID)
-	if err != nil || !slices.Equal(got.Replies, []string{"Fix the failing tests"}) {
+	if err != nil || !slices.Equal(got.Replies, []string{"Commit it"}) {
 		t.Fatalf("suggestion = %+v, %v", got, err)
 	}
 	want := "<user_message>\nalso lint\n</user_message>\n<agent_reply>\nFixed and linted. Want a commit?\n</agent_reply>"
-	for _, req := range prov.DecisionRequests() {
-		if req.Input != want {
-			t.Errorf("evidence included more than the last user message and final reply: %q", req.Input)
+	for _, req := range prov.UtilityRequests() {
+		if req.Prompt != want {
+			t.Errorf("prompt included more than the last user message and final reply: %q", req.Prompt)
 		}
-		if ids := optionIDs(req.Options); !slices.Equal(ids, []string{"fix-tests", "yes", "no"}) {
-			t.Errorf("options = %q", ids)
+		if req.System != suggestRepliesSystem || req.ResponseSchema == nil || req.Model != "a" {
+			t.Errorf("request = %+v", req)
 		}
 	}
-	if n := utilityCalls(prov, suggestReplyLog); n != 1 {
+	if n := utilityCalls(prov, purposeSuggestReplies); n != 1 {
 		t.Errorf("suggestion calls = %d, want 1", n)
 	}
 }
 
-// suggestReplyLog is the suggestion's purpose in the Utility log.
-const suggestReplyLog = "decision-" + purposeSuggestReply
-
-func optionIDs(options []DecisionOption) []string {
-	ids := []string{}
-	for _, o := range options {
-		ids = append(ids, o.ID)
-	}
-	return ids
+// suggests plays the Utility model for suggestion calls: it writes reply.
+func suggests(prov *agenttest.Pager, reply string) {
+	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		if req.Purpose != purposeSuggestReplies {
+			return "", fmt.Errorf("no %s here", req.Purpose)
+		}
+		return fmt.Sprintf(`{"reply":%q}`, reply), nil
+	})
 }
 
-// The replies offered follow what the turn did, in a fixed order.
-func TestReplyCandidatesFollowTheTurn(t *testing.T) {
-	failing := []EvidenceCheck{{outcomes: map[string]string{checkTest: outcomeFail}}}
-	passing := []EvidenceCheck{{outcomes: map[string]string{checkTest: outcomePass}}}
-	edit := []turnEdit{{path: "a.go"}}
-	for _, tc := range []struct {
-		name    string
-		facts   turnFacts
-		git     *GitPending
-		final   string
-		running func(s *webSession)
-		ci      bool
-		want    []string
+// A reply is one line of at most 120 characters, or none; anything else is
+// an unusable answer.
+func TestSuggestionAnswerContract(t *testing.T) {
+	long := strings.Repeat("界", maxSuggestedReplyRunes)
+	for name, tc := range map[string]struct {
+		reply, want string
+		invalid     bool
 	}{
-		{name: "plain answer", final: "It is 4.", want: []string{}},
-		{name: "edit with unsaved work", facts: turnFacts{edits: edit}, git: &GitPending{Uncommitted: 1}, final: "Done.", want: []string{"commit", "run-tests"}},
-		{name: "edit with passing tests", facts: turnFacts{edits: edit, checks: passing}, git: &GitPending{Uncommitted: 1}, final: "Done.", want: []string{"commit"}},
-		{name: "edit outside git", facts: turnFacts{edits: edit}, final: "Done.", want: []string{"run-tests"}},
-		{name: "failed command blocks commit", facts: turnFacts{edits: edit, failed: 1}, git: &GitPending{Uncommitted: 1}, final: "Done.", want: []string{"run-tests", "fix-failed"}},
-		{name: "failing tests", facts: turnFacts{edits: edit, checks: failing, failed: 1}, git: &GitPending{Uncommitted: 1}, final: "Two tests fail.", want: []string{"fix-tests"}},
-		{name: "committed and unpushed", facts: turnFacts{committed: true}, git: &GitPending{Unpushed: 1}, final: "Committed.", want: []string{"push"}},
-		{name: "unpushed without a commit", git: &GitPending{Unpushed: 1}, final: "Looked.", want: []string{}},
-		{name: "recommendation", final: "Both work. I’d recommend the second.", want: []string{"follow-recommendation"}},
-		{name: "recommended option", final: "- B (recommended)", want: []string{"follow-recommendation"}},
-		{name: "recommendation in code only", final: "Here:\n```\n# I recommend this\n```\nSee `my recommendation`.", want: []string{}},
-		{name: "background shell", final: "Started.", running: func(s *webSession) {
-			s.backgroundTasks = &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "1", Status: "completed"}, {ID: "2", Status: "running"}}}
-		}, want: []string{"status"}},
-		{name: "subagent", final: "Started.", running: func(s *webSession) {
-			s.subagents = []*agentapi.Subagent{{ID: "a", Status: agentapi.SubagentRunning}}
-		}, want: []string{"status"}},
-		{name: "pipeline", final: "Pushed.", ci: true, want: []string{"status"}},
-		{name: "question", final: "Fixed it. Shall I push?\n```\nok\n```", want: []string{"yes", "no"}},
-		{name: "question then statement", final: "Shall I push? I left it.", want: []string{}},
+		"a reply":          {reply: `{"reply":"Run the tests"}`, want: "Run the tests"},
+		"none":             {reply: `{"reply":""}`},
+		"null":             {reply: `{"reply":null}`},
+		"fenced":           {reply: "```json\n{\"reply\":\"Push it\"}\n```", want: "Push it"},
+		"made one line":    {reply: `{"reply":"  Yes,\n go\tahead \u001b[31m "}`, want: "Yes, go ahead"},
+		"at the limit":     {reply: `{"reply":"` + long + `"}`, want: long},
+		"too long":         {reply: `{"reply":"` + long + `x"}`, invalid: true},
+		"not an object":    {reply: "Run the tests", invalid: true},
+		"another field":    {reply: `{"reply":"Run the tests","why":"x"}`, invalid: true},
+		"not valid UTF-8":  {reply: "{\"reply\":\"\xff\"}", invalid: true},
+		"a second answer":  {reply: `{"reply":"a"} {"reply":"b"}`, invalid: true},
+		"a refusal":        {reply: "I cannot help with that.", invalid: true},
+		"reasoning before": {reply: `<think>{"reply":"no"}</think>{"reply":"Yes"}`, want: "Yes"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := &Manager{pendingTop: map[string]string{"/w": "/repo"}, gitPending: map[string]*GitPending{"/repo": tc.git}}
-			s := &webSession{workdir: "/w", items: []agentapi.Item{{Kind: agentapi.ItemUser, Text: "go"}, {Kind: agentapi.ItemAssistant, Text: tc.final}}}
-			if tc.running != nil {
-				tc.running(s)
-			}
-			if got := optionIDs(m.replyCandidatesLocked(s, tc.facts, tc.ci)); !slices.Equal(got, tc.want) {
-				t.Fatalf("candidates = %q, want %q", got, tc.want)
+		t.Run(name, func(t *testing.T) {
+			got, err := parseSuggestion(tc.reply)
+			if got != tc.want || (err != nil) != tc.invalid || err != nil && !errors.Is(err, errInvalidSuggestion) {
+				t.Fatalf("parseSuggestion = %q, %v", got, err)
 			}
 		})
 	}
-	for command, want := range map[string][2]bool{
-		"git commit -m x && git push":   {true, true},
-		"rtk git -C repo commit -am x":  {true, false},
-		"git log --grep commit":         {false, false},
-		"git push origin HEAD":          {false, true},
-		"echo committed; git status -s": {false, false},
-	} {
-		var f turnFacts
-		for _, w := range gitWriteRE.FindAllStringSubmatch(command, -1) {
-			f.committed = f.committed || w[1] == "commit"
-			f.pushed = f.pushed || w[1] == "push"
-		}
-		if [2]bool{f.committed, f.pushed} != want {
-			t.Errorf("%q: committed, pushed = %v, %v", command, f.committed, f.pushed)
-		}
-	}
 }
 
-// One fitting reply is the suggestion, with no model call.
-func TestSuggestionNeedsNoCallForOneCandidate(t *testing.T) {
+// Without a Utility model nothing is asked or kept: a suggestion never runs
+// on the Thread's own model. Choosing one asks.
+func TestSuggestionNeedsAUtilityModel(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
+	suggests(prov, "Run the tests")
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": store.WebTitleModelNone}}); err != nil {
+		t.Fatal(err)
+	}
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "run the tests", "Two tests fail.",
-		agentapi.Item{ID: "t1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"go test ./..."}`, Status: agentapi.ToolCompleted, ExitCode: codeOf(1)}})
-	got, err := m.SuggestReplies(context.Background(), sum.ID)
-	if err != nil || !slices.Equal(got.Replies, []string{"Fix the failing tests"}) || len(prov.DecisionRequests()) != 0 {
-		t.Fatalf("suggestion = %+v, %v after %d calls", got, err, len(prov.DecisionRequests()))
+	finishTurn(prov.Last(), "fix it", "Fixed parse.go. I have not run the tests.")
+	if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || got.ItemID != "" || len(got.Replies) != 0 || len(prov.UtilityRequests())+len(m.UtilityLog(0, 10).Calls) != 0 {
+		t.Fatalf("without a Utility model = %+v, %v after %d calls", got, err, len(prov.UtilityRequests()))
 	}
-}
-
-// A turn no reply fits gets none, kept like any answer, with no call.
-func TestSuggestionNoneWithoutCandidates(t *testing.T) {
-	prov := newAssistProvider()
-	m, project := assistManager(t, openTestStore(t), prov)
-	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
-	if err != nil {
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "a"}}); err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "what is 2+2", "4.")
-	for range 2 {
-		if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || got.ItemID != "a-what is 2+2" || len(got.Replies) != 0 {
-			t.Fatalf("suggestion = %+v, %v", got, err)
-		}
-	}
-	if n := len(prov.DecisionRequests()) + len(m.UtilityLog(0, 10).Calls); n != 0 {
-		t.Fatalf("%d decision calls", n)
+	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, []string{"Run the tests"}) {
+		t.Fatalf("with a Utility model = %+v", got)
 	}
 }
 
-// When the model picks none, none shows, and the turn is not asked again.
-func TestSuggestionAbstainShowsNothingAndIsKept(t *testing.T) {
+// When the model writes none, or an unusable answer, none shows, and the
+// turn is not asked again.
+func TestSuggestionNoneShowsNothingAndIsKept(t *testing.T) {
+	for reply, valid := range map[string]bool{"": true, strings.Repeat("x", maxSuggestedReplyRunes+1): false} {
+		t.Run(fmt.Sprint(valid), func(t *testing.T) { suggestionNone(t, reply, valid) })
+	}
+}
+
+func suggestionNone(t *testing.T, reply string, valid bool) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	decides(prov, "")
+	suggests(prov, reply)
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -314,34 +278,8 @@ func TestSuggestionAbstainShowsNothingAndIsKept(t *testing.T) {
 		}
 	}
 	calls := m.UtilityLog(0, 10).Calls
-	if n := utilityCalls(prov, suggestReplyLog); n != 1 || len(calls) != 1 || calls[0].TaskID != sum.ID || calls[0].Answer != "[abstain]" {
+	if n := utilityCalls(prov, purposeSuggestReplies); n != 1 || len(calls) != 1 || calls[0].TaskID != sum.ID || calls[0].Purpose != purposeSuggestReplies || calls[0].Model != "a" || calls[0].Answer != "" || calls[0].Valid == nil || *calls[0].Valid != valid {
 		t.Fatalf("%d calls, log %+v", n, calls)
-	}
-}
-
-// The unsaved work is read as the turn left it: an edit in a repository
-// with uncommitted changes offers Commit this.
-func TestSuggestionReadsTheFolderUnsavedWork(t *testing.T) {
-	prov := newAssistProvider()
-	m := startManager(t, openTestStore(t), prov)
-	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "a"}}); err != nil {
-		t.Fatal(err)
-	}
-	project := addProject(t, m, gitRepoFixture(t))
-	prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
-		if !slices.Equal(optionIDs(req.Options), []string{"commit", "run-tests"}) {
-			return agentapi.DecisionAnswer{}, fmt.Errorf("options %q", optionIDs(req.Options))
-		}
-		return agentapi.DecisionAnswer{Choice: "commit"}, nil
-	})
-	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	finishTurn(prov.Last(), "update it", "Updated tracked.txt.",
-		agentapi.Item{ID: "e1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Input: `{"path":"tracked.txt"}`, Status: agentapi.ToolCompleted}})
-	if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || !slices.Equal(got.Replies, []string{"Commit this"}) {
-		t.Fatalf("suggestion = %+v, %v", got, err)
 	}
 }
 
@@ -561,7 +499,7 @@ func TestExportHoldsTheWholeRecord(t *testing.T) {
 func TestAssistPastTheUtilityLimit(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	decides(prov, "no")
+	suggests(prov, "Run them")
 	zero := 0
 	limit := &zero
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
@@ -586,7 +524,7 @@ func TestAssistPastTheUtilityLimit(t *testing.T) {
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &unset}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, []string{"No, leave it"}) {
+	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, []string{"Run them"}) {
 		t.Fatalf("suggestions after the limit = %+v", got)
 	}
 }
@@ -599,7 +537,7 @@ func TestPausedSuggestionsAreLoggedOnce(t *testing.T) {
 	t.Cleanup(func() { uamlog.SetLogger(previous) })
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	decides(prov, "yes")
+	suggests(prov, "Yes")
 	zero := 0
 	limit := &zero
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
