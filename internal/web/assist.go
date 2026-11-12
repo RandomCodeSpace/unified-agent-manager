@@ -20,7 +20,7 @@ import (
 
 // The assist features (docs/web.md): replies suggested after a turn, the
 // outcome line of a completed turn, Run again and Export as Markdown. A
-// suggestion is picked by a Utility model call (Decide) when more than one
+// suggestion is picked by a decision model call (Decide) when more than one
 // reply fits a finished turn; everything else is built from the transcript.
 const (
 	// maxSuggestedReplies is one: the composer shows a single suggestion.
@@ -176,7 +176,7 @@ var replyChoices = []DecisionOption{
 	{ID: "no", Description: "No, leave it"},
 }
 
-const suggestReplyInstructions = `Pick the reply the user would most likely send next, judging from their last message and the agent's final reply. Each option is that reply's text. Return null when none fits.`
+const suggestReplyInstructions = `Pick the reply the user would most likely send next, judging from their last message and the agent's final reply. Each option is that reply's text.`
 
 // recommendsRE is a reply making an explicit recommendation.
 var recommendsRE = regexp.MustCompile(`(?i)\bI(?:['’]d| would)? recommend\b|\bmy recommendation\b|\brecommended:|\(recommended\)`)
@@ -334,9 +334,9 @@ func (m *Manager) SuggestReplies(ctx context.Context, id string) (Suggestions, e
 		s.suggesting = nil
 	}
 	close(run.done)
-	// Past today's Utility limit, or without a Utility model, none are shown
+	// Past today's Utility limit, or without a decision model, none are shown
 	// and none are kept: a look once a call may run asks again.
-	if m.closed || s.removed || paused || errors.Is(err, errUtilityUnavailable) {
+	if m.closed || s.removed || paused || errors.Is(err, errDecisionUnavailable) {
 		return none, nil
 	}
 	s.suggestions = &store.WebSuggestions{ItemID: key, Replies: replies}

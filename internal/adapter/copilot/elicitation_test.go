@@ -76,7 +76,9 @@ func TestWebElicitationFormAccept(t *testing.T) {
 		},
 		Required: []string{"name", "ok"},
 	}
-	done := elicitAsync(h.fs, copilot.ElicitationContext{Message: "Configure the release", RequestedSchema: schema, ElicitationSource: strp("github"), ElicitationSourceDisplayName: strp("GitHub")})
+	// The SDK gives a Connector-owned server's display name on the event only.
+	h.fs.onEvent(ev("e0", &rpc.ElicitationRequestedData{RequestID: "r0", Message: "Configure the release", ElicitationSource: strp("github"), ElicitationSourceDisplayName: strp("GitHub")}))
+	done := elicitAsync(h.fs, copilot.ElicitationContext{Message: "Configure the release", RequestedSchema: schema, ElicitationSource: strp("github")})
 	q := pendingElicitation(t, h)
 	var names []string
 	for _, x := range q.Questions {
@@ -222,8 +224,8 @@ func TestWebElicitationLinksAndCompletesElsewhere(t *testing.T) {
 
 	done := elicitAsync(h.fs, copilot.ElicitationContext{Message: "First", RequestedSchema: schema})
 	first := pendingElicitation(t, h)
-	h.fs.onEvent(copilot.SessionEvent{ID: "e1", AgentID: &sub, Data: &rpc.ElicitationRequestedData{RequestID: "r1", Message: "First", ToolCallID: strp("call-1"), RequestedSchema: &rpc.ElicitationRequestedSchema{}}})
-	if got := h.sink.interaction(first.ID); got.ToolCallID != "call-1" || got.AgentID != sub || got.State != agentapi.InteractionPending {
+	h.fs.onEvent(copilot.SessionEvent{ID: "e1", AgentID: &sub, Data: &rpc.ElicitationRequestedData{RequestID: "r1", Message: "First", ToolCallID: strp("call-1"), RequestedSchema: &rpc.ElicitationRequestedSchema{}, ElicitationSourceDisplayName: strp("Docs")}})
+	if got := h.sink.interaction(first.ID); got.ToolCallID != "call-1" || got.AgentID != sub || got.State != agentapi.InteractionPending || first.Title != "Form from Copilot" || got.Title != "Form from Docs" {
 		t.Fatalf("linked after the callback = %+v", got)
 	}
 	cancel := rpc.ElicitationCompletedActionCancel

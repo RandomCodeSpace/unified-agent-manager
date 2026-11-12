@@ -2,9 +2,10 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,40 +19,35 @@ func decisionFixture() DecisionRequest {
 		Options: []DecisionOption{{ID: "explained", Description: "Explained something"}, {ID: "changed", Description: "Changed something"}}}
 }
 
+// decides makes prov's decision model pick choice, or abstain when choice
+// is "".
+func decides(prov interface {
+	SetDecisionHook(func(context.Context, agentapi.DecisionRequest) (agentapi.DecisionAnswer, error))
+}, choice string) {
+	prov.SetDecisionHook(func(context.Context, agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+		return agentapi.DecisionAnswer{Choice: choice, Abstained: choice == "", Model: "decider"}, nil
+	})
+}
+
 func TestDecisionAnswerContract(t *testing.T) {
 	for _, tt := range []struct {
-		name, reply string
-		want        DecisionResult
-		valid       bool
+		name   string
+		answer agentapi.DecisionAnswer
+		want   DecisionResult
+		valid  bool
 	}{
-		{"first choice", `{"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
-		{"second choice", ` {"choice":"changed"} `, DecisionResult{Choice: "changed"}, true},
-		{"abstention", `{"choice":null}`, DecisionResult{Abstained: true}, true},
-		{"preamble", `Answer: {"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
-		{"fence", "```json\n{\"choice\":\"explained\"}\n```", DecisionResult{Choice: "explained"}, true},
-		{"thinking", `<think>{"choice":"changed"}</think>{"choice":"explained"}`, DecisionResult{Choice: "explained"}, true},
-		{"thinking abstention", "<think>hmm</think>\n{\"choice\":null}", DecisionResult{Abstained: true}, true},
-		{name: "missing", reply: `{}`},
-		{name: "empty", reply: ""},
-		{name: "unknown", reply: `{"choice":"complete"}`},
-		{name: "empty choice", reply: `{"choice":""}`},
-		{name: "unknown field", reply: `{"choice":"explained","reason":"fine"}`},
-		{name: "multiple", reply: `{"choice":"explained"}{"choice":"changed"}`},
-		{name: "trailing prose", reply: `{"choice":"explained"} done`},
-		{name: "refusal", reply: `I cannot choose. {"choice":"explained"}`},
-		{name: "number", reply: `{"choice":1}`},
-		{name: "boolean", reply: `{"choice":false}`},
-		{name: "array", reply: `{"choice":[]}`},
-		{name: "object", reply: `{"choice":{}}`},
-		{name: "null object", reply: `null`},
-		{name: "incomplete", reply: `{"choice":"explained"`},
-		{name: "oversized", reply: strings.Repeat(" ", 2048) + `{"choice":null}`},
-		{name: "invalid UTF-8", reply: "{\"choice\":\"\xff\"}"},
+		{"first choice", agentapi.DecisionAnswer{Choice: "explained"}, DecisionResult{Choice: "explained"}, true},
+		{"second choice", agentapi.DecisionAnswer{Choice: "changed"}, DecisionResult{Choice: "changed"}, true},
+		{"abstention", agentapi.DecisionAnswer{Abstained: true}, DecisionResult{Abstained: true}, true},
+		{name: "empty", answer: agentapi.DecisionAnswer{}},
+		{name: "unknown", answer: agentapi.DecisionAnswer{Choice: "complete"}},
+		{name: "padded", answer: agentapi.DecisionAnswer{Choice: " explained"}},
+		{name: "choice and abstention", answer: agentapi.DecisionAnswer{Choice: "explained", Abstained: true}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseDecision(tt.reply, decisionFixture().Options)
+			got, err := checkDecision(tt.answer, decisionFixture().Options)
 			if got != tt.want || (err == nil) != tt.valid || err != nil && !errors.Is(err, ErrInvalidDecision) {
-				t.Fatalf("parse = %+v, %v; want %+v, valid=%v", got, err, tt.want, tt.valid)
+				t.Fatalf("check = %+v, %v; want %+v, valid=%v", got, err, tt.want, tt.valid)
 			}
 		})
 	}
@@ -70,7 +66,11 @@ func TestDecisionRejectsInvalidInputBeforeInference(t *testing.T) {
 		"long evidence":    func(r *DecisionRequest) { r.Input = strings.Repeat("x", 16385) },
 		"invalid UTF-8":    func(r *DecisionRequest) { r.Input = "\xff" },
 		"one option":       func(r *DecisionRequest) { r.Options = r.Options[:1] },
-		"too many":         func(r *DecisionRequest) { r.Options = make([]DecisionOption, 33) },
+		"too many": func(r *DecisionRequest) {
+			for i := range maxDecisionOptions - 1 {
+				r.Options = append(r.Options, DecisionOption{ID: "more-" + strconv.Itoa(i), Description: "More"})
+			}
+		},
 		"duplicate ID":     func(r *DecisionRequest) { r.Options[1].ID = r.Options[0].ID },
 		"invalid ID":       func(r *DecisionRequest) { r.Options[0].ID = "with space" },
 		"no description":   func(r *DecisionRequest) { r.Options[0].Description = "" },
@@ -86,72 +86,48 @@ func TestDecisionRejectsInvalidInputBeforeInference(t *testing.T) {
 			}
 		})
 	}
-	if len(prov.UtilityRequests()) != 0 || m.UtilityLog(0, 10).Today.Calls != 0 {
-		t.Fatal("invalid input spent a Utility call")
+	if len(prov.DecisionRequests()) != 0 || m.UtilityLog(0, 10).Today.Calls != 0 {
+		t.Fatal("invalid input spent a decision call")
 	}
 }
 
-func TestDecisionSendsAClosedSchema(t *testing.T) {
+// A decision goes to the decision model whole, whatever the Utility model
+// is, and is logged and counted once under the model that answered.
+func TestDecisionAsksTheDecisionModelAndAccountsOnce(t *testing.T) {
 	prov := newAssistProvider()
 	m, _ := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
-	if _, err := m.Decide(context.Background(), decisionFixture()); err != nil {
-		t.Fatal(err)
-	}
-	reqs := prov.UtilityRequests()
-	if len(reqs) != 1 {
-		t.Fatalf("%d Utility calls", len(reqs))
-	}
-	got, _ := json.Marshal(reqs[0].ResponseSchema)
-	want := `{"additionalProperties":false,"properties":{"choice":{"anyOf":[{"enum":["explained","changed"]},{"type":"null"}]}},"required":["choice"],"type":"object"}`
-	if string(got) != want {
-		t.Fatalf("schema = %s, want %s", got, want)
-	}
-}
-
-func TestDecisionUsesConfiguredUtilityAndAccountsOnce(t *testing.T) {
-	prov := newAssistProvider()
-	m, _ := assistManager(t, openTestStore(t), prov)
-	// A different configured model and different options on the next call must
-	// not reuse any state from the first call.
-	for i, model := range []string{"a", "b"} {
-		if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": model}}); err != nil {
+	// Different options on the next call must not reuse any state from the
+	// first call.
+	for i, utility := range []string{"a", "none"} {
+		if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": utility}}); err != nil {
 			t.Fatal(err)
 		}
 		input := decisionFixture()
 		if i == 1 {
 			input.Options[0].ID = "other"
 		}
-		prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-			if req.Model != model || req.Purpose != "decision-reply-kind" || req.Workdir != "" || len(req.Tools) != 0 || len(req.Attachments) != 0 || req.CallTool != nil || req.Timeout != decisionTimeout {
-				t.Errorf("unexpected Utility request: model=%s purpose=%s", req.Model, req.Purpose)
-			}
-			var prompt struct {
-				Input   string           `json:"input"`
-				Options []DecisionOption `json:"options"`
-			}
-			if err := json.Unmarshal([]byte(req.Prompt), &prompt); err != nil || prompt.Input != input.Input || len(prompt.Options) != 2 || prompt.Options[0] != input.Options[0] || !strings.Contains(req.System, input.Instructions) {
-				t.Errorf("prompt did not preserve request: %v", err)
+		prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+			if req.Purpose != "reply-kind" || req.Instructions != input.Instructions || req.Input != input.Input || !slices.Equal(req.Options, input.Options) {
+				t.Errorf("request did not preserve the decision: %+v", req)
 			}
 			if i == 0 {
-				req.OnUsage(agentapi.UtilityUsage{InputTokens: 40, OutputTokens: 6, Credits: 0.002})
+				req.OnUsage(agentapi.UtilityUsage{InputTokens: 40, Tokens: []agentapi.TokenUsage{{Model: "decider", Input: 40}}})
 			}
-			return `{"choice":"` + input.Options[0].ID + `"}`, nil
+			return agentapi.DecisionAnswer{Choice: input.Options[0].ID, Model: "decider"}, nil
 		})
 		got, err := m.Decide(context.Background(), input)
 		if err != nil || got.Choice != input.Options[0].ID || got.Abstained {
 			t.Fatalf("decision = %+v, %v", got, err)
 		}
 		calls := m.UtilityLog(0, 10).Calls
-		if len(calls) != i+1 || len(prov.UtilityRequests()) != i+1 {
-			t.Fatalf("wrong call count: %d logs, %d provider calls", len(calls), len(prov.UtilityRequests()))
+		if len(calls) != i+1 || len(prov.DecisionRequests()) != i+1 || len(prov.UtilityRequests()) != 0 {
+			t.Fatalf("wrong call count: %d logs, %d decisions, %d Utility calls", len(calls), len(prov.DecisionRequests()), len(prov.UtilityRequests()))
 		}
 		c := calls[0]
-		req := prov.UtilityRequests()[i]
-		if c.Provider != "fake" || c.Model != model || c.Purpose != req.Purpose || c.Valid == nil || !*c.Valid || c.Answer != got.Choice || c.Outcome != utilityOK || c.Retry || c.Fallback || c.PromptChars != utf8.RuneCountInString(req.System+req.Prompt) {
+		if c.Provider != "fake" || c.Model != "decider" || c.Purpose != "decision-reply-kind" || c.Valid == nil || !*c.Valid || c.Answer != got.Choice || c.Outcome != utilityOK || c.Retry || c.Fallback || c.PromptChars != utf8.RuneCountInString(input.Instructions+input.Input) {
 			t.Fatalf("decision log = %+v", c)
 		}
-		if i == 0 && (c.Estimated || c.InputTokens != 40 || c.OutputTokens != 6 || c.Credits != 0.002) || i == 1 && (!c.Estimated || c.InputTokens == 0 || c.OutputTokens == 0) {
+		if i == 0 && (c.Estimated || c.InputTokens != 40 || c.OutputTokens != 0) || i == 1 && (!c.Estimated || c.InputTokens == 0 || c.OutputTokens != 0) {
 			t.Fatalf("usage = %+v", c)
 		}
 	}
@@ -161,14 +137,16 @@ func TestDecisionFailuresAndPurposePause(t *testing.T) {
 	prov := newAssistProvider()
 	m, _ := assistManager(t, openTestStore(t), prov)
 	providerErr := errors.New("provider unavailable")
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "", providerErr })
+	prov.SetDecisionHook(func(context.Context, agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+		return agentapi.DecisionAnswer{}, providerErr
+	})
 	if _, err := m.Decide(context.Background(), decisionFixture()); !errors.Is(err, providerErr) {
 		t.Fatalf("provider failure = %v", err)
 	}
 	if c := m.UtilityLog(0, 10).Calls[0]; c.Valid != nil || c.Outcome != utilityError || !c.Fallback {
 		t.Fatalf("provider error counted as invalid: %+v", c)
 	}
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":"invented"}`, nil })
+	decides(prov, "invented")
 	for range 4 {
 		got, err := m.Decide(context.Background(), decisionFixture())
 		if !errors.Is(err, ErrInvalidDecision) || got != (DecisionResult{}) {
@@ -180,10 +158,10 @@ func TestDecisionFailuresAndPurposePause(t *testing.T) {
 	}
 	_, err := m.Decide(context.Background(), decisionFixture())
 	var paused *Error
-	if !errors.As(err, &paused) || paused.Code != codeUtilityPaused || len(prov.UtilityRequests()) != 5 {
-		t.Fatalf("purpose did not pause after four invalid jobs: %v, calls=%d", err, len(prov.UtilityRequests()))
+	if !errors.As(err, &paused) || paused.Code != codeUtilityPaused || len(prov.DecisionRequests()) != 5 {
+		t.Fatalf("purpose did not pause after four invalid jobs: %v, calls=%d", err, len(prov.DecisionRequests()))
 	}
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
+	decides(prov, "")
 	input := decisionFixture()
 	input.Purpose = "another-purpose"
 	for range 5 {
@@ -195,37 +173,39 @@ func TestDecisionFailuresAndPurposePause(t *testing.T) {
 			t.Fatalf("abstention log = %+v", c)
 		}
 	}
-	if len(prov.UtilityRequests()) != 10 {
-		t.Fatalf("unexpected retries: %d calls", len(prov.UtilityRequests()))
+	if len(prov.DecisionRequests()) != 10 {
+		t.Fatalf("unexpected retries: %d calls", len(prov.DecisionRequests()))
 	}
 }
 
 func TestDecisionRespectsUtilitySettings(t *testing.T) {
-	for _, mode := range []string{"disabled model", "off", "daily limit"} {
+	for _, mode := range []string{"no provider", "off", "daily limit"} {
 		t.Run(mode, func(t *testing.T) {
 			prov := newAssistProvider()
 			m, _ := assistManager(t, openTestStore(t), prov)
 			wantCode := codeUtilityPaused
 			switch mode {
-			case "disabled model":
+			case "no provider":
 				wantCode = codeUtilityUnavailable
-				if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "none"}}); err != nil {
-					t.Fatal(err)
-				}
+				m.mu.Lock()
+				info := m.infos["fake"]
+				info.Available = false
+				m.infos["fake"] = info
+				m.mu.Unlock()
 			case "off":
 				setUtilityLimit(t, m, new(0))
 			case "daily limit":
 				setUtilityLimit(t, m, new(1))
-				prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
+				decides(prov, "")
 				if _, err := m.Decide(context.Background(), decisionFixture()); err != nil {
 					t.Fatal(err)
 				}
 			}
-			before := len(prov.UtilityRequests())
+			before := len(prov.DecisionRequests())
 			got, err := m.Decide(context.Background(), decisionFixture())
 			var blocked *Error
-			if !errors.As(err, &blocked) || blocked.Code != wantCode || got != (DecisionResult{}) || len(prov.UtilityRequests()) != before {
-				t.Fatalf("blocked call = %+v, %v; calls=%d", got, err, len(prov.UtilityRequests())-before)
+			if !errors.As(err, &blocked) || blocked.Code != wantCode || got != (DecisionResult{}) || len(prov.DecisionRequests()) != before {
+				t.Fatalf("blocked call = %+v, %v; calls=%d", got, err, len(prov.DecisionRequests())-before)
 			}
 		})
 	}
@@ -244,14 +224,14 @@ func TestDecisionCancellationAndShutdown(t *testing.T) {
 					close(cleanup)
 				}
 			}()
-			prov.SetUtilityHook(func(ctx context.Context, _ agentapi.UtilityRequest) (string, error) {
+			prov.SetDecisionHook(func(ctx context.Context, _ agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
 				close(started)
 				<-ctx.Done()
 				close(canceled)
 				<-cleanup
 				// Even a provider returning success after cancellation cannot
 				// turn the canceled job into a valid decision.
-				return `{"choice":"explained"}`, nil
+				return agentapi.DecisionAnswer{Choice: "explained"}, nil
 			})
 			ctx, cancel := context.WithCancel(context.Background())
 			wantErr := context.Canceled
@@ -344,8 +324,8 @@ func TestDecisionCancellationBeforeInference(t *testing.T) {
 				cancel()
 			}
 			_, err := m.Decide(ctx, decisionFixture())
-			if !errors.Is(err, wantErr) || len(prov.UtilityRequests()) != 0 || m.UtilityLog(0, 10).Today.Calls != 0 {
-				t.Fatalf("canceled before inference = %v, calls=%d", err, len(prov.UtilityRequests()))
+			if !errors.Is(err, wantErr) || len(prov.DecisionRequests()) != 0 || m.UtilityLog(0, 10).Today.Calls != 0 {
+				t.Fatalf("canceled before inference = %v, calls=%d", err, len(prov.DecisionRequests()))
 			}
 		})
 	}
@@ -402,31 +382,28 @@ func TestUtilityModelResolution(t *testing.T) {
 	}
 }
 
-// With no Utility model and no priced model, a Thread's decision runs on
-// the Thread's own model; one with no Thread is not run.
-func TestDecisionFallsBackToTheThreadModel(t *testing.T) {
+// A Thread's decision names the Thread in the log; neither it nor one with
+// no Thread needs a Utility model.
+func TestDecisionNamesItsThread(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": ""}}); err != nil {
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "none"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Decide(context.Background(), decisionFixture()); !errors.Is(err, errUtilityUnavailable) {
-		t.Fatalf("decision with no Thread = %v", err)
+	decides(prov, "")
+	if got, err := m.Decide(context.Background(), decisionFixture()); err != nil || !got.Abstained {
+		t.Fatalf("decision with no Thread = %+v, %v", got, err)
 	}
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
 	input := decisionFixture()
 	input.TaskID = sum.ID
 	if got, err := m.Decide(context.Background(), input); err != nil || !got.Abstained {
 		t.Fatalf("Thread decision = %+v, %v", got, err)
 	}
-	if reqs := prov.UtilityRequests(); len(reqs) != 1 || reqs[0].Model != "b" {
-		t.Fatalf("Utility requests = %+v", reqs)
-	}
-	if c := m.UtilityLog(0, 10).Calls[0]; c.Model != "b" || c.TaskID != sum.ID {
-		t.Fatalf("logged call = %+v", c)
+	if calls := m.UtilityLog(0, 10).Calls; len(calls) != 2 || calls[0].Model != "decider" || calls[0].TaskID != sum.ID || calls[1].TaskID != "" {
+		t.Fatalf("logged calls = %+v", calls)
 	}
 }

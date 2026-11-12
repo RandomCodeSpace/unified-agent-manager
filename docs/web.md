@@ -1900,8 +1900,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   go ahead" and "No, leave it" (the final reply's last sentence is a
   question). The uncommitted and unpushed counts are read again as the turn
   left them. When none fits there is no suggestion; when one fits it is the
-  suggestion, with no model call; when more fit, one Utility model call
-  (logged as "decision-suggest-reply") picks one of them or none, from your
+  suggestion, with no model call; when more fit, one call to Copilot's
+  decision model (logged as "decision-suggest-reply") picks one of them or none, from your
   last message and the agent's final reply. Messages longer than 2,000
   characters are shortened to their first and last 1,000 characters, with an
   ellipsis between them. Tool calls and earlier agent messages are excluded.
@@ -2815,7 +2815,7 @@ failed**, **Timed out**, **Auth failed**, or **Runner failure · not your
 change**. GitLab's own runner failure reasons name the last two without a
 log read; the rest come from patterns in the end of the job log, read once
 per job (a commit UAM tracks keeps the result across restarts). A log the
-patterns miss goes once, in the background, to the Utility model (job name,
+patterns miss goes once, in the background, to Copilot's decision model (job name,
 stage and the last 8 KB of the log; Utility log purpose **CI failure
 kind**), which picks one of those kinds or abstains; the chip gains the
 label on its next read. Only the kind and the number of failed tests are
@@ -3278,7 +3278,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   must first restore the recorded settings successfully.
 - **Detached shells (Copilot).** Copilot CLI reports a running detached
   shell's process id as a decimal number (`3892667.0`), which the Copilot
-  SDK (still in 1.0.28) cannot read, so it rejects the whole task list. UAM
+  SDK (still in 1.0.31) cannot read, so it rejects the whole task list. UAM
   reads the list itself, one entry at a time, so detached shells are listed
   and can be stopped like any other. An entry UAM still cannot read is left
   out and the rest stay listed. Only when no entry can be read does the chip

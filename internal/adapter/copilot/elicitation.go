@@ -136,8 +136,7 @@ func formContent(questions []agentapi.Question, answers [][]string) (map[string]
 // cannot show it.
 func elicitationOf(req copilot.ElicitationContext, now time.Time) (agentapi.Interaction, error) {
 	source := clip(strings.TrimSpace(deref(req.ElicitationSource)), maxFormLabel)
-	// A Connector-owned server's display name only labels; Source stays its identity.
-	from := cmp.Or(clip(strings.TrimSpace(deref(req.ElicitationSourceDisplayName)), maxFormLabel), source, "Copilot")
+	from := cmp.Or(source, "Copilot")
 	ix := agentapi.Interaction{
 		ID:          "elicitation-" + rand.Text(),
 		Kind:        agentapi.InteractionQuestion,
@@ -475,8 +474,18 @@ type elicitLinks struct {
 }
 
 type elicitEvent struct {
-	key, requestID, toolCallID, agentID string
-	at                                  time.Time
+	key, requestID, toolCallID, agentID, title string
+	at                                         time.Time
+}
+
+// elicitTitle is the title a Connector-owned server's trusted display name
+// gives its form, "" without one. The name only labels; Source stays the
+// server's identity. The SDK reports it on the event, not to the callback.
+func elicitTitle(d *rpc.ElicitationRequestedData) string {
+	if name := clip(strings.TrimSpace(deref(d.ElicitationSourceDisplayName)), maxFormLabel); name != "" {
+		return "Form from " + name
+	}
+	return ""
 }
 
 func elicitKey(message string, link, source *string) string {
@@ -500,7 +509,7 @@ func (c *conversation) elicitAskedLocked(in *interaction, now time.Time) {
 	if i := slices.IndexFunc(l.events, func(e elicitEvent) bool { return e.key == in.elicitKey }); i >= 0 {
 		e := l.events[i]
 		l.events = slices.Delete(l.events, i, i+1)
-		in.requestID, in.ToolCallID, in.AgentID = e.requestID, e.toolCallID, e.agentID
+		in.requestID, in.ToolCallID, in.AgentID, in.Title = e.requestID, e.toolCallID, e.agentID, cmp.Or(e.title, in.Title)
 		return
 	}
 	if len(l.waiting) >= maxQuestionLinks {
@@ -523,14 +532,14 @@ func (c *conversation) elicitRequestedLocked(d *rpc.ElicitationRequestedData, ag
 	if i := slices.IndexFunc(l.waiting, func(in *interaction) bool { return in.elicitKey == key }); i >= 0 {
 		in := l.waiting[i]
 		l.waiting = slices.Delete(l.waiting, i, i+1)
-		in.requestID, in.ToolCallID, in.AgentID = d.RequestID, toolCallID, agentID
+		in.requestID, in.ToolCallID, in.AgentID, in.Title = d.RequestID, toolCallID, agentID, cmp.Or(elicitTitle(d), in.Title)
 		c.emitInteractionLocked(in)
 		return
 	}
 	if len(l.events) >= maxQuestionLinks {
 		l.events = l.events[1:]
 	}
-	l.events = append(l.events, elicitEvent{key: key, requestID: d.RequestID, toolCallID: toolCallID, agentID: agentID, at: now})
+	l.events = append(l.events, elicitEvent{key: key, requestID: d.RequestID, toolCallID: toolCallID, agentID: agentID, title: elicitTitle(d), at: now})
 }
 
 // elicitCompletedLocked handles an elicitation.completed event. One this
