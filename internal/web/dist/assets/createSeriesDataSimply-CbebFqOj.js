@@ -1,0 +1,1 @@
+import{bi as e,ct as t,gi as n,lt as r}from"./echarts-DimuNrYx.js";function i(i,a,o){a=e(a)&&{coordDimensions:a}||n({encodeDefine:i.getEncode()},a);var s=i.getSource(),c=t(s,a).dimensions,l=new r(c,i);return l.initData(s,o),l}export{i as t};
