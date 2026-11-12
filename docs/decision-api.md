@@ -51,9 +51,12 @@ Callers:
   letters, digits or hyphens, starting with a letter.
 - The provider (`agentapi.DecisionRunner`) sends one request with the input as
   its context and two questions. A choice question picks among the options; it
-  always picks one, so a yes/no question asks whether the evidence shows that
-  any option fits. The answer abstains unless that is at least 0.5 likely and
-  one option leads: a tie, a refused question or a missing answer abstains.
+  always picks one, so a yes/no question asks whether at least one option is a
+  reasonable answer to the task. The answer abstains unless that is at least
+  0.5 likely and one option leads: a tie, a refused question or a missing
+  answer abstains. The wording matters: asking whether the evidence shows
+  which option fits scored about 0.1 for a reply of yes or no the model was
+  0.98 sure of, so every such suggestion abstained.
   Only an allowed ID or an abstention is accepted. A valid abstention is a
   successful answer.
 - The decision model returns probabilities, not text, so there is no reply to
@@ -131,6 +134,8 @@ shutdown waiting for provider cleanup. `go test ./internal/adapter/copilot -run
 '^TestRunDecision'` covers the request sent and how its answers are read.
 
 `UAM_DECISION_LIVE_PROBE=1 go test ./internal/web -run '^TestDecisionLiveProbe$' -v`
-asks the signed-in account's real decision model nine questions (six with clear
-evidence, three with none, one of them a planted instruction). On 2026-11-12
-all nine were right at about 600 ms and 410 input tokens each.
+asks the signed-in account's real decision model twelve questions with both
+callers' instructions and options (six with a fitting option, six with none,
+two of those a planted instruction). On 2026-11-12 all twelve were right at
+about 600 ms and 420 to 610 input tokens each. Run it after changing either
+question's wording or a caller's instructions.
