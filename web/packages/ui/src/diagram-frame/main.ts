@@ -20,6 +20,14 @@ const fontReady = (async () => {
  * sequence diagram to Excalidraw element skeletons; it can reach nothing else.
  */
 
+const XY_TEXT = ['titleColor', 'dataLabelColor', 'legendTextColor', 'xAxisTitleColor', 'xAxisLabelColor', 'xAxisTickColor', 'xAxisLineColor', 'yAxisTitleColor', 'yAxisLabelColor', 'yAxisTickColor', 'yAxisLineColor'];
+/** An xychart's variables are one object, replaced whole: its palette is the series tones, the rest what Mermaid would derive. */
+const xyChart = (theme: Record<string, string>) => ({
+  ...Object.fromEntries(XY_TEXT.map((key) => [key, theme.primaryTextColor])),
+  backgroundColor: theme.background,
+  plotColorPalette: Array.from({ length: 7 }, (_, i) => theme[`cScale${i}`]).join(','),
+});
+
 function configure(theme: Record<string, string>) {
   mermaid.initialize({
     startOnLoad: false,
@@ -30,7 +38,10 @@ function configure(theme: Record<string, string>) {
     // Notes spanning two participants have a fixed width; wrap their text to fit it.
     sequence: { wrap: true },
     theme: 'base',
-    themeVariables: { fontFamily: DIAGRAM_FONT, ...theme },
+    themeVariables: { fontFamily: DIAGRAM_FONT, ...theme, ...(theme.cScale0 && { xyChart: xyChart(theme) }) },
+    // Plain boxes and subgraphs take the 6px corner the page's controls have. A timeline rules its lines in
+    // the label colour, which is the text on the series tones: on the card they take the line colour.
+    themeCSS: `rect.basic.label-container,.cluster rect{rx:6px;ry:6px}${theme.lineColor ? `.lineWrapper line{stroke:${theme.lineColor}}` : ''}`,
     // The global family and size also become the sequence diagram's actor, note and message
     // fonts, which otherwise default to "Open Sans" at 16px; 14 matches the theme's fontSize.
     fontFamily: DIAGRAM_FONT,

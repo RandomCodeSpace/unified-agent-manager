@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DiagramError, DiagramQueue, KEPT_DIAGRAMS, errorReason, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
+import { DiagramError, DiagramQueue, KEPT_DIAGRAMS, diagramTheme, errorReason, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
 
 const flow = 'flowchart LR\n  A --> B';
 const theme = { primaryColor: '#f3f2ee' };
@@ -191,4 +191,25 @@ test('a parse error names its reason, not only the line, in at most 200 characte
   const long = errorReason(`Parse error on line 2:\nx\n^\nExpecting ${Array.from({ length: 40 }, (_, i) => `'TOKEN_${i}'`).join(', ')}, got 'EOF'`);
   assert.ok(long.length <= 200, long);
   assert.match(long, /^Parse error on line 2: Expecting 'TOKEN_0', .*….*, got 'EOF'$/);
+});
+
+test('slices, sections and branches take the chart series tones, and only a dark scheme says it is dark', () => {
+  const tokens = { raised: '#ffffff', 'badge-blue': '#0265c0', 'badge-orange': '#a74c0e', 'badge-teal': '#107469', 'badge-pink': '#ad3479', 'badge-violet': '#6b4fc2', 'badge-cyan': '#0d6f88', 'badge-green': '#21763e' };
+  const root = { dataset: { theme: 'light' } };
+  globalThis.document = { documentElement: root };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: (name) => tokens[name.replace('--color-', '')] ?? '' });
+  try {
+    const light = diagramTheme();
+    // Mermaid would turn the primary's hue for these, and ours is white: every one came out the same grey.
+    assert.deepEqual([light.pie1, light.cScale0, light.git0, light.pie2, light.cScale1], ['#0265c0', '#0265c0', '#0265c0', '#a74c0e', '#a74c0e']);
+    // Past the seven tones they repeat; a git graph has eight branches' worth.
+    assert.deepEqual([light.pie8, light.cScale11, light.git7, light.git8], ['#0265c0', '#6b4fc2', '#0265c0', undefined]);
+    assert.deepEqual([light.cScaleLabel0, light.gitBranchLabel7, light.pieSectionTextColor], ['#ffffff', '#ffffff', '#ffffff']);
+    assert.equal(light.darkMode, undefined);
+    root.dataset.theme = 'dark';
+    assert.equal(diagramTheme().darkMode, 'true');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.getComputedStyle;
+  }
 });

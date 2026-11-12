@@ -201,7 +201,8 @@ test('a hidden slider gives its margin back to the plot unless a legend or scale
   const rendered = chartOption({ ...chart, kind: 'echarts', options }, { width: 900, height: 320 });
   assert.equal(rendered.grid.bottom, 8);
   assert.equal(rendered.grid.containLabel, false);
-  assert.equal(rendered.grid.left, 60);
+  // A chart of plain axes takes the card's margins, not its author's.
+  assert.equal(rendered.grid.left, 8);
   assert.deepEqual(options, saved);
   const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 900, height: 320 });
   try {
@@ -210,9 +211,10 @@ test('a hidden slider gives its margin back to the plot unless a legend or scale
     assert.ok(320 - (rect.y + rect.height) < 60, `${320 - (rect.y + rect.height)}px under the plot`);
   } finally { drawing.dispose(); }
   const vertical = chartOption({ ...chart, kind: 'echarts', options: { ...options, dataZoom: [{ type: 'inside' }, { type: 'slider', yAxisIndex: 0 }] } }, { width: 900, height: 320 });
-  assert.deepEqual([vertical.grid.right, vertical.grid.bottom], [8, 110]);
-  for (const kept of [{ legend: {} }, { legend: { bottom: 0 } }, { visualMap: { min: 0, max: 1 } }]) {
-    assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, ...kept } }, { width: 900, height: 320 }).grid.bottom, 110);
+  assert.deepEqual([vertical.grid.right, vertical.grid.bottom], [8, 8]);
+  // A legend along the bottom keeps its row; a scale the card does not place keeps the author's margin.
+  for (const [kept, bottom] of [[{ legend: {} }, 32], [{ legend: { bottom: 0 } }, 32], [{ visualMap: { min: 0, max: 1 } }, 110]]) {
+    assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, ...kept } }, { width: 900, height: 320 }).grid.bottom, bottom);
   }
 });
 
@@ -224,14 +226,16 @@ test('a top legend keeps one row and the grid starts below it, clear of the y ax
   };
   const phone = chartOption({ ...chart, kind: 'echarts', options }, { width: 360, height: 260 });
   assert.equal(phone.legend.type, 'scroll');
-  assert.equal(phone.grid.top, 56);
+  // The plot starts under the legend's row; the y axis name is inside the plot's own bounds.
+  assert.deepEqual([phone.grid.top, phone.grid.bottom, phone.grid.outerBoundsContain], [32, 8, 'all']);
   // Two equal entries fill a phone page, so none shows cut off beside the pager.
-  assert.deepEqual([phone.legend.width, phone.legend.textStyle.width, phone.legend.textStyle.overflow], [344, 80, 'truncate']);
+  assert.deepEqual([phone.legend.width, phone.legend.textStyle.width, phone.legend.textStyle.overflow], [344, 98, 'truncate']);
   assert.equal(chartOption({ ...chart, kind: 'echarts', options }, { width: 900, height: 320 }).legend.textStyle, undefined);
-  assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, grid: { top: 90 } } }, { width: 900, height: 320 }).grid.top, 90);
-  // ECharts puts an unplaced legend at the bottom; that layout stays the author's.
+  // An authored margin does not move it.
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, grid: { top: 90 } } }, { width: 900, height: 320 }).grid.top, 32);
+  // ECharts puts an unplaced legend at the bottom: one paged row there, and the plot ends above it.
   const bottom = chartOption({ ...chart, kind: 'echarts', options: { ...options, legend: {} } }, { width: 360, height: 260 });
-  assert.deepEqual([bottom.legend, bottom.grid], [{}, options.grid]);
+  assert.deepEqual([bottom.legend.type, bottom.legend.bottom, bottom.grid.top, bottom.grid.bottom], ['scroll', 0, 8, 32]);
 });
 
 test('a draggable scale on the right keeps its handle labels off the plot', () => {
@@ -369,4 +373,80 @@ test('CSV quotes what needs it; the headline is a line\'s latest value or a bar\
   assert.equal(niceCeil(7), 8);
   assert.equal(niceCeil(41280), 50000);
   assert.equal(niceCeil(0), 0);
+});
+
+test('the theme styles the marks, and a filled line is a wash unless its specification says otherwise', () => {
+  const theme = chartTheme();
+  assert.deepEqual([theme.legend.icon, theme.legend.itemWidth, theme.legend.itemHeight], ['roundRect', 10, 10]);
+  assert.equal(theme.bar.itemStyle.borderRadius, 2);
+  // Only a category axis loses its ticks: a value axis keeps what ECharts decides.
+  assert.deepEqual([theme.categoryAxis.axisTick.show, theme.valueAxis.axisTick.show], [false, undefined]);
+  const areas = (areaStyle) => chartOption({ ...chart, kind: 'echarts', options: {
+    xAxis: { type: 'category', data: ['a'] }, yAxis: {}, series: [{ type: 'line', data: [1], areaStyle }, { type: 'bar', data: [1], areaStyle }],
+  } }, { width: 480, height: 300 }).series.map((s) => s.areaStyle);
+  assert.deepEqual(areas({}), [{ opacity: 0.16 }, {}]);
+  assert.deepEqual(areas({ opacity: 0.9 }), [{ opacity: 0.9 }, { opacity: 0.9 }]);
+  assert.deepEqual(areas({ color: '#123456' }), [{ color: '#123456' }, { color: '#123456' }]);
+  // A lone line stands on a wash of its own colour; several would muddy each other.
+  const lines = (names) => chartOption({ ...chart, kind: 'line', series: names.map((name) => ({ name, values: [1, 2] })) }, { width: 480, height: 300 }).series.map((s) => s.areaStyle);
+  assert.deepEqual(lines(['a']), [{ opacity: 0.1 }]);
+  assert.deepEqual(lines(['a', 'b']), [undefined, undefined]);
+});
+
+test('a chart of plain axes is laid out by the card, so its title, legend, labels and names stay on it', () => {
+  const names = ['Web interface', 'Go backend', 'Documentation', 'Unit tests', 'End-to-end tests', 'CI pipeline', 'Release tooling', 'Design system', 'Copilot adapter'];
+  const files = Array.from({ length: 40 }, (_, i) => `components/SomeLongComponentName${i}.tsx`);
+  // What an agent writes without knowing the card's width: percentage margins, a default legend, end-of-axis names.
+  const options = {
+    title: { text: 'Lines changed per week by area', subtext: 'Last twelve weeks', textStyle: { fontSize: 22 } }, legend: { data: names },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', name: 'File', data: files, axisLabel: { rotate: 45 } },
+    yAxis: [{ type: 'value', name: 'Lines changed in the working tree' }, { type: 'value', name: 'Share of all changes (%)' }],
+    series: names.map((name, i) => ({ name, type: i % 2 ? 'line' : 'bar', data: files.map((_, j) => (i * 7 + j * 13) % 90) })),
+  };
+  const saved = structuredClone(options);
+  for (const [width, height] of [[342, 260], [944, 320]]) {
+    const laid = chartOption({ ...chart, kind: 'echarts', options }, { width, height });
+    // The title's band (two lines), then the plot, then the legend's one paged row.
+    assert.deepEqual([laid.title.top, laid.title.textStyle.fontSize, laid.title.textStyle.overflow], [0, 14, 'truncate']);
+    assert.deepEqual([laid.legend.type, laid.legend.bottom, laid.legend.width], ['scroll', 0, width - 16]);
+    assert.deepEqual(laid.grid, { left: 8, right: 8, top: 54, bottom: 32, width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' });
+    // The x axis name goes under the middle; slanted labels are cut; each y axis name runs inward and shares the width.
+    assert.deepEqual([laid.xAxis.nameLocation, laid.xAxis.axisLabel.overflow, laid.xAxis.axisLabel.rotate], ['middle', 'truncate', 45]);
+    assert.deepEqual(laid.yAxis.map((axis) => [axis.nameTextStyle.align, axis.nameTruncate.maxWidth]), [['left', width / 2 - 24], ['right', width / 2 - 24]]);
+    // Drawn, nothing is outside the card: the plot keeps room for its own labels and names.
+    const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width, height });
+    try {
+      drawing.setOption(laid);
+      const rect = drawing.getModel().getComponent('grid').coordinateSystem.getRect();
+      assert.ok(rect.x > 8 && rect.y > 54 && rect.x + rect.width < width - 8 && rect.y + rect.height < height - 32, JSON.stringify(rect));
+      assert.ok(rect.height > height / 4, `the plot keeps ${rect.height}px of ${height}`);
+    } finally { drawing.dispose(); }
+  }
+  assert.deepEqual(options, saved);
+  // What the card cannot place stays the author's: two grids, a side legend, a pie beside the axes, a fixed drawing.
+  const kept = { grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true } };
+  const base = { ...kept, legend: {}, xAxis: { type: 'category', data: ['a'] }, yAxis: {}, series: [{ type: 'bar', data: [1] }] };
+  for (const other of [
+    { grid: [kept.grid, kept.grid] }, { legend: { orient: 'vertical', right: 0 } }, { graphic: [{ type: 'text' }] },
+    { series: [{ type: 'bar', data: [1] }, { type: 'pie', data: [{ name: 'a', value: 1 }] }] },
+  ]) {
+    const laid = chartOption({ ...chart, kind: 'echarts', options: { ...base, ...other } }, { width: 944, height: 320 });
+    assert.deepEqual([laid.grid, laid.legend], [other.grid ?? kept.grid, other.legend ?? {}]);
+  }
+});
+
+test('on a phone a pie leaves a band for its title, a radar cuts long names and a flow keeps room for its last labels', () => {
+  const phone = { width: 342, height: 260 };
+  const titled = chartOption({ ...pie, options: { ...pie.options, title: { text: 'Languages' } } }, phone);
+  assert.deepEqual([titled.title.top, titled.series[0].top], [0, 34]);
+  // Each page of its legend holds two entries of one width.
+  assert.deepEqual([titled.legend[0].textStyle.width, titled.legend[0].textStyle.backgroundColor], [89, 'transparent']);
+  const radar = { radar: { indicator: [{ name: 'Bundle size budget', max: 100 }, { name: 'Kept', max: 100, nameTruncate: { maxWidth: 200 } }] }, series: [{ type: 'radar', data: [{ value: [1, 2] }] }] };
+  assert.deepEqual(chartOption({ ...chart, kind: 'echarts', options: radar }, phone).radar.indicator.map((axis) => axis.nameTruncate.maxWidth), [86, 200]);
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options: radar }, { width: 944, height: 320 }).radar.indicator[0].nameTruncate, undefined);
+  const flow = { series: [{ type: 'sankey', data: [{ name: 'a' }, { name: 'b' }], links: [{ source: 'a', target: 'b', value: 1 }] }] };
+  const narrow = chartOption({ ...chart, kind: 'echarts', options: flow }, phone).series[0];
+  assert.deepEqual([narrow.left, narrow.right, narrow.label.width, narrow.label.overflow], [8, 103, 91, 'truncate']);
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options: flow }, { width: 944, height: 320 }).series[0].right, undefined);
 });

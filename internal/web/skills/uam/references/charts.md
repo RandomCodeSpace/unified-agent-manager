@@ -35,6 +35,12 @@ refresh it later without you.
   the date range and series toggles in the chart's ⋯ menu, so do not write
   "drag the slider". For tabular data, use one `dataset.source` with named
   dimensions and an explicit `sourceHeader`.
+- **Leave layout to uam.** A chart of plain axes (line, bar, scatter) is laid
+  out by its card at whatever width the owner has: omit `grid` margins and
+  legend positions, and omit `title` from `options` (the card already shows
+  the call's `title`). A long legend pages by itself; long labels are cut.
+  Two grids, a vertical legend or `graphic` keep the layout you write, so
+  avoid them unless the chart needs them.
 - A refused call says what to fix. After the chart, write the takeaway in
   your reply (the peak, the trend, anything odd), not the rows: the owner
   sees them in the chart.

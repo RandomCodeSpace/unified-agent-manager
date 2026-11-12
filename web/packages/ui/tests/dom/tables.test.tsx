@@ -192,3 +192,64 @@ test('an overflowing table pins a bar naming the rows below its visible bottom, 
     for (const [key, descriptor] of saved) if (descriptor) Object.defineProperty(HTMLElement.prototype, key, descriptor); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
   }
 });
+
+test('a column of figures left unaligned is right-aligned; text and an alignment the author chose stay', () => {
+  render(<Markdown text={'| Name | Tests | Time | Note | Count |\n| --- | --- | --- | --- | :--- |\n| a | 412 | 48 s | 12 files | 7 |\n| b | 1,880 | 3 s | | 9 |'} />);
+  const headers = within(screen.getByRole('table')).getAllByRole('columnheader');
+  expect(headers.map(header => header.className)).toEqual(['text-left', 'text-right', 'text-right', 'text-left', 'text-left']);
+  // The figures line up digit under digit.
+  expect(within(screen.getByRole('table')).getAllByRole('cell').slice(0, 5).map(cell => cell.className.includes('tabular-nums'))).toEqual([false, true, true, false, false]);
+});
+
+test('rows group under each value of a column, fold, keep the sort inside a group and ungroup', async () => {
+  const user = userEvent.setup();
+  render(<Markdown text={'| Package | Area | Tests |\n| --- | --- | --- |\n| web | ui | 30 |\n| store | core | 5 |\n| chart | ui | 12 |\n| queue | core | 40 |\n| docs |  | 1 |'} />);
+  const table = screen.getByRole('table');
+  const heads = () => within(table).getAllByRole('rowheader').map(head => head.textContent);
+  // A column where every row differs, or none does, has nothing to group.
+  await user.click(screen.getByRole('button', { name: 'Sort or filter Package' }));
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Group rows by this column' }).disabled).toBe(true);
+  await user.keyboard('{Escape}');
+  await choose(user, 'Area', 'Group rows by this column');
+  // Groups come in the order their value first appears; a row without a value has a group of its own.
+  expect(heads()).toEqual(['ui2 rows', 'core2 rows', 'No value1 row']);
+  expect(names()).toEqual(['ui2 rows', 'web', 'chart', 'core2 rows', 'store', 'queue', 'No value1 row', 'docs']);
+  expect(screen.getByRole('status').textContent).toBe('5 rows in 3 groups');
+  expect(screen.getByRole('button', { name: 'Sort or filter Area' }).title).toBe('Rows grouped');
+  // A sort orders the rows inside each group, and the groups by their first row.
+  await choose(user, 'Tests', 'Sort descending');
+  expect(names()).toEqual(['core2 rows', 'queue', 'store', 'ui2 rows', 'web', 'chart', 'No value1 row', 'docs']);
+  // Folding a group hides its rows and keeps its head and count.
+  const core = within(table).getByRole('button', { name: /^core/ });
+  expect(core.getAttribute('aria-expanded')).toBe('true');
+  await user.click(core);
+  expect(core.getAttribute('aria-expanded')).toBe('false');
+  expect(names()).toEqual(['core2 rows', 'ui2 rows', 'web', 'chart', 'No value1 row', 'docs']);
+  await user.click(screen.getByRole('button', { name: 'Fold all' }));
+  expect(names()).toEqual(['core2 rows', 'ui2 rows', 'No value1 row']);
+  await user.click(screen.getByRole('button', { name: 'Unfold all' }));
+  expect(names()).toHaveLength(8);
+  // A filter narrows the groups with the rows.
+  await user.click(screen.getByRole('button', { name: 'Sort or filter Package' }));
+  await user.type(screen.getByRole('textbox', { name: 'Package contains' }), 'o');
+  await user.keyboard('{Escape}');
+  expect(names()).toEqual(['core1 row', 'store', 'No value1 row', 'docs']);
+  expect(screen.getByRole('status').textContent).toBe('2 rows in 2 groups (5 total)');
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  await user.click(screen.getByRole('button', { name: 'Ungroup' }));
+  expect(within(table).queryAllByRole('rowheader')).toHaveLength(0);
+  expect(names()).toEqual(['queue', 'web', 'chart', 'store', 'docs']);
+});
+
+test('a long grouped table pages by line, and a group that runs on repeats its head', async () => {
+  const user = userEvent.setup();
+  const rows = Array.from({ length: 150 }, (_, i) => `| item ${i} | ${i < 120 ? 'first' : 'second'} |`).join('\n');
+  render(<Markdown text={`| Name | Group |\n| --- | --- |\n${rows}`} />);
+  await choose(user, 'Group', 'Group rows by this column');
+  expect(screen.getByRole('status').textContent).toBe('150 rows in 2 groups, page 1 of 2');
+  expect(names().slice(0, 2)).toEqual(['first120 rows', 'item 0']);
+  await user.click(screen.getByRole('button', { name: 'Next rows' }));
+  // The second page opens inside the first group, under its head again.
+  expect(names().slice(0, 2)).toEqual(['first120 rows', 'item 99']);
+  expect(names()).toContain('second30 rows');
+});

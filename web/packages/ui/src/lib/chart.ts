@@ -46,6 +46,9 @@ function token(name: string, fallback: string): string {
 export const chartToken = token;
 const seriesColors = () => SERIES_TOKENS.map((name, i) => token(name, SERIES_FALLBACK[i]));
 
+/** The side of a legend mark; ECharts' own is 25 by 14. */
+const LEGEND_MARK = 10;
+
 /**
  * The ECharts theme for the scheme on screen, from the same tokens: every chart, line/bar or
  * agent-authored, takes its palette, text, grid and tooltip colours from here. Colours a saved
@@ -65,15 +68,23 @@ export function chartTheme(): Record<string, unknown> {
     // A two-stop ramp for visual maps and heatmaps, low to high.
     gradientColor: [token('selection', '#cfdaf3'), token('badge-blue', SERIES_FALLBACK[0])],
     textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', color: body },
-    title: { textStyle: { color: ink }, subtextStyle: { color: muted } },
-    legend: { textStyle: { color: body }, inactiveColor: line, pageTextStyle: { color: muted }, pageIconColor: body, pageIconInactiveColor: line },
-    categoryAxis: axis, valueAxis: axis, logAxis: axis, timeAxis: axis,
-    tooltip: { backgroundColor: raised, borderColor: line, textStyle: { color: ink }, axisPointer: { lineStyle: { color: line }, crossStyle: { color: line } } },
+    title: { textStyle: { color: ink, fontSize: 14, fontWeight: 600 }, subtextStyle: { color: muted, fontSize: 12 } },
+    // Every series' legend mark is the 10px swatch a row chart's bar toggle has.
+    legend: { icon: 'roundRect', itemWidth: LEGEND_MARK, itemHeight: LEGEND_MARK, textStyle: { color: body }, inactiveColor: line, pageTextStyle: { color: muted }, pageIconColor: body, pageIconInactiveColor: line },
+    // A category axis names its bands: its baseline is enough, without a tick between each pair.
+    categoryAxis: { ...axis, axisTick: { show: false } }, valueAxis: axis, logAxis: axis, timeAxis: axis,
+    tooltip: { backgroundColor: raised, borderColor: line, borderRadius: 6, padding: [6, 10], textStyle: { color: ink }, axisPointer: { lineStyle: { color: line }, crossStyle: { color: line } } },
     visualMap: { textStyle: { color: body } },
-    pie: { label: { color: body }, itemStyle: { borderColor: raised } },
+    // The marks: a 2px line with solid points, bars with eased corners, and slices and cells parted by the card's own colour.
+    line: { symbol: 'circle', symbolSize: 5, lineStyle: { width: 2 } },
+    bar: { itemStyle: { borderRadius: 2 } },
+    pie: { label: { color: body }, itemStyle: { borderColor: raised, borderWidth: 2, borderRadius: 3 } },
+    heatmap: { itemStyle: { borderColor: raised, borderWidth: 2, borderRadius: 2 } },
     // Treemap labels sit on the badge fills, which carry `raised` text at 4.5:1 or more.
     treemap: { label: { color: raised }, upperLabel: { color: raised }, itemStyle: { borderColor: raised }, breadcrumb: { itemStyle: { color: hairline, textStyle: { color: body } }, emphasis: { itemStyle: { color: line } } } },
     sankey: { label: { color: body } },
+    // A radar's web is hairlines on the card, without ECharts' grey bands, and its names read as axis labels do.
+    radar: { axisName: { color: muted }, axisLine: { lineStyle: { color: line } }, splitLine: { lineStyle: { color: hairline } }, splitArea: { show: false } },
   };
 }
 
@@ -136,7 +147,8 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
     },
     series: chart.series.map((s, i) => chart.kind === 'bar' && i === 0
       ? { type: 'bar', name: s.name, data: s.values, barMaxWidth: 48, emphasis: { disabled: true } }
-      : { type: 'line', name: s.name, data: s.values, showSymbol: s.values.length === 1, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2 }, emphasis: { disabled: true } }),
+      // A lone line stands on a faint wash of its own colour; several would only muddy each other.
+      : { type: 'line', name: s.name, data: s.values, showSymbol: s.values.length === 1, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2 }, emphasis: { disabled: true }, ...(chart.series.length === 1 && { areaStyle: { opacity: 0.1 } }) }),
   };
 }
 
@@ -145,9 +157,11 @@ const CATEGORY_ROW = 20;
 const categoryHeight = (count: number) => count * CATEGORY_ROW + 80;
 /**
  * A phone legend page: the pager and padding plus two entries' marks and gaps at itemGap 24
- * (measured). What remains is two names' text, with about 6px to spare either way.
+ * (measured with the theme's 10px marks). What remains is two names' text boxes, each as wide as
+ * the other whatever its name (a text with a background keeps its set width), so a page's pair
+ * fits whole and the third entry starts about 12px past the clip.
  */
-const LEGEND_CHROME = 184;
+const LEGEND_CHROME = 148;
 const firstOf = <T,>(value: T | T[] | undefined) => (Array.isArray(value) ? value[0] : value);
 
 /**
@@ -165,6 +179,21 @@ function pixels(value: unknown, total: number): number | undefined {
   const match = typeof value === 'string' ? /^(\d+(?:\.\d+)?)(%|px)?$/.exec(value) : null;
   return match ? Number(match[1]) * (match[2] === '%' ? total / 100 : 1) : undefined;
 }
+
+/**
+ * A filled line's area is a wash, so the lines and grid under it still read; ECharts' own is
+ * nearly solid. A specification that sets the area's colour or opacity keeps its own.
+ */
+function washed<T extends { type?: unknown; areaStyle?: unknown }>(series: T): T {
+  const area = series.areaStyle;
+  if (series.type !== 'line' || !area || typeof area !== 'object' || 'opacity' in area || 'color' in area) return series;
+  return { ...series, areaStyle: { ...area, opacity: 0.16 } };
+}
+
+/** Series drawn on plain x and y axes: a chart of only these is laid out by the card, not by its author. */
+const AXIS_SERIES = new Set(['line', 'bar', 'scatter', 'effectScatter', 'candlestick', 'boxplot', 'pictorialBar']);
+/** A one-row legend's height: the 10px mark in ECharts' 5px padding, and a gap from the plot. */
+const LEGEND_ROW = 24;
 
 /** Saved specifications are validated JSON; text tooltips and static rendering apply at every scope. */
 function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
@@ -254,31 +283,70 @@ function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
   // On a phone each legend page holds two equal entries, so the pager never shows a cut-off one:
   // the third starts past the clip, with a wide gap to absorb the pager's text width.
   const legendWidth = look.width - 16;
-  const legendText = topLegend && look.width < 480 ? Math.max(24, Math.floor((legendWidth - LEGEND_CHROME) / 2)) : undefined;
+  const legendText = look.width < 480 ? Math.max(24, Math.floor((legendWidth - LEGEND_CHROME) / 2)) : undefined;
+  const phoneLegend = (legend: { textStyle?: unknown }) => legendText ? { left: 'center' as const, width: legendWidth, itemGap: 24, textStyle: { ...(legend.textStyle as object | undefined), width: legendText, overflow: 'truncate' as const, backgroundColor: 'transparent' } } : {};
   // A draggable scale on the right labels its handles on the plot's side: keep the grid clear of them.
   const scale = !look.spark && grids.length <= 1 && xAxes.length > 0 ? objects(option.visualMap).find((map) => map.calculable && map.show !== false
     && map.orient !== 'horizontal' && (map.right !== undefined || map.left === 'right')) : undefined;
   const scaleRoom = scale ? (pixels(scale.right, look.width) ?? 0) + (pixels(scale.itemWidth, look.width) ?? 20) + 26
     + 7 * Math.max(String(scale.max ?? 100).length, String(scale.min ?? 0).length) : 0;
+  // A chart of plain axes and marks is laid out here: its author guessed margins without knowing the
+  // card's width, and a guess too small puts the legend on the plot or the labels off the card.
+  // The title takes a band at the top, the legend one paged row above or below, and the plot fills
+  // the rest with its labels and axis names inside it (ECharts' outer bounds).
+  const titles = objects(option.title);
+  const plain = !look.spark && !option.media && !option.baseOption && grids.length <= 1 && xAxes.length > 0 && yAxes.length > 0
+    && titles.length <= 1 && legends.length <= 1 && legends[0]?.orient !== 'vertical' && (!option.visualMap || (!!scale && objects(option.visualMap).length === 1)) && !option.graphic
+    && series.length > 0 && series.every((s) => AXIS_SERIES.has(String(s.type)) && (!s.coordinateSystem || s.coordinateSystem === 'cartesian2d'));
+  const title = titles.length === 1 && titles[0].show !== false && (titles[0].text || titles[0].subtext) ? titles[0] : undefined;
+  const titleBand = title ? 8 + (title.text ? 18 : 0) + (title.text && title.subtext ? 4 : 0) + (title.subtext ? 16 : 0) : 0;
+  const rowLegend = plain && legends.length === 1 && legends[0].show !== false ? legends[0] : undefined;
+  const legendAbove = !!rowLegend && legendTop !== undefined && legendTop < look.height / 4;
+  // An x axis name sits under the middle of its axis, where the end of the axis cannot clip it. A y axis
+  // name starts at its axis and runs inward, so a long one takes no margin; two share the width.
+  const nameWidth = Math.floor(look.width / Math.min(2, yAxes.length)) - 24;
+  const inward = <T extends { name?: unknown; position?: unknown; nameLocation?: unknown; nameTextStyle?: object }>(axis: T, index: number): T => !axis.name || axis.nameLocation !== undefined ? axis
+    : { ...axis, nameTruncate: { maxWidth: nameWidth }, nameTextStyle: { align: axis.position === 'right' || (index > 0 && axis.position !== 'left') ? 'right' : 'left', ...axis.nameTextStyle } };
+  const yAxis = <T extends { type?: unknown; data?: unknown; axisLabel?: object; name?: unknown; position?: unknown; nameLocation?: unknown; nameTextStyle?: object }>(axis: T, index: number): T => categoryLabels(plain ? inward(axis, index) : axis);
+  // Slanted labels are cut to a fifth of the height, or forty long names leave no room for the bars.
+  const slantWidth = Math.max(48, Math.min(120, Math.round(look.height * 0.2)));
+  const under = <T extends { name?: unknown; nameLocation?: unknown; nameGap?: unknown; axisLabel?: { rotate?: unknown } }>(axis: T): T => ({
+    ...axis,
+    ...(axis.name && axis.nameLocation === undefined ? { nameLocation: 'middle', nameGap: axis.nameGap ?? 28 } : {}),
+    ...(axis.axisLabel?.rotate ? { axisLabel: { width: slantWidth, overflow: 'truncate', hideOverlap: true, ...axis.axisLabel } } : {}),
+  });
+  // A radar's axis names stand outside its web: on a phone a long one is cut to a quarter of the width,
+  // which only each indicator's own nameTruncate does.
+  const radars = objects(option.radar);
+  const radar = !look.spark && look.width < 480 && radars.length === 1 && !Array.isArray(option.radar) && Array.isArray(radars[0].indicator)
+    ? { ...radars[0], indicator: objects(radars[0].indicator).map((axis) => ({ nameTruncate: { maxWidth: Math.round(look.width / 4) }, ...axis })) } as EChartsOption['radar'] : undefined;
   return {
     ...option,
     // Authored percentage margins plus containLabel can leave only a few pixels
     // for bars. Bound the whole drawing and give labels a limited share.
-    grid: fitBar ? { ...grids[0], left: 8, right: 8, top: 8, bottom: 8, width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' }
+    grid: fitBar || plain ? { ...grids[0], left: 8, right: Math.max(8, scaleRoom), top: 8 + titleBand + (legendAbove ? LEGEND_ROW : 0), bottom: 8 + (rowLegend && !legendAbove ? LEGEND_ROW : 0), width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' }
       : topLegend || scale ? { ...grids[0], ...(topLegend && { top: gridTop }), ...(scale && { right: Math.max(pixels(grids[0]?.right, look.width) ?? 0, scaleRoom) }) } : option.grid,
-    xAxis: fitBar && valueAxis ? { ...valueAxis, nameLocation: 'middle', nameGap: 28, splitNumber: look.width < 480 ? 2 : valueAxis.splitNumber ?? 5, axisLabel: { ...valueAxis.axisLabel, hideOverlap: true } } : option.xAxis,
-    yAxis: look.spark || !option.yAxis ? option.yAxis : Array.isArray(option.yAxis) ? option.yAxis.map(categoryLabels) : categoryLabels(option.yAxis),
-    legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto' }))
-      : topLegend ? { ...legends[0], type: 'scroll', ...(legendText && { left: 'center', width: legendWidth, itemGap: 24, textStyle: { ...legends[0].textStyle, width: legendText, overflow: 'truncate' } }) } : option.legend,
+    xAxis: fitBar && valueAxis ? { ...valueAxis, nameLocation: 'middle', nameGap: 28, splitNumber: look.width < 480 ? 2 : valueAxis.splitNumber ?? 5, axisLabel: { ...valueAxis.axisLabel, hideOverlap: true } }
+      : plain && option.xAxis ? Array.isArray(option.xAxis) ? option.xAxis.map(under) : under(option.xAxis) : option.xAxis,
+    yAxis: look.spark || !option.yAxis ? option.yAxis : Array.isArray(option.yAxis) ? option.yAxis.map(yAxis) : yAxis(option.yAxis, 0),
+    legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto', ...phoneLegend(legend) }))
+      : rowLegend ? { ...rowLegend, type: 'scroll' as const, orient: 'horizontal' as const, top: legendAbove ? titleBand : 'auto', bottom: legendAbove ? 'auto' : 0, width: legendWidth, ...phoneLegend(rowLegend) }
+        : topLegend ? { ...legends[0], type: 'scroll' as const, ...phoneLegend(legends[0]) } : option.legend,
+    // The band above the plot: one line each, cut to the card's width.
+    title: (plain || smallPie) && title ? { ...title, top: 0, padding: [8, 8, 0, 8], itemGap: 4, textStyle: { ...(title.textStyle as object | undefined), fontSize: 14, lineHeight: 18, width: look.width - 16, overflow: 'truncate' }, subtextStyle: { ...(title.subtextStyle as object | undefined), fontSize: 12, lineHeight: 16, width: look.width - 16, overflow: 'truncate' } } : option.title,
     animation: false,
+    ...(radar && { radar }),
     tooltip: { ...(Array.isArray(option.tooltip) ? option.tooltip[0] : option.tooltip), renderMode: 'richText', confine: true },
     series: series.map((s) => s.type === 'graph' || s.type === 'tree' || s.type === 'treemap'
       ? { ...s, animation: false, roam: s.roam ?? true }
+      // A flow's last column is labelled on its right: on a phone it keeps a third of the width for those names.
+      : s.type === 'sankey' && !look.spark && look.width < 480 && s.right === undefined
+        ? { ...s, animation: false, left: s.left ?? 8, right: Math.round(look.width * 0.3), label: { width: Math.round(look.width * 0.3) - 12, overflow: 'truncate' as const, ...(s.label as object | undefined) } }
       : smallPie && s.type === 'pie'
-        ? { ...s, animation: false, center: ['50%', '50%'], left: 0, right: 0, top: 8, bottom: legends.some((legend) => legend.show !== false) ? 36 : 8, width: 'auto', height: 'auto',
+        ? { ...s, animation: false, center: ['50%', '50%'], left: 0, right: 0, top: 8 + titleBand, bottom: legends.some((legend) => legend.show !== false) ? 36 : 8, width: 'auto', height: 'auto',
           label: { ...s.label, alignTo: 'edge', edgeDistance: 8, overflow: 'break' },
           labelLine: { ...s.labelLine, length: 8, length2: 8 } }
-        : { ...s, animation: false }),
+        : { ...washed(s), animation: false }),
     dataZoom: zoom,
   };
 }

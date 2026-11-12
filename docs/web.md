@@ -1417,6 +1417,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   descending and original order. Plain numbers sort numerically; IDs, dates and
   values with units remain text. Tables over 100 rows are paged, with sorting and
   filtering applied to all rows. A table still streaming stays plain until complete.
+  A column of figures you did not align reads right-aligned, and the row under the
+  pointer is tinted. **Group rows by this column**, in a column's menu, gathers the
+  rows under each of its values, each group with a count and a head that folds it;
+  **Fold all** and **Ungroup** sit under the table. Sorting orders the rows inside
+  each group, and a column where every row differs or none does offers no grouping.
   These controls only change your view; they make no request to the agent and do
   not change the stored message or its Markdown export.
 - **Charts**: ask a Thread a data question ("chart commits per day this
@@ -1467,6 +1472,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or use the zoom buttons in Chart tools. Plain scrolling moves the conversation;
   tables and chart data pass scrolling to it at their edges. Series can be toggled
   through the legend. Small pinned previews keep their compact view.
+  A chart of plain axes (lines, bars, scatter) is laid out by its card, whatever
+  margins the agent wrote: the title takes a band at the top, the legend one row
+  above or below that pages when it is long (two entries a page on a phone), and
+  the plot fills the rest with its labels and axis names inside it, so nothing
+  falls off the card at any width. Charts with two grids, a side legend or a
+  drawing of their own keep the layout they were given.
   For other chart families, `uam_chart` accepts `kind: "echarts"` with an
   `options` JSON object, or a command with `format: "json"` that prints that
   object. This supports pie/donut, scatter, radar, heatmap, candlestick,
