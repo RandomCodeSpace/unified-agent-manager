@@ -23,7 +23,7 @@ const footOf = (el: Element) => el.closest('.group\\/copy')?.querySelector(':sco
 
 describe('messages', () => {
   const notes = 'uam thread: Thread "Fix \\"login\\"" (child-1), which you started, ended its turn: completed. Files changed: 2. Its last reply:\nRaw child reply\n\nwith a second paragraph\n\nuam thread: Thread "Docs" (child-2), which you started, was settled.\nuam trail: Thread "Docs" (child-2) edited a.go 3 min ago and is still running. Re-read it first.\nuam budget: this Thread is close to the spending limit its owner set.';
-  const drawing = 'The user edited docs/b.drawio since your version (v1 → v2):\n~ node "API" renamed "Gateway"\nNow 3 nodes, 2 edges. Build on the user\'s version; uam_diagram_read for the full diagram.';
+  const drawing = 'The user edited docs/b.drawio since your version (v1 → v2):\n~ node "API" renamed "Gateway"\nNow 3 nodes, 2 edges. Build on the user\'s version; uam_diagram_read for the full diagram.\n\nThe user selected in docs/b.drawio: "Gateway", edge "Gateway" → "DB" (id e1). Their message refers to these.';
   // The journal hands notices back with line breaks as spaces.
   test.each([['as sent', (s: string) => s], ['from the journal', (s: string) => s.replaceAll('\n', ' ')]])('uam notes link the thread and leave replies and drawing changes to the agent (%s)', (_, form) => {
     const select = vi.fn();
@@ -43,6 +43,7 @@ describe('messages', () => {
     expect(view.getByText('3 min ago and is still running.', { exact: false }).textContent).toBe('Thread Docs edited a.go 3 min ago and is still running.');
     expect(view.getByText(/^uam budget: this Thread is close/)).toBeTruthy();
     expect(view.getByText('You edited', { exact: false }).textContent).toBe('You edited docs/b.drawio (v1 → v2).');
+    expect(view.getByText('You selected', { exact: false }).textContent).toBe('You selected "Gateway", edge "Gateway" → "DB" (id e1) in docs/b.drawio.');
     fireEvent.click(view.getByRole('button', { name: 'Fix "login"' }));
     for (const docs of view.getAllByRole('button', { name: 'Docs' })) fireEvent.click(docs);
     expect(select.mock.calls).toEqual([['child-1'], ['child-2'], ['child-2']]);

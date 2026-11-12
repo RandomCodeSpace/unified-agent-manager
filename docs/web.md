@@ -1216,7 +1216,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   list of what changed. Delete on the drawing's card removes the file after a
   confirmation. Your changes reach the agent as a note with your next
   message (the composer shows a chip per changed drawing; the conversation shows
-  the note as a one-line notice naming the drawing). The Excalidraw editor (2.9 MB)
+  the note as a one-line notice naming the drawing). To point the agent at
+  part of a drawing, select shapes or arrows on the canvas and press Use
+  selection in message: the editor closes, the composer's chip says how many
+  are selected (its × takes them back), and your next message names them to
+  the agent, so "make this red" has a target. With the draw.io editor the
+  button asks the page what is selected when you press it; a draw.io page
+  older than 30.1 cannot say, and the button is then disabled. The agent can
+  then rename, recolour or remove elements of a drawing in place, Excalidraw
+  or draw.io, with your layout kept; the card shows its version, and an editor you had open
+  refuses its next save until you press Reload. It cannot add shapes or
+  arrows in place: for those it writes a new diagram. The Excalidraw editor (2.9 MB)
   loads on the first open of a page load; pictures need it too. Settings →
   Conversation → Diagram editor can switch to a draw.io page at an origin you name, after a
   check of that origin passes.
@@ -1481,7 +1491,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `sessions.json`, never in the project; deleting the Thread removes that
   record, not your files. `GET /api/sessions/{id}/drawings`
   lists them as `{"drawings": [{path, format, version, agent_version,
-  item_id, fence_index, changes_count}]}`, which the session snapshot also
+  item_id, fence_index, changes_count, selected_count}]}`, which the session snapshot also
   carries as `drawings`, so a card finds its drawing by the message and
   block it came from. `GET /api/sessions/{id}/drawings/{path}` returns the
   file and its baseline with the changes between them (`changes`,
@@ -1494,7 +1504,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent's version, computed from the drawing itself (nodes added, removed,
   renamed, restyled or moved by more than 8 px; edges added, removed,
   rebound or relabelled). A save also sends the Thread's session event, so
-  other browsers refresh. `DELETE /api/sessions/{id}/drawings/{path}`
+  other browsers refresh. `PATCH /api/sessions/{id}/drawings/{path}` with
+  `{"selected": [ids]}` keeps the elements you picked for your next message
+  (204; at most 50 ids, an empty list forgets them); the list counts them as
+  `selected_count`. `DELETE /api/sessions/{id}/drawings/{path}`
   removes a drawing (204): its file goes and its record is kept, marked
   deleted, so listings skip it but the deletion stays the Thread's edit
   after a restart; converting the path again replaces it. It deletes only a
@@ -1511,7 +1524,25 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   docs/flow.excalidraw (v1 → v2).", without the change list), and through its
   `uam_diagram_read` tool, which lists the drawings or returns one as text
   (one line per node and edge, with the unseen changes); both make the
-  current version the agent's. The draw.io editor is opt-in: Settings holds
+  current version the agent's. A selection adds a second note, "The user
+  selected in docs/flow.excalidraw: "Cache", edge "API" → "Cache" (id e7).
+  Their message refers to these." (a node gets its id only when another
+  shares its name), sent once, also when the drawing itself did not change.
+  The agent's `uam_diagram_edit` tool changes a drawing in
+  place: each edit names one element (`node` by its label, or `id`) and
+  gives `rename`, `stroke`, `fill` or `remove`; the edits apply together or
+  not at all. Only the named elements change (a removed node takes its
+  label and arrows; a new label is wrapped to its shape and centred in it,
+  and a shape too low for it grows about its centre; in a `.drawio` file,
+  whose first page it edits, a removed cell also takes the cells it contains,
+  the label goes on the cell that holds it, as HTML where that cell is HTML,
+  colours become `strokeColor` and `fillColor` in its style, and a
+  compressed page is written back plain), the result is the agent's next version, so no note
+  comes back for it, and the call answers with the changes. It is refused
+  while you have changes the agent has not read, for a name two nodes
+  share, and in an `.excalidraw` drawing for an element without a label to
+  rename; it adds no shape or arrow. It writes without a permission request in every mode,
+  and only to a drawing of the Thread's record. The draw.io editor is opt-in: Settings holds
   `drawio: {origin, enabled}`, and `POST /api/settings/drawio/check` with
   `{"origin"}` probes an origin as the editor frame would load it
   (`/?embed=1&proto=json`, 5 s, no cross-origin redirect, 256 KiB) and
@@ -1525,7 +1556,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   unless it passes; while enabled, every page's Content-Security-Policy
   gains `frame-src 'self' <origin>`, and is otherwise unchanged.
   Session stats count `drawing.convert`, `drawing.save`, `drawing.delete`,
-  `drawing.read` and `drawing.note`.
+  `drawing.read`, `drawing.note`, `drawing.select` and `drawing.edit`.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
   flaky tests and report failures". **Routines** (the clock) in the

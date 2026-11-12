@@ -274,3 +274,122 @@ test('with draw.io enabled a converted fence opens the embed, and a frame the pa
     put.mockRestore();
   }
 });
+
+test('after the agent’s edit, the open editor’s saves are refused until Reload, though the doc was read again', async () => {
+  const { user } = await openTask('t-chart');
+  const path = 'docs/diagram-d4-0.excalidraw';
+  const { canvas, restored } = await openEditor(user);
+  // The agent's edit: another writer takes the file to v3 while the canvas shows v2.
+  await api.putDrawing('t-chart', path, { content: (await api.drawing('t-chart', path)).content, format: 'excalidraw', base_version: 2 });
+  const put = vi.spyOn(api, 'putDrawing');
+  try {
+    fireEvent.keyDown(canvas, { key: 'Shift' });
+    act(() => emit!([{ ...restored[0], x: 50 }], {}, {}));
+    const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' }));
+    expect(await editor.findByText(/The agent changed this drawing/)).toBeTruthy();
+    // The conflict read the doc again (v3); a save based on it would put the stale scene over the agent's change.
+    await sleep(300);
+    act(() => emit!([{ ...restored[0], x: 90 }], {}, {}));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2));
+    expect(put.mock.calls.map((c) => c[2].base_version)).toEqual([2, 2]);
+    await user.click(await editor.findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(updateScene).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(canvas, { key: 'Shift' });
+    act(() => emit!([{ ...restored[0], x: 120 }], {}, {}));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(3));
+    expect(put.mock.calls[2][2].base_version).toBe(3);
+  } finally {
+    put.mockRestore();
+  }
+});
+
+test('Use selection in message names the picked shapes to the agent: a chip that takes them back, then one notice line', async () => {
+  const { user } = await openTask('t-chart');
+  const path = 'docs/diagram-d4-0.excalidraw';
+  const select = vi.spyOn(api, 'selectDrawing');
+  const dialog = () => screen.queryByRole('dialog', { name: 'Edit diagram-d4-0.excalidraw' });
+  /** Opens the editor and selects the Browser box with its bound label; only the box can be named to the agent. */
+  const pick = async () => {
+    const { restored } = await openEditor(user);
+    const use = within(dialog()!).getByRole<HTMLButtonElement>('button', { name: 'Use selection in message' });
+    expect(use.disabled).toBe(true);
+    const scene = [{ ...restored[0], id: 'browser' }, { type: 'text', id: 'browser-label', containerId: 'browser', x: 0, y: 0, width: 10, height: 10 }];
+    act(() => emit!(scene, { selectedElementIds: { browser: true, 'browser-label': true } }, {}));
+    await waitFor(() => expect(use.disabled).toBe(false));
+    await user.click(use);
+    await waitFor(() => expect(dialog()).toBeNull());
+  };
+  try {
+    await pick();
+    expect(select).toHaveBeenLastCalledWith('t-chart', path, ['browser']);
+    expect(await screen.findByText('· 1 selected')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Remove the selection in diagram-d4-0.excalidraw' }));
+    await waitFor(() => expect(screen.queryByText('· 1 selected')).toBeNull());
+    expect(select).toHaveBeenLastCalledWith('t-chart', path, []);
+    await pick();
+    await screen.findByText('· 1 selected');
+    await user.type(composer(), 'Make this red');
+    await user.keyboard('{Enter}');
+    await log().findByText((_, el) => el?.tagName === 'P' && el.textContent === 'You selected "Browser" in docs/diagram-d4-0.excalidraw.');
+    await waitFor(() => expect(screen.queryByText('· 1 selected')).toBeNull());
+  } finally {
+    select.mockRestore();
+  }
+});
+
+test('with draw.io, Use selection in message asks the page for its selected cells; a page that cannot say leaves the button off', async () => {
+  const { user } = await openTask('t-chart');
+  await act(() => api.updateWebSettings({ drawio: { origin: 'https://embed.diagrams.net', enabled: true } }));
+  const select = vi.spyOn(api, 'selectDrawing');
+  try {
+    await user.click((await screen.findAllByRole('button', { name: 'Edit as drawing' }))[0]);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Create drawing' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.drawio' });
+    const editor = within(dialog);
+    const frame = editor.getByTitle<HTMLIFrameElement>('draw.io editor');
+    /** A message as the embed posts one. */
+    const say = (message: unknown) => act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message), origin: 'https://embed.diagrams.net', source: frame.contentWindow }));
+    });
+    const answer = (cells: unknown[]) => say({ event: 'export', format: 'json', data: { version: '32.7.1', pages: [{ cells }] } });
+    // Until the page has loaded the file and said whether it can name a selection, there is no button.
+    say({ event: 'init' });
+    expect(editor.queryByRole('button', { name: 'Use selection in message' })).toBeNull();
+    say({ event: 'load' });
+    answer([]);
+    const use = await editor.findByRole<HTMLButtonElement>('button', { name: 'Use selection in message' });
+    expect(use.disabled).toBe(false);
+    // Nothing selected: the editor stays and says what to do.
+    await user.click(use);
+    answer([]);
+    expect(await editor.findByText('Select shapes or arrows in the drawing first.')).toBeTruthy();
+    expect(select).not.toHaveBeenCalled();
+    // A box, an edge and the edge's label cell, which the export lists under it: the label is the edge's.
+    await user.click(use);
+    answer([{ id: 'a', type: 'node', parent: '1', label: 'Browser' }, { id: 'e', type: 'edge', parent: '1', source: 'a', target: 'b' }, { id: 'e-l', type: 'node', parent: 'e', label: 'HTTPS' }]);
+    await waitFor(() => expect(select).toHaveBeenCalledWith('t-chart', 'docs/diagram-d2-0.drawio', ['a', 'e']));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit diagram-d2-0.drawio' })).toBeNull());
+    expect(await screen.findByText('· 2 selected')).toBeTruthy();
+  } finally {
+    select.mockRestore();
+  }
+});
+
+test('a draw.io page too old to name a selection gets the button disabled, with the reason', async () => {
+  const { user } = await openTask('t-chart');
+  await act(() => api.updateWebSettings({ drawio: { origin: 'https://embed.diagrams.net', enabled: true } }));
+  await user.click((await screen.findAllByRole('button', { name: 'Edit as drawing' }))[0]);
+  await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Create drawing' }));
+  const editor = within(await screen.findByRole('dialog', { name: 'Edit diagram-d2-0.drawio' }));
+  const frame = editor.getByTitle<HTMLIFrameElement>('draw.io editor');
+  const say = (message: unknown) => act(() => {
+    window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message), origin: 'https://embed.diagrams.net', source: frame.contentWindow }));
+  });
+  say({ event: 'init' });
+  say({ event: 'load' });
+  // An older page answers an export it does not know with a picture.
+  say({ event: 'export', format: 'svg', data: 'data:image/svg+xml;base64,AAAA' });
+  const use = await editor.findByRole<HTMLButtonElement>('button', { name: 'Use selection in message' });
+  expect(use.disabled).toBe(true);
+  expect(use.title).toContain('needs draw.io 30.1 or later');
+});

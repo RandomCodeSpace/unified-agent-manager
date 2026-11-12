@@ -14,6 +14,8 @@ interface Entry {
   fence_index: number;
   content: string;
   baseline: string;
+  /** The elements the user picked for their next message. */
+  selected?: string[];
 }
 
 interface Node { id: string; type: string; label: string; x: number; y: number; w: number; h: number; stroke?: string; fill?: string }
@@ -61,7 +63,7 @@ export function model(content: string, format: Drawing['format']): Model {
 function name(m: Model, id: string | null): string {
   const n = id ? m.nodes.get(id) : undefined;
   if (!n) return '(nothing)';
-  return n.label ? `"${n.label}"` : `unlabelled ${n.type === 'rectangle' ? 'box' : n.type} ${near(m, n)}`;
+  return n.label ? JSON.stringify(n.label) : `unlabelled ${n.type === 'rectangle' ? 'box' : n.type} ${near(m, n)}`;
 }
 
 // An unlabelled shape has only its place to go by: name it by the closest labelled one.
@@ -78,10 +80,10 @@ function near(m: Model, n: Node): string {
   if (!best) return 'on its own';
   const { o, dx, dy } = best;
   const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'left of' : 'right of') : dy > 0 ? 'above' : 'below';
-  return `${side} "${o.label}"`;
+  return `${side} ${JSON.stringify(o.label)}`;
 }
 
-const edgeText = (m: Model, e: Edge) => `${name(m, e.from)} → ${name(m, e.to)}${e.label ? ` "${e.label}"` : ''}`;
+const edgeText = (m: Model, e: Edge) => `${name(m, e.from)} → ${name(m, e.to)}${e.label ? ` ${JSON.stringify(e.label)}` : ''}`;
 
 /** Changes from the agent's version (a) to the user's (b). status: id → added|changed|moved|removed. */
 export function diff(a: Model, b: Model): { changes: DrawingChange[]; status: Record<string, DrawingStatus> } {
@@ -122,7 +124,7 @@ export function diff(a: Model, b: Model): { changes: DrawingChange[]; status: Re
       changes.push({ kind: '~', text: `edge ${edgeText(a, o)} now ${edgeText(b, e)}` });
       status[id] = 'changed';
     } else if (o.label !== e.label) {
-      changes.push({ kind: '~', text: `edge ${edgeText(b, e)} label was "${o.label}"` });
+      changes.push({ kind: '~', text: `edge ${edgeText(b, e)} label was ${JSON.stringify(o.label)}` });
       status[id] = 'changed';
     }
   }
@@ -143,6 +145,21 @@ export function note(path: string, from: number, to: number, changes: DrawingCha
     ...changes.map((c) => `${c.kind} ${c.text}`),
     `Now ${current.nodes.size} nodes, ${current.edges.size} edges. Build on the user's version; uam_diagram_read for the full diagram.`,
   ].join('\n');
+}
+
+/** An element as the selection note names it: a node with its id when two share the name, an edge always with its id. */
+function ref(m: Model, id: string): string {
+  const e = m.edges.get(id);
+  if (e) return `edge ${edgeText(m, e)} (id ${id})`;
+  if (!m.nodes.has(id)) return '';
+  const n = name(m, id);
+  return [...m.nodes.keys()].some((o) => o !== id && name(m, o) === n) ? `${n} (id ${id})` : n;
+}
+
+/** The note of the elements the user picked for their next message. */
+export function selectionNote(path: string, ids: string[], current: Model): string {
+  const names = ids.map((id) => ref(current, id)).filter(Boolean);
+  return names.length ? `The user selected in ${path}: ${names.join(', ')}. Their message refers to these.` : '';
 }
 
 /* The fixture: a request-flow drawing as the converter and the page's styling leave it. */
@@ -217,10 +234,11 @@ export function drawingsMock() {
   const reply = (status: number, body?: unknown) => body === undefined ? new Response(null, { status }) : new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const fail = (status: number, error: string) => reply(status, { error });
   const diffOf = (e: Entry) => diff(model(e.baseline, e.format), model(e.content, e.format));
-  const summary = (path: string, e: Entry): Drawing => ({ path, format: e.format, version: e.version, agent_version: e.agent_version, item_id: e.item_id, fence_index: e.fence_index, changes_count: e.version === e.agent_version ? 0 : diffOf(e).changes.length });
+  const summary = (path: string, e: Entry): Drawing => ({ path, format: e.format, version: e.version, agent_version: e.agent_version, item_id: e.item_id, fence_index: e.fence_index, changes_count: e.version === e.agent_version ? 0 : diffOf(e).changes.length, selected_count: e.selected?.length ?? 0 });
   const saved = (path: string, e: Entry): DrawingSaved => {
     const d = e.version === e.agent_version ? { changes: [], status: {} } : diffOf(e);
-    return { version: e.version, agent_version: e.agent_version, ...d, note: note(path, e.agent_version, e.version, d.changes, model(e.content, e.format)) };
+    const current = model(e.content, e.format);
+    return { version: e.version, agent_version: e.agent_version, ...d, note: [note(path, e.agent_version, e.version, d.changes, current), selectionNote(path, e.selected ?? [], current)].filter(Boolean).join('\n\n') };
   };
   const view = (path: string, e: Entry): DrawingDoc => ({ path, format: e.format, item_id: e.item_id, fence_index: e.fence_index, content: e.content, baseline: e.version === e.agent_version ? null : e.baseline, ...saved(path, e) });
 
@@ -231,10 +249,11 @@ export function drawingsMock() {
     consume(session: string): string[] {
       const notes: string[] = [];
       for (const [path, e] of Object.entries(entries[session] ?? {})) {
-        if (e.version === e.agent_version) continue;
+        if (e.version === e.agent_version && !e.selected?.length) continue;
         notes.push(saved(path, e).note);
         e.agent_version = e.version;
         e.baseline = e.content;
+        e.selected = [];
       }
       return notes;
     },
@@ -272,6 +291,13 @@ export function drawingsMock() {
           // Edited back to the agent's version: nothing to send.
           if (diffOf(e).changes.length === 0) e.agent_version = e.version;
           return reply(200, saved(path, e));
+        }
+        if (method === 'PATCH') {
+          const e = mine[path];
+          if (!e) return fail(404, 'no such drawing');
+          if (!Array.isArray(body.selected)) return fail(400, 'selected is required');
+          e.selected = body.selected as string[];
+          return reply(204);
         }
         if (method === 'DELETE') {
           if (!mine[path]) return fail(404, 'no such drawing');

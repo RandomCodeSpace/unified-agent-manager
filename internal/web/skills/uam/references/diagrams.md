@@ -17,8 +17,20 @@
   folder, which they edit in uam.
 - Their edits arrive as a note on your next message: which nodes and edges
   were added, removed, renamed, restyled or moved. Build on their version.
+- A second note, "The user selected in docs/flow.excalidraw: …", names the
+  elements they picked for that message: "this" and "these" mean those. It
+  gives an id for an arrow, and for a node whose name another node shares.
 - Call `uam_diagram_read` for the full drawing as text (one line per node
   and edge); without `path` it lists the drawings.
+- Call `uam_diagram_edit` to change a drawing in place, `.excalidraw` or
+  `.drawio`, with the owner's layout kept: each edit names one element
+  (`node` by its label, or `id` from a selection note) and gives `rename`,
+  `stroke`, `fill` or `remove`. Removing a node removes its arrows, and in
+  a `.drawio` drawing what it contains; a long new label wraps inside its
+  shape. It refuses while the owner has changes you have not read: read
+  the drawing, then edit.
+- It cannot add a node or an arrow, and in an `.excalidraw` drawing it
+  cannot label an element that has no label. For those, write a new
+  mermaid block and say the owner can convert it.
 - Do not edit a drawing file with your file tools: its layout is the
-  owner's. To change the picture, write a new mermaid block and say the
-  owner can convert it.
+  owner's.

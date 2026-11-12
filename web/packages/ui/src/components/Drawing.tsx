@@ -41,6 +41,8 @@ export interface DrawingsApi {
   /** Deletes a drawing uam created: its file and its entry. */
   remove: (path: string) => Promise<void>;
   save: (path: string, content: string, baseVersion: number) => Promise<DrawingSaved>;
+  /** Sends these elements' names with the next message; an empty list takes them back. */
+  select: (path: string, ids: string[]) => Promise<void>;
   open: (target: OpenDrawing) => void;
 }
 
@@ -130,6 +132,13 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
       relist();
       return saved;
     },
+    select: async (path, ids) => {
+      await api.selectDrawing(sessionId, path, ids);
+      setListed({ from: session.drawings, list: drawings.map((x) => (x.path === path ? { ...x, selected_count: ids.length } : x)) });
+      relist();
+      // The note the editor previews names the selection.
+      void load(path).catch(() => {});
+    },
     open: (target) => setOpened({ ...target, open: true, phone: window.matchMedia(PHONE).matches }),
   }), [api, sessionId, session.drawings, writable, title, drawings, drawio, docs, load, relist]);
 
@@ -140,9 +149,10 @@ export function DrawingsProvider({ session, writable, children }: Readonly<{ ses
       if (doc && (entry.version > doc.version || entry.agent_version > doc.agent_version)) void load(entry.path).catch(() => {});
     }
   }, [drawings, docs, load]);
-  // A prompt carried the notes: each lands as a uam notice, and the session events carry no list, so the list is read again then.
-  // A Thread without drawings has no notes to count, so its items are not scanned.
-  const notes = useMemo(() => (drawings.length === 0 ? 0 : session.items.reduce((n, item) => n + (item.kind === 'notice' && !!item.text?.startsWith('The user edited ') ? 1 : 0), 0)), [drawings.length, session.items]);
+  // A prompt carried the notes (each lands as a uam notice), or the agent changed a drawing with its edit tool: the session
+  // events carry no list, so the list is read again then. A Thread without drawings has neither, so its items are not scanned.
+  const notes = useMemo(() => (drawings.length === 0 ? 0 : session.items.reduce((n, item) => n + (
+    (item.kind === 'notice' && /^The user (?:edited|selected in) /.test(item.text ?? '')) || (item.kind === 'tool' && item.tool?.name === 'uam_diagram_edit' && item.tool.status === 'completed') ? 1 : 0), 0)), [drawings.length, session.items]);
   const seenNotes = useRef(notes);
   useEffect(() => {
     if (notes <= seenNotes.current) return;
@@ -171,10 +181,13 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
   );
 }
 
-/** Above the composer's field: the chips of the drawings with unsent changes, loaded only while there is one. */
+/** Whether the next message carries something of the drawing: unsent changes or a selection. */
+export const drawingPending = (x: Drawing) => x.changes_count > 0 || (x.selected_count ?? 0) > 0;
+
+/** Above the composer's field: the chips of the drawings with unsent changes or a selection, loaded only while there is one. */
 export function DrawingChips() {
   const d = useContext(DrawingsContext);
-  if (!d?.drawings.some((x) => x.changes_count > 0)) return null;
+  if (!d?.drawings.some(drawingPending)) return null;
   return (
     <Suspense fallback={null}>
       <DrawingChipRow />

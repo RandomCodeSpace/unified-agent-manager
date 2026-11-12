@@ -43,7 +43,7 @@ var diagramReadTool = agentapi.HostTool{
 	Name: diagramReadToolName,
 	Description: "Read a drawing: a diagram the owner converted from one of your mermaid blocks into a .excalidraw or .drawio file in docs/ and edits in uam. " +
 		"Without path, lists the drawings with their versions and unseen changes. With path, returns the drawing as text (node and edge lines) and, when the owner changed it since your version, the changes. " +
-		"The file's layout is the owner's: do not edit it with file tools. To change the picture, write a new mermaid block and say the owner can convert it.",
+		"The file's layout is the owner's: do not edit it with file tools. uam_diagram_edit renames, recolours and removes in place; to add to the picture, write a new mermaid block and say the owner can convert it.",
 	Parameters: toolSchema(nil, map[string]any{
 		"path": stringProp("The drawing's path in the thread's folder, such as docs/flow.excalidraw. Omit to list the drawings."),
 	}),
@@ -51,15 +51,17 @@ var diagramReadTool = agentapi.HostTool{
 
 // DrawingSummary is one drawing as listed and in the session snapshot.
 // ItemID and FenceIndex say which mermaid block of the conversation it was
-// converted from; ChangesCount is how many changes the agent has not seen.
+// converted from; ChangesCount is how many changes the agent has not seen,
+// SelectedCount how many elements the owner picked for their next message.
 type DrawingSummary struct {
-	Path         string `json:"path"`
-	Format       string `json:"format"`
-	Version      int    `json:"version"`
-	AgentVersion int    `json:"agent_version"`
-	ItemID       string `json:"item_id"`
-	FenceIndex   int    `json:"fence_index"`
-	ChangesCount int    `json:"changes_count"`
+	Path          string `json:"path"`
+	Format        string `json:"format"`
+	Version       int    `json:"version"`
+	AgentVersion  int    `json:"agent_version"`
+	ItemID        string `json:"item_id"`
+	FenceIndex    int    `json:"fence_index"`
+	ChangesCount  int    `json:"changes_count"`
+	SelectedCount int    `json:"selected_count"`
 }
 
 // DrawingView is GET /api/sessions/{id}/drawings/{path}: the file, the
@@ -108,6 +110,9 @@ type drawingEntry struct {
 	FenceIndex   int    `json:"fence_index"`
 	ChangesCount int    `json:"changes_count"`
 	Baseline     string `json:"baseline"`
+	// Selected is the ids of the elements the owner picked for their next
+	// message (SelectDrawing); the prompt that names them forgets them.
+	Selected []string `json:"selected,omitempty"`
 	// Deleted marks a drawing uam removed: listings skip it, but it stays the
 	// Thread's edit so the deletion is still its own after a restart.
 	Deleted bool `json:"deleted,omitempty"`
@@ -248,7 +253,7 @@ func (m *Manager) sessionDir(id string) (string, error) {
 }
 
 func (e *drawingEntry) summary(p string) DrawingSummary {
-	return DrawingSummary{Path: p, Format: e.Format, Version: e.Version, AgentVersion: e.AgentVersion, ItemID: e.ItemID, FenceIndex: e.FenceIndex, ChangesCount: e.ChangesCount}
+	return DrawingSummary{Path: p, Format: e.Format, Version: e.Version, AgentVersion: e.AgentVersion, ItemID: e.ItemID, FenceIndex: e.FenceIndex, ChangesCount: e.ChangesCount, SelectedCount: len(e.Selected)}
 }
 
 // drawingSummaries lists the Task's drawings by path.
@@ -325,7 +330,7 @@ func (m *Manager) Drawing(id, p string) (DrawingView, error) {
 	}
 	changes, status := drawingDiff(e, current)
 	view := DrawingView{Path: rel, Format: e.Format, Version: e.Version, AgentVersion: e.AgentVersion, Content: string(content), Changes: changes, Status: status,
-		Note: drawingNote(rel, e.AgentVersion, e.Version, changes, current)}
+		Note: e.note(rel, changes, current)}
 	if e.Version != e.AgentVersion {
 		baseline := e.Baseline
 		view.Baseline = &baseline
@@ -480,7 +485,7 @@ func (m *Manager) writeDrawing(id, dir, rel, format string, req DrawingSave, cur
 	} else {
 		e.Version++
 		out.Changes, out.Status = drawingDiff(e, current)
-		out.Note = drawingNote(rel, e.AgentVersion, e.Version, out.Changes, current)
+		out.Note = e.note(rel, out.Changes, current)
 		e.ChangesCount = len(out.Changes)
 		m.count("drawing.save")
 	}
@@ -511,8 +516,9 @@ func catchUpLocked(e *drawingEntry, content []byte) {
 }
 
 // takeDrawingNotes is the notes of the Task's drawings the owner changed
-// since the agent's version, which then becomes the current one. It is
-// taken once per prompt.
+// since the agent's version, which then becomes the current one, and of
+// the elements they selected, which are then forgotten. It is taken once
+// per prompt.
 func (m *Manager) takeDrawingNotes(taskID, dir string) string {
 	m.drawings.mu.Lock()
 	defer m.drawings.mu.Unlock()
@@ -522,7 +528,7 @@ func (m *Manager) takeDrawingNotes(taskID, dir string) string {
 	changed := false
 	for _, p := range slices.Sorted(maps.Keys(idx.Drawings)) {
 		e := idx.Drawings[p]
-		if e.Deleted || e.Version <= e.AgentVersion {
+		if e.Deleted || e.Version <= e.AgentVersion && len(e.Selected) == 0 {
 			continue
 		}
 		if root == nil {
@@ -546,7 +552,11 @@ func (m *Manager) takeDrawingNotes(taskID, dir string) string {
 			notes = append(notes, note)
 			m.count("drawing.note")
 		}
+		if note := selectionNote(p, e.Selected, current); note != "" {
+			notes = append(notes, note)
+		}
 		catchUpLocked(e, content)
+		e.Selected = nil
 		changed = true
 	}
 	if changed {
@@ -676,6 +686,19 @@ func (s *Server) drawingRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("PATCH /api/sessions/{id}/drawings/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Selected []string `json:"selected"`
+		}
+		if !decodeBody(w, r, &body) {
+			return
+		}
+		if err := s.m.SelectDrawing(r.PathValue("id"), r.PathValue("path"), body.Selected); err != nil {
+			writeFailure(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("DELETE /api/sessions/{id}/drawings/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.m.DeleteDrawing(r.PathValue("id"), r.PathValue("path")); err != nil {

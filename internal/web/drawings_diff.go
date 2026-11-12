@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -59,15 +60,16 @@ func (d *diagram) edge(id string) *diagramEdge {
 	return nil
 }
 
-// name is how a node is referred to: its label quoted, or for an unlabelled
-// shape its kind and where it sits.
+// name is how a node is referred to: its label quoted (a quote or a line
+// break inside it escaped, so a label cannot pass for the text around it),
+// or for an unlabelled shape its kind and where it sits.
 func (d *diagram) name(id string) string {
 	n := d.node(id)
 	if n == nil {
 		return "(nothing)"
 	}
 	if n.Label != "" {
-		return `"` + n.Label + `"`
+		return strconv.Quote(n.Label)
 	}
 	kind := n.Type
 	if kind == "rectangle" {
@@ -106,13 +108,13 @@ func (d *diagram) near(n *diagramNode) string {
 	default:
 		side = "below"
 	}
-	return side + ` "` + best.Label + `"`
+	return side + " " + strconv.Quote(best.Label)
 }
 
 func (d *diagram) edgeText(e diagramEdge) string {
 	s := d.name(e.From) + " → " + d.name(e.To)
 	if e.Label != "" {
-		s += ` "` + e.Label + `"`
+		s += " " + strconv.Quote(e.Label)
 	}
 	return s
 }
@@ -178,7 +180,7 @@ func diffDiagrams(a, b *diagram) ([]DrawingChange, map[string]string) {
 			changes = append(changes, DrawingChange{"~", "edge " + a.edgeText(*o) + " now " + b.edgeText(e)})
 			status[e.ID] = "changed"
 		case o.Label != e.Label:
-			changes = append(changes, DrawingChange{"~", "edge " + b.edgeText(e) + ` label was "` + o.Label + `"`})
+			changes = append(changes, DrawingChange{"~", "edge " + b.edgeText(e) + " label was " + strconv.Quote(o.Label)})
 			status[e.ID] = "changed"
 		}
 	}

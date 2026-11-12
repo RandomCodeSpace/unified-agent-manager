@@ -1,6 +1,6 @@
 ---
 name: uam
-description: Guide to uam, the browser app this Thread runs in, and its uam and uam_* tools. Load it before you show the owner a file, image, PDF, HTML page, Mermaid diagram or chart (uam_show_file, uam_chart); read an owner's drawing (uam_diagram_read); read Thread or Project state, search Threads' conversations or read one (uam); start another Thread (uam_create_task); message another Thread or answer one (uam_send); ask the owner a question with ask_user; start subagents; suggest a slash command or autopilot; and when the owner mentions uam, a Thread, a Project, their phone or the browser.
+description: Guide to uam, the browser app this Thread runs in, and its uam and uam_* tools. Load it before you show the owner a file, image, PDF, HTML page, Mermaid diagram or chart (uam_show_file, uam_chart); read or change an owner's drawing (uam_diagram_read, uam_diagram_edit); read Thread or Project state, search Threads' conversations or read one (uam); start another Thread (uam_create_task); message another Thread or answer one (uam_send); ask the owner a question with ask_user; start subagents; suggest a slash command or autopilot; and when the owner mentions uam, a Thread, a Project, their phone or the browser.
 ---
 
 # uam
@@ -21,7 +21,7 @@ needs, all in one step when it needs several:
 - `references/files.md`: showing a file or image: paths, links, file chips,
   images and `uam_show_file`.
 - `references/diagrams.md`: a Mermaid diagram, or an owner's drawing
-  (`uam_diagram_read`).
+  (`uam_diagram_read`, `uam_diagram_edit`).
 - `references/charts.md`: a chart (`uam_chart`).
 - `references/uam-tool.md`: reading Thread or Project state, searching
   Threads' conversations or reading one (`uam`).

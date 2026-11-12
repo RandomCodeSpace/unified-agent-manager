@@ -29,6 +29,30 @@ export function drawioMessage(data: unknown): { event: string; xml?: string; dat
   return { event: m.event, ...(typeof m.xml === 'string' ? { xml: m.xml } : {}), ...(typeof m.data === 'string' ? { data: m.data } : {}) };
 }
 
+/** The message that asks the page for its selected cells: its JSON export, of the selection only (draw.io 30.1 and later). */
+export const DRAWIO_SELECTION = JSON.stringify({ action: 'export', format: 'json', selection: true });
+
+/**
+ * The ids the page's answer to `DRAWIO_SELECTION` names: the selected cells without their
+ * descendants, which the export lists as well. Null when the message is not that answer, as from
+ * a draw.io page too old for the JSON export, which sends a picture.
+ */
+export function drawioSelection(data: unknown): string[] | null {
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  const m = data as { event?: unknown; format?: unknown; data?: { pages?: { cells?: unknown }[] } | null } | null;
+  const cells = m?.event === 'export' && m.format === 'json' && typeof m.data === 'object' ? m.data?.pages?.[0]?.cells : null;
+  if (!Array.isArray(cells)) return null;
+  const list = cells as { id?: unknown; type?: unknown; parent?: unknown }[];
+  const ids = new Set(list.map((c) => c.id));
+  return list.filter((c) => typeof c.id === 'string' && c.type !== 'layer' && !ids.has(c.parent)).map((c) => c.id as string);
+}
+
 /** A data URL's picture with its own size. */
 export function measure(url: string): Promise<Picture> {
   return new Promise((resolve, reject) => {

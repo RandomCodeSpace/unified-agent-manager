@@ -38,6 +38,8 @@ export interface CanvasProps {
   background: string;
   /** Every change the user made, debounced 200 ms, with the live elements and files. */
   onChange: (elements: DrawnElement[], files: Record<string, unknown>) => void;
+  /** The ids of the selected shapes, arrows and free text, each time the selection changes. */
+  onSelection: (ids: string[]) => void;
   /** The scene as Excalidraw restored it (added defaults, re-measured text) on mount or after `load`: the text the next change compares against. */
   onRestored: (elements: DrawnElement[], files: Record<string, unknown>) => void;
   /** The imperative API once it is here, and `load`, which puts a file's elements on the canvas as a restore, not a change. */
@@ -46,8 +48,12 @@ export interface CanvasProps {
 
 export type { ExcalidrawImperativeAPI };
 
-export default function ExcalidrawCanvas({ elements, files, theme, background, onChange, onRestored, onApi }: Readonly<CanvasProps>) {
+/** What a selection can name to the agent: the model's nodes and edges (drawings_diff.go), free text among them. */
+const NAMED = new Set(['rectangle', 'ellipse', 'diamond', 'frame', 'arrow', 'line']);
+
+export default function ExcalidrawCanvas({ elements, files, theme, background, onChange, onSelection, onRestored, onApi }: Readonly<CanvasProps>) {
   const timer = useRef(0);
+  const picked = useRef('');
   // Excalidraw reports the scene it restored (on mount, after `load`) as changes: only what
   // follows the user's first pointer, key, drop or paste is one.
   const touched = useRef(false);
@@ -56,12 +62,19 @@ export default function ExcalidrawCanvas({ elements, files, theme, background, o
   };
   // Excalidraw mutates the elements it is given, so it never gets the owner's copy.
   const [initial] = useState(() => ({ elements: structuredClone(elements) as never, files: files as never, appState: { viewBackgroundColor: background, currentItemRoughness: 0, currentItemFontFamily: NUNITO, currentItemStrokeWidth: 1.5 }, scrollToContent: true }));
-  const changed = useCallback<NonNullable<Parameters<typeof Excalidraw>[0]['onChange']>>((els, _state, f) => {
+  const changed = useCallback<NonNullable<Parameters<typeof Excalidraw>[0]['onChange']>>((els, state, f) => {
+    // Excalidraw reports every pointer move here, so the editor hears only a selection that differs.
+    const selected = state.selectedElementIds ?? {};
+    const ids = els.filter((e) => !e.isDeleted && selected[e.id] && (NAMED.has(e.type) || (e.type === 'text' && !e.containerId))).map((e) => e.id);
+    if (ids.join('\n') !== picked.current) {
+      picked.current = ids.join('\n');
+      onSelection(ids);
+    }
     clearTimeout(timer.current);
     const live = () => structuredClone(els.filter((e) => !e.isDeleted)) as unknown as DrawnElement[];
     if (!touched.current) return onRestored(live(), { ...f });
     timer.current = window.setTimeout(() => onChange(live(), { ...f }), 200);
-  }, [onChange, onRestored]);
+  }, [onChange, onRestored, onSelection]);
   // Excalidraw's menu trigger is an icon button without a name, and MainMenu passes it no props.
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {

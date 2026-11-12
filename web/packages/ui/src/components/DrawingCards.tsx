@@ -2,6 +2,7 @@
 // conversation, the composer's chips, the pictures, and converting a fence. Drawing.tsx loads
 // this module on demand (`lazy`), so a Thread without drawings never carries it.
 
+import { X } from 'lucide-react';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { describeError, type DrawingDoc } from '../api';
 import { cn } from '../lib/cn';
@@ -10,7 +11,7 @@ import { exportDrawioPng } from '../lib/drawio';
 import { changeSummary, changesWord, drawingPath, excalidrawFile, loadExcalidraw, parseExcalidraw, picture, styleSkeletons, toDrawioXml, token, type DrawnElement, type Picture, type Skeleton } from '../lib/drawings';
 import { useScheme } from '../lib/theme';
 import { Note, Spinner } from './common';
-import { DrawingsContext, type DrawingsApi, type DrawingView } from './Drawing';
+import { drawingPending, DrawingsContext, type DrawingsApi, type DrawingView } from './Drawing';
 import type { Fence } from './Diagram';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -179,18 +180,32 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
   );
 }
 
-/** Above the composer's field: "<file> · k changes by you · View", one chip per drawing with unsent changes (Drawing.tsx shows this only when there is one). */
+/**
+ * Above the composer's field, one chip per drawing the next message carries something of:
+ * "<file> · k changes by you · View" for unsent changes, "· n selected" with a remove button for
+ * a selection (Drawing.tsx shows this only when there is one).
+ */
 export function DrawingChipRow() {
   const d = useContext(DrawingsContext);
-  const changed = d?.drawings.filter((x) => x.changes_count > 0) ?? [];
-  if (!d || changed.length === 0) return null;
+  const pending = d?.drawings.filter(drawingPending) ?? [];
+  if (!d || pending.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-3">
-      {changed.map((x) => (
+      {pending.map((x) => (
         <span key={x.path} className="flex h-6 items-center gap-1.5 rounded-xs bg-warning-wash px-2 text-caption text-warning">
           <span className="min-w-0 truncate font-mono text-code-sm">{fileName(x.path)}</span>
-          <span>· {changesWord(x.changes_count)} by you ·</span>
-          <button type="button" aria-haspopup="dialog" aria-label={`View the changes to ${fileName(x.path)}`} className="rounded-xs font-medium hover:underline" onClick={(e) => d.open({ path: x.path, view: 'changes', anchor: e.currentTarget.parentElement ?? e.currentTarget })}>View</button>
+          {x.changes_count > 0 && (
+            <>
+              <span>· {changesWord(x.changes_count)} by you ·</span>
+              <button type="button" aria-haspopup="dialog" aria-label={`View the changes to ${fileName(x.path)}`} className="rounded-xs font-medium hover:underline" onClick={(e) => d.open({ path: x.path, view: 'changes', anchor: e.currentTarget.parentElement ?? e.currentTarget })}>View</button>
+            </>
+          )}
+          {!!x.selected_count && (
+            <>
+              <span>· {x.selected_count} selected</span>
+              <button type="button" aria-label={`Remove the selection in ${fileName(x.path)}`} className="rounded-xs hover:text-ink" onClick={() => void d.select(x.path, []).catch(() => {})}><X aria-hidden="true" className="size-3" /></button>
+            </>
+          )}
         </span>
       ))}
     </div>
