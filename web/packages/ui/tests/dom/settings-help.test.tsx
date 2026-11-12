@@ -90,7 +90,7 @@ describe('settings help', () => {
     const description = document.getElementById(toggle.getAttribute('aria-describedby')!);
     expect(description?.className).toBe('sr-only');
     await user.pointer([{ keys: '[TouchA]', target: help }]);
-    expect((await openTooltip()).textContent).toContain('no model call when the choice is clear');
+    expect((await openTooltip()).textContent).toContain('written by the Utility model');
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(tooltip()).toBeNull());

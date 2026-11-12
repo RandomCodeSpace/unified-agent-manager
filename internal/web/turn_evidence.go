@@ -562,16 +562,9 @@ type turnFacts struct {
 	// with when each was last touched, in that order.
 	edits  []turnEdit
 	failed int
-	// commands counts the turn's main-agent shell commands; committed and
-	// pushed say whether one of them ran git commit or git push.
-	commands          int
-	committed, pushed bool
+	// commands counts the turn's main-agent shell commands.
+	commands int
 }
-
-// gitWriteRE matches a git commit or push in a shell command and names it.
-// shortcut: a pattern, not a shell parse; quoted or aliased commands may
-// miss or match, which only changes a suggested reply.
-var gitWriteRE = regexp.MustCompile(`\bgit\s+(?:-C\s+\S+\s+)?(commit|push)\b`)
 
 type turnEdit struct {
 	path string
@@ -612,10 +605,6 @@ func (s *webSession) turnFacts() (f turnFacts, ok bool) {
 		}
 		if main {
 			f.commands++
-			for _, w := range gitWriteRE.FindAllStringSubmatch(a.command, -1) {
-				f.committed = f.committed || w[1] == "commit"
-				f.pushed = f.pushed || w[1] == "push"
-			}
 			if a.status == agentapi.ToolFailed || a.exit != nil && *a.exit != 0 {
 				f.failed++
 			}

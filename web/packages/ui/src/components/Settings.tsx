@@ -659,7 +659,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Background AI purposes paused after unusable answers, and when they resume.
   const [pausedPurposes, setPausedPurposes] = useState<{ purposes: string[]; resetsAt: string }>({ purposes: [], resetsAt: '' });
   const onPausedPurposes = useCallback((purposes: string[], resetsAt: string) => setPausedPurposes({ purposes, resetsAt }), []);
-  const repliesPaused = settings.suggest_replies !== false && pausedPurposes.purposes.includes('decision-suggest-reply');
+  const repliesPaused = settings.suggest_replies !== false && pausedPurposes.purposes.includes('suggest-replies');
   // Agents, Skills, Hooks and Instructions share one scope, the Thread's project to start with; a kind with a form open holds it.
   const [toolkitScope, setToolkitScope] = useState(() => initialToolkitScope(threadProject, projects));
   const [held, setHeld] = useState<readonly ConfigurationKind[]>([]);
@@ -845,7 +845,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           ]}
         />
       </Row>
-      <Row id="suggest-replies" label="Suggest replies" help="Suggests one reply based on what the turn did; no model call when the choice is clear.">
+      <Row id="suggest-replies" label="Suggest replies" help="Suggests the reply you would likely send next, written by the Utility model; none when no reply is clearly likely.">
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
       {api.supports('thread-messages-v1') && (

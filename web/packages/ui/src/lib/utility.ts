@@ -13,9 +13,9 @@ const PURPOSES: Record<string, string> = {
   'mr-description': 'Merge request description',
   'memory-notes': 'Memory notes',
   'subagent-label': 'Subagent name',
-  'decision-suggest-reply': 'Suggested replies',
-  // Made only by older versions; their calls stay in the 30-day log.
   'suggest-replies': 'Suggested replies',
+  // Made only by older versions; their calls stay in the 30-day log.
+  'decision-suggest-reply': 'Suggested replies',
   outcome: 'Outcome line',
   'decision-ci-failure-kind': 'CI failure kind',
   // Made only by older versions; their calls stay in the 30-day log.
