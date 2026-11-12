@@ -8,6 +8,8 @@
  * frame answers to the origin the request came from. Each side validates what it receives.
  */
 
+import { SERIES_TOKENS } from './chart.ts';
+
 export interface DiagramRender {
   id: string;
   source: string;
@@ -267,6 +269,23 @@ const THEME_TOKENS: Record<string, string> = {
   activationBorderColor: 'accent',
   errorBkgColor: 'error-wash',
   errorTextColor: 'error',
+  // A gantt's bars in the washes, as a sequence diagram's activations are; Mermaid's own are white and lightgrey in either scheme.
+  taskBkgColor: 'accent-wash',
+  taskBorderColor: 'accent',
+  activeTaskBkgColor: 'warning-wash',
+  activeTaskBorderColor: 'warning',
+  doneTaskBkgColor: 'surface',
+  doneTaskBorderColor: 'hairline-strong',
+  critBkgColor: 'error-wash',
+  critBorderColor: 'error',
+  todayLineColor: 'error',
+  gridColor: 'hairline',
+  sectionBkgColor: 'surface',
+  sectionBkgColor2: 'surface',
+  altSectionBkgColor: 'code-bg',
+  // A pie's slices are parted by the card's own colour, and its text sits on the series tones.
+  pieStrokeColor: 'code-bg',
+  pieSectionTextColor: 'raised',
 };
 
 /**
@@ -285,11 +304,26 @@ export function diagramTheme(): Record<string, string> {
   const style = getComputedStyle(document.documentElement);
   // 14px, matched by the sequence sizes in the frame: Mermaid measures with the theme size and
   // draws sequence text with its own, and a mismatch overflows the boxes.
-  const out: Record<string, string> = { fontFamily: DIAGRAM_FONT, fontSize: '14px' };
+  const out: Record<string, string> = { fontFamily: DIAGRAM_FONT, fontSize: '14px', pieTitleTextSize: '16px', pieSectionTextSize: '13px', pieLegendTextSize: '13px', pieOuterStrokeWidth: '0px', pieOpacity: '1' };
   for (const [variable, token] of Object.entries(THEME_TOKENS)) {
     const value = style.getPropertyValue(`--color-${token}`).trim();
     if (value) out[variable] = value;
   }
+  // Mermaid derives its series colours by turning the primary's hue, and ours is white or near-black, so
+  // every slice, section and branch came out the same grey. They take the chart series tones instead
+  // (DESIGN.md), which carry `raised` text at 4.5:1 or more.
+  const series = SERIES_TOKENS.map((token) => style.getPropertyValue(`--color-${token}`).trim());
+  const raised = style.getPropertyValue('--color-raised').trim();
+  if (raised && series.every(Boolean)) {
+    for (let i = 0; i < 12; i++) {
+      const tone = series[i % series.length];
+      out[`pie${i + 1}`] = out[`cScale${i}`] = tone;
+      out[`cScaleLabel${i}`] = raised;
+      if (i < 8) { out[`git${i}`] = tone; out[`gitBranchLabel${i}`] = raised; }
+    }
+  }
+  // Mermaid lightens what it derives unless told the scheme is dark; any string is true to it, so light sends none.
+  if (scheme === 'dark') out.darkMode = 'true';
   theme = { scheme, variables: out };
   return out;
 }

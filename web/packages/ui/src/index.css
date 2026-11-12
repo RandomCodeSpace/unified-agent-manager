@@ -1312,6 +1312,19 @@
   /* Cells by name, not `> *`: a universal subject would make any element that stops being a last child (a popup
      opened beside it) restyle its whole subtree. */
   .data-table tbody tr:last-child > :is(th, td) { border-bottom: 0; }
+  /* A group's head is a row in the well tone whose whole width is the button that folds it; a folded group's
+     head keeps its rule, so heads in a run stay apart. */
+  .data-table tbody tr[data-group] > th {
+    padding: 0;
+    border-bottom: 1px solid var(--color-hairline);
+    background: var(--color-tint-well);
+    font-weight: 500;
+  }
+  /* The row under the pointer is tinted, so a wide row reads across; a touch screen has no hover to leave behind. */
+  @media (hover: hover) {
+    .data-table tbody tr:hover > :is(th, td) { background: var(--color-tint-well); }
+    .data-table tbody tr[data-group]:hover > th { background: var(--color-tint-hover); }
+  }
   .md hr {
     margin: 12px 0;
     border: 0;

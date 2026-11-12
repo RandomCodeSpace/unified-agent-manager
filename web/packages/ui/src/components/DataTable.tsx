@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, Filter, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, Filter, ListTree, SkipForward, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { Children, isValidElement, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { barColumns, cellStatus, magnitude, rowsBelow, statusColumns, type CellStatus } from '../lib/table-visual';
@@ -10,6 +10,9 @@ import { Popover } from './ui/popover';
 type Value = string | number | null;
 export interface TableColumn { name: string; heading?: ReactNode; align?: CSSProperties['textAlign'] }
 export interface TableRow { id: number; values: readonly Value[]; cells: readonly ReactNode[] }
+/** The rows that share one value of the grouped column. */
+interface RowGroup { key: string; rows: TableRow[] }
+const groupKey = (row: TableRow, column: number) => String(row.values[column] ?? '').trim();
 const PAGE_SIZE = 100;
 // Text sorts naturally: "item 9" before "item 10".
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -71,6 +74,9 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
   const [filters, setFilters] = useState<Record<number, string>>({});
   const [page, setPage] = useState(0);
+  // The column the rows are grouped by, and the groups folded shut (by value).
+  const [group, setGroup] = useState<number | null>(null);
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState<number | null>(null);
   const [heading, setHeading] = useState('');
   const named = useCallback((element: HTMLDivElement | null) => { if (element) setHeading(headingBefore(element)); }, []);
@@ -89,10 +95,38 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
       return (numbers ? magnitude(av)! - magnitude(bv)! : collator.compare(String(av), String(bv))) * (descending ? -1 : 1);
     });
   }, [rows, sort, active]);
-  const start = Math.min(page, Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1)) * PAGE_SIZE;
-  const paginated = visible.length > PAGE_SIZE;
-  const shown = visible.slice(start, start + PAGE_SIZE);
+  // Grouped, the rows gather under each value of the column in the order the value first appears, so a sort orders the groups too.
+  const groups = useMemo(() => {
+    if (group === null) return null;
+    const byKey = new Map<string, RowGroup>();
+    for (const row of visible) {
+      const key = groupKey(row, group);
+      const found = byKey.get(key);
+      if (found) found.rows.push(row);
+      else byKey.set(key, { key, rows: [row] });
+    }
+    return [...byKey.values()];
+  }, [visible, group]);
+  // What a page counts: each group's head, then its rows unless it is folded. Ungrouped, the rows alone.
+  const lines = useMemo(() => groups
+    ? groups.flatMap((g): { group: RowGroup; row?: TableRow }[] => [{ group: g }, ...(folded.has(g.key) ? [] : g.rows.map(row => ({ group: g, row })))])
+    : visible.map(row => ({ group: undefined, row })), [groups, folded, visible]);
+  const start = Math.min(page, Math.max(0, Math.ceil(lines.length / PAGE_SIZE) - 1)) * PAGE_SIZE;
+  const paginated = lines.length > PAGE_SIZE;
+  const shownLines = lines.slice(start, start + PAGE_SIZE);
+  const shown = shownLines.flatMap(line => line.row ? [line.row] : []);
+  // A page's lines as bodies: one per group, each under its head; a group that began on the page before repeats its head.
+  const sections = shownLines.reduce<{ group?: RowGroup; rows: TableRow[] }[]>((all, line) => {
+    const last = all.at(-1);
+    if (!last || last.group !== line.group || !line.row) all.push({ group: line.group, rows: line.row ? [line.row] : [] });
+    else last.rows.push(line.row);
+    return all;
+  }, []);
+  // A column groups only when some rows share a value and some do not: counted once its menu opens.
+  const distinct = useMemo(() => menu === null ? 0 : new Set(rows.map(row => groupKey(row, menu))).size, [menu, rows]);
   const order = (next: typeof sort) => { setSort(next); setPage(0); setMenu(null); };
+  const groupBy = (column: number | null) => { setGroup(column); setFolded(new Set()); setPage(0); setMenu(null); };
+  const fold = (key: string) => setFolded(now => { const next = new Set(now); if (!next.delete(key)) next.add(key); return next; });
   const region = useRef<HTMLElement>(null);
   const [more, setMore] = useState(0);
   // Count the rows past the region's visible bottom on scroll and on any resize of the region or its table (sort, filter, page, fonts).
@@ -103,7 +137,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
     const measure = () => {
       frame = 0;
       const bottom = element.getBoundingClientRect().top + element.clientTop + element.clientHeight;
-      setMore(rowsBelow(element, bottom, [...element.querySelectorAll(':scope > table > tbody > tr')].map(row => row.getBoundingClientRect().top)));
+      setMore(rowsBelow(element, bottom, [...element.querySelectorAll(':scope > table > tbody > tr:not([data-group])')].map(row => row.getBoundingClientRect().top)));
     };
     const schedule = () => { frame ||= requestAnimationFrame(measure); };
     measure();
@@ -122,20 +156,24 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
             const selected = sort?.column === index;
             const filter = filters[index]?.trim();
             const Icon = selected ? sort.descending ? ArrowDown : ArrowUp : filter ? Filter : ArrowUpDown;
-            const state = [selected ? `Sorted ${sort.descending ? 'descending' : 'ascending'}` : '', filter ? `Contains: ${filter}` : ''].filter(Boolean).join(', ');
+            const grouped = group === index;
+            const state = [selected ? `Sorted ${sort.descending ? 'descending' : 'ascending'}` : '', filter ? `Contains: ${filter}` : '', grouped ? 'Rows grouped' : ''].filter(Boolean).join(', ');
             return (
               <th key={index} scope="col" aria-sort={selected ? sort.descending ? 'descending' : 'ascending' : 'none'} className={alignment(column.align)}>
                 <div className={cn('flex items-center gap-1.5', column.align === 'right' && 'justify-end')}>
                   <span className="min-w-0">{column.heading ?? column.name}</span>
                   {/* One small control per column: 20px so the head row stays 28px, with the `icon-sm` hit area (32px, 44px on a coarse pointer) without taking width. */}
                   <Popover.Root open={menu === index} onOpenChange={open => setMenu(open ? index : null)}>
-                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn('size-5 rounded-xs after:-inset-1.5 pointer-coarse:after:-inset-3', selected || filter ? 'text-accent' : 'text-faint', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
+                    <Popover.Trigger render={<Button size="icon-sm" {...roving.item(index)} aria-label={`Sort or filter ${column.name}`} title={state || 'Sort or filter'} className={cn('size-5 rounded-xs after:-inset-1.5 pointer-coarse:after:-inset-3', selected || filter || grouped ? 'text-accent' : 'text-faint', filter && 'bg-accent-wash')} />}><Icon className="size-3.5" /></Popover.Trigger>
                     <Popover.Content side="bottom" align="end" className="max-w-72">
                       <Popover.Title>{column.name}</Popover.Title>
                       <div className="flex flex-col">
                         <Button size="md" aria-pressed={selected && !sort.descending} className="justify-start px-2" onClick={() => order({ column: index, descending: false })}><ArrowUp />Sort ascending</Button>
                         <Button size="md" aria-pressed={selected && sort.descending} className="justify-start px-2" onClick={() => order({ column: index, descending: true })}><ArrowDown />Sort descending</Button>
                         <Button size="md" disabled={!selected} className="justify-start px-2" onClick={() => order(null)}><ArrowUpDown />Original order</Button>
+                        {grouped
+                          ? <Button size="md" aria-pressed className="justify-start px-2" onClick={() => groupBy(null)}><ListTree />Ungroup rows</Button>
+                          : <Button size="md" disabled={distinct < 2 || distinct >= rows.length} title={distinct < 2 ? 'Every row has the same value here' : distinct >= rows.length ? 'No two rows share a value here' : undefined} className="justify-start px-2" onClick={() => groupBy(index)}><ListTree />Group rows by this column</Button>}
                       </div>
                       <Input size="md" aria-label={`${column.name} contains`} placeholder="Contains…" value={filters[index] ?? ''} onChange={event => { setFilters({ ...filters, [index]: event.target.value }); setPage(0); }} />
                       <Button size="sm" disabled={!filters[index]} onClick={() => { setFilters({ ...filters, [index]: '' }); setPage(0); }}>Clear this filter</Button>
@@ -145,7 +183,20 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
               </th>
             );
           })}</tr></thead>
-          <tbody>{shown.map(row => <tr key={row.id}>{columns.map((column, index) => {
+          {sections.map((section, at) => {
+            const closed = !!section.group && folded.has(section.group.key);
+            const Fold = closed ? ChevronRight : ChevronDown;
+            return (
+              <tbody key={section.group ? `${at}:${section.group.key}` : 'rows'}>
+                {/* A group's head: the whole row folds it, and says how many rows it holds. */}
+                {section.group && <tr data-group=""><th colSpan={columns.length} scope="rowgroup">
+                  <button type="button" aria-expanded={!closed} className="flex min-h-[27px] w-full items-center gap-1.5 px-2.5 text-left pointer-coarse:min-h-11" onClick={() => fold(section.group!.key)}>
+                    <Fold aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
+                    <span className="min-w-0 text-ink">{section.group.key || 'No value'}</span>
+                    <span className="text-caption font-normal text-muted tabular-nums">{section.group.rows.length} {section.group.rows.length === 1 ? 'row' : 'rows'}</span>
+                  </button>
+                </th></tr>}
+                {section.rows.map(row => <tr key={row.id}>{columns.map((column, index) => {
             const Cell = rowHeaders && index === 0 ? 'th' : 'td';
             const status = statuses?.[index] ? cellStatus(row.values[index]) : null;
             if (status) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={alignment(column.align)}><StatusLabel status={status} text={String(row.values[index])} /></Cell>;
@@ -160,7 +211,10 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
               {row.cells[index]}
               <svg aria-hidden="true" className={cn('pointer-events-none absolute top-[calc(1lh+2px)] h-0.75 w-[min(calc(100%-1.25rem),9rem)] rounded-full bg-accent-wash', end ? 'right-2.5' : 'left-2.5')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" className="fill-accent/50" /></svg>
             </Cell>;
-          })}</tr>)}</tbody>
+          })}</tr>)}
+              </tbody>
+            );
+          })}
         </table>
         {visible.length === 0 && <p className="px-2 py-4 text-center text-caption text-muted">No matching rows</p>}
         {/* Pinned over the last visible row (its negative margin adds no scroll height); it stays put when a wide table scrolls sideways. */}
@@ -173,8 +227,12 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           <ArrowDown aria-hidden="true" className="size-3.5 text-accent" />
         </button>}
       </section>
-      {(active.length > 0 || paginated) && <div className="flex items-center gap-2 pt-1 text-caption text-muted">
-        <span role="status">{paginated ? `${start + 1}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length} rows` : `${visible.length} of ${rows.length} rows`}{paginated && active.length > 0 ? ` (${rows.length} total)` : ''}</span>
+      {(active.length > 0 || paginated || groups) && <div className="flex items-center gap-2 pt-1 text-caption text-muted">
+        <span role="status">{groups
+          ? `${visible.length} ${visible.length === 1 ? 'row' : 'rows'} in ${groups.length} ${groups.length === 1 ? 'group' : 'groups'}${active.length > 0 ? ` (${rows.length} total)` : ''}${paginated ? `, page ${start / PAGE_SIZE + 1} of ${Math.ceil(lines.length / PAGE_SIZE)}` : ''}`
+          : `${paginated ? `${start + 1}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length} rows` : `${visible.length} of ${rows.length} rows`}${paginated && active.length > 0 ? ` (${rows.length} total)` : ''}`}</span>
+        {groups && <Button size="sm" onClick={() => { setFolded(folded.size < groups.length ? new Set(groups.map(g => g.key)) : new Set()); setPage(0); }}>{folded.size < groups.length ? 'Fold all' : 'Unfold all'}</Button>}
+        {groups && <Button size="sm" onClick={() => groupBy(null)}>Ungroup</Button>}
         {active.length > 0 && <Button size="sm" onClick={() => { setFilters({}); setPage(0); }}>Clear filters</Button>}
         {paginated && <div className="ml-auto flex gap-1"><Button size="icon" aria-label="Previous rows" disabled={start === 0} onClick={() => setPage(start / PAGE_SIZE - 1)}><ChevronLeft /></Button><Button size="icon" aria-label="Next rows" disabled={start + PAGE_SIZE >= visible.length} onClick={() => setPage(start / PAGE_SIZE + 1)}><ChevronRight /></Button></div>}
       </div>}
@@ -197,12 +255,18 @@ export function MarkdownTable({ children, streaming }: Readonly<{ children?: Rea
     const body = sections.find(section => section.type === 'tbody');
     const headers = elements(elements(head?.props.children)[0]?.props.children);
     if (!headers.length) return null;
+    const rows = elements(body?.props.children).map((row, id) => {
+      const cells = elements(row.props.children).map(cell => cell.props.children);
+      return { id, cells, values: cells.map(cell => cellText(cell).trim()) };
+    });
+    // A column of figures the author left unaligned is right-aligned, as a chart's table is: the digits line up.
+    const figures = (index: number) => {
+      const values = rows.map(row => row.values[index] ?? '').filter(Boolean);
+      return values.length > 0 && values.every(value => magnitude(value) !== null);
+    };
     return {
-      columns: headers.map((cell, index) => ({ name: cellText(cell.props.children).trim() || `Column ${index + 1}`, heading: cell.props.children, align: cell.props.style?.textAlign })),
-      rows: elements(body?.props.children).map((row, id) => {
-        const cells = elements(row.props.children).map(cell => cell.props.children);
-        return { id, cells, values: cells.map(cell => cellText(cell).trim()) };
-      }),
+      columns: headers.map((cell, index) => ({ name: cellText(cell.props.children).trim() || `Column ${index + 1}`, heading: cell.props.children, align: cell.props.style?.textAlign ?? (figures(index) ? 'right' as const : undefined) })),
+      rows,
     };
   }, [children, streaming]);
   // The bars are drawn inside a boundary: a throw while working them out shows today's plain table.

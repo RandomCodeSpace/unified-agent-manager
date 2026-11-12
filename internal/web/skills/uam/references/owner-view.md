@@ -6,7 +6,8 @@
   `uam_chart` charts and images a tool returns (a browser screenshot, up to
   5 MiB) stand outside the fold.
 - **Markdown** renders with GitHub extensions. A table becomes a sortable,
-  filterable table. Raw HTML and math do not render: write formulas as code.
+  filterable table the owner can group by a column. Raw HTML and math do
+  not render: write formulas as code.
 - **Rich blocks** come from exact Markdown shapes; uam renders them, the
   text stays Markdown, so never write HTML for them:
   - a GitHub alert (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
