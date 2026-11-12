@@ -40,12 +40,12 @@ func installedCLI() (string, os.FileInfo, error) {
 
 // sdkClientAt points the SDK at the CLI at path, retaining the user's login
 // and configuration. Disable shell history in the runtime and its children
-// and turn on the feature assisted permissions need, without changing the
+// and turn on the features assisted permissions and decisions need, without changing the
 // service environment or the manual web terminal. export adds the local
 // usage export; a client that runs no model leaves it out, so it creates no
 // export file.
 func sdkClientAt(path string, export bool) sdkClient {
-	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	env := append(withFeatureFlag(withFeatureFlag(os.Environ(), "AUTO_APPROVAL"), "DECISIONS_API"), "HISTFILE="+os.DevNull, "HISTSIZE=0")
 	env = withDefault(env, wsMaxAge, "15")
 	if owner := cliOwner(); owner != "" {
 		env = append(env, cliOwnerEnv+"="+owner)
@@ -83,10 +83,10 @@ func withDefault(env []string, key, value string) []string {
 // cliFeatureFlags lists the CLI's enabled feature flags, comma-separated.
 const cliFeatureFlags = "COPILOT_CLI_ENABLED_FEATURE_FLAGS"
 
-// withAutoApproval returns a copy of env whose CLI feature flags include
-// AUTO_APPROVAL, the CLI's gate for the assisted permission mode, added to
-// the flags env sets, if any.
-func withAutoApproval(env []string) []string {
+// withFeatureFlag returns a copy of env whose CLI feature flags include
+// flag, added to the flags env sets, if any. AUTO_APPROVAL is the CLI's gate
+// for the assisted permission mode, DECISIONS_API the one for decisions.ask.
+func withFeatureFlag(env []string, flag string) []string {
 	out := slices.Clone(env)
 	for i := len(out) - 1; i >= 0; i-- {
 		flags, ok := strings.CutPrefix(out[i], cliFeatureFlags+"=")
@@ -94,15 +94,15 @@ func withAutoApproval(env []string) []string {
 			continue
 		}
 		switch {
-		case slices.ContainsFunc(strings.Split(flags, ","), func(f string) bool { return strings.TrimSpace(f) == "AUTO_APPROVAL" }):
+		case slices.ContainsFunc(strings.Split(flags, ","), func(f string) bool { return strings.TrimSpace(f) == flag }):
 		case flags == "":
-			out[i] += "AUTO_APPROVAL"
+			out[i] += flag
 		default:
-			out[i] += ",AUTO_APPROVAL"
+			out[i] += "," + flag
 		}
 		return out
 	}
-	return append(out, cliFeatureFlags+"=AUTO_APPROVAL")
+	return append(out, cliFeatureFlags+"="+flag)
 }
 
 func resolveCopilot() (string, error) {

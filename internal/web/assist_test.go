@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -36,11 +35,17 @@ func newAssistProvider() *agenttest.Pager {
 	return prov
 }
 
-// utilityCalls counts the Utility calls made for purpose.
+// utilityCalls counts the Utility calls made for purpose, and the decisions
+// logged as it.
 func utilityCalls(prov *agenttest.Pager, purpose string) int {
 	n := 0
 	for _, r := range prov.UtilityRequests() {
 		if r.Purpose == purpose {
+			n++
+		}
+	}
+	for _, r := range prov.DecisionRequests() {
+		if "decision-"+r.Purpose == purpose {
 			n++
 		}
 	}
@@ -66,15 +71,15 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	st := openTestStore(t)
 	m, project := assistManager(t, st, prov)
 	release := make(chan struct{})
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose != suggestReplyLog {
-			return "", fmt.Errorf("no %s here", req.Purpose)
+	prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+		if req.Purpose != purposeSuggestReply {
+			return agentapi.DecisionAnswer{}, fmt.Errorf("no %s here", req.Purpose)
 		}
 		<-release
-		if !strings.Contains(req.Prompt, "make the test pass") || !strings.Contains(req.Prompt, "Fixed it. Shall I commit it?") || req.Model != "a" {
-			return "", fmt.Errorf("unexpected request %+v", req)
+		if !strings.Contains(req.Input, "make the test pass") || !strings.Contains(req.Input, "Fixed it. Shall I commit it?") {
+			return agentapi.DecisionAnswer{}, fmt.Errorf("unexpected request %+v", req)
 		}
-		return `<think>hm</think>{"choice":"yes"}`, nil
+		return agentapi.DecisionAnswer{Choice: "yes"}, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -148,7 +153,7 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":"fix-tests"}`, nil })
+	decides(prov, "fix-tests")
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -170,15 +175,11 @@ func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 		t.Fatalf("suggestion = %+v, %v", got, err)
 	}
 	want := "<user_message>\nalso lint\n</user_message>\n<agent_reply>\nFixed and linted. Want a commit?\n</agent_reply>"
-	for _, req := range prov.UtilityRequests() {
-		var prompt struct {
-			Input   string           `json:"input"`
-			Options []DecisionOption `json:"options"`
+	for _, req := range prov.DecisionRequests() {
+		if req.Input != want {
+			t.Errorf("evidence included more than the last user message and final reply: %q", req.Input)
 		}
-		if err := json.Unmarshal([]byte(req.Prompt), &prompt); err != nil || prompt.Input != want {
-			t.Errorf("prompt included more than the last user message and final reply: %q, %v", prompt.Input, err)
-		}
-		if ids := optionIDs(prompt.Options); !slices.Equal(ids, []string{"fix-tests", "yes", "no"}) {
+		if ids := optionIDs(req.Options); !slices.Equal(ids, []string{"fix-tests", "yes", "no"}) {
 			t.Errorf("options = %q", ids)
 		}
 	}
@@ -273,8 +274,8 @@ func TestSuggestionNeedsNoCallForOneCandidate(t *testing.T) {
 	finishTurn(prov.Last(), "run the tests", "Two tests fail.",
 		agentapi.Item{ID: "t1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"go test ./..."}`, Status: agentapi.ToolCompleted, ExitCode: codeOf(1)}})
 	got, err := m.SuggestReplies(context.Background(), sum.ID)
-	if err != nil || !slices.Equal(got.Replies, []string{"Fix the failing tests"}) || len(prov.UtilityRequests()) != 0 {
-		t.Fatalf("suggestion = %+v, %v after %d calls", got, err, len(prov.UtilityRequests()))
+	if err != nil || !slices.Equal(got.Replies, []string{"Fix the failing tests"}) || len(prov.DecisionRequests()) != 0 {
+		t.Fatalf("suggestion = %+v, %v after %d calls", got, err, len(prov.DecisionRequests()))
 	}
 }
 
@@ -292,8 +293,8 @@ func TestSuggestionNoneWithoutCandidates(t *testing.T) {
 			t.Fatalf("suggestion = %+v, %v", got, err)
 		}
 	}
-	if n := len(prov.UtilityRequests()) + len(m.UtilityLog(0, 10).Calls); n != 0 {
-		t.Fatalf("%d Utility calls", n)
+	if n := len(prov.DecisionRequests()) + len(m.UtilityLog(0, 10).Calls); n != 0 {
+		t.Fatalf("%d decision calls", n)
 	}
 }
 
@@ -301,7 +302,7 @@ func TestSuggestionNoneWithoutCandidates(t *testing.T) {
 func TestSuggestionAbstainShowsNothingAndIsKept(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":null}`, nil })
+	decides(prov, "")
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)
@@ -327,14 +328,11 @@ func TestSuggestionReadsTheFolderUnsavedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := addProject(t, m, gitRepoFixture(t))
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		var prompt struct {
-			Options []DecisionOption `json:"options"`
+	prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+		if !slices.Equal(optionIDs(req.Options), []string{"commit", "run-tests"}) {
+			return agentapi.DecisionAnswer{}, fmt.Errorf("options %q", optionIDs(req.Options))
 		}
-		if err := json.Unmarshal([]byte(req.Prompt), &prompt); err != nil || !slices.Equal(optionIDs(prompt.Options), []string{"commit", "run-tests"}) {
-			return "", fmt.Errorf("options %q, %v", optionIDs(prompt.Options), err)
-		}
-		return `{"choice":"commit"}`, nil
+		return agentapi.DecisionAnswer{Choice: "commit"}, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -563,7 +561,7 @@ func TestExportHoldsTheWholeRecord(t *testing.T) {
 func TestAssistPastTheUtilityLimit(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":"no"}`, nil })
+	decides(prov, "no")
 	zero := 0
 	limit := &zero
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
@@ -601,7 +599,7 @@ func TestPausedSuggestionsAreLoggedOnce(t *testing.T) {
 	t.Cleanup(func() { uamlog.SetLogger(previous) })
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return `{"choice":"yes"}`, nil })
+	decides(prov, "yes")
 	zero := 0
 	limit := &zero
 	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {

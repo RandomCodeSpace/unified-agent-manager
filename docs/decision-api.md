@@ -1,8 +1,10 @@
 # Internal decision API
 
 `Manager.Decide(ctx, DecisionRequest)` selects one caller-supplied option or
-returns an explicit abstention. It makes one call to the configured Utility
-model. It does not require a specialized decision model.
+returns an explicit abstention. It makes one call to a provider's decision
+model: for Copilot, `decisions.ask` on the account's default decision model
+(`gpt-6-luna-decisions` when this was written). The Utility model is not used,
+and there is no fallback to it: without a decision model the call fails.
 
 ```go
 result, err := manager.Decide(ctx, web.DecisionRequest{
@@ -20,8 +22,8 @@ Check `err` before using the result. On success, `result.Choice` contains one
 allowed ID, or `result.Abstained` is true. Errors return an empty result.
 `errors.Is(err, web.ErrInvalidDecision)` identifies unusable model output.
 Provider and context errors retain their identity through error wrapping.
-Utility unavailability and budget/purpose pauses retain UAM's existing error
-codes. The function is an internal Go API with no HTTP route.
+A missing decision model reports `utility_unavailable`, and budget/purpose
+pauses retain UAM's existing error codes. The function is an internal Go API with no HTTP route.
 
 Callers:
 - `suggest-reply` (`assist.go`) picks the suggested reply when more than one
@@ -43,28 +45,26 @@ Callers:
   without inference. Empty evidence passed to `Decide` is an input error.
 - `TaskID`, when it names a Thread, puts that Thread and its Project on the
   call's Utility log entry, as other Thread jobs have.
-- Supply 2 to 32 options. IDs are unique, 1 to 64 ASCII letters, digits,
+- Supply 2 to 10 options, the most the decision model takes in one question. IDs are unique, 1 to 64 ASCII letters, digits,
   underscores or hyphens, starting with a letter or digit. Descriptions are
   nonempty UTF-8 text of at most 512 bytes. Purposes are 1 to 48 lowercase
   letters, digits or hyphens, starting with a letter.
-- The model is asked for exactly `{"choice":"allowed-id"}` or
-  `{"choice":null}`. The answer is read like other Utility jobs: `<think>`
-  blocks, a preamble or a code fence are tolerated; unknown keys, a second
-  object, trailing prose, refusals, invalid UTF-8, and answers exceeding 2,048
-  bytes are rejected. Only an allowed ID or null is accepted. A valid
-  abstention is a successful answer.
-- The request also carries a closed JSON Schema (`choice` is one of the option
-  IDs or null, no other keys), which the Copilot provider sends as a strict
-  `json_schema` response format. The schema is a hint: the answer is still
-  validated as above. Custom (BYOM) models get no schema, since their
-  endpoints were not probed for it, and rely on the prompt alone.
-- The API calls the selected Utility provider at most once. It adds no retry
-  or alternate-model fallback. The existing Utility model selection and
-  explicit opt-out remain authoritative. Compatibility means models runnable
-  through UAM's configured `UtilityRunner`, including supported BYOM models.
-- Calls are tool-free and use the provider's restricted throwaway conversation.
-  UAM retains ownership of credentials, two shared Utility slots, daily budgets,
-  usage accounting, invalid-answer pauses, cancellation, and shutdown cleanup.
+- The provider (`agentapi.DecisionRunner`) sends one request with the input as
+  its context and two questions. A choice question picks among the options; it
+  always picks one, so a yes/no question asks whether the evidence shows that
+  any option fits. The answer abstains unless that is at least 0.5 likely and
+  one option leads: a tie, a refused question or a missing answer abstains.
+  Only an allowed ID or an abstention is accepted. A valid abstention is a
+  successful answer.
+- The decision model returns probabilities, not text, so there is no reply to
+  parse and no output tokens. Custom (BYOM) models cannot answer decisions.
+- The API calls the first available provider with a decision model at most
+  once. It adds no retry or alternate-model fallback. The Copilot CLI offers
+  `decisions.ask` behind its `DECISIONS_API` feature flag, which UAM turns on
+  when it starts the CLI; a CLI without it fails the call.
+- Calls have no conversation and no tools. UAM retains ownership of two shared
+  Utility slots, the Background AI daily limit, usage accounting,
+  invalid-answer pauses, cancellation, and shutdown cleanup.
 - A 45-second deadline (assistTimeout) covers slot waiting and inference,
   shortened by the caller's deadline. Provider cleanup can extend past it.
   Cancellation before inference does not become a successful decision, even
@@ -124,8 +124,13 @@ go test ./internal/web -run '^TestDecision' -count=1
 go test -race ./internal/web -run '^TestDecision' -count=1
 ```
 
-These tests use UAM's fake Utility provider. They cover strict output validation,
-input rejection, configured model changes, usage accounting, single-call failures,
-independent purpose pauses, valid abstentions, settings gates, slot waiting,
-cancellation, deadlines, and shutdown waiting for provider cleanup. They do not
-establish live model compatibility, semantic accuracy, or production latency.
+These tests use UAM's fake provider. They cover answer validation, input
+rejection, usage accounting, single-call failures, independent purpose pauses,
+valid abstentions, settings gates, slot waiting, cancellation, deadlines, and
+shutdown waiting for provider cleanup. `go test ./internal/adapter/copilot -run
+'^TestRunDecision'` covers the request sent and how its answers are read.
+
+`UAM_DECISION_LIVE_PROBE=1 go test ./internal/web -run '^TestDecisionLiveProbe$' -v`
+asks the signed-in account's real decision model nine questions (six with clear
+evidence, three with none, one of them a planted instruction). On 2026-11-12
+all nine were right at about 600 ms and 410 input tokens each.

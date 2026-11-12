@@ -23,40 +23,42 @@ type Provider struct {
 	display string
 	caps    agentapi.Capabilities
 
-	mu          sync.Mutex
-	checkErr    error
-	openErr     error
-	setModelErr error
-	models      []agentapi.Model
-	modelsErr   error
-	modelsCalls int
-	commands    []agentapi.Command
-	commandsErr error
-	quotas      []agentapi.Quota
-	quotaErr    error
-	quotaCalls  int
-	titleHook   func(ctx context.Context, req agentapi.TitleRequest) (string, error)
-	titles      []agentapi.TitleRequest
-	utilityHook func(ctx context.Context, req agentapi.UtilityRequest) (string, error)
-	utilities   []agentapi.UtilityRequest
-	known       map[string]agentapi.History
-	convs       []*Conversation
-	opens       []agentapi.OpenRequest
-	shutdowns   int
-	nextID      int
-	opened      chan *Conversation
-	readHook    func(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error)
-	reads       []agentapi.ReadRequest
-	windowHook  func(ctx context.Context, req agentapi.WindowRequest) error
-	windows     []agentapi.WindowRequest
-	subReads    []agentapi.SubagentRequest
-	previous    []agentapi.PreviousConversation
-	previousErr error
-	listDirs    []string
-	inUse       []string
-	inUseErr    error
-	inUseChecks [][]string
-	inUseHook   func(context.Context, []string) ([]string, error)
+	mu           sync.Mutex
+	checkErr     error
+	openErr      error
+	setModelErr  error
+	models       []agentapi.Model
+	modelsErr    error
+	modelsCalls  int
+	commands     []agentapi.Command
+	commandsErr  error
+	quotas       []agentapi.Quota
+	quotaErr     error
+	quotaCalls   int
+	titleHook    func(ctx context.Context, req agentapi.TitleRequest) (string, error)
+	titles       []agentapi.TitleRequest
+	utilityHook  func(ctx context.Context, req agentapi.UtilityRequest) (string, error)
+	utilities    []agentapi.UtilityRequest
+	decisionHook func(ctx context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error)
+	decisions    []agentapi.DecisionRequest
+	known        map[string]agentapi.History
+	convs        []*Conversation
+	opens        []agentapi.OpenRequest
+	shutdowns    int
+	nextID       int
+	opened       chan *Conversation
+	readHook     func(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error)
+	reads        []agentapi.ReadRequest
+	windowHook   func(ctx context.Context, req agentapi.WindowRequest) error
+	windows      []agentapi.WindowRequest
+	subReads     []agentapi.SubagentRequest
+	previous     []agentapi.PreviousConversation
+	previousErr  error
+	listDirs     []string
+	inUse        []string
+	inUseErr     error
+	inUseChecks  [][]string
+	inUseHook    func(context.Context, []string) ([]string, error)
 }
 
 // NewProvider returns a fake provider with the given name and capabilities.
@@ -170,6 +172,32 @@ func (p *Provider) UtilityRequests() []agentapi.UtilityRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]agentapi.UtilityRequest(nil), p.utilities...)
+}
+
+// SetDecisionHook decides how RunDecision behaves; the hook plays the
+// decision model. Without a hook RunDecision fails.
+func (p *Provider) SetDecisionHook(hook func(ctx context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.decisionHook = hook
+}
+
+func (p *Provider) RunDecision(ctx context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+	p.mu.Lock()
+	p.decisions = append(p.decisions, req)
+	hook := p.decisionHook
+	p.mu.Unlock()
+	if hook == nil {
+		return agentapi.DecisionAnswer{}, fmt.Errorf("fake %s has no decision hook", p.name)
+	}
+	return hook(ctx, req)
+}
+
+// DecisionRequests returns every RunDecision call, oldest first.
+func (p *Provider) DecisionRequests() []agentapi.DecisionRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.DecisionRequest(nil), p.decisions...)
 }
 
 // SetCommands decides what every conversation's Commands returns.

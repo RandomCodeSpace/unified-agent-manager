@@ -126,9 +126,7 @@ func TestCompletionBoundsReleaseOversizedBacking(t *testing.T) {
 func TestCompletionNoticePreservesSuggestedReplies(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		return `{"choice":"yes"}`, nil
-	})
+	decides(prov, "yes")
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
 		t.Fatal(err)

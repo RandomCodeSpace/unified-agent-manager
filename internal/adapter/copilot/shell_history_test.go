@@ -230,12 +230,12 @@ func TestSDKCLIEnvironmentEnablesAutoApproval(t *testing.T) {
 		"AUTO_APPROVAL,FOO":     "AUTO_APPROVAL,FOO",
 		"FOO, AUTO_APPROVAL ,X": "FOO, AUTO_APPROVAL ,X",
 	} {
-		env := withAutoApproval([]string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=" + inherited})
+		env := withFeatureFlag([]string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=" + inherited}, "AUTO_APPROVAL")
 		if !slices.Equal(env, []string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=" + want}) {
 			t.Errorf("flags %q: env = %q", inherited, env)
 		}
 	}
-	if env := withAutoApproval([]string{"UAM_TEST_KEEP=inherited"}); !slices.Equal(env, []string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=AUTO_APPROVAL"}) {
+	if env := withFeatureFlag(withFeatureFlag([]string{"UAM_TEST_KEEP=inherited"}, "AUTO_APPROVAL"), "DECISIONS_API"); !slices.Equal(env, []string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=AUTO_APPROVAL,DECISIONS_API"}) {
 		t.Errorf("unset flags: env = %q", env)
 	}
 
@@ -266,7 +266,7 @@ func TestSDKCLIEnvironmentEnablesAutoApproval(t *testing.T) {
 		t.Fatal("stub unexpectedly completed the SDK handshake")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "environment"))
-	if want := "AHP_CLIENT,AUTO_APPROVAL\ninherited\n"; err != nil || string(data) != want {
+	if want := "AHP_CLIENT,AUTO_APPROVAL,DECISIONS_API\ninherited\n"; err != nil || string(data) != want {
 		t.Fatalf("child environment = %q, %v; want %q", data, err, want)
 	}
 	if os.Getenv("COPILOT_CLI_ENABLED_FEATURE_FLAGS") != "AHP_CLIENT" {

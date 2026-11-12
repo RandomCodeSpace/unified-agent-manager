@@ -104,7 +104,7 @@ func labelGitLabJob(summary *GitLabItemSummary, f *store.WebGitLabFailure) {
 
 // readGitLabJobFailureOnce answers from the receipt of the job's commit, or
 // reads the job and saves what it found there. A log the patterns miss goes
-// to the Utility model, in the background. nil while GitLab rate limits.
+// to the decision model, in the background. nil while GitLab rate limits.
 func (m *Manager) readGitLabJobFailureOnce(ctx context.Context, gate glabGate, projectID int64, itemKey string, job *gitLabProjectJob) *store.WebGitLabFailure {
 	key := gitLabCommitKey(gate.Host, gate.Path, job.sha)
 	cfg, err := m.store.Load()
@@ -130,7 +130,7 @@ func (m *Manager) readGitLabJobFailureOnce(ctx context.Context, gate glabGate, p
 	return &f
 }
 
-// gitLabFailureOptions are the kinds the Utility model picks from for a log
+// gitLabFailureOptions are the kinds the decision model picks from for a log
 // the patterns miss; "other" gets no label.
 var gitLabFailureOptions = []DecisionOption{
 	{ID: "tests", Description: "Automated tests ran and some failed"},
@@ -143,7 +143,7 @@ var gitLabFailureOptions = []DecisionOption{
 	{ID: "other", Description: "The log shows a failure that fits none of the other options"},
 }
 
-// startGitLabFailureDecision asks the Utility model what a job failed on,
+// startGitLabFailureDecision asks the decision model what a job failed on,
 // from its name, stage and the last 8 KB of its log, without holding up
 // GitLab reads. Shutdown waits for it. The caller holds gitlab.work.
 func (m *Manager) startGitLabFailureDecision(itemKey, commitKey string, tracked bool, job GitLabJob, tail string) {

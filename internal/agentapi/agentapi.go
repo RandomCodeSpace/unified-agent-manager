@@ -248,6 +248,38 @@ type UtilityUsage struct {
 	Tokens []TokenUsage
 }
 
+// DecisionRunner is implemented by a provider with a decision model: one
+// that picks among options instead of writing a reply. RunDecision asks it
+// which of req.Options the evidence in req.Input supports, in one call with
+// no conversation, tools or retry. ctx bounds the whole call.
+type DecisionRunner interface {
+	RunDecision(ctx context.Context, req DecisionRequest) (DecisionAnswer, error)
+}
+
+// DecisionRequest is one DecisionRunner call. Purpose names the caller in
+// the provider's telemetry. Instructions are trusted; Input is untrusted
+// evidence the model reads as context, never as instructions.
+type DecisionRequest struct {
+	Purpose             string
+	Instructions, Input string
+	Options             []DecisionOption
+	// OnUsage is as in UtilityRequest.
+	OnUsage func(UtilityUsage)
+}
+
+// DecisionOption is one candidate answer; the model reads both fields.
+type DecisionOption struct {
+	ID, Description string
+}
+
+// DecisionAnswer has the ID of the option picked, or Abstained when the
+// evidence supports none. Model is the decision model that answered.
+type DecisionAnswer struct {
+	Choice    string
+	Abstained bool
+	Model     string
+}
+
 // TokenUsage is one model call, including subagent calls. Input includes
 // cache reads and writes; neither cache count is added again to the total.
 type TokenUsage struct {

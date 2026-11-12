@@ -28,11 +28,11 @@ func TestGitLabFailureTheRegexesMissIsDecidedOnce(t *testing.T) {
 	if err := f.m.recordGitLabCommit(t.Context(), f.id, sha, "main"); err != nil {
 		t.Fatal(err)
 	}
-	f.prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if strings.Contains(req.Prompt, "Job: odd") {
-			return `{"choice":"typecheck"}`, nil
+	f.prov.SetDecisionHook(func(_ context.Context, req agentapi.DecisionRequest) (agentapi.DecisionAnswer, error) {
+		if strings.Contains(req.Input, "Job: odd") {
+			return agentapi.DecisionAnswer{Choice: "typecheck"}, nil
 		}
-		return `{"choice":null}`, nil
+		return agentapi.DecisionAnswer{Abstained: true}, nil
 	})
 	at := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
 	f.m.now = func() time.Time { return at }
@@ -42,13 +42,13 @@ func TestGitLabFailureTheRegexesMissIsDecidedOnce(t *testing.T) {
 		t.Fatalf("first read = %+v, %v", items, err)
 	}
 	f.m.titles.Wait()
-	reqs := f.prov.UtilityRequests()
+	reqs := f.prov.DecisionRequests()
 	if len(reqs) != 2 {
-		t.Fatalf("utility calls = %d, want one per job the patterns missed", len(reqs))
+		t.Fatalf("decision calls = %d, want one per job the patterns missed", len(reqs))
 	}
 	for _, req := range reqs {
-		if req.Purpose != "decision-ci-failure-kind" || !strings.Contains(req.Prompt, `Stage: verify`) || strings.Contains(req.Prompt, "EARLY-MARKER") || len(req.Prompt) > 12<<10 {
-			t.Fatalf("decision request = %q, %d prompt bytes", req.Purpose, len(req.Prompt))
+		if req.Purpose != "ci-failure-kind" || !strings.Contains(req.Input, `Stage: verify`) || strings.Contains(req.Input, "EARLY-MARKER") || len(req.Input) > 12<<10 {
+			t.Fatalf("decision request = %q, %d evidence bytes", req.Purpose, len(req.Input))
 		}
 	}
 	// The cached read shows the decision at once; an abstention shows nothing.
@@ -72,8 +72,8 @@ func TestGitLabFailureTheRegexesMissIsDecidedOnce(t *testing.T) {
 	at = at.Add(gitLabItemTTL)
 	items, err = f.m.gitLabItems(t.Context(), f.id, refs)
 	f.m.titles.Wait()
-	if err != nil || items[0].FailureKind != "Type check failed" || len(f.prov.UtilityRequests()) != 2 {
-		t.Fatalf("after restart = %+v, %v, %d calls", items[0], err, len(f.prov.UtilityRequests()))
+	if err != nil || items[0].FailureKind != "Type check failed" || len(f.prov.DecisionRequests()) != 2 {
+		t.Fatalf("after restart = %+v, %v, %d calls", items[0], err, len(f.prov.DecisionRequests()))
 	}
 }
 

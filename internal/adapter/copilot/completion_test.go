@@ -105,7 +105,7 @@ func TestCompletionBoundsAndReplay(t *testing.T) {
 	auto.IsAutopilotContinuation = copilot.Bool(true)
 	d := completeData(copilot.Bool(true), "completed", strings.Repeat("界", 500))
 	d.Reason = copilot.String(strings.Repeat("r", 500))
-	d.Blocker = &rpc.TaskBlocker{Kind: rpc.TaskBlockerKind(strings.Repeat("k", 100)), Reason: rpc.PermissionRecoveryReason(strings.Repeat("r", 100))}
+	d.Blocker = &rpc.TaskBlocker{Kind: rpc.TaskBlockerKind(strings.Repeat("k", 100)), Reason: rpc.TaskBlockerReason(strings.Repeat("r", 100))}
 	journal := []copilot.SessionEvent{ev("user-native", main), completionEvent("steer", "user-native", steer), completionEvent("auto", "steer", auto), agentEv("child-user", "child", userMessage("child-message", rpc.UserMessageDeliveryIdle, "child")), agentEv("child-complete", "child", d), completionEvent("main-complete", "auto", d)}
 	var live []agentapi.Item
 	tr := newTranscript()
@@ -173,7 +173,7 @@ func TestCompletionBoundsReleaseOversizedBacking(t *testing.T) {
 				large := "fact" + strings.Repeat(tc.unit, 1<<20)
 				d := completeData(copilot.Bool(true), "completed", large)
 				d.Reason = copilot.String(large)
-				d.Blocker = &rpc.TaskBlocker{Kind: rpc.TaskBlockerKind(large), Reason: rpc.PermissionRecoveryReason(large)}
+				d.Blocker = &rpc.TaskBlocker{Kind: rpc.TaskBlockerKind(large), Reason: rpc.TaskBlockerReason(large)}
 				return newTranscript().completion(ev("receipt", d), d)
 			}()
 			runtime.GC()
@@ -441,7 +441,7 @@ func TestCompletionNoticeFactsAreLiteralAndBounded(t *testing.T) {
 		t.Fatalf("literal facts=%q", it.Text)
 	}
 	d.Summary, d.Reason = copilot.String(strings.Repeat("`", 1000)), copilot.String(strings.Repeat("`", 1000))
-	d.Blocker.Kind, d.Blocker.Reason = rpc.TaskBlockerKind(strings.Repeat("`", 1000)), rpc.PermissionRecoveryReason(strings.Repeat("`", 1000))
+	d.Blocker.Kind, d.Blocker.Reason = rpc.TaskBlockerKind(strings.Repeat("`", 1000)), rpc.TaskBlockerReason(strings.Repeat("`", 1000))
 	if text := newTranscript().items(ev("max", d))[0].Text; len(text) > 3072 {
 		t.Fatalf("notice bytes=%d", len(text))
 	}

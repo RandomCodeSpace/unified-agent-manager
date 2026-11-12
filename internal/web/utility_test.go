@@ -116,34 +116,15 @@ func TestUtilityCallsAreLoggedAndCapped(t *testing.T) {
 // system message and its prompt, for every purpose alike.
 func TestUtilityPromptSizeIsSystemAndPrompt(t *testing.T) {
 	prov := newAssistProvider()
-	m, project := assistManager(t, openTestStore(t), prov)
-	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t", Model: "a"})
-	if err != nil {
+	m, _ := assistManager(t, openTestStore(t), prov)
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "ok", nil })
+	req := agentapi.UtilityRequest{Model: "a", Purpose: "probe", System: "Règle: answer briefly.", Prompt: "état"}
+	if _, err := m.runUtilityRequest(context.Background(), UtilityCall{Purpose: req.Purpose, Provider: "fake", Model: req.Model}, prov, req); err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "fix the test", "Fixed it. Commit it?")
-	if _, err := m.SuggestReplies(context.Background(), sum.ID); err != nil {
-		t.Fatal(err)
+	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Purpose != "probe" || c.PromptChars != utf8.RuneCountInString(req.System+req.Prompt) {
+		t.Fatalf("logged call = %+v", c)
 	}
-	waitUntil(t, "the suggested reply call", func() bool { return utilityCalls(prov, suggestReplyLog) == 1 })
-	var req agentapi.UtilityRequest
-	for _, r := range prov.UtilityRequests() {
-		if r.Purpose == suggestReplyLog {
-			req = r
-		}
-	}
-	if req.System == "" {
-		t.Fatal("the request has no system message")
-	}
-	want := utf8.RuneCountInString(req.System + req.Prompt)
-	waitUntil(t, "the logged call", func() bool {
-		for _, c := range m.UtilityLog(0, utilityPage).Calls {
-			if c.Purpose == suggestReplyLog && c.TaskID == sum.ID {
-				return c.PromptChars == want
-			}
-		}
-		return false
-	})
 }
 
 // Rewriting the log never writes through a file planted where a fixed
