@@ -19,7 +19,6 @@ import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
-import { InSettingsLine, Setting } from './notebook/SettingsLine';
 import { PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
 import { DrawingChips } from './Drawing';
@@ -1830,8 +1829,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Tip>
           </>
         )}
-        {/* In the notebook layout the settings controls stand in the header's line, each behind its name (notebook/SettingsLine); this row keeps Attach and the actions. */}
-        <InSettingsLine>
         {catalogPending ? (
           // One bar in the pickers' 28px height with the delayed Loading line over it, so the row keeps its height and
           // the composer does not move when the catalogs land. It grows from no width to 192px, so it never folds or wraps the row.
@@ -1849,7 +1846,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </button>
           </Tip>
         ) : (
-        <Setting label="Model">
         <Picker
           id="composer-model"
           icon={<ModelIcon model={subagent ? subagent.model ?? '' : selection.model} fallback={<Cpu aria-hidden="true" className="text-faint" />} />}
@@ -1871,7 +1867,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           lock={!!subagent}
           onChange={(v) => void settings({ model: v })}
         />
-        </Setting>
         )}
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
         <ComposerTools
@@ -1885,7 +1880,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           styleReason={newTask ? undefined : 'Fixed when the Thread started.'}
         />
         {!settledRow && <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />}
-        {!settledRow && <Setting label="Effort and context" className="max-sm:hidden">{subagent ? (
+        {!settledRow && (subagent ? (
           <Tip label={<>{`Effort: ${effortLabel(subagent.effort)}`}<span className="block text-on-primary/70">{SPAWNED}</span></>}>
             <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort: ${effortLabel(subagent.effort)}. Locked. ${SPAWNED}`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
@@ -1912,10 +1907,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Tip>
             <Menu.Content side="top" align="start" className={PHONE_PICKER}>{tuningItems}</Menu.Content>
           </Menu.Root>
-        )}</Setting>}
+        ))}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
-        <Setting label="Mode" className="max-sm:hidden">
         {subagent ? (
           <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">Inherited from the Thread. Change it in the Thread&rsquo;s composer.</span></>}>
             <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}, inherited from the Thread. Locked.`} className="text-body aria-disabled:cursor-default aria-disabled:opacity-100 max-sm:hidden">
@@ -1947,8 +1941,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Menu.Content>
           </Menu.Root>
         )}
-        </Setting>
-        {!newTask && !subagent && <Setting label="Background"><BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} onOutput={onCommandOutput} /></Setting>}
+        {!newTask && !subagent && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} onOutput={onCommandOutput} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">
@@ -1972,17 +1965,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         )}
           </>
         )}
-        </InSettingsLine>
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
         {/* The branch and the time split ride with them; once the row has wrapped, the branch's name gives way. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:min-w-0 in-data-[fold~=wrap]:shrink">
         {project && !newTask && (
-          <InSettingsLine>
           <span data-composer-foot="" className="flex min-w-0 items-center gap-1 empty:hidden *:data-place:max-w-48">
-            <Setting label="Branch"><PlaceFoot session={session} project={project} /></Setting>
-            <Setting label="Time"><TimeSplitSummary session={session} /></Setting>
+            <PlaceFoot session={session} project={project} />
+            <TimeSplitSummary session={session} />
           </span>
-          </InSettingsLine>
         )}
         <span className="flex shrink-0 items-center gap-0.5">
         {/* Saving a setting is words: the Task's state glyph is the one ring. */}

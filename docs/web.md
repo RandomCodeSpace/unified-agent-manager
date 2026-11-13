@@ -1274,7 +1274,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Opening another preview or switching Threads discards the old preview and
   cancels its pending read.
 - **Declared files**: `uam_show_file` records a file reference and optional
-  title. Its tool call folds into the turn's activity in both layouts;
+  title. Its tool call folds into the turn's activity;
   the conversation's inline file link opens the preview without a separate
   card. Opening a file still checks current availability, and temporary
   files require an explicit grant. Declaration metadata does not grant access.
@@ -2726,11 +2726,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     waiting it says "Nothing needs you." Without a Project it says
     "Start with a project" and offers **Add project**. Settings → This browser →
     Theme picks Light, Dark or Match system (the default, which follows the
-    OS as it changes); the choice is kept per browser. Interface, on the same
-    page, picks Current or Notebook (beta), also per browser: Notebook shows a
-    Thread's turns as numbered cells with the running turn's work beside the
-    reply, and your other active Threads in the left column, answerable there.
-    Both show the same Threads and offer the same controls.
+    OS as it changes); the choice is kept per browser.
 
 States shown for each session:
 

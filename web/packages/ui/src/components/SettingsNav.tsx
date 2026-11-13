@@ -43,7 +43,7 @@ export const SETTINGS_GROUPS = [
     { id: 'session-stats', label: 'Session stats', blurb: 'Counts from every Copilot session, to screenshot and share.', keywords: 'stats statistics usage counts sessions history prompts turns tools failures errors permissions stops screenshot feedback' },
   ] },
   { label: 'This browser', scope: 'browser', pages: [
-    { id: 'browser', label: 'Appearance & alerts', blurb: 'Notifications, theme, interface and motion.', keywords: 'theme dark light system interface layout notebook beta current cells motion animation reduced notifications notify push alerts' },
+    { id: 'browser', label: 'Appearance & alerts', blurb: 'Notifications, theme and motion.', keywords: 'theme dark light system motion animation reduced notifications notify push alerts' },
   ] },
 ] as const satisfies readonly { label: string; scope: SettingsScope; pages: readonly { id: string; label: string; blurb: string; keywords: string }[] }[];
 

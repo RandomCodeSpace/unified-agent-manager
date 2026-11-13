@@ -11,8 +11,6 @@ import { localHints } from '../lib/fileReferences';
 import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { useLayout } from '../lib/layout';
-import type { Turn as ThreadTurn } from '../lib/turns';
 import { formatCount, lineCountsText } from '../lib/cost';
 import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
@@ -30,7 +28,6 @@ import { LiveSubagents, SubagentChip, SubagentTag, useLiveSubagentIds, useScope,
 import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
-import { Cell, type CellParts } from './notebook/Cell';
 import { PlanNotice } from './Plan';
 import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
 import { Blocks, type Block } from './ui/blocks';
@@ -59,8 +56,6 @@ interface Props {
   liveItems?: Item[];
   historyItemSeq?: Record<string, number>;
   turnTimings?: TurnTiming[];
-  /** The Thread's turns (lib/turns `threadTurns`): the notebook layout's cells take their number and their state word from it, as its list of turns does. */
-  turns?: readonly ThreadTurn[];
   planVersion?: number;
   planAvailable?: boolean;
   /** The provider's scratch plan file; its edits are not the turn's changed files. */
@@ -138,11 +133,8 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line, and plain rows at the foot while one runs;
  * the chip and each row open the strip's sheet.
  */
-export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], turns, interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenThreadChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export const Transcript = memo(function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenThreadChanges, readersActive = true, readerGeneration = '', changedLine = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
-  // The notebook layout (lib/layout) stands each turn of the main conversation in a cell; a subagent's transcript keeps today's rows.
-  const cells = useLayout() === 'notebook' && !agentId;
-  const turnOf = useMemo(() => new Map(turns?.map((turn) => [turn.key, turn])), [turns]);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
   const inline = !agentId && subagents.length > 0;
@@ -181,19 +173,6 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
   let ownMessage = false;
   let footLive = live;
-  // The turn's message, held for its cell (the current layout puts it straight in the rows).
-  let prompt: ReactNode = null;
-  // The foot of the live tail: the head of a turn with nothing in it yet, and the step in progress.
-  // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
-  const foot = () => {
-    const step = working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
-    // A streaming thought is the strip's "Thinking" and its peek: the foot shows only a running call.
-    const current = step?.item?.kind === 'tool' && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
-    return {
-      status: working && !showedWorking && <TurnStatus working timing={turnTimings.at(-1)?.state === 'working' ? turnTimings.at(-1) : undefined} />,
-      tail: <WorkingTail working={working} turnId={userItemId ?? 'start'} current={current} />,
-    };
-  };
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
     // A turn that ended is over, also while the next one starts before its message lands: it keeps its
@@ -205,17 +184,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const begunSince = (entry: Entry) => !!entry.item && !(Date.parse(entry.item.time) < ended);
     const open = !(timing?.ended_at || cut) || group.some(begunSince);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live: live && open });
-    const runs = last && working && open;
-    // How the turn's parts stand: in a cell in the notebook layout, with its message and, on the last one, the foot.
-    // What came before any message is no turn, and stays the full-width rows it is.
-    const cell = (): CellParts | undefined => (cells && userItemId ? { number: turnOf.get(userItemId)?.number, word: turnOf.get(userItemId)?.word, timing, prompt, live: last && liveCard, ...(last && foot()) } : undefined);
     if (!group.length) {
-      const status = showEnd ? <TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} /> : null;
-      const parts = cell();
-      // A cell for a turn with nothing in it: its message, the status of one that ended so, or the last one's foot.
-      if (parts && (status || prompt || last)) out.push(<TurnShell key={`cell-${userItemId}`} replyKey={userItemId!} head={status} cell={parts} />);
-      else if (!parts && status) out.push(status);
-      prompt = null;
+      if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
     }
     let refs: Item[] | undefined;
@@ -229,6 +199,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && begunSince(entry));
     const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
     if (last) footLive = groupLive;
+    const runs = last && working && open;
     if (runs) showedWorking = true;
     // One status row heads the turn and keeps its slot while it runs, so "Took 12s" lands there
     // at the end and streamed content lands below it: nothing on screen moves at either moment.
@@ -248,10 +219,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // The live rows show every one of them under their own chip: its chip waits until they leave. Every call has spawned one
     // they show (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
     const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
-    const parts = cell();
-    prompt = null;
     out.push(
-      <TurnShell key={parts ? `cell-${userItemId}` : `turn-${id}`} replyKey={userItemId ?? 'start'} cell={parts} head={
+      <TurnShell key={`turn-${id}`} replyKey={userItemId ?? 'start'} head={
         runs || showEnd || summary.count > 0 || spawned.length > 0 || replyEnd || edits ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} at={timing?.ended_at ?? replyEnd?.at} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} replyKey={userItemId ?? 'start'} tones={tones} reply={replyEnd ? lastReply : undefined} end={replyEnd} edits={edits} gitlab={refs} /> : null
       }>
         <SubagentLinkContext.Provider value={subagentLinker(spawned)}>{renderCompact(group, gctx, product, own, userItemId && replied.get(userItemId))}</SubagentLinkContext.Provider>
@@ -267,21 +236,20 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     flush();
     userItemId = entry.item.id;
     ownMessage = true;
-    const bubble = contained(entry.item, <UserBubble item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} peer={agentId ? undefined : peers.get(entry.item.id)} />);
-    if (cells) prompt = bubble;
-    else out.push(bubble);
+    out.push(contained(entry.item, <UserBubble item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} peer={agentId ? undefined : peers.get(entry.item.id)} />));
   });
   flush(true);
-  // The last turn's cell holds the foot; without one (the current layout, or nothing but what came before any message) it follows the rows.
-  const after = cells && userItemId ? null : foot();
+  // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
+  const step = working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
+  // A streaming thought is the strip's "Thinking" and its peek: the foot shows only a running call.
+  const current = step?.item?.kind === 'tool' && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
-        {after?.status}
-        {/* The notebook layout's live card shows the subagents at work (one home per fact). */}
-        {inline && liveCard && !cells && <LiveSubagents />}
-        {after?.tail}
+        {working && !showedWorking && <TurnStatus working timing={turnTimings.at(-1)?.state === 'working' ? turnTimings.at(-1) : undefined} />}
+        {inline && liveCard && <LiveSubagents />}
+        <WorkingTail working={working} turnId={userItemId ?? 'start'} current={current} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -362,19 +330,13 @@ const NOTES = "relative mt-0.5 -mb-0.5 flex flex-col gap-1 pl-3 before:absolute 
 /** Where the turn's head puts its slot for the reply's "no record" line (`NoRecordSlot`). */
 const NoRecordSlotRef = createContext<((slot: HTMLElement | null) => void) | undefined>(undefined);
 
-/**
- * One turn: its head, then what stands in the answer, which reaches the head's slot for the "no record" line (Receipts).
- * Its parts are the same in both layouts; only how they stand differs: head over answer here, or, given `cell`, the notebook layout's cell.
- */
-function TurnShell({ replyKey, head, children, cell }: Readonly<{ replyKey: string; head: ReactNode; children?: ReactNode; /** The notebook layout: the cell's own parts. */ cell?: CellParts }>) {
+/** One turn: its head, then what stands in the answer, which reaches the head's slot for the "no record" line (Receipts). */
+function TurnShell({ replyKey, head, children }: Readonly<{ replyKey: string; head: ReactNode; children: ReactNode }>) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const did = <NoRecordSlotRef.Provider value={setSlot}>{head}</NoRecordSlotRef.Provider>;
-  const said = <NoRecordSlot.Provider value={slot}>{children}</NoRecordSlot.Provider>;
-  if (cell) return <Cell replyKey={replyKey} {...cell} did={did}>{said}</Cell>;
   return (
     <div data-reply={replyKey} className="flex flex-col gap-3">
-      {did}
-      {said}
+      <NoRecordSlotRef.Provider value={setSlot}>{head}</NoRecordSlotRef.Provider>
+      <NoRecordSlot.Provider value={slot}>{children}</NoRecordSlot.Provider>
     </div>
   );
 }

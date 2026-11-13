@@ -69,12 +69,8 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
  * else answered, a 410 means the provider withdrew the request. While pending the header
  * carries the attention chip; that is the only orange on the card. A question with one
  * question is not a card: it is the composer's extension (`ComposerQuestion`).
- *
- * `place` is for where something beside the card already says that the Thread waits (the notebook
- * layout): `cell`, the turn's cell, whose gutter says so, draws the card without its chip; `card`,
- * another Thread's card, whose state tag says so, is also the surface, so the request stands flat in it.
  */
-export function InteractionCard({ session, interaction, onUpdate, place }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void; place?: 'cell' | 'card' }>) {
+export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
   const api = useApi();
   /** The action in flight: a permission option's id, `answer`, `decline` or `cancel`. */
   const [busy, setBusy] = useState<string | null>(null);
@@ -115,16 +111,14 @@ export function InteractionCard({ session, interaction, onUpdate, place }: Reado
   if (!pending) return <DecidedRow interaction={interaction} />;
 
   return (
-    <section className={place === 'card' ? undefined : 'rounded-lg bg-raised px-4 py-3 shadow-float animate-rise'} role="group" aria-labelledby={titleId}>
-      {!place && (
-        <div className="mb-1.5 flex items-center gap-2">
-          <Chip tone="attention">
-            <Icon aria-hidden="true" className="size-3.5" />
-            {permission ? 'Needs permission' : 'Needs answer'}
-          </Chip>
-        </div>
-      )}
-      <h3 id={titleId} className={place === 'card' ? 'text-ui font-semibold text-ink' : 'text-title text-ink'}>
+    <section className="rounded-lg bg-raised px-4 py-3 shadow-float animate-rise" role="group" aria-labelledby={titleId}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <Chip tone="attention">
+          <Icon aria-hidden="true" className="size-3.5" />
+          {permission ? 'Needs permission' : 'Needs answer'}
+        </Chip>
+      </div>
+      <h3 id={titleId} className="text-title text-ink">
         {interaction.title}
       </h3>
       {write ? (

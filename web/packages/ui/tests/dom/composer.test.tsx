@@ -278,6 +278,15 @@ describe('pickers', () => {
 });
 
 describe('settings in the toolbar', () => {
+  test('the model picker, Attach and Send stay inside the composer form', async () => {
+    await openTask('t3');
+    const model = await screen.findByRole('button', { name: /^Model: Auto/ });
+    const form = document.getElementById('composer-text')!.closest('form')!;
+    expect(model.closest('form')).toBe(form);
+    expect(within(form).getByRole('button', { name: /^Attach files/ })).toBeTruthy();
+    expect(within(form).getByRole('button', { name: /^Send/ })).toBeTruthy();
+  });
+
   test('choosing a model on an idle task saves it on the task', async () => {
     const { user } = await openTask('t3');
     await choose(user, 'Model: Auto', /GPT-5 mini/);
