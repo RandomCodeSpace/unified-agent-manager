@@ -25,6 +25,8 @@ needs, all in one step when it needs several:
 - `references/charts.md`: a chart (`uam_chart`).
 - `references/forms.md`: asking several things at once, or offering buttons
   (`uam_form`).
+- `references/surfaces.md`: a live card the owner acts on or that you keep
+  updating (`uam_surface`).
 - `references/uam-tool.md`: reading Thread or Project state, searching
   Threads' conversations or reading one (`uam`).
 - `references/threads.md`: starting another Thread (`uam_create_task`), or a

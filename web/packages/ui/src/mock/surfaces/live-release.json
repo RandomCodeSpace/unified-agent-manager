@@ -1,0 +1,259 @@
+{
+ "create": {
+  "messages": [
+   {
+    "version": "1.0",
+    "createSurface": {
+     "surfaceId": "release-signoff-v0230",
+     "catalogId": "urn:uam:catalog:v1",
+     "components": [
+      {
+       "id": "root",
+       "component": "Card",
+       "child": "content"
+      },
+      {
+       "id": "content",
+       "component": "Column",
+       "children": [
+        "title",
+        "version",
+        "screenshotLabel",
+        "screenshot",
+        "videoLabel",
+        "video",
+        "audioLabel",
+        "audio",
+        "changesLabel",
+        "changeIcons",
+        "releaseDate",
+        "actions"
+       ]
+      },
+      {
+       "id": "title",
+       "component": "Text",
+       "text": "Release sign-off",
+       "variant": "title"
+      },
+      {
+       "id": "version",
+       "component": "Text",
+       "text": "v0.23.0",
+       "variant": "body"
+      },
+      {
+       "id": "screenshotLabel",
+       "component": "Text",
+       "text": "Settings screenshot",
+       "variant": "caption"
+      },
+      {
+       "id": "screenshot",
+       "component": "Image",
+       "url": "shots/settings-page.png",
+       "description": "Screenshot of the settings page",
+       "fit": "contain"
+      },
+      {
+       "id": "videoLabel",
+       "component": "Text",
+       "text": "Demo video",
+       "variant": "caption"
+      },
+      {
+       "id": "video",
+       "component": "Video",
+       "url": "media/demo.mp4"
+      },
+      {
+       "id": "audioLabel",
+       "component": "Text",
+       "text": "Voice note",
+       "variant": "caption"
+      },
+      {
+       "id": "audio",
+       "component": "AudioPlayer",
+       "url": "media/voice-note.mp3",
+       "description": "Release voice note"
+      },
+      {
+       "id": "changesLabel",
+       "component": "Text",
+       "text": "Areas changed",
+       "variant": "caption"
+      },
+      {
+       "id": "changeIcons",
+       "component": "Row",
+       "children": [
+        "settingsGroup",
+        "notificationsGroup",
+        "securityGroup"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "settingsGroup",
+       "component": "Column",
+       "children": [
+        "settingsIcon",
+        "settingsText"
+       ],
+       "weight": 1,
+       "align": "center"
+      },
+      {
+       "id": "settingsIcon",
+       "component": "Icon",
+       "name": "settings"
+      },
+      {
+       "id": "settingsText",
+       "component": "Text",
+       "text": "Settings",
+       "variant": "caption"
+      },
+      {
+       "id": "notificationsGroup",
+       "component": "Column",
+       "children": [
+        "notificationsIcon",
+        "notificationsText"
+       ],
+       "weight": 1,
+       "align": "center"
+      },
+      {
+       "id": "notificationsIcon",
+       "component": "Icon",
+       "name": "notifications"
+      },
+      {
+       "id": "notificationsText",
+       "component": "Text",
+       "text": "Notifications",
+       "variant": "caption"
+      },
+      {
+       "id": "securityGroup",
+       "component": "Column",
+       "children": [
+        "securityIcon",
+        "securityText"
+       ],
+       "weight": 1,
+       "align": "center"
+      },
+      {
+       "id": "securityIcon",
+       "component": "Icon",
+       "name": "lock"
+      },
+      {
+       "id": "securityText",
+       "component": "Text",
+       "text": "Security",
+       "variant": "caption"
+      },
+      {
+       "id": "releaseDate",
+       "component": "DateTimeInput",
+       "label": "Release date and time",
+       "value": {
+        "@path": "/releaseDate"
+       },
+       "enableDate": true,
+       "enableTime": true
+      },
+      {
+       "id": "actions",
+       "component": "Row",
+       "children": [
+        "changelogModal",
+        "approve"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "changelogModal",
+       "component": "Modal",
+       "trigger": "changelogButton",
+       "content": "changelogContent"
+      },
+      {
+       "id": "changelogButton",
+       "component": "Button",
+       "child": "changelogButtonText",
+       "variant": "default"
+      },
+      {
+       "id": "changelogButtonText",
+       "component": "Text",
+       "text": "Show changelog"
+      },
+      {
+       "id": "changelogContent",
+       "component": "Column",
+       "children": [
+        "changelogTitle",
+        "change1",
+        "change2",
+        "change3"
+       ]
+      },
+      {
+       "id": "changelogTitle",
+       "component": "Text",
+       "text": "Changes in v0.23.0",
+       "variant": "title"
+      },
+      {
+       "id": "change1",
+       "component": "Text",
+       "text": "New release card",
+       "variant": "body"
+      },
+      {
+       "id": "change2",
+       "component": "Text",
+       "text": "Faster pickers",
+       "variant": "body"
+      },
+      {
+       "id": "change3",
+       "component": "Text",
+       "text": "uam_form",
+       "variant": "body"
+      },
+      {
+       "id": "approve",
+       "component": "Button",
+       "child": "approveText",
+       "variant": "primary",
+       "action": {
+        "event": {
+         "name": "approveRelease",
+         "context": {
+          "chosenDate": {
+           "@path": "/releaseDate"
+          }
+         }
+        }
+       }
+      },
+      {
+       "id": "approveText",
+       "component": "Text",
+       "text": "Approve"
+      }
+     ],
+     "dataModel": {
+      "releaseDate": "2026-11-20T10:00:00"
+     }
+    }
+   }
+  ]
+ }
+}

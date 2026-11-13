@@ -1,0 +1,223 @@
+{
+ "create": {
+  "messages": [
+   {
+    "version": "1.0",
+    "createSurface": {
+     "surfaceId": "release-signoff-v0230",
+     "catalogId": "urn:uam:catalog:v1",
+     "components": [
+      {
+       "id": "root",
+       "component": "Card",
+       "child": "content"
+      },
+      {
+       "id": "content",
+       "component": "Column",
+       "children": [
+        "title",
+        "subtitle",
+        "screenshot",
+        "change-icons",
+        "release-date",
+        "actions"
+       ]
+      },
+      {
+       "id": "title",
+       "component": "Text",
+       "text": "Release sign-off · v0.23.0",
+       "variant": "body"
+      },
+      {
+       "id": "subtitle",
+       "component": "Text",
+       "text": "Review the release details and choose when to ship.",
+       "variant": "caption"
+      },
+      {
+       "id": "screenshot",
+       "component": "Image",
+       "url": "shots/settings-page.png",
+       "description": "Settings page screenshot"
+      },
+      {
+       "id": "change-icons",
+       "component": "Row",
+       "children": [
+        "settings-item",
+        "notifications-item",
+        "security-item"
+       ],
+       "justify": "spaceBetween",
+       "align": "center"
+      },
+      {
+       "id": "settings-item",
+       "component": "Column",
+       "children": [
+        "settings-icon",
+        "settings-label"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "settings-icon",
+       "component": "Icon",
+       "name": "settings"
+      },
+      {
+       "id": "settings-label",
+       "component": "Text",
+       "text": "Settings",
+       "variant": "caption"
+      },
+      {
+       "id": "notifications-item",
+       "component": "Column",
+       "children": [
+        "notifications-icon",
+        "notifications-label"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "notifications-icon",
+       "component": "Icon",
+       "name": "notifications"
+      },
+      {
+       "id": "notifications-label",
+       "component": "Text",
+       "text": "Notifications",
+       "variant": "caption"
+      },
+      {
+       "id": "security-item",
+       "component": "Column",
+       "children": [
+        "security-icon",
+        "security-label"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "security-icon",
+       "component": "Icon",
+       "name": "lock"
+      },
+      {
+       "id": "security-label",
+       "component": "Text",
+       "text": "Security",
+       "variant": "caption"
+      },
+      {
+       "id": "release-date",
+       "component": "DateTimeInput",
+       "label": "Release date and time",
+       "value": {
+        "@path": "/releaseAt"
+       },
+       "enableDate": true,
+       "enableTime": true
+      },
+      {
+       "id": "actions",
+       "component": "Row",
+       "children": [
+        "changelog-modal",
+        "approve-button"
+       ],
+       "justify": "spaceBetween",
+       "align": "center"
+      },
+      {
+       "id": "changelog-modal",
+       "component": "Modal",
+       "trigger": "changelog-trigger",
+       "content": "changelog-content"
+      },
+      {
+       "id": "changelog-trigger",
+       "component": "Button",
+       "child": "changelog-label",
+       "variant": "default",
+       "action": {
+        "event": {
+         "name": "show-changelog"
+        }
+       }
+      },
+      {
+       "id": "changelog-label",
+       "component": "Text",
+       "text": "Show changelog",
+       "variant": "body"
+      },
+      {
+       "id": "changelog-content",
+       "component": "Column",
+       "children": [
+        "changelog-title",
+        "change-one",
+        "change-two",
+        "change-three"
+       ]
+      },
+      {
+       "id": "changelog-title",
+       "component": "Text",
+       "text": "What's new in v0.23.0",
+       "variant": "body"
+      },
+      {
+       "id": "change-one",
+       "component": "Text",
+       "text": "New release card",
+       "variant": "body"
+      },
+      {
+       "id": "change-two",
+       "component": "Text",
+       "text": "Faster pickers",
+       "variant": "body"
+      },
+      {
+       "id": "change-three",
+       "component": "Text",
+       "text": "uam_form",
+       "variant": "body"
+      },
+      {
+       "id": "approve-button",
+       "component": "Button",
+       "child": "approve-label",
+       "variant": "primary",
+       "action": {
+        "event": {
+         "name": "approve",
+         "context": {
+          "releaseAt": {
+           "@path": "/releaseAt"
+          }
+         }
+        }
+       }
+      },
+      {
+       "id": "approve-label",
+       "component": "Text",
+       "text": "Approve",
+       "variant": "body"
+      }
+     ],
+     "dataModel": {
+      "releaseAt": "2026-11-20T10:00:00"
+     }
+    }
+   }
+  ]
+ }
+}

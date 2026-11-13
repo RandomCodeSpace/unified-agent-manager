@@ -1,0 +1,279 @@
+{
+  "create": {
+    "messages": [
+      {
+        "version": "1.0",
+        "createSurface": {
+          "surfaceId": "review-surface-pr",
+          "catalogId": "urn:uam:catalog:v1",
+          "components": [
+            {
+              "id": "root",
+              "component": "Column",
+              "children": [
+                "head",
+                "hint",
+                "findings",
+                "foot"
+              ]
+            },
+            {
+              "id": "head",
+              "component": "Text",
+              "text": {
+                "@path": "/title"
+              }
+            },
+            {
+              "id": "hint",
+              "component": "Text",
+              "variant": "caption",
+              "text": "Choose Fix, Skip or Later for each finding, then send."
+            },
+            {
+              "id": "findings",
+              "component": "List",
+              "children": {
+                "componentId": "finding",
+                "path": "/findings"
+              }
+            },
+            {
+              "id": "finding",
+              "component": "Row",
+              "align": "center",
+              "children": [
+                "f_severity",
+                "f_text",
+                "f_choice"
+              ]
+            },
+            {
+              "id": "f_severity",
+              "component": "Status",
+              "weight": 1,
+              "label": {
+                "@path": "severity"
+              },
+              "tone": {
+                "@path": "tone"
+              }
+            },
+            {
+              "id": "f_text",
+              "component": "Column",
+              "weight": 5,
+              "children": [
+                "f_title",
+                "f_file"
+              ]
+            },
+            {
+              "id": "f_title",
+              "component": "Text",
+              "text": {
+                "@path": "title"
+              }
+            },
+            {
+              "id": "f_file",
+              "component": "Text",
+              "variant": "caption",
+              "text": {
+                "@path": "file"
+              }
+            },
+            {
+              "id": "f_choice",
+              "component": "ChoicePicker",
+              "variant": "mutuallyExclusive",
+              "value": {
+                "@path": "choice"
+              },
+              "options": [
+                {
+                  "label": "Fix",
+                  "value": "fix"
+                },
+                {
+                  "label": "Skip",
+                  "value": "skip"
+                },
+                {
+                  "label": "Later",
+                  "value": "later"
+                }
+              ]
+            },
+            {
+              "id": "foot",
+              "component": "Row",
+              "justify": "end",
+              "children": [
+                "send"
+              ]
+            },
+            {
+              "id": "send",
+              "component": "Button",
+              "variant": "primary",
+              "child": "send_label",
+              "@checks": [
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/0/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                },
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/1/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                },
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/2/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                },
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/3/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                },
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/4/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                },
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/findings/5/choice"
+                      }
+                    }
+                  },
+                  "message": "Choose for every finding"
+                }
+              ],
+              "action": {
+                "event": {
+                  "name": "review_decisions",
+                  "context": {
+                    "F1": {
+                      "@path": "/findings/0/choice"
+                    },
+                    "F2": {
+                      "@path": "/findings/1/choice"
+                    },
+                    "F3": {
+                      "@path": "/findings/2/choice"
+                    },
+                    "F4": {
+                      "@path": "/findings/3/choice"
+                    },
+                    "F5": {
+                      "@path": "/findings/4/choice"
+                    },
+                    "F6": {
+                      "@path": "/findings/5/choice"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "send_label",
+              "component": "Text",
+              "text": "Send decisions"
+            }
+          ],
+          "dataModel": {
+            "title": "Review of #863: 6 findings",
+            "findings": [
+              {
+                "id": "F1",
+                "severity": "High",
+                "tone": "fail",
+                "title": "Action context is posted without checking the surface still exists",
+                "file": "internal/web/surface.go:142",
+                "choice": []
+              },
+              {
+                "id": "F2",
+                "severity": "High",
+                "tone": "fail",
+                "title": "JSON Pointer writes accept \"__proto__\" segments",
+                "file": "web/packages/ui/src/lib/surface.ts:38",
+                "choice": []
+              },
+              {
+                "id": "F3",
+                "severity": "Medium",
+                "tone": "warn",
+                "title": "Version counter is not reset when a surface is deleted and created again",
+                "file": "internal/web/surface.go:88",
+                "choice": []
+              },
+              {
+                "id": "F4",
+                "severity": "Medium",
+                "tone": "warn",
+                "title": "Template rows re-render on every data model patch",
+                "file": "web/packages/ui/src/components/Surface.tsx:97",
+                "choice": []
+              },
+              {
+                "id": "F5",
+                "severity": "Low",
+                "tone": "neutral",
+                "title": "Error text names the component id twice",
+                "file": "internal/web/surface_validate.go:61",
+                "choice": []
+              },
+              {
+                "id": "F6",
+                "severity": "Low",
+                "tone": "neutral",
+                "title": "Slider step rounds 0.1 to 0.10000000000000001",
+                "file": "web/packages/ui/src/components/Surface.tsx:203",
+                "choice": []
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "patches": []
+}

@@ -1,0 +1,204 @@
+{
+  "create": {
+    "messages": [
+      {
+        "version": "1.0",
+        "createSurface": {
+          "surfaceId": "load-test-params",
+          "catalogId": "urn:uam:catalog:v1",
+          "components": [
+            {
+              "id": "root",
+              "component": "Column",
+              "children": [
+                "head",
+                "sliders",
+                "options",
+                "endpoint",
+                "foot"
+              ]
+            },
+            {
+              "id": "head",
+              "component": "Text",
+              "text": "Load test parameters"
+            },
+            {
+              "id": "sliders",
+              "component": "Row",
+              "align": "start",
+              "children": [
+                "users",
+                "minutes"
+              ]
+            },
+            {
+              "id": "users",
+              "component": "Slider",
+              "weight": 1,
+              "label": "Concurrent users",
+              "min": 10,
+              "max": 500,
+              "steps": 49,
+              "value": {
+                "@path": "/users"
+              }
+            },
+            {
+              "id": "minutes",
+              "component": "Slider",
+              "weight": 1,
+              "label": "Duration in minutes",
+              "min": 1,
+              "max": 30,
+              "steps": 29,
+              "value": {
+                "@path": "/minutes"
+              }
+            },
+            {
+              "id": "options",
+              "component": "Row",
+              "align": "end",
+              "children": [
+                "env",
+                "traces"
+              ]
+            },
+            {
+              "id": "env",
+              "component": "ChoicePicker",
+              "label": "Environment",
+              "variant": "mutuallyExclusive",
+              "value": {
+                "@path": "/env"
+              },
+              "options": [
+                {
+                  "label": "Staging",
+                  "value": "staging"
+                },
+                {
+                  "label": "Canary",
+                  "value": "canary"
+                },
+                {
+                  "label": "Production",
+                  "value": "production"
+                }
+              ]
+            },
+            {
+              "id": "traces",
+              "component": "CheckBox",
+              "label": "Record traces",
+              "value": {
+                "@path": "/traces"
+              }
+            },
+            {
+              "id": "endpoint",
+              "component": "TextField",
+              "label": "Target endpoint",
+              "variant": "shortText",
+              "placeholder": "/api/…",
+              "value": {
+                "@path": "/endpoint"
+              },
+              "@checks": [
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/endpoint"
+                      }
+                    }
+                  },
+                  "message": "Name an endpoint"
+                }
+              ]
+            },
+            {
+              "id": "foot",
+              "component": "Row",
+              "justify": "end",
+              "children": [
+                "run"
+              ]
+            },
+            {
+              "id": "run",
+              "component": "Button",
+              "variant": "primary",
+              "child": "run_label",
+              "@checks": [
+                {
+                  "condition": {
+                    "@call": "required",
+                    "args": {
+                      "value": {
+                        "@path": "/endpoint"
+                      }
+                    }
+                  },
+                  "message": "Name an endpoint"
+                }
+              ],
+              "action": {
+                "event": {
+                  "name": "run_load_test",
+                  "context": {
+                    "users": {
+                      "@path": "/users"
+                    },
+                    "minutes": {
+                      "@path": "/minutes"
+                    },
+                    "env": {
+                      "@path": "/env"
+                    },
+                    "traces": {
+                      "@path": "/traces"
+                    },
+                    "endpoint": {
+                      "@path": "/endpoint"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "run_label",
+              "component": "Text",
+              "text": "Run"
+            }
+          ],
+          "dataModel": {
+            "users": 100,
+            "minutes": 5,
+            "env": [
+              "staging"
+            ],
+            "traces": true,
+            "endpoint": "/api/sessions"
+          }
+        }
+      }
+    ]
+  },
+  "patches": [
+    {
+      "messages": [
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "load-test-params",
+            "path": "/minutes",
+            "value": 15
+          }
+        }
+      ]
+    }
+  ]
+}

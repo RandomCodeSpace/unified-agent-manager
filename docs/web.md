@@ -1507,6 +1507,44 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent why. Stop, a rewind or a restart withdraws a waiting form, as it
   does a question. Once answered, the conversation shows the form's title
   with the button and the values you chose.
+- **Cards (uam_surface)**: an agent can draw a live card in the
+  conversation, such as a build board or a review queue, through the
+  `uam_surface` tool, and keep updating it while it works. The tool takes
+  A2UI v1.0 messages (`createSurface`, `updateComponents`,
+  `updateDataModel`, `deleteSurface`) over uam's catalog
+  `urn:uam:catalog:v1`: the 18 A2UI basic components (text, icons, layout,
+  tabs, a dialog, buttons and inputs, images, video and audio) plus a status
+  and a progress bar, drawn with uam's own components. It returns at once;
+  the agent does not wait. uam checks every call (components, properties,
+  bindings, references, sizes: 32 KiB a call, 200 components, 2,000 shown
+  components and 64 KiB of data 32 levels deep a card, 8 cards a Thread,
+  deleted ones included) and refuses one that does not fit, telling
+  the agent where and why. A deleted card's id is not reused in its Thread. Images, video and audio are files in the
+  Thread's folder, served by the raw file route, never web addresses. What
+  you type into a card's inputs stays on the card; pressing one of its
+  buttons queues a one-line message to the agent, `[uam_surface action]`
+  and the action as JSON with the button's text and the card's title,
+  which the conversation shows as a short chip.
+  Cards are kept in uam's store beside `sessions.json`, never in the
+  project: one `surfaces.json` in the Thread's upload folder, owner-only and
+  written atomically, so they survive a restart and go when the Thread is
+  deleted. uam checks the file as it checks a call whenever it reads it, and
+  refuses one it cannot read or that fails a check (logged, the file kept
+  as it is). A card the agent deleted shows
+  as a short "removed by the agent" line. `GET
+  /api/sessions/{id}/surface?call={call}` returns the card a call created
+  (`deleted: true` once the agent removed it; 404 for a call that only
+  updated one), the `surface` event says which card changed, and `POST
+  /api/sessions/{id}/surface/action` with `{surface_id, name,
+  source_component_id, context, base_path, request_id, version}` sends a
+  press (202). `version` is the card version the page shows and is
+  required; if the card has changed since, the press is refused with 409
+  (`the card changed; review it and press again`) and nothing is queued,
+  so the button text and title in the message are always the ones the
+  owner saw. A repeated `request_id` queues nothing new while the Thread
+  still remembers it: the guard covers the Thread's last 64 prompts. A
+  press is refused unless that card has a Button with that action, and the
+  context only fills the keys the action names. Connected instances' cards work the same way.
 - **Drawings**: a mermaid flowchart or sequence diagram in a reply can be
   edited as a drawing. The block becomes a `.excalidraw` file (or, with the
   draw.io editor enabled, a `.drawio` file) under the Thread folder's

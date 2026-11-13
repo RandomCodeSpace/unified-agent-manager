@@ -97,6 +97,10 @@ type Manager struct {
 	persistMu sync.Mutex
 	wake      chan struct{}
 
+	// surfaceMu serializes uam_surface calls' changes to the Threads'
+	// surfaces files (surface.go).
+	surfaceMu sync.Mutex
+
 	// timeSplits caches each journal's model/local time split.
 	timeSplits timeSplitCache
 	// projectMu serializes Project changes, Task creation's final write and

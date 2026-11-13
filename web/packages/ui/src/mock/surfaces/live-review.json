@@ -1,0 +1,153 @@
+{
+ "create": {
+  "messages": [
+   {
+    "version": "1.0",
+    "createSurface": {
+     "surfaceId": "pr-review-choices",
+     "catalogId": "urn:uam:catalog:v1",
+     "components": [
+      {
+       "id": "root",
+       "component": "Card",
+       "child": "content"
+      },
+      {
+       "id": "content",
+       "component": "Column",
+       "children": [
+        "title",
+        "instructions",
+        "issues",
+        "submit"
+       ]
+      },
+      {
+       "id": "title",
+       "component": "Text",
+       "text": "Choose what to do with each PR issue",
+       "variant": "title"
+      },
+      {
+       "id": "instructions",
+       "component": "Text",
+       "text": "Select Fix, Skip, or Later for all six issues, then send your choices together. I will not make changes until you send them.",
+       "variant": "body"
+      },
+      {
+       "id": "issues",
+       "component": "Column",
+       "children": {
+        "componentId": "issueRow",
+        "path": "/issues"
+       }
+      },
+      {
+       "id": "issueRow",
+       "component": "Column",
+       "children": [
+        "issueTitle",
+        "issueDetail",
+        "decision"
+       ]
+      },
+      {
+       "id": "issueTitle",
+       "component": "Text",
+       "text": {
+        "@path": "title"
+       },
+       "variant": "body"
+      },
+      {
+       "id": "issueDetail",
+       "component": "Text",
+       "text": {
+        "@path": "detail"
+       },
+       "variant": "caption"
+      },
+      {
+       "id": "decision",
+       "component": "ChoicePicker",
+       "label": "Decision",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "choice"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "submit",
+       "component": "Button",
+       "child": "submitLabel",
+       "variant": "primary",
+       "action": {
+        "event": {
+         "name": "send-choices",
+         "context": {
+          "issues": {
+           "@path": "/issues"
+          }
+         }
+        }
+       }
+      },
+      {
+       "id": "submitLabel",
+       "component": "Text",
+       "text": "Send all choices"
+      }
+     ],
+     "dataModel": {
+      "issues": [
+       {
+        "title": "1. High — action context is posted without checking the surface still exists",
+        "detail": "internal/web/surface.go:142",
+        "choice": ""
+       },
+       {
+        "title": "2. High — JSON Pointer writes accept \"__proto__\" segments",
+        "detail": "web/packages/ui/src/lib/surface.ts:38",
+        "choice": ""
+       },
+       {
+        "title": "3. Medium — version counter is not reset when a surface is deleted and created again",
+        "detail": "internal/web/surface.go:88",
+        "choice": ""
+       },
+       {
+        "title": "4. Medium — template rows re-render on every data model patch",
+        "detail": "web/packages/ui/src/components/Surface.tsx:97",
+        "choice": ""
+       },
+       {
+        "title": "5. Low — error text names the component id twice",
+        "detail": "internal/web/surface.go:61",
+        "choice": ""
+       },
+       {
+        "title": "6. Low — slider step rounds 0.1 to 0.1000000001",
+        "detail": "web/packages/ui/src/components/Surface.tsx:203",
+        "choice": ""
+       }
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

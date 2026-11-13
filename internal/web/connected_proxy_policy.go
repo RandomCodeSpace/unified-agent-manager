@@ -72,6 +72,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"GET /api/sessions/{id}/plan",
 		"GET /api/sessions/{id}/plan-reviews/{rid}",
 		"GET /api/sessions/{id}/subagents",
+		"GET /api/sessions/{id}/surface",
 		"GET /api/sessions/{id}/subagents/{agent_id}",
 		"GET /api/sessions/{id}/subagents/{agent_id}/history",
 		"GET /api/sessions/{id}/turns/{timing_id}/todos",
@@ -147,6 +148,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/sessions/{id}/subagents/{agent_id}/cancel",
 		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
 		"POST /api/sessions/{id}/suggestions",
+		"POST /api/sessions/{id}/surface/action",
 		"POST /api/sessions/{id}/unarchive",
 		"POST /api/settings/custom-models/discover",
 		"POST /api/worktrees/remove",
@@ -186,7 +188,8 @@ func connectedAccountGated(pattern string) bool {
 		"POST /api/sessions/{id}/rewind",
 		"POST /api/sessions/{id}/rewind/release",
 		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
-		"POST /api/sessions/{id}/suggestions":
+		"POST /api/sessions/{id}/suggestions",
+		"POST /api/sessions/{id}/surface/action":
 		return true
 	default:
 		return false

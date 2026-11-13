@@ -522,6 +522,14 @@ var imageExtensions = map[string]string{
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
 }
 
+// mediaTypes maps the audio and video extensions the raw route also serves,
+// for uam_surface's Video and AudioPlayer, to their type. They are typed by
+// extension like the view route's media and served under nosniff, so the
+// bytes never run as a page; ServeContent answers Range requests for seeking.
+var mediaTypes = map[string]string{
+	".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+}
+
 // ServedFile is a file of a Task's directory, open for reading, with the
 // type it is served as.
 type ServedFile struct {
@@ -535,7 +543,7 @@ type ServedFile struct {
 // the real file must lie inside the Task's real directory; anything else,
 // missing files included, is a 404 that says nothing more. Only a regular
 // file whose extension and bytes agree on png, jpeg, gif or webp, at most
-// maxServedImageBytes, is served.
+// maxServedImageBytes, is served, or an audio or video file (mediaTypes).
 func (m *Manager) RawImage(id, p string) (*ServedFile, error) {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -592,13 +600,23 @@ func openImage(workdir, p string) (*ServedFile, error) {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	// Nothing without an image name is opened.
-	if _, ok := imageExtensions[strings.ToLower(filepath.Ext(rel))]; !ok {
-		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images are served")
+	// Nothing without an image or media name is opened.
+	ext := strings.ToLower(filepath.Ext(rel))
+	media, isMedia := mediaTypes[ext]
+	if _, ok := imageExtensions[ext]; !ok && !isMedia {
+		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images and mp4, webm, mp3, ogg, wav and m4a media are served")
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, newError(http.StatusNotFound, msgFileNotFound)
+	}
+	if isMedia {
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			_ = f.Close()
+			return nil, newError(http.StatusNotFound, msgFileNotFound)
+		}
+		return &ServedFile{File: f, Info: info, MIME: media}, nil
 	}
 	img, err := checkImage(f, filepath.Ext(rel))
 	if err != nil {

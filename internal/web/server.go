@@ -333,6 +333,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}/diff", s.handleItemDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.chartRoutes(mux)
+	s.surfaceRoutes(mux)
 	s.drawingRoutes(mux)
 	s.messageRoutes(mux)
 	s.routineRoutes(mux)
@@ -1187,8 +1188,10 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRawImage serves an image file of the Task's directory, named by the
-// path query parameter, for the images a reply's markdown refers to by path.
-// The type is what the bytes sniffed as, never HTML. Unlike the other API
+// path query parameter, for the images a reply's markdown refers to by path,
+// and the audio and video of a uam_surface card (Range requests included).
+// An image's type is what the bytes sniffed as, media's its extension's;
+// never HTML. Unlike the other API
 // routes it may be revalidated: the browser sends If-Modified-Since or
 // If-None-Match and gets a 304 while the file is unchanged.
 func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {

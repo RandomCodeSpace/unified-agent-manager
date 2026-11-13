@@ -1,0 +1,47 @@
+{
+  "create": {
+    "messages": [
+      {
+        "version": "1.0",
+        "createSurface": {
+          "surfaceId": "release-notes",
+          "catalogId": "urn:uam:catalog:v1",
+          "components": [
+            { "id": "root", "component": "Column", "children": ["head", "summary", "shot", "facts", "when", "media", "foot"] },
+            { "id": "head", "component": "Row", "children": ["head-icon", "title"] },
+            { "id": "head-icon", "component": "Icon", "name": "notifications" },
+            { "id": "title", "component": "Text", "variant": "title", "text": "uam 0.23.0 is ready to ship" },
+            { "id": "summary", "component": "Text", "variant": "caption", "text": "Cards can now show screenshots, clips and voice notes from the working folder." },
+            { "id": "shot", "component": "Image", "url": "release/screenshot.jpg", "description": "A migration board drawn as a card in a Thread", "variant": "largeFeature", "fit": "contain" },
+            { "id": "facts", "component": "Row", "children": ["fixes", "features", "breaking"] },
+            { "id": "fixes", "component": "Row", "children": ["fixes-icon", "fixes-text"] },
+            { "id": "fixes-icon", "component": "Icon", "name": "check" },
+            { "id": "fixes-text", "component": "Text", "text": "14 fixes" },
+            { "id": "features", "component": "Row", "children": ["features-icon", "features-text"] },
+            { "id": "features-icon", "component": "Icon", "name": "star" },
+            { "id": "features-text", "component": "Text", "text": "3 features" },
+            { "id": "breaking", "component": "Row", "children": ["breaking-icon", "breaking-text"] },
+            { "id": "breaking-icon", "component": "Icon", "name": "warning" },
+            { "id": "breaking-text", "component": "Text", "text": "1 breaking change" },
+            { "id": "when", "component": "DateTimeInput", "label": "Release date", "enableDate": true, "value": { "@path": "/date" }, "min": "2026-11-14", "max": "2026-12-31" },
+            { "id": "media", "component": "Column", "children": ["demo", "voice"] },
+            { "id": "demo", "component": "Video", "url": "release/demo.mp4", "posterUrl": "release/demo-poster.jpg" },
+            { "id": "voice", "component": "AudioPlayer", "url": "release/voice-note.mp3", "description": "Voice note from the release lead" },
+            { "id": "foot", "component": "Row", "children": ["changelog"] },
+            { "id": "changelog", "component": "Modal", "trigger": "show", "content": "log" },
+            { "id": "show", "component": "Button", "child": "show-label" },
+            { "id": "show-label", "component": "Text", "text": "Show changelog" },
+            { "id": "log", "component": "Column", "children": ["log-1", "log-2", "log-3", "log-4", "approve"] },
+            { "id": "log-1", "component": "Text", "text": "Surfaces draw Image, Video, AudioPlayer, Icon, Modal and DateTimeInput." },
+            { "id": "log-2", "component": "Text", "text": "Media load only from the Thread's working folder, never from another host." },
+            { "id": "log-3", "component": "Text", "text": "Fixed: a Tabs card keeps its tab when the agent updates it." },
+            { "id": "log-4", "component": "Text", "variant": "caption", "text": "Breaking: uam_surface refuses media URLs; save the file and pass its path." },
+            { "id": "approve", "component": "Button", "child": "approve-label", "variant": "primary", "action": { "event": { "name": "approve_release", "context": { "date": { "@path": "/date" } } } } },
+            { "id": "approve-label", "component": "Text", "text": "Approve release" }
+          ],
+          "dataModel": { "date": "2026-11-18" }
+        }
+      }
+    ]
+  }
+}

@@ -44,6 +44,9 @@ type compactTool struct {
 	ShellID string `json:"shell_id,omitempty"`
 	// BudgetStopped marks a call the Thread's budget denied: it never ran.
 	BudgetStopped bool `json:"budget_stopped,omitempty"`
+	// SurfaceID is the surface a uam_surface call created, which the
+	// transcript shows as a card.
+	SurfaceID string `json:"surface_id,omitempty"`
 }
 type compactTestCounts struct {
 	Passed int `json:"passed"`
@@ -175,7 +178,7 @@ func projectItem(it agentapi.Item) compactItem {
 				paths = []string{tool.Declaration.Path}
 			}
 		}
-		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths, ShellID: shellID(&tool), BudgetStopped: budgetStopped(&tool)}
+		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths, ShellID: shellID(&tool), BudgetStopped: budgetStopped(&tool), SurfaceID: createdSurface(&tool)}
 		if commandTools[strings.ToLower(tool.Name)] && (tool.Status == agentapi.ToolCompleted || tool.Status == agentapi.ToolFailed) && !it.Clipped && !strings.Contains(tool.Output, truncatedMarker) && len(commandChecks(toolCommand(&tool))) > 0 {
 			if counts := countsOf(tool.Output); counts != nil {
 				projected.Tests = &compactTestCounts{Passed: counts.passed, Failed: counts.failed}

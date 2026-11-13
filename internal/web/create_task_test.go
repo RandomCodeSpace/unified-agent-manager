@@ -66,7 +66,7 @@ func toolNames(tools []agentapi.HostTool) []string {
 }
 
 // plainTaskTools are the tools of a Task that may create Tasks.
-var plainTaskTools = []string{createTaskToolName, chartToolName, formToolName, diagramReadToolName, diagramEditToolName, uamToolName}
+var plainTaskTools = []string{createTaskToolName, chartToolName, formToolName, surfaceToolName, diagramReadToolName, diagramEditToolName, uamToolName}
 
 // startedTask is the Task ID a uam_create_task result names.
 var startedTask = regexp.MustCompile(`^Started thread ([0-9a-f-]{36})\b`)
@@ -155,7 +155,7 @@ func TestCreateTaskStartsATaskInAnExistingProject(t *testing.T) {
 	if sends := child.Sends(); !slices.Equal(sends, []string{"fix the build\n\tthen test"}) {
 		t.Fatalf("first messages = %q", sends)
 	}
-	if req := child.Request(); !slices.Equal(toolNames(req.Tools), []string{chartToolName, formToolName, diagramReadToolName, diagramEditToolName, uamToolName}) || req.CallTool == nil {
+	if req := child.Request(); !slices.Equal(toolNames(req.Tools), []string{chartToolName, formToolName, surfaceToolName, diagramReadToolName, diagramEditToolName, uamToolName}) || req.CallTool == nil {
 		t.Fatalf("a created task has tools: %q", toolNames(req.Tools))
 	}
 	child.EmitTurn(agentapi.TurnCompleted, "")
@@ -352,7 +352,7 @@ func TestCreateTaskSpawnedBySurvivesARestart(t *testing.T) {
 		t.Fatalf("after a restart: %+v, %v", sum, err)
 	}
 	mustSubmit(t, m, child.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
-	if req := prov.Last().Request(); req.SessionID != child.ID || !slices.Equal(toolNames(req.Tools), []string{chartToolName, formToolName, diagramReadToolName, diagramEditToolName, uamToolName}) {
+	if req := prov.Last().Request(); req.SessionID != child.ID || !slices.Equal(toolNames(req.Tools), []string{chartToolName, formToolName, surfaceToolName, diagramReadToolName, diagramEditToolName, uamToolName}) {
 		t.Fatalf("reopened created task = %+v", req)
 	}
 }

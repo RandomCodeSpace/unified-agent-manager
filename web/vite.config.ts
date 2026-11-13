@@ -268,7 +268,8 @@ function clusterIdFix(): Plugin {
  * Dev only: the in-browser mock (`?mock`) fakes `fetch`, but `<img src>` and links load the
  * attachment serve route natively, so the dev server answers it with a generated file. The
  * id decides the kind: `txt` and `pdf` in the id serve text and a one-page PDF, anything
- * else a small PNG whose colours follow the id. Written without node typings (the tsconfig
+ * else a small PNG whose colours follow the id; the Cards Thread's raw files redirect to the
+ * mock's sample media. Written without node typings (the tsconfig
  * has none), hence the structural request and response types and the hand-rolled PNG.
  */
 function mockAttachmentRoute(): Plugin {
@@ -278,7 +279,14 @@ function mockAttachmentRoute(): Plugin {
     configureServer(server) {
       server.middlewares.use((rawReq, rawRes, next) => {
         const req = rawReq as unknown as { url?: string; method?: string };
-        const res = rawRes as unknown as { setHeader(name: string, value: string): void; end(body: string | Uint8Array): void };
+        const res = rawRes as unknown as { statusCode: number; setHeader(name: string, value: string): void; end(body?: string | Uint8Array): void };
+        // The Cards Thread's media (mock/surfaces.ts) by file name, whatever folder the card names, from the mock's media folder.
+        const media = /^\/api\/sessions\/t-cards\/files\/raw\?path=(?:[\w.-]+%2F)*([\w.-]+)$/.exec(req.url ?? '');
+        if (media && req.method === 'GET') {
+          res.statusCode = 302;
+          res.setHeader('Location', `/packages/ui/src/mock/surfaces/media/${media[1]}`);
+          return res.end();
+        }
         const m = /^\/api\/sessions\/[^/]+\/attachments\/([^/?]+)/.exec(req.url ?? '');
         if (!m || req.method !== 'GET') return next();
         const id = decodeURIComponent(m[1]);

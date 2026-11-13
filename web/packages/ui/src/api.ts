@@ -882,6 +882,25 @@ export interface Project {
   output_style?: string;
 }
 
+/** One component of a surface: its `id`, its catalog name and the catalog's props for it. */
+export interface SurfaceComponent { id: string; component: string; [prop: string]: unknown }
+/** A surface an agent drew with `uam_surface` (A2UI v1.0); `version` goes up with every applied message, and a surface the agent deleted answers `deleted`. */
+export interface Surface {
+  surface_id: string;
+  call_id: string;
+  catalog_id: string;
+  version: number;
+  deleted: boolean;
+  components: SurfaceComponent[];
+  data_model: Record<string, unknown>;
+}
+/**
+ * A Button's press: `version` is the card version shown (the server refuses any other with 409), `base_path` the
+ * template item it was pressed in ("" outside a template), and `request_id` stays the same when the press is retried,
+ * so a retry after a lost answer is queued once.
+ */
+export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown>; base_path: string; request_id: string; version: number }
+
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
   title: string;
@@ -1104,6 +1123,8 @@ export interface ToolCall {
   unasked?: boolean;
   /** The Thread's budget denied it: it never ran, so it did not fail. */
   budget_stopped?: boolean;
+  /** A `uam_surface` call that created a surface: that surface's id, kept after the agent deletes it. */
+  surface_id?: string;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }
@@ -1614,6 +1635,8 @@ export interface LoadedSkill {
 }
 
 export interface SessionDetail extends SessionSummary, Representation {
+  /** Client only: the latest `surface` event's version, by creating call id. */
+  surface_versions?: Record<string, number>;
   turn_timings?: TurnTiming[];
   seq?: number;
   history?: 'loaded' | 'loading' | 'unavailable';
@@ -1871,7 +1894,8 @@ export type UpdateData =
   | { name: 'plan_version'; seq: number; session_id: string; plan_version: number; plan_path?: string }
   | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null }
   | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot }
-  | { name: 'skills_loaded'; seq: number; session_id: string; skills_loaded: LoadedSkill[] };
+  | { name: 'skills_loaded'; seq: number; session_id: string; skills_loaded: LoadedSkill[] }
+  | { name: 'surface'; seq: number; session_id: string; call_id: string; surface_id: string; version: number };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1899,6 +1923,7 @@ export const UPDATE_EVENTS = [
   'schedules',
   'mcp_status',
   'skills_loaded',
+  'surface',
 ] as const;
 
 /** How long a prompt waits for the service to take it (it answers once the message is sent or queued). */
@@ -2708,6 +2733,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     /** The chart a Task drew with the `uam_chart` call `callId`. */
     chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),
+    /** The surface the `uam_surface` call `callId` created, and a Button's action (queued as the user's message). */
+    surface: (id: string, callId: string, signal?: AbortSignal) => call<Surface>('GET', `/api/sessions/${enc(id)}/surface?call=${enc(callId)}`, undefined, false, signal),
+    /** The press's submission; undefined when a 202 carried no body, which still means queued. */
+    surfaceAction: (id: string, body: SurfaceAction) => call<Submission>('POST', `/api/sessions/${enc(id)}/surface/action`, body).catch((err: unknown): undefined => { if (!(err instanceof SyntaxError)) throw err; }),
     pinChart: (id: string, callId: string) => call<PinnedChart>('POST', `/api/sessions/${enc(id)}/chart/pin`, { call_id: callId }),
     pinnedCharts: async (projectId: string, signal?: AbortSignal) => (await call<{ charts: PinnedChart[] }>('GET', `/api/projects/${enc(projectId)}/charts`, undefined, false, signal)).charts,
     /** Runs the chart's command again, no model involved: on demand at most once a minute (429 sooner); `auto` at most once an hour, else the chart as it is. */

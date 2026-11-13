@@ -84,7 +84,7 @@ type createTaskArgs struct {
 
 // taskToolsLocked is the Manager's hostTools: uam_create_task unless
 // spawned (that tool or a routine's run created the Task), uam_chart
-// (charts.go), uam_form (form.go), uam_diagram_read (drawings.go), uam_diagram_edit
+// (charts.go), uam_form (form.go), uam_surface (surface.go), uam_diagram_read (drawings.go), uam_diagram_edit
 // (drawings_edit.go) and the uam read tool. Its
 // CallTool dispatches by tool name. The caller holds mu.
 func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
@@ -95,7 +95,7 @@ func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostT
 	if m.settings.ThreadMessages {
 		tools = append(tools, sendTool)
 	}
-	return append(tools, chartTool, formTool, diagramReadTool, diagramEditTool, uamTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
+	return append(tools, chartTool, formTool, surfaceTool, diagramReadTool, diagramEditTool, uamTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
 		case call.Name == uamToolName:
 			return m.uamCall(ctx, taskID, call)
@@ -103,6 +103,8 @@ func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostT
 			return m.chartCall(ctx, taskID, call)
 		case call.Name == formToolName:
 			return m.formCall(ctx, taskID, call)
+		case call.Name == surfaceToolName:
+			return m.surfaceCall(ctx, taskID, call)
 		case call.Name == diagramReadToolName:
 			return m.diagramReadCall(ctx, taskID, call)
 		case call.Name == diagramEditToolName:
