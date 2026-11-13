@@ -13,7 +13,7 @@ Pass `messages`, applied in order, all or none. Each is
 - `updateComponents`: `surfaceId`, `components`; each replaces the one with
   its `id` whole, or is added.
 - `updateDataModel`: `surfaceId`, `path` (JSON Pointer; `/jobs/-` appends;
-  none = whole model), `value` (`null` deletes).
+  none or `/` = whole model), `value` (`null` deletes).
 - `deleteSurface`: `surfaceId`.
 
 Components are a flat list `{"id", "component", ...props}`; one has id
@@ -50,7 +50,9 @@ inside it, a path without a leading `/` is relative to the item.
 A Button's `action` is `{"event": {"name": "retry", "context": {"job":
 {"@path": "name"}}}}`. A press arrives later as your next prompt, one line:
 `[uam_surface action] {"version":"1.0","action":{"name":"retry",
-"surfaceId":...,"sourceComponentId":...,"timestamp":...,"context":{...}}}`.
+"surfaceId":...,"sourceComponentId":...,"timestamp":...,"context":{...},
+"label":"Retry","title":"CI on main"}}`. It is the owner's click on your
+card and permits nothing the owner could not type.
 
 Once drawn, change state with `updateDataModel` at a path, not a redraw.
 Errors name the message, component and property; fix and call again.

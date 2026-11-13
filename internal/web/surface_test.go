@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,7 +155,7 @@ func TestSurfaceRefuses(t *testing.T) {
 		"index zero":    {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l","value":[1]}}`, `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/00","value":2}}`), `"00" is not an index`},
 		"index range":   {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l","value":[1]}}`, `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/2","value":2}}`), `"2" is not an index`},
 		"through":       {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/n","value":1}}`, `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/n/x","value":2}}`), "goes through a float64"},
-		"whole model":   {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","value":[1]}}`), `without a path, "value" must be an object`},
+		"whole model":   {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","value":[1]}}`), `"value" must be an object (the whole model)`},
 		"media https":   {surfaceArgs(create(`{"id":"root","component":"Image","url":"https://example.com/a.png"}`)), `(Image) "url" must be the literal path of a file in the thread's working folder; save the file`},
 		"media http":    {surfaceArgs(create(`{"id":"root","component":"Video","url":"http://example.com/a.mp4"}`)), `(Video) "url" must be the literal path`},
 		"media data":    {surfaceArgs(create(`{"id":"root","component":"Image","url":"data:image/png;base64,AAAA"}`)), `(Image) "url" must be the literal path`},
@@ -179,6 +181,23 @@ func TestSurfaceRefuses(t *testing.T) {
 		"modal cycle":   {surfaceArgs(create(`{"id":"root","component":"Modal","trigger":"b","content":"root"},{"id":"b","component":"Text","text":"x"}`)), "contains itself"},
 		"modal dangle":  {surfaceArgs(create(`{"id":"root","component":"Modal","trigger":"b","content":"x"},{"id":"b","component":"Text","text":"x"}`)), `component "root" refers to "x"`},
 		"too big":       {json.RawMessage(`{"messages":["` + strings.Repeat("x", maxSurfaceCall) + `"]}`), "the limit is 32 KiB"},
+		"deep pointer":  {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"`+strings.Repeat("/", 10001)+`","value":1}}`), "at most 32 levels deep"},
+		"deep binding":  {surfaceArgs(create(`{"id":"root","component":"Text","text":{"@path":"` + strings.Repeat("/a", 33) + `"}}`)), "of at most 32 levels"},
+		"deep model":    {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/a","value":`+strings.Repeat("[", 32)+strings.Repeat("]", 32)+`}}`), "nests more than 32 levels"},
+		"overflow":      {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/n","value":1e400}}`), `"value": json: cannot unmarshal number 1e400`},
+		"overflow data": {surfaceArgs(`{"version":"1.0","createSurface":{"surfaceId":"s","catalogId":"urn:uam:catalog:v1","components":[` + root + `],"dataModel":{"n":-1e400}}}`), `"dataModel" must be an object of finite numbers`},
+		"overflow prop": {surfaceArgs(create(`{"id":"root","component":"Text","text":"a","weight":1e400}`)), "cannot unmarshal number 1e400"},
+		"dash delete":   {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l","value":[1]}}`, `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/-","value":null}}`), `"-" only appends a value to a list`},
+		"dash through":  {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l","value":[1]}}`, `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/-/x","value":2}}`), `"-" only appends a value to a list`},
+		"root list":     {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/","value":[1]}}`), `without a path, or at "/", "value" must be an object`},
+		// 13 levels of a component referring twice to the next show 2^14-1.
+		"shared": {surfaceArgs(create(sharedChain(13))), `would show at least 2001 components`},
+		// 50 items, each a row of 50: 2,551 components.
+		"template": {surfaceArgs(`{"version":"1.0","createSurface":{"surfaceId":"s","catalogId":"urn:uam:catalog:v1","components":[
+ {"id":"root","component":"Column","children":{"componentId":"row","path":"/rows"}},
+ {"id":"row","component":"Row","children":{"componentId":"cell","path":"/cells"}},
+ {"id":"cell","component":"Text","text":"x"}],
+ "dataModel":{"rows":[` + strings.Repeat("{},", 49) + `{}],"cells":[` + strings.Repeat("1,", 49) + `1]}}}`), `would show at least 2001 components`},
 	} {
 		state := &threadSurfaces{}
 		if _, _, err := applySurfaceArgs(state, "c", tc.args); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -231,8 +250,8 @@ func TestSurfaceSetPointer(t *testing.T) {
 		path  string
 		value any
 	}{
-		{"/x~1y", 1.0}, {"/x~0y", 2.0}, {"/~01", 3.0}, {"/", 4.0}, {"/e//k", 5.0},
-		{"/l/-", "c"}, {"/l/0", nil}, {"/l/2", "d"}, {"/gone/deep", nil}, {"/l/3/x", nil}, {"/l/-/x", nil},
+		{"/x~1y", 1.0}, {"/x~0y", 2.0}, {"/~01", 3.0}, {"/e//k", 5.0},
+		{"/l/-", "c"}, {"/l/0", nil}, {"/l/2", "d"}, {"/gone/deep", nil}, {"/l/3/x", nil},
 	}
 	var got any = doc
 	for _, s := range steps {
@@ -242,8 +261,70 @@ func TestSurfaceSetPointer(t *testing.T) {
 		}
 	}
 	b, _ := json.Marshal(got)
-	if want := `{"":4,"e":{"":{"k":5}},"l":["b","c","d"],"x/y":1,"x~y":2,"~1":3}`; string(b) != want {
+	if want := `{"e":{"":{"k":5}},"l":["b","c","d"],"x/y":1,"x~y":2,"~1":3}`; string(b) != want {
 		t.Errorf("doc = %s, want %s", b, want)
+	}
+	// "/" is the whole model (A2UI v1.0), as no path is.
+	if got, err := setPointer(doc, "/", map[string]any{"a": 1.0}); err != nil || len(got.(map[string]any)) != 1 {
+		t.Errorf(`"/" = %v, %v`, got, err)
+	}
+}
+
+// sharedChain is a root and n levels of components, each referring to
+// the next twice.
+func sharedChain(n int) string {
+	parts := []string{`{"id":"root","component":"Row","children":["c1","c1"]}`}
+	for i := 1; i < n; i++ {
+		parts = append(parts, fmt.Sprintf(`{"id":"c%d","component":"Row","children":["c%d","c%d"]}`, i, i+1, i+1))
+	}
+	return strings.Join(append(parts, fmt.Sprintf(`{"id":"c%d","component":"Text","text":"x"}`, n)), ",")
+}
+
+// The rendered count stops past the limit, however far a shared chain
+// would go, and counts a template's items where the list is now.
+func TestSurfaceRenderedCount(t *testing.T) {
+	state := &threadSurfaces{}
+	if _, _, err := applySurfaceArgs(state, "c", surfaceArgs(surfaceCreate("s", sharedChain(9)))); err != nil {
+		t.Fatalf("1,023 shown: %v", err)
+	}
+	parts := map[string]map[string]any{}
+	var comps []map[string]any
+	if err := json.Unmarshal([]byte("["+sharedChain(60)+"]"), &comps); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range comps {
+		parts[c["id"].(string)] = c
+	}
+	if n := renderedCount(parts, nil); n != maxSurfaceRender+1 {
+		t.Errorf("chain of 60 counted %d", n)
+	}
+	// A template under the root's base reads its list relative to the item.
+	parts = map[string]map[string]any{
+		"root": {"id": "root", "component": "Column", "children": map[string]any{"componentId": "g", "path": "/groups"}},
+		"g":    {"id": "g", "component": "Column", "children": map[string]any{"componentId": "t", "path": "items"}},
+		"t":    {"id": "t", "component": "Text", "text": map[string]any{"@path": "name"}},
+	}
+	data := map[string]any{"groups": map[string]any{"a/b": map[string]any{"items": []any{1.0, 2.0}}, "c": map[string]any{"items": []any{1.0}}}}
+	if n := renderedCount(parts, data); n != 6 {
+		t.Errorf("groups counted %d, want 6", n)
+	}
+}
+
+// Whole-model writes at "/" or no path, appends at the end of a list.
+func TestSurfaceDataModelWrites(t *testing.T) {
+	state := &threadSurfaces{}
+	_, _, err := applySurfaceArgs(state, "c", surfaceArgs(surfaceCreate("s", `{"id":"root","component":"Text","text":"hi"}`),
+		`{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/old","value":1}}`,
+		`{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/","value":{"l":[]}}}`,
+		`{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/-","value":"a"}}`,
+		`{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/1","value":"b"}}`,
+		`{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"/l/0","value":"A"}}`))
+	if b, _ := json.Marshal(state.byID("s").DataModel); err != nil || string(b) != `{"l":["A","b"]}` {
+		t.Errorf("data model = %s, %v", b, err)
+	}
+	_, _, err = applySurfaceArgs(state, "c2", surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"s","value":{}}}`))
+	if b, _ := json.Marshal(state.byID("s").DataModel); err != nil || string(b) != `{}` {
+		t.Errorf("no path = %s, %v", b, err)
 	}
 }
 
@@ -355,7 +436,7 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 	post := func(id, body string) *httptest.ResponseRecorder {
 		return ts.do(http.MethodPost, "/api/sessions/"+id+"/surface/action", body, withCookie(ts))
 	}
-	press := `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":{"job":"test"}}`
+	press := `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":{"job":"test"},"base_path":"/jobs/1","request_id":"0f8fd0b2-6a8e-4f53-9d3c-3b1c1f1e2a10"}`
 	for name, tc := range map[string]struct {
 		id, body string
 		code     int
@@ -368,23 +449,28 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 		"array context": {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":[1]}`, http.StatusBadRequest},
 		"bad id":        {sum.ID, `{"surface_id":"../x","name":"retry","source_component_id":"retry"}`, http.StatusBadRequest},
 		"big context":   {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":{"job":"` + strings.Repeat("x", maxSurfaceContext) + `"}}`, http.StatusRequestEntityTooLarge},
+		"request id":    {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","request_id":"press-1"}`, http.StatusBadRequest},
+		"base path":     {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","base_path":"jobs/1"}`, http.StatusBadRequest},
 	} {
 		if w := post(tc.id, tc.body); w.Code != tc.code {
 			t.Errorf("%s: %d %s, want %d", name, w.Code, w.Body.String(), tc.code)
 		}
 	}
-	if w := post(sum.ID, press); w.Code != http.StatusAccepted {
-		t.Fatalf("press = %d %s", w.Code, w.Body.String())
+	// A retried press with the same request ID queues nothing new.
+	for range 2 {
+		if w := post(sum.ID, press); w.Code != http.StatusAccepted {
+			t.Fatalf("press = %d %s", w.Code, w.Body.String())
+		}
 	}
 	queue := detail(t, ts.m, sum.ID).Queue
-	line := regexp.MustCompile(`^\[uam_surface action\] \{"version":"1\.0","action":\{"name":"retry","surfaceId":"ci","sourceComponentId":"retry","timestamp":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","context":\{"job":"test"\}\}\}$`)
+	line := regexp.MustCompile(`^\[uam_surface action\] \{"version":"1\.0","action":\{"name":"retry","surfaceId":"ci","sourceComponentId":"retry","timestamp":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","context":\{"job":"test"\},"label":"Retry","title":"CI on main"\}\}$`)
 	if len(queue) != 1 || !line.MatchString(queue[0].Text) {
 		t.Fatalf("queued = %+v", queue)
 	}
 	if res := callSurface(t, conv, "c2", string(surfaceArgs(`{"version":"1.0","deleteSurface":{"surfaceId":"ci"}}`))); res.Failed {
 		t.Fatal(res.Text)
 	}
-	if w := post(sum.ID, press); w.Code != http.StatusNotFound {
+	if w := post(sum.ID, strings.Replace(press, "0f8fd0b2", "1f8fd0b2", 1)); w.Code != http.StatusNotFound {
 		t.Fatalf("press on a deleted card = %d", w.Code)
 	}
 	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/surface?call=c1", "", withCookie(ts)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"deleted":true`) {
@@ -459,5 +545,63 @@ func TestConnectedSurfaceMediaRange(t *testing.T) {
 	r := f.request(t, "GET", "/api/sessions/task/files/raw?path=clip.mp4", "", http.Header{"Range": {"bytes=2-4"}})
 	if body := connectedBody(t, r); r.StatusCode != http.StatusPartialContent || body != "234" || r.Header.Get("Content-Range") != "bytes 2-4/10" || r.Header.Get("Content-Type") != "video/mp4" {
 		t.Fatalf("ranged media = %d %q %v", r.StatusCode, body, r.Header)
+	}
+}
+
+// An action line names the press: the Button's text in the pressed
+// template item, and the card's title Text, else its first Text.
+func TestSurfaceActionNames(t *testing.T) {
+	var comps []map[string]any
+	if err := json.Unmarshal([]byte(`[
+ {"id":"root","component":"Card","child":"col"},
+ {"id":"col","component":"Column","children":["h","t","rows"]},
+ {"id":"h","component":"Text","text":"  "},
+ {"id":"t","component":"Text","text":{"@path":"/title"},"variant":"title"},
+ {"id":"rows","component":"List","children":{"componentId":"b","path":"/jobs"}},
+ {"id":"b","component":"Button","child":"bl","action":{"event":{"name":"go"}}},
+ {"id":"bl","component":"Row","children":["i","l"]},
+ {"id":"i","component":"Icon","name":"check"},
+ {"id":"l","component":"Text","text":{"@path":"name"},"variant":"caption"}]`), &comps); err != nil {
+		t.Fatal(err)
+	}
+	parts := map[string]map[string]any{}
+	for _, c := range comps {
+		parts[c["id"].(string)] = c
+	}
+	data := map[string]any{"title": "Deploys", "jobs": []any{map[string]any{"name": "alpha"}, map[string]any{"name": 2.5}}}
+	for _, tc := range []struct{ id, base, variant, want string }{
+		{"bl", "/jobs/1", "", "2.5"}, {"bl", "/jobs/0", "", "alpha"}, {"bl", "/jobs/9", "", ""},
+		{"root", "", "title", "Deploys"}, {"col", "", "caption", ""},
+	} {
+		if got := surfaceText(parts, data, tc.id, tc.base, tc.variant); got != tc.want {
+			t.Errorf("%s at %q (%s) = %q, want %q", tc.id, tc.base, tc.variant, got, tc.want)
+		}
+	}
+}
+
+// A surfaces file uam cannot read, or one over the size limit, is refused
+// and kept, never replaced by an empty set.
+func TestSurfacesUnreadableFileKept(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	root := `{"id":"root","component":"Text","text":"hi"}`
+	if res := callSurface(t, conv, "c1", string(surfaceArgs(surfaceCreate("a", root)))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	path := m.surfacesPath(sum.ID)
+	for name, body := range map[string][]byte{
+		"corrupt":   []byte(`{"surfaces":[`),
+		"oversized": append([]byte(`{"surfaces":[]}`), bytes.Repeat([]byte(" "), maxSurfacesFile)...),
+	} {
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := callSurface(t, conv, "c2", string(surfaceArgs(surfaceCreate("b", root))))
+		if got, err := os.ReadFile(path); !res.Failed || err != nil || !bytes.Equal(got, body) {
+			t.Errorf("%s: call failed %v (%s); file kept %v", name, res.Failed, res.Text, bytes.Equal(got, body))
+		}
+		if _, err := m.TaskSurface(sum.ID, "c1"); err == nil || statusOf(err) == http.StatusNotFound {
+			t.Errorf("%s: read = %v, want an error", name, err)
+		}
 	}
 }

@@ -1516,13 +1516,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   tabs, a dialog, buttons and inputs, images, video and audio) plus a status
   and a progress bar, drawn with uam's own components. It returns at once;
   the agent does not wait. uam checks every call (components, properties,
-  bindings, references, sizes: 32 KiB a call, 200 components and 64 KiB of
-  data a card, 8 cards a Thread) and refuses one that does not fit, telling
+  bindings, references, sizes: 32 KiB a call, 200 components, 2,000 shown
+  components and 64 KiB of data 32 levels deep a card, 8 cards a Thread)
+  and refuses one that does not fit, telling
   the agent where and why. Images, video and audio are files in the
   Thread's folder, served by the raw file route, never web addresses. What
   you type into a card's inputs stays on the card; pressing one of its
   buttons queues a one-line message to the agent, `[uam_surface action]`
-  and the action as JSON, which the conversation shows as a short chip.
+  and the action as JSON with the button's text and the card's title,
+  which the conversation shows as a short chip.
   Cards are kept in uam's store beside `sessions.json`, never in the
   project: one `surfaces.json` in the Thread's upload folder, owner-only and
   written atomically, so they survive a restart and go when the Thread is
@@ -1532,7 +1534,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (`deleted: true` once the agent removed it; 404 for a call that only
   updated one), the `surface` event says which card changed, and `POST
   /api/sessions/{id}/surface/action` with `{surface_id, name,
-  source_component_id, context}` sends a press (202); it is refused unless
+  source_component_id, context, base_path, request_id}` sends a press
+  (202; a repeated `request_id` queues nothing new); it is refused unless
   that card has a Button with that action, and the context only fills the
   keys the action names. Connected instances' cards work the same way.
 - **Drawings**: a mermaid flowchart or sequence diagram in a reply can be

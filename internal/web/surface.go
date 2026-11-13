@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -32,6 +33,18 @@ const (
 	maxSurfaceID             = 64
 	maxSurfaceErrors         = 12
 	maxSurfaceContext        = 4 << 10
+	// maxSurfaceDepth bounds JSON Pointers and how deeply a data model nests.
+	maxSurfaceDepth = 32
+	// maxSurfaceRender bounds the components a card shows, counting shared
+	// and template components each time they show.
+	maxSurfaceRender = 2000
+	// maxSurfacesFile is well above maxSurfaces cards at the component and
+	// data limits; a larger surfaces file is not uam's.
+	maxSurfacesFile = 2 << 20
+	// maxSurfaceLabel and maxSurfaceTitle clip the pressed Button's text and
+	// the card's title in an action line, in runes with the ellipsis.
+	maxSurfaceLabel = 80
+	maxSurfaceTitle = 120
 	// maxRetiredSurfaces bounds the deleted surfaces kept for the calls that
 	// drew them after a new surface took their id.
 	maxRetiredSurfaces = 64
@@ -263,9 +276,11 @@ func createSurface(errs *surfaceErrs, t *threadSurfaces, where, callID, created 
 		return nil
 	}
 	data := map[string]any{}
-	if body.DataModel != nil && string(body.DataModel) != "null" && json.Unmarshal(body.DataModel, &data) != nil {
-		errs.add(`%s: "dataModel" must be an object`, where)
-		return nil
+	if body.DataModel != nil && string(body.DataModel) != "null" {
+		if err := json.Unmarshal(body.DataModel, &data); err != nil {
+			errs.add(`%s: "dataModel" must be an object of finite numbers, strings, booleans, lists and objects: %v`, where, err)
+			return nil
+		}
 	}
 	s := &surface{SurfaceID: body.SurfaceID, CallID: callID, CatalogID: surfaceCatalogID, Components: []map[string]any{}, DataModel: cmpMap(data)}
 	if old == nil {
@@ -328,7 +343,7 @@ func updateDataModel(errs *surfaceErrs, s *surface, where string, body surfaceBo
 		path = *body.Path
 	}
 	if path != "" && !validPointer(path, false) {
-		errs.add(`%s updateDataModel: "path" %q is not a JSON Pointer such as /items/0/done`, where, path)
+		errs.add(`%s updateDataModel: "path" %q is not a JSON Pointer such as /items/0/done, at most %d levels deep`, where, path, maxSurfaceDepth)
 		return ""
 	}
 	data, err := setPointer(s.DataModel, path, value)
@@ -338,7 +353,7 @@ func updateDataModel(errs *surfaceErrs, s *surface, where string, body surfaceBo
 	}
 	model, ok := data.(map[string]any)
 	if !ok && data != nil {
-		errs.add(`%s updateDataModel: without a path, "value" must be an object (the whole model)`, where)
+		errs.add(`%s updateDataModel: without a path, or at "/", "value" must be an object (the whole model)`, where)
 		return ""
 	}
 	s.DataModel = cmpMap(model)
@@ -363,11 +378,21 @@ func (m *Manager) surfacesPath(taskID string) string {
 }
 
 // readSurfaces reads the Thread taskID's surfaces file; none is no surfaces.
+// A file it cannot read, or one over maxSurfacesFile, is an error, never an
+// empty set a write would then put in its place.
 func (m *Manager) readSurfaces(taskID string) (*threadSurfaces, error) {
 	t := &threadSurfaces{}
-	data, err := os.ReadFile(m.surfacesPath(taskID))
+	f, err := os.Open(m.surfacesPath(taskID))
 	if errors.Is(err, fs.ErrNotExist) {
 		return t, nil
+	}
+	var data []byte
+	if err == nil {
+		data, err = io.ReadAll(io.LimitReader(f, maxSurfacesFile+1))
+		_ = f.Close()
+	}
+	if err == nil && len(data) > maxSurfacesFile {
+		err = fmt.Errorf("the file is over %d bytes", maxSurfacesFile)
 	}
 	if err == nil {
 		err = json.Unmarshal(data, t)
@@ -475,14 +500,26 @@ type SurfaceAction struct {
 	Name              string          `json:"name"`
 	SourceComponentID string          `json:"source_component_id"`
 	Context           json.RawMessage `json:"context"`
+	// BasePath is the template item the Button was pressed in, such as
+	// /jobs/2; its text is read there.
+	BasePath string `json:"base_path,omitempty"`
+	// RequestID, a UUID per press, makes a retried POST queue nothing new.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // surfaceAction queues a Button press to the Thread as a one-line prompt.
 // The Button must be on a live surface of that Thread and carry an action
 // of that name, and the context may only fill the keys its action names.
+// A request ID the Thread already has returns that press's outcome.
 func (m *Manager) surfaceAction(taskID string, a SurfaceAction) (Submission, error) {
 	if !validSurfaceID(a.SurfaceID) || !validSurfaceID(a.Name) || !validSurfaceID(a.SourceComponentID) {
 		return Submission{}, newError(http.StatusBadRequest, "surface_id, name and source_component_id are required")
+	}
+	if a.BasePath != "" && (len(a.BasePath) > 512 || !validPointer(a.BasePath, false)) {
+		return Submission{}, newError(http.StatusBadRequest, "base_path must be a JSON Pointer")
+	}
+	if a.RequestID != "" && !validRequestID(a.RequestID) {
+		return Submission{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
 	}
 	if len(a.Context) > maxSurfaceContext {
 		return Submission{}, newError(http.StatusRequestEntityTooLarge, "the action context is over %d bytes", maxSurfaceContext)
@@ -493,8 +530,19 @@ func (m *Manager) surfaceAction(taskID string, a SurfaceAction) (Submission, err
 			return Submission{}, newError(http.StatusBadRequest, "context must be an object")
 		}
 	}
-	if _, err := m.lookup(taskID); err != nil {
+	ws, err := m.lookup(taskID)
+	if err != nil {
 		return Submission{}, err
+	}
+	if a.RequestID != "" {
+		// Answered before the card is checked, so a retry after the agent
+		// changed the card still gets the first press's outcome.
+		m.mu.Lock()
+		sub, ok := ws.findRequest(a.RequestID)
+		m.mu.Unlock()
+		if ok {
+			return sub, nil
+		}
 	}
 	t, err := m.readSurfaces(taskID)
 	if err != nil {
@@ -525,17 +573,34 @@ func (m *Manager) surfaceAction(taskID string, a SurfaceAction) (Submission, err
 		SourceComponentID string         `json:"sourceComponentId"`
 		Timestamp         string         `json:"timestamp"`
 		Context           map[string]any `json:"context"`
+		// Label is the pressed Button's text and Title the card's, so the
+		// model and the transcript name the press.
+		Label string `json:"label,omitempty"`
+		Title string `json:"title,omitempty"`
+	}
+	parts := make(map[string]map[string]any, len(s.Components))
+	for _, c := range s.Components {
+		id, _ := c["id"].(string)
+		parts[id] = c
+	}
+	child, _ := s.Components[i]["child"].(string)
+	title := surfaceText(parts, s.DataModel, "root", "", "title")
+	if title == "" {
+		title = surfaceText(parts, s.DataModel, "root", "", "")
 	}
 	line, err := json.Marshal(struct {
 		Version string     `json:"version"`
 		Action  actionLine `json:"action"`
-	}{"1.0", actionLine{a.Name, a.SurfaceID, a.SourceComponentID, m.now().UTC().Format(time.RFC3339), ctx}})
+	}{"1.0", actionLine{a.Name, a.SurfaceID, a.SourceComponentID, m.now().UTC().Format(time.RFC3339), ctx,
+		clipRunes(surfaceText(parts, s.DataModel, child, a.BasePath, ""), maxSurfaceLabel-1), clipRunes(title, maxSurfaceTitle-1)}})
 	if err != nil {
 		return Submission{}, err
 	}
-	reqID, err := newUUID()
-	if err != nil {
-		return Submission{}, err
+	reqID := a.RequestID
+	if reqID == "" {
+		if reqID, err = newUUID(); err != nil {
+			return Submission{}, err
+		}
 	}
 	return m.Submit(taskID, PromptRequest{Text: surfaceActionPrefix + string(line), RequestID: reqID, Mode: ModeQueue})
 }

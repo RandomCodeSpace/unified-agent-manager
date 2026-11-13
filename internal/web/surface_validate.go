@@ -94,10 +94,11 @@ var surfaceEnums = map[string][]string{
 
 func validSurfaceID(id string) bool { return surfaceIDRE.MatchString(id) }
 
-// validPointer checks JSON Pointer syntax (RFC 6901); relative allows a
-// pointer without the leading slash (inside a list template).
+// validPointer checks JSON Pointer syntax (RFC 6901) and a depth of at most
+// maxSurfaceDepth; relative allows a pointer without the leading slash
+// (inside a list template).
 func validPointer(p string, relative bool) bool {
-	if !strings.HasPrefix(p, "/") && (!relative || p == "") {
+	if !strings.HasPrefix(p, "/") && (!relative || p == "") || strings.Count(p, "/") > maxSurfaceDepth {
 		return false
 	}
 	for i := 0; i < len(p); i++ {
@@ -115,7 +116,7 @@ func checkDynamic(errs *surfaceErrs, where string, v any, kind string, enum []st
 		if p, ok := m["@path"]; ok {
 			s, isStr := p.(string)
 			if len(m) != 1 || !isStr || !validPointer(s, true) {
-				errs.add(`%s: a binding is {"@path": "/json/pointer"} with a valid JSON Pointer`, where)
+				errs.add(`%s: a binding is {"@path": "/json/pointer"} with a valid JSON Pointer of at most %d levels`, where, maxSurfaceDepth)
 			}
 			return
 		}
@@ -345,7 +346,7 @@ func checkChildren(errs *surfaceErrs, where string, v any) {
 		id, okID := c["componentId"].(string)
 		p, okPath := c["path"].(string)
 		if len(c) != 2 || !okID || id == "" || !okPath || !validPointer(p, true) {
-			errs.add(`%s: a template is {"componentId": id, "path": "/json/pointer/to/list"}`, where)
+			errs.add(`%s: a template is {"componentId": id, "path": "/json/pointer/to/list"}, at most %d levels deep`, where, maxSurfaceDepth)
 		}
 	default:
 		errs.add(`%s must be a list of component ids or a template {"componentId", "path"}`, where)
@@ -440,11 +441,18 @@ func checkSurface(errs *surfaceErrs, s *surface) {
 		errs.add(`surface %q has %d components; the limit is %d`, s.SurfaceID, len(s.Components), maxSurfaceParts)
 		return
 	}
-	if b, _ := json.Marshal(s.Components); len(b) > maxSurfaceComponentBytes {
+	if b, err := json.Marshal(s.Components); err != nil {
+		errs.add(`surface %q: its components do not encode as JSON: %v`, s.SurfaceID, err)
+	} else if len(b) > maxSurfaceComponentBytes {
 		errs.add(`surface %q: its components are %d bytes; the limit is %d. Use a template over a data list instead of one component per row`, s.SurfaceID, len(b), maxSurfaceComponentBytes)
 	}
-	if b, _ := json.Marshal(s.DataModel); len(b) > maxSurfaceData {
+	if b, err := json.Marshal(s.DataModel); err != nil {
+		errs.add(`surface %q: the data model does not encode as JSON: %v`, s.SurfaceID, err)
+	} else if len(b) > maxSurfaceData {
 		errs.add(`surface %q: the data model is %d bytes; the limit is %d`, s.SurfaceID, len(b), maxSurfaceData)
+	}
+	if jsonDepth(s.DataModel, maxSurfaceDepth+1) > maxSurfaceDepth {
+		errs.add(`surface %q: the data model nests more than %d levels deep; flatten it`, s.SurfaceID, maxSurfaceDepth)
 	}
 	parts := make(map[string]map[string]any, len(s.Components))
 	triggers := map[string]bool{}
@@ -493,6 +501,154 @@ func checkSurface(errs *surfaceErrs, s *surface) {
 			return
 		}
 	}
+	if n := renderedCount(parts, s.DataModel); n > maxSurfaceRender {
+		errs.add(`surface %q would show at least %d components (a component counts each time it is referred to, and a template's once per item of its list); the limit is %d. Refer to fewer components, or show fewer items`, s.SurfaceID, n, maxSurfaceRender)
+	}
+}
+
+// renderedCount counts the components a surface of parts shows from root
+// over data: a component each time it is referred to, a template's once per
+// item of its list now. It stops counting past maxSurfaceRender. parts must
+// have no cycles.
+func renderedCount(parts map[string]map[string]any, data any) int {
+	n := 0
+	var walk func(id, base string)
+	walk = func(id, base string) {
+		c := parts[id]
+		if c == nil || n > maxSurfaceRender {
+			return
+		}
+		n++
+		// Row, Column and List refer to nothing but their children.
+		if t, ok := c["children"].(map[string]any); ok {
+			child, _ := t["componentId"].(string)
+			path, _ := t["path"].(string)
+			at := surfaceAbsolute(path, base)
+			prefix := at
+			if at == "/" {
+				prefix = ""
+			}
+			for _, k := range surfaceItems(getPointer(data, at)) {
+				if n > maxSurfaceRender {
+					return
+				}
+				walk(child, prefix+"/"+k)
+			}
+			return
+		}
+		for _, ref := range surfaceRefs(c) {
+			walk(ref, base)
+		}
+	}
+	walk("root", "")
+	return n
+}
+
+// surfaceItems are the pointer tokens of a template list's items: a list's
+// indexes or an object's keys, escaped.
+func surfaceItems(v any) []string {
+	var keys []string
+	switch x := v.(type) {
+	case []any:
+		for i := range x {
+			keys = append(keys, strconv.Itoa(i))
+		}
+	case map[string]any:
+		for k := range x {
+			keys = append(keys, strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1"))
+		}
+	}
+	return keys
+}
+
+// surfaceAbsolute is the absolute pointer of a binding's path: one with a
+// leading slash stands alone, any other is relative to base, a template
+// item's pointer.
+func surfaceAbsolute(path, base string) string {
+	switch {
+	case strings.HasPrefix(path, "/"):
+		return path
+	case path != "" && path != ".":
+		return base + "/" + path
+	case base != "":
+		return base
+	}
+	return "/"
+}
+
+// surfaceString is a dynamic string's text against data at base, or "" when
+// it does not resolve to a string, number or boolean.
+func surfaceString(data, v any, base string) string {
+	if m, ok := v.(map[string]any); ok {
+		p, _ := m["@path"].(string)
+		if p == "" {
+			return ""
+		}
+		v = getPointer(data, surfaceAbsolute(p, base))
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	}
+	return ""
+}
+
+// surfaceText is the text of the first Text at or under id, depth first,
+// of variant if it is not "", against data at base; template children are
+// not searched.
+func surfaceText(parts map[string]map[string]any, data any, id, base, variant string) string {
+	seen := map[string]bool{}
+	var find func(id string) string
+	find = func(id string) string {
+		c := parts[id]
+		if c == nil || seen[id] {
+			return ""
+		}
+		seen[id] = true
+		if c["component"] == "Text" && (variant == "" || c["variant"] == variant) {
+			if s := surfaceString(data, c["text"], base); strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+		if _, ok := c["children"].(map[string]any); ok {
+			return ""
+		}
+		for _, ref := range surfaceRefs(c) {
+			if s := find(ref); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	return find(id)
+}
+
+// jsonDepth is how deeply v nests objects and lists, counting at most to
+// limit.
+func jsonDepth(v any, limit int) int {
+	var items []any
+	switch x := v.(type) {
+	case map[string]any:
+		for _, e := range x {
+			items = append(items, e)
+		}
+	case []any:
+		items = x
+	default:
+		return 0
+	}
+	d := 1
+	for _, e := range items {
+		if d >= limit {
+			break
+		}
+		d = max(d, 1+jsonDepth(e, limit-1))
+	}
+	return d
 }
 
 // pointerIndex parses a JSON Pointer token as an index of a list of n items:
@@ -508,23 +664,57 @@ func pointerIndex(tok string, n int) (int, bool) {
 	return i, err == nil && i <= n
 }
 
-// setPointer sets (or, for nil, deletes) the value at an absolute JSON
-// Pointer in doc, creating objects on the way, and returns the new doc. It
-// changes doc in place. Deleting what is not there changes nothing.
-func setPointer(doc any, path string, value any) (any, error) {
-	if path == "" {
-		return value, nil
+// pointerTokens are an absolute JSON Pointer's decoded tokens; "" and "/"
+// are the whole document (A2UI v1.0), so they have none.
+func pointerTokens(path string) []string {
+	if path == "" || path == "/" {
+		return nil
 	}
 	tokens := strings.Split(path[1:], "/")
 	for i, t := range tokens {
 		// ~1 first, so "~01" decodes to "~1" (RFC 6901 section 4).
 		tokens[i] = strings.ReplaceAll(strings.ReplaceAll(t, "~1", "/"), "~0", "~")
 	}
+	return tokens
+}
+
+// getPointer is the value at an absolute JSON Pointer in doc, or nil.
+func getPointer(doc any, path string) any {
+	for _, tok := range pointerTokens(path) {
+		switch n := doc.(type) {
+		case []any:
+			i, ok := pointerIndex(tok, len(n))
+			if !ok || i == len(n) {
+				return nil
+			}
+			doc = n[i]
+		case map[string]any:
+			doc = n[tok]
+		default:
+			return nil
+		}
+	}
+	return doc
+}
+
+// setPointer sets (or, for nil, deletes) the value at an absolute JSON
+// Pointer in doc, creating objects on the way, and returns the new doc. It
+// changes doc in place. Deleting what is not there changes nothing. In a
+// list, an index up to its length and "-" as the last token with a value
+// append; any other "-" or a larger index is an error.
+func setPointer(doc any, path string, value any) (any, error) {
+	tokens := pointerTokens(path)
+	if tokens == nil {
+		return value, nil
+	}
 	var set func(node any, i int) (any, error)
 	set = func(node any, i int) (any, error) {
 		tok, last := tokens[i], i == len(tokens)-1
 		switch n := node.(type) {
 		case []any:
+			if tok == "-" && (!last || value == nil) {
+				return nil, fmt.Errorf(`"-" only appends a value to a list, as the path's last token, such as /jobs/-; use an index to change or delete an item`)
+			}
 			idx, ok := pointerIndex(tok, len(n))
 			if !ok {
 				return nil, fmt.Errorf("%q is not an index of the list at that path, which has %d items; use 0 to %d, or - to append", tok, len(n), len(n))
