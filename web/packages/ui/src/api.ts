@@ -2735,8 +2735,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),
     /** The surface the `uam_surface` call `callId` created, and a Button's action (queued as the user's message). */
     surface: (id: string, callId: string, signal?: AbortSignal) => call<Surface>('GET', `/api/sessions/${enc(id)}/surface?call=${enc(callId)}`, undefined, false, signal),
-    // A 202 may carry no body, which the JSON read rejects; that still means queued.
-    surfaceAction: (id: string, body: SurfaceAction) => call<void>('POST', `/api/sessions/${enc(id)}/surface/action`, body).catch((err: unknown) => { if (!(err instanceof SyntaxError)) throw err; }),
+    /** The press's submission; undefined when a 202 carried no body, which still means queued. */
+    surfaceAction: (id: string, body: SurfaceAction) => call<Submission>('POST', `/api/sessions/${enc(id)}/surface/action`, body).catch((err: unknown): undefined => { if (!(err instanceof SyntaxError)) throw err; }),
     pinChart: (id: string, callId: string) => call<PinnedChart>('POST', `/api/sessions/${enc(id)}/chart/pin`, { call_id: callId }),
     pinnedCharts: async (projectId: string, signal?: AbortSignal) => (await call<{ charts: PinnedChart[] }>('GET', `/api/projects/${enc(projectId)}/charts`, undefined, false, signal)).charts,
     /** Runs the chart's command again, no model involved: on demand at most once a minute (429 sooner); `auto` at most once an hour, else the chart as it is. */

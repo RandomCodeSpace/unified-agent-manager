@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { ApiError, describeError, isStatus, newRequestId, type Surface, type SurfaceAction, type SurfaceComponent } from '../api';
+import { ApiError, describeError, isStatus, newRequestId, type Surface, type Submission, type SurfaceAction, type SurfaceComponent } from '../api';
 import { cn } from '../lib/cn';
 import { actionContext, boundPath, cardTitle, children, drawnCount, failedChecks, get, isHeading, leadTitle, MAX_DEPTH, rememberSurface, resolve, rowName, set, SurfaceVersions, text } from '../lib/surface';
 import { Note, Skeleton } from './common';
@@ -87,13 +87,15 @@ function merge(local: Local, surface: Surface): Local {
 }
 
 /** Every binding in a component's own props: none, only relative ones, or an absolute one. */
-function ownReads(value: unknown): Reads {
+function ownReads(value: unknown, depth = 0): Reads {
   if (!value || typeof value !== 'object') return 'none';
+  // The server refuses deeper literals; past this, read the whole model rather than walk on.
+  if (depth > 32) return 'absolute';
   const path = (value as { '@path'?: unknown; path?: unknown })['@path'] ?? (value as { componentId?: unknown; path?: unknown }).path;
   if (typeof path === 'string') return path.startsWith('/') ? 'absolute' : 'relative';
   let found: Reads = 'none';
   for (const v of Object.values(value)) {
-    const r = ownReads(v);
+    const r = ownReads(v, depth + 1);
     if (r === 'absolute') return r;
     if (r === 'relative') found = r;
   }
@@ -157,7 +159,7 @@ function FromAgent() {
 }
 
 /** The surface itself, with its local data model; exported for the DOM test. */
-export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Surface; onAction: (body: SurfaceAction) => Promise<void>; media: (path: string) => string }>) {
+export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Surface; onAction: (body: SurfaceAction) => Promise<Submission | undefined | void>; media: (path: string) => string }>) {
   const [local, setLocal] = useState<Local>(() => ({ model: surface.data_model, dirty: CLEAN, edits: 0, updated: NONE, server: surface.data_model, seen: surface.version }));
   const [sending, setSending] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
@@ -176,7 +178,7 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
   // One action in flight per card, taken before the request so a second press in the same tick finds it.
   const busy = useRef(false);
   // The last press and its request id, kept until the server answers it, so pressing again retries it under the same id.
-  const retry = useRef<{ key: string; id: string; sent: string } | null>(null);
+  const retry = useRef<{ key: string; sent: string; body: SurfaceAction } | null>(null);
 
   const byId = useMemo(() => new Map(surface.components.map((c) => [c.id, c])), [surface.components]);
   const reads = useMemo(() => {
@@ -221,13 +223,20 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
     setSending(key);
     setFailed('');
     setChanged('');
-    const press = { surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), base_path: base, version: now.seen };
-    // The same press again after a lost answer keeps its id, so the server can answer it once; anything changed makes it a new press.
+    const press = { surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), base_path: base };
+    // The same press again after a lost answer is sent as it was, id and version included, so the server
+    // answers it once even if the card moved on since; different words or values make it a new press.
     const sent = JSON.stringify(press);
-    const id = retry.current?.key === key && retry.current.sent === sent ? retry.current.id : newRequestId();
-    retry.current = { key, id, sent };
-    onAction({ ...press, request_id: id })
-      .then(() => {
+    const body = retry.current?.key === key && retry.current.sent === sent ? retry.current.body : { ...press, version: now.seen, request_id: newRequestId() };
+    retry.current = { key, sent, body };
+    onAction(body)
+      .then((sub) => {
+        if (sub && sub.status !== 'accepted' && sub.status !== 'queued') {
+          // Not taken: the owner's values stay as they are; only an uncertain outcome is worth the same id again.
+          if (sub.status !== 'uncertain') retry.current = null;
+          setFailed(sub.status === 'uncertain' ? 'it may not have reached the agent; press again to retry' : sub.error || 'the Thread did not take it');
+          return;
+        }
         retry.current = null;
         setSent(key);
         setPressed(new Map());
@@ -637,7 +646,8 @@ function SurfaceSlider({ ctx, c, base, weight, place, name }: Part) {
   const { aria, note } = fieldNote(ctx, path, id, !!label && !labelHidden(place));
   const min = typeof c.min === 'number' ? c.min : 0;
   const max = typeof c.max === 'number' ? c.max : 100;
-  const value = Number(resolve(c.value, ctx.model, base)) || min;
+  const raw = Number(resolve(c.value, ctx.model, base));
+  const value = Number.isFinite(raw) ? raw : min;
   const step = typeof c.steps === 'number' && c.steps > 0 ? (max - min) / c.steps : 'any';
   return (
     <Labelled id={id} label={label} weight={weight} place={place} note={note}>

@@ -148,6 +148,8 @@ func TestSurfaceRefuses(t *testing.T) {
 		"cycle":         {surfaceArgs(create(`{"id":"root","component":"Card","child":"a"},{"id":"a","component":"Column","children":["root"]}`)), "contains itself"},
 		"pointer":       {surfaceArgs(create(`{"id":"root","component":"Text","text":{"@path":"/a~2"}}`)), "valid JSON Pointer"},
 		"call":          {surfaceArgs(create(`{"id":"root","component":"Text","text":{"@call":"now"}}`)), "@call is not supported"},
+		"format call":   {surfaceArgs(create(`{"id":"root","component":"Text","text":{"@call":"formatString","args":{"value":"x"}}}`)), "@call is not supported"},
+		"deep literal":  {surfaceArgs(create(`{"id":"root","component":"Button","child":"l","action":{"event":{"name":"go","context":{"x":` + strings.Repeat("[", 40) + strings.Repeat("]", 40) + `}}}},{"id":"l","component":"Text","text":"Go"}`)), `component "root" nests more than 32 levels deep`},
 		"function":      {surfaceArgs(create(`{"id":"root","component":"Button","child":"root","action":{"functionCall":{"call":"x"}}}`)), "functionCall is not supported"},
 		"missing":       {surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"nope","value":{}}}`), `there is no surface "nope"`},
 		"path":          {surfaceArgs(create(root), `{"version":"1.0","updateDataModel":{"surfaceId":"s","path":"a/b","value":1}}`), "is not a JSON Pointer"},

@@ -121,12 +121,6 @@ func checkDynamic(errs *surfaceErrs, where string, v any, kind string, enum []st
 			}
 			return
 		}
-		if c, ok := m["@call"]; ok && c == "formatString" && kind == "string" {
-			if _, ok := m["args"].(map[string]any); !ok {
-				errs.add(`%s: formatString needs an args object`, where)
-			}
-			return
-		}
 		if _, ok := m["@call"]; ok {
 			errs.add(`%s: @call is not supported here; use a literal or {"@path": ...}`, where)
 			return
@@ -460,6 +454,10 @@ func checkSurface(errs *surfaceErrs, s *surface) {
 	for _, c := range s.Components {
 		id, _ := c["id"].(string)
 		parts[id] = c
+		// A literal nested past this is no card's and would only cost the renderer its stack.
+		if jsonDepth(c, maxSurfaceDepth+1) > maxSurfaceDepth {
+			errs.add(`component %q nests more than %d levels deep; flatten it`, id, maxSurfaceDepth)
+		}
 		if t, ok := c["trigger"].(string); ok && c["component"] == "Modal" {
 			triggers[t] = true
 		}

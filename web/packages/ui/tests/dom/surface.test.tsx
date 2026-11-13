@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { ApiError, type ApiClient, type Item, type Surface, type SurfaceAction, type SurfaceComponent } from '../../src/api';
+import { ApiError, type ApiClient, type Submission, type Item, type Surface, type SurfaceAction, type SurfaceComponent } from '../../src/api';
 import { SurfaceCard, SurfaceView } from '../../src/components/Surface';
 import { SurfaceActionChip } from '../../src/components/SurfaceActionChip';
 import { applyMessage, cardTitle, drawnCount, filled, isSurfaceCall, parseActionLine, rememberSurface, set, SurfaceVersions } from '../../src/lib/surface';
@@ -339,6 +339,34 @@ describe('the review fixes', () => {
     expect(ids[2]).not.toBe(ids[1]);
     expect(onAction.mock.calls[2][0].context).toEqual({ note: 'b' });
     expect(ids[3]).not.toBe(ids[2]);
+  });
+
+  test('a press the Thread did not take keeps the owner\'s values; one that got no answer is sent again as it was, even after the card moved on', async () => {
+    const onAction = vi.fn<(body: SurfaceAction) => Promise<Submission | undefined>>()
+      .mockResolvedValueOnce({ request_id: 'r', status: 'rejected', error: 'the Thread is stopped', time: '' })
+      .mockRejectedValueOnce(new ApiError(0, 'offline'))
+      .mockResolvedValue({ request_id: 'r', status: 'queued', time: '' });
+    const parts: SurfaceComponent[] = [
+      { id: 'root', component: 'Column', children: ['note', 'go'] },
+      { id: 'note', component: 'TextField', label: 'Note', value: { '@path': '/note' } },
+      { id: 'go', component: 'Button', child: 'go-label', action: { event: { name: 'go', context: { note: { '@path': '/note' } } } } }, text('go-label', 'Go'),
+    ];
+    const { rerender } = render(<SurfaceView surface={surfaceOf(parts, { note: 'a', n: 1 }, 2)} onAction={onAction} media={media} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'b' } });
+    const go = screen.getByRole('button', { name: 'Go' });
+    fireEvent.click(go);
+    await screen.findByText('Could not send: the Thread is stopped');
+    // An agent patch elsewhere does not overwrite the edit the rejected press carried.
+    rerender(<SurfaceView surface={surfaceOf(parts, { note: 'a', n: 2 }, 3)} onAction={onAction} media={media} />);
+    expect((screen.getByRole('textbox', { name: 'Note' }) as HTMLInputElement).value).toBe('b');
+    fireEvent.click(go);
+    await screen.findByText('Could not send: offline');
+    rerender(<SurfaceView surface={surfaceOf(parts, { note: 'a', n: 3 }, 4)} onAction={onAction} media={media} />);
+    fireEvent.click(go);
+    await screen.findByText('Sent to the agent');
+    const [rejected, lost, again] = onAction.mock.calls.map(([body]) => body);
+    expect(lost.request_id).not.toBe(rejected.request_id);
+    expect(again).toEqual(lost);
   });
 
   test('a picker whose value is blank or no option\'s shows no segment as picked', () => {
