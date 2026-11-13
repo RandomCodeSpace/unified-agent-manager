@@ -118,7 +118,7 @@ func formText(what, v string, limit int, required, lines bool) error {
 		return fmt.Errorf("%s is not valid UTF-8", what)
 	case utf8.RuneCountInString(v) > limit:
 		return fmt.Errorf("%s is longer than %d characters", what, limit)
-	case strings.ContainsFunc(v, func(r rune) bool { return unicode.IsControl(r) && !(lines && (r == '\n' || r == '\t')) }):
+	case strings.ContainsFunc(v, func(r rune) bool { return unicode.IsControl(r) && (!lines || (r != '\n' && r != '\t')) }):
 		return fmt.Errorf("%s has a control character", what)
 	}
 	return nil
@@ -128,7 +128,7 @@ func formText(what, v string, limit int, required, lines bool) error {
 func formName(what, v string) error {
 	if v == "" || len(v) > maxFormName || !unicode.IsLetter(rune(v[0])) ||
 		strings.ContainsFunc(v, func(r rune) bool {
-			return r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-')
+			return r > unicode.MaxASCII || (!unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-')
 		}) {
 		return fmt.Errorf("%s %q must be letters, digits, _ or -, starting with a letter, up to %d characters", what, clipLine(v), maxFormName)
 	}
