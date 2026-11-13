@@ -126,13 +126,12 @@ export const SurfaceCard = memo(function SurfaceCard({ sessionId, callId }: Read
   if (error && !surface) return <Note tone="error" role="alert">Could not load this card: {error} {retry}</Note>;
   if (!surface) return <Skeleton label="Loading the card…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />;
   if (surface.deleted) return <Note>Removed by the agent</Note>;
-  const view = <SurfaceView surface={surface} onAction={onAction} media={media} />;
-  if (!error) return view;
-  // A failed refresh keeps the card it has and says it may be behind.
+  // One shape with or without the note, so a failed refresh never remounts the card and loses its unsent edits.
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      {view}
-      <Note role="status" className="flex flex-wrap items-center gap-x-2 px-1">May be out of date · {error} {retry}</Note>
+      <SurfaceView surface={surface} onAction={onAction} media={media} />
+      {/* A failed refresh keeps the card it has and says it may be behind. */}
+      {error && <Note role="status" className="flex flex-wrap items-center gap-x-2 px-1">May be out of date · {error} {retry}</Note>}
     </div>
   );
 });

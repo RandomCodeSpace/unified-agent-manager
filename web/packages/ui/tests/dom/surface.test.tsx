@@ -393,6 +393,21 @@ describe('the card in the transcript', () => {
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('ab');
   });
 
+  test('an unsent edit survives a failed refresh and the one after it', async () => {
+    const user = userEvent.setup();
+    const components = [{ id: 'root', component: 'TextField', label: 'Name', value: { '@path': '/name' } }];
+    const answers = [() => Promise.resolve(surfaceOf(components, { name: 'a' }, 1)), () => Promise.reject(new Error('offline')), () => Promise.resolve(surfaceOf(components, { name: 'a' }, 3))];
+    const api = client(() => answers.shift()!());
+    const { rerender } = render(mount(api, 1));
+    await user.type(await screen.findByLabelText('Name'), 'b');
+    rerender(mount(api, 2));
+    const stale = await screen.findByText(/May be out of date/);
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('ab');
+    await user.click(within(stale).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/May be out of date/)).toBeNull());
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('ab');
+  });
+
   test('a surface the server does not know draws nothing; only a tombstone says the agent removed it', async () => {
     const { container, unmount } = render(mount(client(() => Promise.reject(new ApiError(404, 'no surface'))), 1));
     await waitFor(() => expect(container.querySelector('[aria-busy], [role="status"]')).toBeNull());
