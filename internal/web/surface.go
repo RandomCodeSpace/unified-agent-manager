@@ -45,9 +45,9 @@ const (
 	// the card's title in an action line, in runes with the ellipsis.
 	maxSurfaceLabel = 80
 	maxSurfaceTitle = 120
-	// maxRetiredSurfaces bounds the deleted surfaces kept for the calls that
-	// drew them after a new surface took their id.
-	maxRetiredSurfaces = 64
+	// surfacesFileVersion is the surfaces file's format; a file without one
+	// is the same format.
+	surfacesFileVersion = 1
 	// surfaceCreatedLine starts the result's first line when the call
 	// created a surface; the transcript marks the call by it (createdSurface).
 	surfaceCreatedLine = "created surface "
@@ -82,15 +82,17 @@ type surface struct {
 
 // threadSurfaces is a Thread's surfaces file.
 type threadSurfaces struct {
-	// Surfaces are the live and deleted surfaces by id, at most maxSurfaces.
+	Version int `json:"version,omitempty"`
+	// Surfaces are the live and deleted surfaces, oldest first, at most
+	// maxSurfaces; a deleted one stays for the Thread's life, so its call
+	// still reads as deleted and its id is never reused.
 	Surfaces []*surface `json:"surfaces"`
-	// Retired are deleted surfaces whose id a later createSurface took,
-	// oldest first, so their calls still read as deleted.
-	Retired []*surface `json:"retired,omitempty"`
 }
 
+// byID is the newest surface of id; only a file of an earlier build has
+// older, deleted ones of the same id.
 func (t *threadSurfaces) byID(id string) *surface {
-	for _, s := range t.Surfaces {
+	for _, s := range slices.Backward(t.Surfaces) {
 		if s.SurfaceID == id {
 			return s
 		}
@@ -98,9 +100,9 @@ func (t *threadSurfaces) byID(id string) *surface {
 	return nil
 }
 
-// byCall is the surface callID created, live, deleted or retired.
+// byCall is the surface callID created, live or deleted.
 func (t *threadSurfaces) byCall(callID string) *surface {
-	for _, s := range slices.Concat(t.Surfaces, t.Retired) {
+	for _, s := range t.Surfaces {
 		if s.CallID == callID {
 			return s
 		}
@@ -256,23 +258,26 @@ func applySurfaceCall(t *threadSurfaces, callID, workdir string, msgs []json.Raw
 	return changed, lines, nil
 }
 
-// createSurface adds the surface a createSurface message makes to t, in the
-// place of a deleted one of its id, which t then retires. It returns nil
-// after adding an error. created is the surface the call already created.
+// createSurface adds the surface a createSurface message makes to t. It
+// returns nil after adding an error. created is the surface the call
+// already created.
 func createSurface(errs *surfaceErrs, t *threadSurfaces, where, callID, created string, body surfaceBody) *surface {
 	old := t.byID(body.SurfaceID)
 	switch {
 	case created != "":
 		errs.add(`%s: this call already created surface %q; a call creates one surface, so send this createSurface in another call`, where, created)
 		return nil
-	case old != nil && !old.Deleted:
-		errs.add(`%s: surface %q already exists; use updateComponents or updateDataModel, or deleteSurface first`, where, body.SurfaceID)
+	case old != nil && old.Deleted:
+		errs.add(`%s: surface %q was deleted in this thread and its id is not reused; choose a new id`, where, body.SurfaceID)
+		return nil
+	case old != nil:
+		errs.add(`%s: surface %q already exists; use updateComponents or updateDataModel to change it`, where, body.SurfaceID)
 		return nil
 	case body.CatalogID != surfaceCatalogID:
 		errs.add(`%s: "catalogId" must be %q`, where, surfaceCatalogID)
 		return nil
-	case old == nil && len(t.Surfaces) >= maxSurfaces:
-		errs.add(`%s: this thread already has %d surfaces, the limit; update one, or delete one and reuse its id`, where, maxSurfaces)
+	case len(t.Surfaces) >= maxSurfaces:
+		errs.add(`%s: this thread's card limit is reached: it has drawn %d surfaces, deleted ones included; update one of its live surfaces instead`, where, maxSurfaces)
 		return nil
 	}
 	data := map[string]any{}
@@ -283,17 +288,7 @@ func createSurface(errs *surfaceErrs, t *threadSurfaces, where, callID, created 
 		}
 	}
 	s := &surface{SurfaceID: body.SurfaceID, CallID: callID, CatalogID: surfaceCatalogID, Components: []map[string]any{}, DataModel: cmpMap(data)}
-	if old == nil {
-		t.Surfaces = append(t.Surfaces, s)
-		return s
-	}
-	// Versions go on rising for an id, so a stale event never wins.
-	s.Version = old.Version
-	t.Surfaces[slices.Index(t.Surfaces, old)] = s
-	t.Retired = append(t.Retired, old)
-	if len(t.Retired) > maxRetiredSurfaces {
-		t.Retired = slices.Delete(t.Retired, 0, len(t.Retired)-maxRetiredSurfaces)
-	}
+	t.Surfaces = append(t.Surfaces, s)
 	return s
 }
 
@@ -378,13 +373,13 @@ func (m *Manager) surfacesPath(taskID string) string {
 }
 
 // readSurfaces reads the Thread taskID's surfaces file; none is no surfaces.
-// A file it cannot read, or one over maxSurfacesFile, is an error, never an
-// empty set a write would then put in its place.
+// A file it cannot read, one over maxSurfacesFile, or one loadSurfaces
+// refuses is an error, never an empty set a write would then put in its place.
 func (m *Manager) readSurfaces(taskID string) (*threadSurfaces, error) {
-	t := &threadSurfaces{}
+	var t *threadSurfaces
 	f, err := os.Open(m.surfacesPath(taskID))
 	if errors.Is(err, fs.ErrNotExist) {
-		return t, nil
+		return &threadSurfaces{Version: surfacesFileVersion}, nil
 	}
 	var data []byte
 	if err == nil {
@@ -395,13 +390,87 @@ func (m *Manager) readSurfaces(taskID string) (*threadSurfaces, error) {
 		err = fmt.Errorf("the file is over %d bytes", maxSurfacesFile)
 	}
 	if err == nil {
-		err = json.Unmarshal(data, t)
+		m.mu.Lock()
+		var workdir string
+		if s := m.sessions[taskID]; s != nil {
+			workdir = s.workdir
+		}
+		m.mu.Unlock()
+		t, err = loadSurfaces(data, workdir)
 	}
 	if err != nil {
 		log.Warn("read the thread's surfaces failed", "session", taskID, "error", err)
 		return nil, errors.New("uam could not read this thread's cards; try again")
 	}
 	return t, nil
+}
+
+// loadSurfaces decodes and checks a surfaces file as a call's changes are
+// checked; media paths must lie in workdir. An earlier build's "retired"
+// list is read as the deleted surfaces it is.
+func loadSurfaces(data []byte, workdir string) (*threadSurfaces, error) {
+	var file *struct {
+		threadSurfaces
+		Retired []*surface `json:"retired"`
+	}
+	if err := decodeStrict(data, &file); err != nil {
+		return nil, err
+	}
+	switch {
+	case file == nil:
+		return nil, errors.New("the file is not an object")
+	case file.Version != 0 && file.Version != surfacesFileVersion:
+		return nil, fmt.Errorf("unknown version %d", file.Version)
+	case len(file.Surfaces) > maxSurfaces:
+		return nil, fmt.Errorf("%d surfaces; the limit is %d", len(file.Surfaces), maxSurfaces)
+	}
+	var errs surfaceErrs
+	for _, s := range file.Retired {
+		if s != nil && !s.Deleted {
+			errs.add("retired surface %q is not deleted", s.SurfaceID)
+		}
+	}
+	t := &threadSurfaces{Version: surfacesFileVersion, Surfaces: slices.Concat(file.Retired, file.Surfaces)}
+	ids, calls := map[string]*surface{}, map[string]bool{}
+	for i, s := range t.Surfaces {
+		if s == nil {
+			return nil, fmt.Errorf("surface %d is null", i+1)
+		}
+		where := fmt.Sprintf("surface %d (%q)", i+1, s.SurfaceID)
+		if !validSurfaceID(s.SurfaceID) || s.CallID == "" || len(s.CallID) > maxToolCallID || s.CatalogID != surfaceCatalogID || s.Version < 1 {
+			errs.add("%s: bad id, call id, catalog id or version", where)
+		}
+		// Only an earlier build's file repeats an id, after deleting it.
+		if prev := ids[s.SurfaceID]; prev != nil && !prev.Deleted {
+			errs.add("%s: the id appears twice", where)
+		}
+		if calls[s.CallID] {
+			errs.add("%s: call %q appears twice", where, s.CallID)
+		}
+		ids[s.SurfaceID], calls[s.CallID] = s, true
+		seen := map[string]bool{}
+		for j, c := range s.Components {
+			id := checkComponent(&errs, fmt.Sprintf("%s component %d", where, j+1), c, workdir)
+			if id != "" && seen[id] {
+				errs.add("%s: component id %q appears twice", where, id)
+			}
+			seen[id] = true
+		}
+		s.Components, s.DataModel = cmpSlice(s.Components), cmpMap(s.DataModel)
+		checkSurface(&errs, s)
+	}
+	if len(errs) > 0 {
+		return nil, errors.New(strings.Join(errs, "; "))
+	}
+	return t, nil
+}
+
+// cmpSlice is l, or an empty list for nil.
+func cmpSlice(l []map[string]any) []map[string]any {
+	if l == nil {
+		return []map[string]any{}
+	}
+	return l
 }
 
 // surfaceCall runs a uam_surface call of the Task taskID.
@@ -505,15 +574,22 @@ type SurfaceAction struct {
 	BasePath string `json:"base_path,omitempty"`
 	// RequestID, a UUID per press, makes a retried POST queue nothing new.
 	RequestID string `json:"request_id,omitempty"`
+	// Version is the surface version the page showed; a press on any other
+	// is refused, so the owner presses only what they saw.
+	Version int `json:"version"`
 }
 
 // surfaceAction queues a Button press to the Thread as a one-line prompt.
 // The Button must be on a live surface of that Thread and carry an action
 // of that name, and the context may only fill the keys its action names.
-// A request ID the Thread already has returns that press's outcome.
+// A request ID the Thread already has returns that press's outcome; a
+// version other than the card's is a conflict.
 func (m *Manager) surfaceAction(taskID string, a SurfaceAction) (Submission, error) {
 	if !validSurfaceID(a.SurfaceID) || !validSurfaceID(a.Name) || !validSurfaceID(a.SourceComponentID) {
 		return Submission{}, newError(http.StatusBadRequest, "surface_id, name and source_component_id are required")
+	}
+	if a.Version < 1 {
+		return Submission{}, newError(http.StatusBadRequest, "version must be the card's version, a positive integer")
 	}
 	if a.BasePath != "" && (len(a.BasePath) > 512 || !validPointer(a.BasePath, false)) {
 		return Submission{}, newError(http.StatusBadRequest, "base_path must be a JSON Pointer")
@@ -551,6 +627,10 @@ func (m *Manager) surfaceAction(taskID string, a SurfaceAction) (Submission, err
 	s := t.byID(a.SurfaceID)
 	if s == nil || s.Deleted {
 		return Submission{}, newError(http.StatusNotFound, "the card is gone")
+	}
+	// The label and title below are then those of the version the owner saw.
+	if s.Version != a.Version {
+		return Submission{}, newError(http.StatusConflict, "the card changed; review it and press again")
 	}
 	i := slices.IndexFunc(s.Components, func(c map[string]any) bool { return c["id"] == a.SourceComponentID })
 	var event map[string]any

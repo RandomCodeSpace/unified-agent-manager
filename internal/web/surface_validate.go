@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -528,7 +529,11 @@ func renderedCount(parts map[string]map[string]any, data any) int {
 			if at == "/" {
 				prefix = ""
 			}
-			for _, k := range surfaceItems(getPointer(data, at)) {
+			// A missing item component counts nothing, so its list would not spend the budget.
+			if parts[child] == nil {
+				return
+			}
+			for k := range surfaceItems(getPointer(data, at)) {
 				if n > maxSurfaceRender {
 					return
 				}
@@ -544,21 +549,26 @@ func renderedCount(parts map[string]map[string]any, data any) int {
 	return n
 }
 
-// surfaceItems are the pointer tokens of a template list's items: a list's
-// indexes or an object's keys, escaped.
-func surfaceItems(v any) []string {
-	var keys []string
-	switch x := v.(type) {
-	case []any:
-		for i := range x {
-			keys = append(keys, strconv.Itoa(i))
-		}
-	case map[string]any:
-		for k := range x {
-			keys = append(keys, strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1"))
+// surfaceItems yields the pointer tokens of a template list's items: a
+// list's indexes or an object's keys, escaped. It makes each only when
+// asked, so a caller that stops early pays for what it took.
+func surfaceItems(v any) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		switch x := v.(type) {
+		case []any:
+			for i := range x {
+				if !yield(strconv.Itoa(i)) {
+					return
+				}
+			}
+		case map[string]any:
+			for k := range x {
+				if !yield(strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1")) {
+					return
+				}
+			}
 		}
 	}
-	return keys
 }
 
 // surfaceAbsolute is the absolute pointer of a binding's path: one with a

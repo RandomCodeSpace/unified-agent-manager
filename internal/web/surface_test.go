@@ -229,16 +229,20 @@ func TestSurfaceRefuses(t *testing.T) {
 		}
 	}
 
-	// The surface limit counts deleted surfaces too; a deleted id is reused.
+	// A deleted id is never reused, and the surface limit counts deleted
+	// surfaces too.
 	state := &threadSurfaces{}
-	for i := range maxSurfaces {
+	for i := range maxSurfaces - 1 {
 		state.Surfaces = append(state.Surfaces, &surface{SurfaceID: string(rune('a' + i)), Deleted: i == 0})
 	}
-	if _, _, err := applySurfaceArgs(state, "c", surfaceArgs(create(root))); err == nil || !strings.Contains(err.Error(), "the limit") {
-		t.Errorf("ninth surface: err = %v", err)
+	if _, _, err := applySurfaceArgs(state, "c", surfaceArgs(surfaceCreate("a", root))); err == nil || !strings.Contains(err.Error(), "choose a new id") {
+		t.Errorf("reusing a deleted id: err = %v", err)
 	}
-	if _, _, err := applySurfaceArgs(state, "c", surfaceArgs(surfaceCreate("a", root))); err != nil || len(state.Retired) != 1 {
-		t.Errorf("reusing a deleted id: %v, retired %d", err, len(state.Retired))
+	if _, _, err := applySurfaceArgs(state, "c", surfaceArgs(create(root))); err != nil {
+		t.Fatalf("eighth surface: %v", err)
+	}
+	if _, _, err := applySurfaceArgs(state, "c2", surfaceArgs(surfaceCreate("z", root))); err == nil || !strings.Contains(err.Error(), "card limit is reached") {
+		t.Errorf("ninth surface: err = %v", err)
 	}
 }
 
@@ -310,6 +314,37 @@ func TestSurfaceRenderedCount(t *testing.T) {
 	}
 }
 
+// A chain of 200 templates over a long list is refused, and counting it
+// allocates for the components it counts, not for every item of every list.
+func TestSurfaceTemplateChainBounded(t *testing.T) {
+	const levels, items = maxSurfaceParts - 1, 15000
+	s := &surface{SurfaceID: "s"}
+	for i := range levels {
+		id, next := fmt.Sprintf("t%d", i), fmt.Sprintf("t%d", i+1)
+		if i == 0 {
+			id = "root"
+		}
+		s.Components = append(s.Components, map[string]any{"id": id, "component": "Column", "children": map[string]any{"componentId": next, "path": "/items"}})
+	}
+	s.Components = append(s.Components, map[string]any{"id": fmt.Sprintf("t%d", levels), "component": "Text", "text": "x"})
+	if err := json.Unmarshal([]byte(`{"items":[`+strings.Repeat("0,", items-1)+`0]}`), &s.DataModel); err != nil {
+		t.Fatal(err)
+	}
+	var errs surfaceErrs
+	checkSurface(&errs, s)
+	if len(errs) != 1 || !strings.Contains(errs[0], "would show at least") {
+		t.Fatalf("errs = %v", errs)
+	}
+	parts := map[string]map[string]any{}
+	for _, c := range s.Components {
+		parts[c["id"].(string)] = c
+	}
+	// Eager enumeration made levels*items (about 3,000,000) index strings.
+	if allocs := testing.AllocsPerRun(3, func() { renderedCount(parts, s.DataModel) }); allocs > 50*maxSurfaceRender {
+		t.Errorf("counting allocated %.0f times", allocs)
+	}
+}
+
 // Whole-model writes at "/" or no path, appends at the end of a list.
 func TestSurfaceDataModelWrites(t *testing.T) {
 	state := &threadSurfaces{}
@@ -350,7 +385,7 @@ func TestSurfacesPersistPerThread(t *testing.T) {
 		{"c2", string(surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"a","path":"/t","value":"hi"}}`))},
 		{"c3", string(surfaceArgs(surfaceCreate("b", root), `{"version":"1.0","deleteSurface":{"surfaceId":"b"}}`))},
 		{"c4", string(surfaceArgs(`{"version":"1.0","deleteSurface":{"surfaceId":"a"}}`))},
-		{"c5", string(surfaceArgs(surfaceCreate("a", root)))},
+		{"c5", string(surfaceArgs(surfaceCreate("a2", root)))},
 	}
 	for _, s := range steps {
 		if res := callSurface(t, conv, s.call, s.args); res.Failed {
@@ -370,7 +405,7 @@ func TestSurfacesPersistPerThread(t *testing.T) {
 	for call, want := range map[string]string{
 		"c1": `"surface_id":"a","call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":3,"deleted":true,"components":[],"data_model":{}`,
 		"c3": `"surface_id":"b","call_id":"c3","catalog_id":"urn:uam:catalog:v1","version":2,"deleted":true`,
-		"c5": `"surface_id":"a","call_id":"c5","catalog_id":"urn:uam:catalog:v1","version":4,"deleted":false,"components":[{"component":"Text","id":"root"`,
+		"c5": `"surface_id":"a2","call_id":"c5","catalog_id":"urn:uam:catalog:v1","version":1,"deleted":false,"components":[{"component":"Text","id":"root"`,
 	} {
 		s, err := m.TaskSurface(sum.ID, call)
 		b, _ := json.Marshal(s)
@@ -433,7 +468,15 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 	if w := ts.do(http.MethodGet, "/api/sessions/"+other.ID+"/surface?call=c1", "", withCookie(ts)); w.Code != http.StatusNotFound {
 		t.Fatalf("another thread's surface = %d", w.Code)
 	}
+	var drawn surface
+	if err := json.Unmarshal(w.Body.Bytes(), &drawn); err != nil || drawn.Version < 1 {
+		t.Fatalf("surface version: %v %d", err, drawn.Version)
+	}
+	// post sends body with the version the page shows, unless body has one.
 	post := func(id, body string) *httptest.ResponseRecorder {
+		if !strings.Contains(body, `"version"`) {
+			body = fmt.Sprintf(`{"version":%d,%s`, drawn.Version, body[1:])
+		}
 		return ts.do(http.MethodPost, "/api/sessions/"+id+"/surface/action", body, withCookie(ts))
 	}
 	press := `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":{"job":"test"},"base_path":"/jobs/1","request_id":"0f8fd0b2-6a8e-4f53-9d3c-3b1c1f1e2a10"}`
@@ -451,6 +494,9 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 		"big context":   {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","context":{"job":"` + strings.Repeat("x", maxSurfaceContext) + `"}}`, http.StatusRequestEntityTooLarge},
 		"request id":    {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","request_id":"press-1"}`, http.StatusBadRequest},
 		"base path":     {sum.ID, `{"surface_id":"ci","name":"retry","source_component_id":"retry","base_path":"jobs/1"}`, http.StatusBadRequest},
+		"no version":    {sum.ID, `{"version":0,"surface_id":"ci","name":"retry","source_component_id":"retry"}`, http.StatusBadRequest},
+		"text version":  {sum.ID, `{"version":"1","surface_id":"ci","name":"retry","source_component_id":"retry"}`, http.StatusBadRequest},
+		"newer version": {sum.ID, `{"version":99,"surface_id":"ci","name":"retry","source_component_id":"retry"}`, http.StatusConflict},
 	} {
 		if w := post(tc.id, tc.body); w.Code != tc.code {
 			t.Errorf("%s: %d %s, want %d", name, w.Code, w.Body.String(), tc.code)
@@ -465,6 +511,26 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 	queue := detail(t, ts.m, sum.ID).Queue
 	line := regexp.MustCompile(`^\[uam_surface action\] \{"version":"1\.0","action":\{"name":"retry","surfaceId":"ci","sourceComponentId":"retry","timestamp":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","context":\{"job":"test"\},"label":"Retry","title":"CI on main"\}\}$`)
 	if len(queue) != 1 || !line.MatchString(queue[0].Text) {
+		t.Fatalf("queued = %+v", queue)
+	}
+	// The agent changes the card between render and press: the press is
+	// refused and queues nothing; one on the new version names the new text.
+	if res := callSurface(t, conv, "c3", string(surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"ci","path":"/x","value":1}}`,
+		`{"version":"1.0","updateComponents":{"surfaceId":"ci","components":[{"id":"rl","component":"Text","text":"Approve deployment"}]}}`))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	stale := strings.Replace(press, "0f8fd0b2", "2f8fd0b2", 1)
+	if w := post(sum.ID, stale); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"error":"the card changed; review it and press again"`) {
+		t.Fatalf("stale press = %d %s", w.Code, w.Body.String())
+	}
+	if queue := detail(t, ts.m, sum.ID).Queue; len(queue) != 1 {
+		t.Fatalf("a stale press queued: %+v", queue)
+	}
+	drawn.Version += 2
+	if w := post(sum.ID, stale); w.Code != http.StatusAccepted {
+		t.Fatalf("current press = %d %s", w.Code, w.Body.String())
+	}
+	if queue := detail(t, ts.m, sum.ID).Queue; len(queue) != 2 || !strings.Contains(queue[1].Text, `"label":"Approve deployment"`) {
 		t.Fatalf("queued = %+v", queue)
 	}
 	if res := callSurface(t, conv, "c2", string(surfaceArgs(`{"version":"1.0","deleteSurface":{"surfaceId":"ci"}}`))); res.Failed {
@@ -589,9 +655,18 @@ func TestSurfacesUnreadableFileKept(t *testing.T) {
 		t.Fatal(res.Text)
 	}
 	path := m.surfacesPath(sum.ID)
+	live := `{"surface_id":"a","call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":1,"deleted":false,"components":[` + root + `],"data_model":{}}`
 	for name, body := range map[string][]byte{
-		"corrupt":   []byte(`{"surfaces":[`),
-		"oversized": append([]byte(`{"surfaces":[]}`), bytes.Repeat([]byte(" "), maxSurfacesFile)...),
+		"corrupt":       []byte(`{"surfaces":[`),
+		"oversized":     append([]byte(`{"surfaces":[]}`), bytes.Repeat([]byte(" "), maxSurfacesFile)...),
+		"null":          []byte(`null`),
+		"null surface":  []byte(`{"surfaces":[null]}`),
+		"duplicate ids": []byte(`{"surfaces":[` + live + `,` + strings.Replace(live, `"c1"`, `"c9"`, 1) + `]}`),
+		"bad component": []byte(`{"surfaces":[` + strings.Replace(live, `"Text"`, `"Script"`, 1) + `]}`),
+		"no root":       []byte(`{"surfaces":[` + strings.Replace(live, `"root"`, `"top"`, 1) + `]}`),
+		"version":       []byte(`{"version":2,"surfaces":[` + live + `]}`),
+		"unknown field": []byte(`{"surfaces":[` + live + `],"extra":1}`),
+		"zero version":  []byte(`{"surfaces":[` + strings.Replace(live, `"version":1`, `"version":0`, 1) + `]}`),
 	} {
 		if err := os.WriteFile(path, body, 0o600); err != nil {
 			t.Fatal(err)
@@ -603,5 +678,44 @@ func TestSurfacesUnreadableFileKept(t *testing.T) {
 		if _, err := m.TaskSurface(sum.ID, "c1"); err == nil || statusOf(err) == http.StatusNotFound {
 			t.Errorf("%s: read = %v, want an error", name, err)
 		}
+	}
+}
+
+// A surfaces file of the earlier build keeps deleted surfaces whose id a
+// later surface took in "retired"; they still read as deleted, the newer
+// surface of the id stays the one calls change, and the next write drops
+// the list.
+func TestSurfacesReadRetired(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	root := `{"id":"root","component":"Text","text":"hi"}`
+	if res := callSurface(t, conv, "c0", string(surfaceArgs(surfaceCreate("b", root)))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	old := `{"surface_id":"a","call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":2,"deleted":true,"components":[],"data_model":{}}`
+	cur := `{"surface_id":"a","call_id":"c2","catalog_id":"urn:uam:catalog:v1","version":3,"deleted":false,"components":[` + root + `],"data_model":{}}`
+	if err := os.WriteFile(m.surfacesPath(sum.ID), []byte(`{"surfaces":[`+cur+`],"retired":[`+old+`]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := m.TaskSurface(sum.ID, "c1"); err != nil || !s.Deleted {
+		t.Fatalf("retired call = %+v, %v", s, err)
+	}
+	if res := callSurface(t, conv, "c3", string(surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"a","path":"/x","value":1}}`))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	if res := callSurface(t, conv, "c4", string(surfaceArgs(surfaceCreate("a", root)))); !res.Failed || !strings.Contains(res.Text, "already exists") {
+		t.Fatalf("reusing a: %+v", res)
+	}
+	got, err := os.ReadFile(m.surfacesPath(sum.ID))
+	if err != nil || bytes.Contains(got, []byte("retired")) {
+		t.Fatalf("rewritten file: %v %s", err, got)
+	}
+	for call, deleted := range map[string]bool{"c1": true, "c2": false} {
+		if s, err := m.TaskSurface(sum.ID, call); err != nil || s.Deleted != deleted || s.Version < 2 {
+			t.Errorf("%s = %+v, %v", call, s, err)
+		}
+	}
+	if s, _ := m.TaskSurface(sum.ID, "c2"); s == nil || s.Version != 4 || s.DataModel["x"] != 1.0 {
+		t.Errorf("c2 after update = %+v", s)
 	}
 }
