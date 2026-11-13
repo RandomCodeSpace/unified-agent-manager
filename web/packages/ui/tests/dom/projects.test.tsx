@@ -277,6 +277,33 @@ describe('project filter', () => {
     expect(localStorage.getItem('uam.projectFilter')).toBe('"p3"');
   });
 
+  test('the filter list: the first row is highlighted, arrows move it, Enter chooses, Esc closes back to the badge, no match says so', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const badge = side.getByRole('button', { name: 'Project filter: all projects' });
+    await user.click(badge);
+    const search = await screen.findByRole('combobox', { name: 'Search projects' });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    const highlighted = () => document.getElementById(search.getAttribute('aria-activedescendant') ?? '')?.textContent;
+    const options = within(screen.getByRole('listbox', { name: 'Projects' })).getAllByRole('option');
+    await waitFor(() => expect(highlighted()).toBe('All projects'));
+    await user.keyboard('{ArrowUp}');
+    expect(highlighted()).toBe('All projects');
+    await user.keyboard('{ArrowDown}');
+    expect(highlighted()).toBe(options[1].textContent);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Search projects' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(badge));
+    await user.click(badge);
+    await user.type(await screen.findByRole('combobox', { name: 'Search projects' }), 'zzzz');
+    expect(screen.getByText('No project matches').getAttribute('role')).toBe('status');
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('combobox', { name: 'Search projects' })).toBeTruthy();
+    await user.clear(screen.getByRole('combobox', { name: 'Search projects' }));
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(await side.findByRole('button', { name: `Project filter: ${options[1].querySelector('.truncate')!.textContent}` })).toBeTruthy();
+  });
+
   test('the task search narrows the list', async () => {
     const { user } = renderApp();
     const side = await sidebar();
