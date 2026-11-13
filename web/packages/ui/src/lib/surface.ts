@@ -1,9 +1,9 @@
-// PROTOTYPE: uam_surface (A2UI v1.0). Throwaway.
 /**
- * The data model of an A2UI v1.0 surface: JSON Pointer reads and writes, `@path` bindings
- * (relative inside a list template), template children and the `required` check.
+ * The data model of an A2UI v1.0 surface (`uam_surface`): JSON Pointer reads and writes, `@path`
+ * bindings (relative inside a list template), template children and the `required` check; the
+ * card's title, and the action line a Button sends as the user's message.
  */
-import { createContext } from 'react';
+import { createContext, useSyncExternalStore } from 'react';
 import type { Item, Surface, SurfaceComponent } from '../api';
 
 type Model = Record<string, unknown>;
@@ -124,7 +124,62 @@ export function applyMessage(surface: Surface | null, message: Message, callId =
 /** The latest `surface` event's version by creating call id, for the open cards (provided by the Thread view). */
 export const SurfaceVersions = createContext<Readonly<Record<string, number>>>({});
 
-/** A completed `uam_surface` call whose messages create a surface shows its card; update-only calls stay activity rows. */
+/** A `uam_surface` call that created a surface shows its card; update-only and failed calls carry no `surface_id` and stay activity rows. */
 export function isSurfaceCall(item: Item): boolean {
-  return item.kind === 'tool' && item.tool?.name === 'uam_surface' && item.tool.status === 'completed'; // the transcript's tool rows carry no input, so an update-only call answers 404 and the card renders nothing
+  return item.kind === 'tool' && item.tool?.name === 'uam_surface' && !!item.tool.surface_id;
+}
+
+const HEADINGS = new Set(['title', 'h1', 'h2', 'h3', 'h4', 'h5']);
+export const isHeading = (c: SurfaceComponent | undefined) => c?.component === 'Text' && HEADINGS.has(String(c.variant));
+
+/** The first child of a Column at `id` (Cards unwrapped) when it is a Text that reads as a title: a heading, or one short line with no sentence stop. */
+export function leadTitle(byId: ReadonlyMap<string, SurfaceComponent>, model: unknown, id: string): { id: string; text: string } | null {
+  let at = byId.get(id);
+  for (let i = 0; at?.component === 'Card' && i < 8; i++) at = byId.get(String(at.child));
+  const first = at?.component === 'Column' && Array.isArray(at.children) ? byId.get(String(at.children[0])) : undefined;
+  if (first?.component !== 'Text' || !(first.variant === undefined || first.variant === 'body' || isHeading(first))) return null;
+  const line = text(first.text, model).trim();
+  return line && (isHeading(first) || (line.length <= 80 && !line.includes('\n') && !/[.:;?!]$/.test(line))) ? { id: first.id, text: line } : null;
+}
+
+/** The Text that titles the card: the first one the agent marked `title` (or a heading), else the root column's lead line when it reads as a title, which the card then styles as one. */
+export function cardTitle(surface: Pick<Surface, 'components' | 'data_model'>): { id: string; text: string } | null {
+  const marked = surface.components.find(isHeading);
+  if (marked) return { id: marked.id, text: text(marked.text, surface.data_model) };
+  return leadTitle(new Map(surface.components.map((c) => [c.id, c])), surface.data_model, 'root');
+}
+
+/** The surfaces the open cards loaded, by Thread and surface id, so an action line can name its button and card. */
+const known = new Map<string, Surface>();
+const listeners = new Set<() => void>();
+export function rememberSurface(sessionId: string, surface: Surface) {
+  known.set(`${sessionId}\n${surface.surface_id}`, surface);
+  for (const l of listeners) l();
+}
+export function useKnownSurface(sessionId: string | undefined, surfaceId: string): Surface | undefined {
+  return useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => known.get(`${sessionId}\n${surfaceId}`));
+}
+
+export const ACTION_PREFIX = '[uam_surface action] ';
+export interface SurfaceActionLine { name: string; surfaceId: string; sourceComponentId: string; timestamp?: string; context: Model }
+
+/** The action a user message carries when a card's Button sent it (the server's one line), or null for any other text. */
+export function parseActionLine(line: string): SurfaceActionLine | null {
+  if (!line.startsWith(ACTION_PREFIX)) return null;
+  try {
+    const action = (JSON.parse(line.slice(ACTION_PREFIX.length)) as { action?: Partial<SurfaceActionLine> }).action;
+    if (typeof action?.name !== 'string' || typeof action.surfaceId !== 'string') return null;
+    const context = action.context && typeof action.context === 'object' && !Array.isArray(action.context) ? action.context : {};
+    return { name: action.name, surfaceId: action.surfaceId, sourceComponentId: String(action.sourceComponentId ?? ''), timestamp: action.timestamp, context };
+  } catch {
+    return null;
+  }
+}
+
+/** What an action line shows: the pressed Button's text and the card's title from the known surface, else the action's name alone. */
+export function actionLabel(action: SurfaceActionLine, surface: Surface | undefined): { button: string; card: string } {
+  const source = surface?.components.find((c) => c.id === action.sourceComponentId);
+  const label = surface?.components.find((c) => c.id === source?.child);
+  const button = label?.component === 'Text' ? text(label.text, surface?.data_model).trim() : '';
+  return { button: button || action.name, card: surface ? cardTitle(surface)?.text ?? '' : '' };
 }

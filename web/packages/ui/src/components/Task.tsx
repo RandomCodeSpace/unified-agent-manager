@@ -59,7 +59,7 @@ const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.a
 import type { GitLabOpenItem } from './GitLabSheet';
 import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
 import type { GitLabRef } from '../lib/gitlabRefs';
-// PROTOTYPE uam_surface: open surface cards refetch on the `surface` event's version.
+// Open surface cards refetch on the `surface` event's version.
 import { SurfaceVersions } from '../lib/surface';
 const NO_SURFACES: Readonly<Record<string, number>> = {};
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */

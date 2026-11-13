@@ -882,9 +882,9 @@ export interface Project {
   output_style?: string;
 }
 
-// PROTOTYPE: uam_surface (A2UI v1.0). Throwaway.
+/** One component of a surface: its `id`, its catalog name and the catalog's props for it. */
 export interface SurfaceComponent { id: string; component: string; [prop: string]: unknown }
-/** A surface an agent drew with `uam_surface` (A2UI v1.0); `version` goes up with every applied message. */
+/** A surface an agent drew with `uam_surface` (A2UI v1.0); `version` goes up with every applied message, and a surface the agent deleted answers `deleted`. */
 export interface Surface {
   surface_id: string;
   call_id: string;
@@ -1118,6 +1118,8 @@ export interface ToolCall {
   unasked?: boolean;
   /** The Thread's budget denied it: it never ran, so it did not fail. */
   budget_stopped?: boolean;
+  /** A `uam_surface` call that created a surface: that surface's id, kept after the agent deletes it. */
+  surface_id?: string;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }
@@ -1628,7 +1630,7 @@ export interface LoadedSkill {
 }
 
 export interface SessionDetail extends SessionSummary, Representation {
-  /** PROTOTYPE uam_surface, client only: the latest `surface` event's version, by creating call id. */
+  /** Client only: the latest `surface` event's version, by creating call id. */
   surface_versions?: Record<string, number>;
   turn_timings?: TurnTiming[];
   seq?: number;
@@ -2726,7 +2728,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     /** The chart a Task drew with the `uam_chart` call `callId`. */
     chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),
-    /** PROTOTYPE uam_surface: the surface the call `callId` created (404 for an update-only call), and a Button's action. */
+    /** The surface the `uam_surface` call `callId` created, and a Button's action (queued as the user's message). */
     surface: (id: string, callId: string, signal?: AbortSignal) => call<Surface>('GET', `/api/sessions/${enc(id)}/surface?call=${enc(callId)}`, undefined, false, signal),
     // A 202 may carry no body, which the JSON read rejects; that still means queued.
     surfaceAction: (id: string, body: SurfaceAction) => call<void>('POST', `/api/sessions/${enc(id)}/surface/action`, body).catch((err: unknown) => { if (!(err instanceof SyntaxError)) throw err; }),
