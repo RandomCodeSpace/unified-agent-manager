@@ -93,6 +93,11 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/aside", false},
 		{"POST", "/api/sessions/task/aside/extra", false},
 		{"GET", "/api/utility", true},
+		// A uam_surface card reads by its call, and its Button presses prompt the Thread.
+		{"GET", "/api/sessions/task/surface?call=c1", true},
+		{"POST", "/api/sessions/task/surface", false},
+		{"POST", "/api/sessions/task/surface/action", true},
+		{"GET", "/api/sessions/task/surface/action", false},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},
 		{"POST", "/api/logout", false},
@@ -130,6 +135,10 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 	_, pattern := ts.srv.mux.Handler(httptest.NewRequest("GET", "/api/secrets", nil))
 	if connectedWorkloadPatternAllowed(pattern) {
 		t.Fatal("new owner API was implicitly granted to attached instances")
+	}
+	// A Button press queues a prompt; reading the card does not run a model.
+	if !connectedAccountGated("POST /api/sessions/{id}/surface/action") || connectedAccountGated("GET /api/sessions/{id}/surface") {
+		t.Fatal("surface routes are gated wrongly")
 	}
 	if connectedAccountGated("GET /api/sessions/{id}/context") {
 		t.Fatal("read-only context metadata was account-gated")
