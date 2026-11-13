@@ -27,13 +27,13 @@ afterEach(() => vi.restoreAllMocks());
 describe('the Task list', () => {
   test('keeps every unsettled Task in one flat list with its status', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
-    // Finished and unread also holds t-chart, the chart demo (mock/charts.ts), and t21, which called an MCP server's tools;
+    // Finished and unread also holds t-chart, the chart demo (mock/charts.ts), t-cards, the cards demo (mock/surfaces.ts), and t21, which called an MCP server's tools;
     // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
     const { user } = renderApp();
     const side = await sidebar();
     expect(side.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
-    expect(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
+    expect(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).toHaveLength(21);
     const you = within(side.getByRole('list', { name: 'Unsettled threads' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
     expect(await tipOf(user, you.getByRole('button', { name: /Needs permission.*Tidy zsh startup/ }))).toContain('Needs permission to run a shell command outside the project');

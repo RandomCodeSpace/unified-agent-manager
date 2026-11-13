@@ -1,0 +1,209 @@
+{
+ "create": {
+  "messages": [
+   {
+    "version": "1.0",
+    "createSurface": {
+     "surfaceId": "staging-migrations",
+     "catalogId": "urn:uam:catalog:v1",
+     "components": [
+      {
+       "id": "root",
+       "component": "Card",
+       "child": "board"
+      },
+      {
+       "id": "board",
+       "component": "Column",
+       "children": [
+        "title",
+        "environment",
+        "jobs"
+       ]
+      },
+      {
+       "id": "title",
+       "component": "Text",
+       "text": "Staging database migrations",
+       "variant": "body"
+      },
+      {
+       "id": "environment",
+       "component": "Text",
+       "text": "8 migrations · simulated progress",
+       "variant": "caption"
+      },
+      {
+       "id": "jobs",
+       "component": "List",
+       "direction": "vertical",
+       "children": {
+        "componentId": "migration",
+        "path": "/migrations"
+       }
+      },
+      {
+       "id": "migration",
+       "component": "Column",
+       "children": [
+        "name",
+        "status",
+        "progress",
+        "note"
+       ]
+      },
+      {
+       "id": "name",
+       "component": "Text",
+       "text": {
+        "@path": "name"
+       },
+       "variant": "body"
+      },
+      {
+       "id": "status",
+       "component": "Status",
+       "label": {
+        "@path": "status"
+       },
+       "tone": {
+        "@path": "tone"
+       }
+      },
+      {
+       "id": "progress",
+       "component": "Progress",
+       "value": {
+        "@path": "percent"
+       },
+       "max": 100,
+       "label": "Progress"
+      },
+      {
+       "id": "note",
+       "component": "Text",
+       "text": {
+        "@path": "note"
+       },
+       "variant": "caption"
+      }
+     ],
+     "dataModel": {
+      "migrations": [
+       {
+        "name": "0041_thread_budget",
+        "status": "Done",
+        "tone": "ok",
+        "percent": 100,
+        "note": ""
+       },
+       {
+        "name": "0042",
+        "status": "Done",
+        "tone": "ok",
+        "percent": 100,
+        "note": ""
+       },
+       {
+        "name": "0043",
+        "status": "Done",
+        "tone": "ok",
+        "percent": 100,
+        "note": ""
+       },
+       {
+        "name": "0044",
+        "status": "Running",
+        "tone": "running",
+        "percent": 40,
+        "note": ""
+       },
+       {
+        "name": "0045",
+        "status": "Queued",
+        "tone": "neutral",
+        "percent": 0,
+        "note": ""
+       },
+       {
+        "name": "0046",
+        "status": "Queued",
+        "tone": "neutral",
+        "percent": 0,
+        "note": ""
+       },
+       {
+        "name": "0047",
+        "status": "Queued",
+        "tone": "neutral",
+        "percent": 0,
+        "note": ""
+       },
+       {
+        "name": "0048_vacuum_history",
+        "status": "Queued",
+        "tone": "neutral",
+        "percent": 0,
+        "note": ""
+       }
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "patches": [
+  {
+   "messages": [
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/3/status",
+      "value": "Done"
+     }
+    },
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/3/tone",
+      "value": "ok"
+     }
+    },
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/3/percent",
+      "value": 100
+     }
+    },
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/4/status",
+      "value": "Failed"
+     }
+    },
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/4/tone",
+      "value": "fail"
+     }
+    },
+    {
+     "version": "1.0",
+     "updateDataModel": {
+      "surfaceId": "staging-migrations",
+      "path": "/migrations/4/note",
+      "value": "lock timeout"
+     }
+    }
+   ]
+  }
+ ]
+}

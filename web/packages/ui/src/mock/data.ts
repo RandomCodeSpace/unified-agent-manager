@@ -3,6 +3,9 @@
 
 import surfaceBoard from './surfaces/board.json';
 import surfaceParams from './surfaces/params.json';
+import surfaceRealBoard from './surfaces/real-board.json';
+import surfaceRealRelease from './surfaces/real-release.json';
+import surfaceRealReview from './surfaces/real-review.json';
 import surfaceRelease from './surfaces/release.json';
 import surfaceReview from './surfaces/review.json';
 import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall, TurnTodos } from '../api';
@@ -906,31 +909,45 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'd4', kind: 'assistant', time: ago(8), text: 'Here is the request flow with the state store. Click it to edit; I see your changes with your next message.\n\n```mermaid\nflowchart LR\n  browser[Browser] -->|HTTPS| proxy[Sign-in proxy] --> web[uam web Go]\n  web -->|SDK stdio| cli[Copilot CLI] --> model[Model API]\n  web -->|reads| disk[Session state]\n  cli -->|writes| disk\n```' },
       ],
     }),
-    // PROTOTYPE: uam_surface (A2UI v1.0). Throwaway. Four surfaces; mock/surfaces.ts serves them and patches the board.
+    // Cards drawn with uam_surface (mock/surfaces.ts serves them and patches the board); a tool row shows a card only with its surface_id.
     task({
-      id: 't-surface',
+      id: 't-cards',
       project_id: 'p1',
       workdir: p('p1'),
       model: 'gpt-6-luna',
-      name: 'Surface prototype',
+      name: 'Cards',
       title: '',
       state: 'completed',
-      created_at: ago(7),
+      created_at: ago(9),
       updated_at: ago(1),
       items: [
-        { id: 's1', kind: 'user', time: ago(7), text: 'Run the staging migrations and keep me posted on a board.' },
-        tool('call-surface-board', 7, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', input: JSON.stringify(surfaceBoard.create), output: 'created surface migrate-staging' }),
-        { id: 's2', kind: 'assistant', time: ago(6), text: 'The board above follows the run; I update it as each migration finishes.' },
-        { id: 's3', kind: 'user', time: ago(5), text: 'Review the surface PR and let me pick what to fix.' },
-        tool('call-surface-review', 5, { name: 'uam_surface', title: 'Surface: review-surface-pr', status: 'completed', input: JSON.stringify(surfaceReview.create), output: 'created surface review-surface-pr' }),
-        { id: 's4', kind: 'assistant', time: ago(4), text: 'Six findings, two of them high. Choose for each and send; I start on the fixes when your decisions arrive.' },
-        { id: 's5', kind: 'user', time: ago(4), text: 'Then set up a load test I can tune.' },
-        tool('call-surface-params', 3, { name: 'uam_surface', title: 'Surface: load-test-params', status: 'completed', input: JSON.stringify(surfaceParams.create), output: 'created surface load-test-params' }),
-        tool('call-surface-patch', 3, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', input: JSON.stringify(surfaceBoard.patches[0]), output: 'updated data model of migrate-staging at /rows/3' }),
-        { id: 's6', kind: 'assistant', time: ago(3), text: 'Set the load and press Run when ready.' },
-        { id: 's7', kind: 'user', time: ago(2), text: 'Put the release notes on a card with the demo clip.' },
-        tool('call-surface-release', 2, { name: 'uam_surface', title: 'Surface: release-notes', status: 'completed', input: JSON.stringify(surfaceRelease.create), output: 'created surface release-notes' }),
-        { id: 's8', kind: 'assistant', time: ago(1), text: 'Pick the release date, and approve from the changelog when it reads right.' },
+        { id: 's1', kind: 'user', time: ago(9), text: 'Run the staging migrations and keep me posted on a board.' },
+        tool('call-surface-board', 9, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', surface_id: 'migrate-staging', input: JSON.stringify(surfaceBoard.create), output: 'created surface migrate-staging' }),
+        { id: 's2', kind: 'assistant', time: ago(9), text: 'The board above follows the run; I update it as each migration finishes.' },
+        { id: 's3', kind: 'user', time: ago(8), text: 'Review the surface PR and let me pick what to fix.' },
+        tool('call-surface-review', 8, { name: 'uam_surface', title: 'Surface: review-surface-pr', status: 'completed', surface_id: 'review-surface-pr', input: JSON.stringify(surfaceReview.create), output: 'created surface review-surface-pr' }),
+        { id: 's4', kind: 'assistant', time: ago(8), text: 'Six findings, two of them high. Choose for each and send; I start on the fixes when your decisions arrive.' },
+        { id: 's4a', kind: 'user', time: ago(7), text: '[uam_surface action] {"version":"1.0","action":{"name":"review_decisions","surfaceId":"review-surface-pr","sourceComponentId":"send","timestamp":"2026-11-13T18:20:00Z","context":{"F1":["fix"],"F2":["fix"],"F3":["later"],"F4":["fix"],"F5":["skip"],"F6":["later"]}}}' },
+        { id: 's4b', kind: 'assistant', time: ago(7), text: 'Fixing F1, F2 and F4; F3 and F6 wait, F5 is skipped.' },
+        { id: 's5', kind: 'user', time: ago(6), text: 'Then set up a load test I can tune.' },
+        tool('call-surface-params', 6, { name: 'uam_surface', title: 'Surface: load-test-params', status: 'completed', surface_id: 'load-test-params', input: JSON.stringify(surfaceParams.create), output: 'created surface load-test-params' }),
+        tool('call-surface-patch', 6, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', input: JSON.stringify(surfaceBoard.patches[0]), output: 'updated data model of migrate-staging at /rows/3' }),
+        { id: 's6', kind: 'assistant', time: ago(6), text: 'Set the load and press Run when ready.' },
+        { id: 's7', kind: 'user', time: ago(5), text: 'Put the release notes on a card with the demo clip.' },
+        tool('call-surface-draft', 5, { name: 'uam_surface', title: 'Surface: release-draft', status: 'completed', surface_id: 'release-draft', input: '{}', output: 'created surface release-draft' }),
+        tool('call-surface-release', 5, { name: 'uam_surface', title: 'Surface: release-notes', status: 'completed', surface_id: 'release-notes', input: JSON.stringify(surfaceRelease.create), output: 'created surface release-notes' }),
+        { id: 's8', kind: 'assistant', time: ago(5), text: 'Pick the release date, and approve from the changelog when it reads right.' },
+        // Three cards as a model drew them in real runs, payloads verbatim.
+        { id: 'r1', kind: 'user', time: ago(4), text: 'I am about to run eight database migrations on staging, named 0041_thread_budget to 0048_vacuum_history. Show me a live board for them that you keep updated.' },
+        tool('call-real-board', 4, { name: 'uam_surface', title: 'Surface: staging-migrations', status: 'completed', surface_id: 'staging-migrations', input: JSON.stringify(surfaceRealBoard.create), output: 'created surface staging-migrations' }),
+        tool('call-real-board-patch', 4, { name: 'uam_surface', title: 'Surface: staging-migrations', status: 'completed', input: JSON.stringify(surfaceRealBoard.patches[0]), output: 'updated data model of staging-migrations' }),
+        { id: 'r2', kind: 'assistant', time: ago(4), text: 'The board shows 0044 done and 0045 failed with a lock timeout; the rest are queued.' },
+        { id: 'r3', kind: 'user', time: ago(3), text: 'Prepare a release sign-off card for v0.23.0 with the screenshot at shots/settings-page.png, a row of icons for what changed, a release date and time, a changelog dialog and an Approve button.' },
+        tool('call-real-release', 3, { name: 'uam_surface', title: 'Surface: release-signoff-v0230', status: 'completed', surface_id: 'release-signoff-v0230', input: JSON.stringify(surfaceRealRelease.create), output: 'created surface release-signoff-v0230' }),
+        { id: 'r4', kind: 'assistant', time: ago(3), text: 'The sign-off card is ready; Approve sends me the chosen date.' },
+        { id: 'r5', kind: 'user', time: ago(2), text: 'I reviewed a pull request and found six issues. Give me a card where I can pick Fix, Skip or Later for each one and send all my choices at once.' },
+        tool('call-real-review', 2, { name: 'uam_surface', title: 'Surface: pr-review-issue-choices', status: 'completed', surface_id: 'pr-review-issue-choices', input: JSON.stringify(surfaceRealReview.create), output: 'created surface pr-review-issue-choices' }),
+        { id: 'r6', kind: 'assistant', time: ago(1), text: 'Every finding starts on Later; send when your choices are in.' },
       ],
     }),
     task({

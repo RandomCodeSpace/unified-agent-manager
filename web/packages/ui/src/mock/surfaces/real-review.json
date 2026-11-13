@@ -1,0 +1,326 @@
+{
+ "create": {
+  "messages": [
+   {
+    "version": "1.0",
+    "createSurface": {
+     "surfaceId": "pr-review-issue-choices",
+     "catalogId": "urn:uam:catalog:v1",
+     "components": [
+      {
+       "id": "root",
+       "component": "Card",
+       "child": "content"
+      },
+      {
+       "id": "content",
+       "component": "Column",
+       "children": [
+        "intro",
+        "issue1",
+        "issue2",
+        "issue3",
+        "issue4",
+        "issue5",
+        "issue6",
+        "submit"
+       ]
+      },
+      {
+       "id": "intro",
+       "component": "Text",
+       "variant": "body",
+       "text": "Choose Fix, Skip, or Later for each finding. Defaults are Later. Send all six choices together when ready."
+      },
+      {
+       "id": "issue1",
+       "component": "Row",
+       "children": [
+        "label1",
+        "choice1"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label1",
+       "component": "Text",
+       "variant": "body",
+       "text": "1. High — action context posted without checking surface still exists (internal/web/surface.go:142)"
+      },
+      {
+       "id": "choice1",
+       "component": "ChoicePicker",
+       "label": "Choice 1",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue1"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "issue2",
+       "component": "Row",
+       "children": [
+        "label2",
+        "choice2"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label2",
+       "component": "Text",
+       "variant": "body",
+       "text": "2. High — JSON Pointer writes accept '__proto__' segments (web/packages/ui/src/lib/surface.ts:38)"
+      },
+      {
+       "id": "choice2",
+       "component": "ChoicePicker",
+       "label": "Choice 2",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue2"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "issue3",
+       "component": "Row",
+       "children": [
+        "label3",
+        "choice3"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label3",
+       "component": "Text",
+       "variant": "body",
+       "text": "3. Medium — version counter not reset when a surface is deleted and created again (internal/web/surface.go:88)"
+      },
+      {
+       "id": "choice3",
+       "component": "ChoicePicker",
+       "label": "Choice 3",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue3"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "issue4",
+       "component": "Row",
+       "children": [
+        "label4",
+        "choice4"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label4",
+       "component": "Text",
+       "variant": "body",
+       "text": "4. Medium — template rows re-render on every data model patch (web/packages/ui/src/components/Surface.tsx:97)"
+      },
+      {
+       "id": "choice4",
+       "component": "ChoicePicker",
+       "label": "Choice 4",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue4"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "issue5",
+       "component": "Row",
+       "children": [
+        "label5",
+        "choice5"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label5",
+       "component": "Text",
+       "variant": "body",
+       "text": "5. Low — error text names the component id twice (internal/web/surface.go:61)"
+      },
+      {
+       "id": "choice5",
+       "component": "ChoicePicker",
+       "label": "Choice 5",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue5"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "issue6",
+       "component": "Row",
+       "children": [
+        "label6",
+        "choice6"
+       ],
+       "align": "center"
+      },
+      {
+       "id": "label6",
+       "component": "Text",
+       "variant": "body",
+       "text": "6. Low — slider step rounds 0.1 to 0.1000000001 (web/packages/ui/src/components/Surface.tsx:203)"
+      },
+      {
+       "id": "choice6",
+       "component": "ChoicePicker",
+       "label": "Choice 6",
+       "options": [
+        {
+         "label": "Fix",
+         "value": "Fix"
+        },
+        {
+         "label": "Skip",
+         "value": "Skip"
+        },
+        {
+         "label": "Later",
+         "value": "Later"
+        }
+       ],
+       "value": {
+        "@path": "/choices/issue6"
+       },
+       "variant": "mutuallyExclusive"
+      },
+      {
+       "id": "submit",
+       "component": "Button",
+       "child": "submit-label",
+       "variant": "primary",
+       "action": {
+        "event": {
+         "name": "submit_choices",
+         "context": {
+          "issue1": {
+           "@path": "/choices/issue1"
+          },
+          "issue2": {
+           "@path": "/choices/issue2"
+          },
+          "issue3": {
+           "@path": "/choices/issue3"
+          },
+          "issue4": {
+           "@path": "/choices/issue4"
+          },
+          "issue5": {
+           "@path": "/choices/issue5"
+          },
+          "issue6": {
+           "@path": "/choices/issue6"
+          }
+         }
+        }
+       }
+      },
+      {
+       "id": "submit-label",
+       "component": "Text",
+       "text": "Send all choices"
+      }
+     ],
+     "dataModel": {
+      "choices": {
+       "issue1": [
+        "Later"
+       ],
+       "issue2": [
+        "Later"
+       ],
+       "issue3": [
+        "Later"
+       ],
+       "issue4": [
+        "Later"
+       ],
+       "issue5": [
+        "Later"
+       ],
+       "issue6": [
+        "Later"
+       ]
+      }
+     }
+    }
+   }
+  ]
+ }
+}

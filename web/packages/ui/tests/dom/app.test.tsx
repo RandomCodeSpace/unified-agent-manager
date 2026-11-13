@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
-import { api } from '../../src/api';
+import { api, readOnly } from '../../src/api';
 import * as data from '../../src/mock/data';
 import { openSubagentIndex, openTask, renderApp, sidebar } from './render';
 
@@ -546,6 +546,8 @@ describe('phone drawer', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Projects' });
     const rows = () => drawer.querySelectorAll('ul[aria-label="Unsettled threads"] > li').length;
     await waitFor(() => expect(drawer.querySelectorAll('[data-task-row^="more-"]')).toHaveLength(60));
+    // Rows mount in batches of 16, so the clones can all be in before the last batch of the rest.
+    await waitFor(() => expect(rows()).toBe(state.tasks.filter((t) => !readOnly(t)).length));
     const all = rows();
     expect(all).toBeGreaterThan(60);
     await user.click(within(drawer).getByRole('button', { name: /^Hide sidebar/ }));
