@@ -1,5 +1,7 @@
+import { Autocomplete } from '@base-ui/react/autocomplete';
+import { Combobox } from '@base-ui/react/combobox';
 import { Check, ChevronDown, Clock, Layers, FolderPlus, Search, Settings, X } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, newTaskProject, searchProjects } from '../lib/tasks';
@@ -13,34 +15,10 @@ import { Tip } from './ui/tooltip';
 
 /**
  * The Project lists a search box drives (T3 Code): the sidebar's filter dropdown and the
- * New task palette. The box keeps focus; the
+ * New task palette, on Base UI's Autocomplete and Combobox (inline). The box keeps focus; the
  * highlight is virtual (`aria-activedescendant`), arrows move it, Enter picks it, Esc closes
  * the surface and a pointer over a row takes it.
  */
-
-/** The highlighted index, clamped to the list; `initial` is used once, on mount. */
-function useHighlight(count: number, initial: number, onPick: (index: number) => void) {
-  const [active, setActive] = useState(initial);
-  const at = Math.min(active, count - 1);
-  const list = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    list.current?.querySelector('[data-highlighted]')?.scrollIntoView({ block: 'nearest' });
-  }, [at]);
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const move = (n: number) => {
-      setActive(Math.max(0, Math.min(count - 1, n)));
-      e.preventDefault();
-    };
-    if (e.key === 'ArrowDown') move(at + 1);
-    else if (e.key === 'ArrowUp') move(at - 1);
-    else if (e.key === 'Enter' && at >= 0) {
-      e.preventDefault();
-      onPick(at);
-    }
-  };
-  return { active: at, setActive, list, onKeyDown };
-}
 
 const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-none placeholder:text-muted';
 
@@ -78,7 +56,7 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRout
         </Popover.Trigger>
       </Tip>
       {/* Wider than the Routines picker's list: each row also carries its Routines and Edit buttons. */}
-      <Popover.Content side={side} align="start" sideOffset={side === 'right' ? 8 : 4} initialFocus={input} className="w-88 max-w-(--available-width) gap-0 p-1">
+      <Popover.Content aria-label="Project filter" side={side} align="start" sideOffset={side === 'right' ? 8 : 4} initialFocus={input} className="w-88 max-w-(--available-width) gap-0 p-1">
         <FilterList
           projects={projects}
           filter={chosen?.id ?? null}
@@ -114,7 +92,7 @@ export function RoutinesProjectPicker({ projects, value, onPick }: Readonly<{ pr
         <span className="min-w-0 truncate max-[480px]:hidden">{name}</span>
         <ChevronDown className="text-muted" />
       </Popover.Trigger>
-      <Popover.Content side="bottom" align="start" sideOffset={4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
+      <Popover.Content aria-label="Project filter" side="bottom" align="start" sideOffset={4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
         <FilterList
           projects={projects}
           filter={project?.id ?? null}
@@ -174,7 +152,6 @@ function FilterList({ projects, filter, input, onPick, onEdit, onRoutines, group
   onRoutines?: (p: Project) => void;
   groups?: ProjectGroup[];
 }>) {
-  const id = useId();
   const [query, setQuery] = useState('');
   const q = query.trim().toLocaleLowerCase();
   const sections = useMemo(() => {
@@ -204,35 +181,23 @@ function FilterList({ projects, filter, input, onPick, onEdit, onRoutines, group
     }];
   }, [q, query, groups, projects, filter, onPick, onEdit, onRoutines]);
   const rows = sections.flatMap((section) => section.rows);
-  const { active, setActive, list, onKeyDown } = useHighlight(rows.length, 0, (i) => rows[i].pick());
-  const renderRow = (row: ShownRow, i: number) => {
+  const renderRow = (row: ShownRow) => {
     const p = row.project;
-    const pick = () => row.pick();
     return (
       // The row holds the option (the Project, named by it alone) and, beside it, its buttons. The option is reached through the search box (`aria-activedescendant`), never focused itself.
-      <div
-        key={row.key}
-        role="none"
-        data-highlighted={i === active ? '' : undefined}
-        className={cn(itemClass, 'pr-1', row.current && 'text-ink')}
-        onPointerMove={() => i !== active && setActive(i)}
-      >
-        <div
-          role="option"
-          tabIndex={-1}
-          id={`${id}-${i}`}
-          aria-selected={i === active}
+      <div key={row.key} role="none" className={cn(itemClass, 'pr-1 has-data-highlighted:bg-tint-hover has-data-highlighted:text-ink has-data-highlighted:[&_svg]:text-ink', row.current && 'text-ink')}>
+        <Autocomplete.Item
+          value={row.key}
           aria-current={row.current || undefined}
           className="flex min-w-0 flex-1 items-center gap-2 self-stretch outline-hidden"
-          onClick={pick}
-          onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && pick()}
+          onClick={row.pick}
         >
           {p ? <ProjectBadge badge={p.badge} /> : row.icon}
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate">{row.label}</span>
           </span>
           {row.current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
-        </div>
+        </Autocomplete.Item>
         {p && row.onRoutines && (
           <Tip label="Routines">
             <Button
@@ -264,44 +229,27 @@ function FilterList({ projects, filter, input, onPick, onEdit, onRoutines, group
       </div>
     );
   };
-  let index = 0;
   return (
-    <>
-      <label className="flex items-center gap-1.5 px-2 pb-1 text-muted">
+    // Inline: the popover around it is the surface, so Esc bubbles to it. A row press would fill the box with its value; the list closes instead.
+    <Autocomplete.Root inline open mode="none" autoHighlight="always" keepHighlight loopFocus={false} value={query} onValueChange={(v, d) => d.reason !== 'item-press' && setQuery(v)}>
+      <div className="flex items-center gap-1.5 px-2 pb-1 text-muted">
         <Search aria-hidden="true" className="size-3.5 shrink-0" />
-        <input
-          ref={input}
-          type="search"
-          role="combobox"
-          aria-label="Search projects"
-          aria-autocomplete="list"
-          aria-expanded="true"
-          aria-controls={`${id}-list`}
-          aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
-          placeholder="Search projects…"
-          className={inputClass}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setActive(0);
-          }}
-          onKeyDown={onKeyDown}
-        />
-      </label>
-      <div ref={list} role="listbox" id={`${id}-list`} aria-label="Projects" className="max-h-[min(60dvh,360px)] overflow-y-auto overflow-x-hidden overscroll-contain pt-1">
+        <Autocomplete.Input ref={input} type="search" aria-label="Search projects" placeholder="Search projects…" className={inputClass} />
+      </div>
+      <Autocomplete.List aria-label="Projects" className="max-h-[min(60dvh,360px)] overflow-y-auto overflow-x-hidden overscroll-contain pt-1">
         {sections.map((section) => {
-          const shown = section.rows.map((row) => renderRow(row, index++));
+          const shown = section.rows.map(renderRow);
           if (!('label' in section)) return shown;
           return (
-            <div key={section.key} role="group" aria-labelledby={`${id}-g-${section.key || 'home'}`}>
-              <div id={`${id}-g-${section.key || 'home'}`} role="presentation" className={cn(labelClass, 'truncate')}>{section.label}</div>
+            <Autocomplete.Group key={section.key}>
+              <Autocomplete.GroupLabel className={cn(labelClass, 'truncate')}>{section.label}</Autocomplete.GroupLabel>
               {shown}
-            </div>
+            </Autocomplete.Group>
           );
         })}
         {rows.length === 0 && <p role="status" className="px-2 py-2 text-caption text-muted">No project matches</p>}
-      </div>
-    </>
+      </Autocomplete.List>
+    </Autocomplete.Root>
   );
 }
 
@@ -386,51 +334,38 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
       return searchProjects(own.map((e) => e.project), query).map((project) => own.find((e) => e.project === project)!);
     });
   }, [entries, query]);
-  const { active, setActive, list, onKeyDown } = useHighlight(matches.length, Math.max(0, entries.findIndex((e) => e.key === start)), (i) => onPick(matches[i]));
-  const option = (e: PaletteEntry, i: number) => (
-    <button
-      key={e.key}
-      type="button"
-      role="option"
-      tabIndex={-1}
-      id={`${id}-${i}`}
-      aria-selected={i === active}
-      data-highlighted={i === active ? '' : undefined}
-      className={cn(itemClass, 'gap-2.5 px-2.5 py-1.5 text-left')}
-      onPointerMove={() => i !== active && setActive(i)}
-      onClick={() => onPick(e)}
-    >
+  // Rows off screen skip style, layout and paint (content-visibility): with 300 Projects the palette opens about 10 frames sooner at 4x CPU throttle.
+  const option = (e: PaletteEntry) => (
+    <Combobox.Item key={e.key} value={e.key} className={cn(itemClass, 'gap-2.5 px-2.5 py-1.5 text-left [contain-intrinsic-size:auto_42px] [content-visibility:auto]')} onClick={() => onPick(e)}>
       <ProjectBadge badge={e.project.badge} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-ink">{e.project.name}</span>
         <span className="truncate text-meta text-muted" title={e.project.dir}>{e.project.dir}</span>
       </span>
       {entries.indexOf(e) < 9 && <span className="contents pointer-coarse:hidden"><Key>Alt+{entries.indexOf(e) + 1}</Key></span>}
-    </button>
+    </Combobox.Item>
   );
   const grouped = entries.some((e) => e.group);
   return (
-    <>
+    // Inline in the dialog, which owns Esc. The start row is the selection, so it holds the highlight on open and when the search is cleared.
+    <Combobox.Root
+      inline
+      open
+      autoHighlight
+      loopFocus={false}
+      value={start ?? entries[0]?.key ?? null}
+      inputValue={query}
+      onInputValueChange={(v, d) => d.reason !== 'item-press' && setQuery(v)}
+    >
       <div className="flex items-center gap-1 px-2 py-1.5">
         <Button size="icon" aria-label="Close" className="text-muted" onClick={onClose}>
           <X />
         </Button>
-        <input
+        <Combobox.Input
           ref={input}
-          type="search"
-          role="combobox"
           aria-label="Search projects"
-          aria-autocomplete="list"
-          aria-expanded="true"
-          aria-controls={`${id}-list`}
-          aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
           placeholder="Search projects…"
           className={inputClass}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setActive(0);
-          }}
           onKeyDown={(e) => {
             const digit = e.altKey && !e.ctrlKey && !e.metaKey ? DIGIT.exec(e.code)?.[1] : undefined;
             // A Project's number is its place in the full list; it picks the Project while the search shows it.
@@ -438,9 +373,7 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
             if (hit) {
               e.preventDefault();
               onPick(hit);
-              return;
             }
-            onKeyDown(e);
           }}
         />
       </div>
@@ -448,16 +381,16 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
         <p id={`${id}-label`} className={labelClass}>
           Projects
         </p>
-        <div ref={list} role="listbox" id={`${id}-list`} aria-labelledby={`${id}-label`}>
+        <Combobox.List aria-labelledby={`${id}-label`}>
           {grouped
             ? [...new Set(matches.map((m) => m.group!))].map((g) => (
-                <div key={g.key} role="group" aria-labelledby={`${id}-g-${g.key || 'home'}`}>
-                  <div id={`${id}-g-${g.key || 'home'}`} role="presentation" className={cn(labelClass, 'truncate')}>{g.label}</div>
-                  {matches.map((m, i) => (m.group === g ? option(m, i) : null))}
-                </div>
+                <Combobox.Group key={g.key}>
+                  <Combobox.GroupLabel className={cn(labelClass, 'truncate')}>{g.label}</Combobox.GroupLabel>
+                  {matches.map((m) => (m.group === g ? option(m) : null))}
+                </Combobox.Group>
               ))
-            : matches.map((m, i) => option(m, i))}
-        </div>
+            : matches.map(option)}
+        </Combobox.List>
         {matches.length === 0 && !loaded && <Skeleton label="Loading projects…" rows={3} className="gap-1 px-1 pb-1" rowClassName="h-10 w-full" />}
         {matches.length === 0 && loaded && (
           <div className="flex flex-col items-start gap-2 px-2 py-3">
@@ -476,6 +409,6 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
         <span className="flex items-center gap-1"><Key>Enter</Key> Select</span>
         <span className="flex items-center gap-1"><Key>Esc</Key> Close</span>
       </footer>
-    </>
+    </Combobox.Root>
   );
 }

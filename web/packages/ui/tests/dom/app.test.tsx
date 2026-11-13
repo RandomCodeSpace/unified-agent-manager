@@ -379,6 +379,25 @@ describe('new task', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  test('the palette opens on a highlighted Project; arrows move it and Enter opens that Project\'s draft', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    await user.keyboard('{Alt>}n{/Alt}');
+    const palette = within(await screen.findByRole('dialog'));
+    const search = palette.getByRole('combobox', { name: 'Search projects' });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    const options = palette.getAllByRole('option');
+    const at = () => options.findIndex((o) => o.id === search.getAttribute('aria-activedescendant'));
+    await waitFor(() => expect(at()).toBeGreaterThanOrEqual(0));
+    const next = Math.min(at() + 1, options.length - 1);
+    await user.keyboard('{ArrowDown}');
+    expect(at()).toBe(next);
+    const name = options[next].querySelector('[title]')!.previousElementSibling!.textContent!;
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(header().textContent).toBe('New thread'));
+    expect(screen.getByText(`New thread in ${name}`)).toBeTruthy();
+  });
+
   test('palette numbers stay with their project while searching, and no match offers Add project', async () => {
     const { user } = renderApp();
     await sidebar();

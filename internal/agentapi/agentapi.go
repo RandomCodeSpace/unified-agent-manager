@@ -1504,7 +1504,8 @@ type Interaction struct {
 	Intention string      `json:"intention,omitempty"`
 	Plan      *PlanReview `json:"plan,omitempty"`
 	// Options lists permission decisions the provider accepts. Answer.Decision
-	// must be one of these IDs.
+	// must be one of these IDs. On a question they are a form's actions: an
+	// answer (not a decline or cancel) names the one the user chose.
 	Options []Option `json:"options,omitempty"`
 	// Questions lists question prompts. Answer.Answers must have one entry per
 	// question.

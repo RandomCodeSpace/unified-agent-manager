@@ -1,12 +1,13 @@
 import { Tooltip as BaseTooltip } from '@base-ui/react/tooltip';
 import { Info } from 'lucide-react';
-import { useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Button } from './button';
 
 export const TooltipProvider = BaseTooltip.Provider;
 
 /**
- * A hint for sighted users; the trigger must carry its own accessible name. `label` may
+ * A hint on hover and keyboard focus; the trigger must carry its own accessible name, and while the tip is open
+ * it describes the trigger (`aria-describedby`), so text the name lacks reaches a screen reader too. `label` may
  * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up. It never takes the
  * pointer: a tip shown on focus may cover a field, and a press there reaches the field.
  */
@@ -14,18 +15,24 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
   const shown = useRef(false);
   const openAtPress = useRef(false);
   const [open, setOpen] = useState(false);
+  const popupId = useId();
   if (!label) return children;
+  const child = children as ReactElement<{ 'aria-label'?: string; 'aria-describedby'?: string }>;
+  const own = child.props;
+  // A trigger's own description wins; a tip that only repeats the name adds none.
+  const describedBy = own['aria-describedby'] ?? (open && label !== own['aria-label'] ? popupId : undefined);
   return (
     <BaseTooltip.Root
       disabled={disabled}
       open={openOnClick ? open : undefined}
       onOpenChange={(open) => {
         shown.current = open;
-        if (openOnClick) setOpen(open);
+        setOpen(open);
       }}
     >
       <BaseTooltip.Trigger
-        render={children}
+        // Set on the child: its props win Base UI's merge, an explicit undefined included.
+        render={cloneElement(child, { 'aria-describedby': describedBy })}
         closeOnClick={!openOnClick}
         onPointerDown={openOnClick ? () => { openAtPress.current = shown.current; } : undefined}
         onClick={openOnClick ? (event) => {
@@ -38,6 +45,8 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner side={side} sideOffset={6} collisionPadding={8} className="pointer-events-none z-60">
           <BaseTooltip.Popup
+            id={popupId}
+            role="tooltip"
             data-popup="tooltip"
             className="max-w-64 origin-(--transform-origin) rounded-sm bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none"
           >

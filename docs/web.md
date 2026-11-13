@@ -1492,6 +1492,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Repeated pictorial symbols need an explicit integer `symbolRepeat` from
   0 to 1000; automatic repetition is unavailable. `splitNumber` uses the
   same limit. Sankey `layoutIterations` defaults to 32 and accepts 0 to 128.
+- **Forms**: when an agent needs several answers at once, or wants you to
+  pick what happens next, it can show a form through the `uam_form` tool:
+  a title, an optional plain-text note, up to 8 fields (a line or a text
+  box, one or several of a few options, a checkbox) and 1 to 4 buttons. A
+  form with no fields is a row of buttons. It appears as a card in the
+  conversation, like a question with several parts, and the agent waits
+  until you answer: the button you press and every field go back to it in
+  one answer, and Dismiss tells it you closed the form without answering.
+  A required field left empty says so under itself when you press a button.
+  Everything on the form is plain text: uam shows no Markdown, links or
+  images from it. uam checks the form before showing it (counts, lengths,
+  kinds, names and options) and refuses one that does not fit, telling the
+  agent why. Stop, a rewind or a restart withdraws a waiting form, as it
+  does a question. Once answered, the conversation shows the form's title
+  with the button and the values you chose.
 - **Drawings**: a mermaid flowchart or sequence diagram in a reply can be
   edited as a drawing. The block becomes a `.excalidraw` file (or, with the
   draw.io editor enabled, a `.drawio` file) under the Thread folder's

@@ -109,7 +109,10 @@ describe('a draft Thread', () => {
     expect(screen.getByRole('button', { name: 'Branch feat/settings-rail' })).toBeTruthy();
     menu = await openBranches(user);
     expect(menu.getByRole('option', { name: /^feat\/settings-rail/ }).getAttribute('aria-selected')).toBe('true');
-    await user.type(menu.getByRole('textbox', { name: 'Find a branch' }), 'release/1.4{Enter}');
+    // The checked row holds the highlight on open.
+    const find = menu.getByRole('combobox', { name: 'Find a branch' });
+    await waitFor(() => expect(document.getElementById(find.getAttribute('aria-activedescendant') ?? '')?.textContent).toMatch(/^feat\/settings-rail/));
+    await user.type(find, 'release/1.4{Enter}');
     expect(screen.getByRole('button', { name: 'Branch origin/release/1.4' })).toBeTruthy();
     await user.type(composer(), '@');
     await waitFor(() => expect(files).toHaveBeenCalledWith(expect.any(String), '', 50, 'origin/release/1.4'));

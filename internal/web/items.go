@@ -1050,8 +1050,11 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 		}
 		return newError(http.StatusBadRequest, "decision must be one of the offered options")
 	case agentapi.InteractionQuestion:
-		if a.Decision != "" || a.Plan != nil {
-			return newError(http.StatusBadRequest, "a question takes answers, not a decision")
+		if a.Plan != nil || a.Decision != "" && !slices.ContainsFunc(ix.Options, func(o agentapi.Option) bool { return o.ID == a.Decision }) {
+			return newError(http.StatusBadRequest, "a question takes answers, and a form's action must be one of its actions")
+		}
+		if (a.Cancel || a.Reject) && a.Decision != "" {
+			return newError(http.StatusBadRequest, "a decline or cancel takes no action")
 		}
 		if a.Cancel {
 			if ix.Elicitation == nil {
@@ -1067,6 +1070,9 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 				return newError(http.StatusBadRequest, "a rejected question takes no answers")
 			}
 			return nil
+		}
+		if len(ix.Options) > 0 && a.Decision == "" {
+			return newError(http.StatusBadRequest, "an answer to a form names one of its actions")
 		}
 		if len(a.Answers) != len(ix.Questions) {
 			return newError(http.StatusBadRequest, "answers must have one entry per question (%d)", len(ix.Questions))
@@ -1160,6 +1166,11 @@ func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.Interactio
 	}
 	if ix.Elicitation != nil && ix.Elicitation.Mode == agentapi.ElicitationURL {
 		return agentapi.InteractionAnswered, "accepted"
+	}
+	for _, opt := range ix.Options {
+		if opt.ID == a.Decision {
+			return agentapi.InteractionAnswered, opt.Label
+		}
 	}
 	return agentapi.InteractionAnswered, "answered"
 }

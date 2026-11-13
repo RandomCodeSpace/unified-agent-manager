@@ -962,8 +962,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }
 
   // A pending question with one question is the composer's extension (DESIGN.md Composer, answer mode),
-  // never a card: the composer shows it, holds the text and files, and answers or declines it.
-  const question = session.capabilities.questions ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'question' && i.questions?.length === 1) : undefined;
+  // never a card: the composer shows it, holds the text and files, and answers or declines it. A form
+  // with actions (`uam_form`) is always its card.
+  const question = session.capabilities.questions ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'question' && i.questions?.length === 1 && !i.options?.length) : undefined;
   const plan = session.capabilities.plan ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'plan_review' && i.plan) : undefined;
   const onAnswered = useCallback((i: Interaction) => onInteractionUpdate(session.id, i), [onInteractionUpdate, session.id]);
   const answering = useMemo<Answering | null>(() => plan ? { kind: 'plan', interaction: plan, plan: plan.plan!, onAnswered } : question ? { kind: 'question', interaction: question, question: question.questions![0], onAnswered } : null, [question, plan, onAnswered]);
