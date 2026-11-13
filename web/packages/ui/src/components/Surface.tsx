@@ -234,7 +234,7 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
         if (sub && sub.status !== 'accepted' && sub.status !== 'queued') {
           // Not taken: the owner's values stay as they are; only an uncertain outcome is worth the same id again.
           if (sub.status !== 'uncertain') retry.current = null;
-          setFailed(sub.status === 'uncertain' ? 'it may not have reached the agent; press again to retry' : sub.error || 'the Thread did not take it');
+          setFailed(sub.status === 'uncertain' ? 'it is not known whether the agent got it; check the conversation before pressing again' : sub.error || 'the Thread did not take it');
           return;
         }
         retry.current = null;
