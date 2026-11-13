@@ -313,6 +313,15 @@ describe('the review fixes', () => {
     expect(next.request_id).not.toBe(first.request_id);
   });
 
+  test('a picker whose value is blank or no option\'s shows no segment as picked', () => {
+    const { container } = draw(surfaceOf([
+      { id: 'root', component: 'List', children: { componentId: 'pick', path: '/rows' } },
+      { id: 'pick', component: 'ChoicePicker', label: 'Decision', options: [{ label: 'Fix', value: 'Fix' }, { label: 'Skip', value: 'Skip' }], value: { '@path': 'choice' }, variant: 'mutuallyExclusive' },
+    ], { rows: [{ choice: '' }, { choice: 'later' }, { choice: [] }, { choice: ['Skip'] }] }));
+    const hidden = [...container.querySelectorAll('[role=radiogroup]')].map((g) => g.className.includes('[&>span:first-child]:opacity-0'));
+    expect(hidden).toEqual([true, true, true, false]);
+  });
+
   test('typing in one template row redraws that row, not the others', async () => {
     const user = userEvent.setup();
     const seen = vi.fn(media);

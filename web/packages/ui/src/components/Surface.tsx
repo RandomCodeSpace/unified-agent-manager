@@ -619,8 +619,8 @@ function SurfaceChoice({ ctx, c, base, weight, place, name }: Part) {
     return (
       <div style={weight} className="flex min-w-0 flex-col gap-1">
         {label && <span id={id} className={place === 'beside' ? 'sr-only' : 'text-caption text-muted'}>{label}</span>}
-        {/* With nothing chosen yet the thumb hides, so no segment reads as picked. */}
-        <Segmented aria-labelledby={label ? id : undefined} aria-label={named} aria-invalid={aria['aria-invalid']} aria-describedby={aria['aria-describedby']} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('min-w-48', !chosen.length && '[&>span:first-child]:opacity-0', aria['aria-invalid'] && 'shadow-[inset_0_0_0_1px_var(--color-error)]')} />
+        {/* With nothing chosen yet (or a value no segment has) the thumb hides, so no segment reads as picked. */}
+        <Segmented aria-labelledby={label ? id : undefined} aria-label={named} aria-invalid={aria['aria-invalid']} aria-describedby={aria['aria-describedby']} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('min-w-48', !options.some((o) => o.value === chosen[0]) && '[&>span:first-child]:opacity-0', aria['aria-invalid'] && 'shadow-[inset_0_0_0_1px_var(--color-error)]')} />
         {note}
       </div>
     );
