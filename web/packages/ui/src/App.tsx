@@ -15,8 +15,6 @@ import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
-import { useLayout } from './lib/layout';
-import { TurnJumpProvider } from './components/notebook/slots';
 import { newTaskKey, parseDraft, serializeDraft } from './lib/drafts';
 import { needsYouCount, newTaskProject as paletteStart, putAwayWork, tasksOf } from './lib/tasks';
 import { setViewing, startNotifications } from './lib/notify';
@@ -53,8 +51,6 @@ export { keysTaken, popupOpen, sessionsUpdate, threadCovered } from './lib/overl
 /** Settings and Routines are off the first paint: each loads with its first open and stays. */
 const SettingsView = lazy(() => import('./components/Settings').then((m) => ({ default: m.SettingsView })));
 const RoutinesView = lazy(() => import('./components/Routines').then((m) => ({ default: m.RoutinesView })));
-/** The notebook layout's column loads with that layout: the current one does not pay for it. */
-const Contents = lazy(() => import('./components/notebook/Contents'));
 
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
 /** `owner`: another machine's Task (connected instances), confirmed here and run against that machine. */
@@ -112,7 +108,6 @@ export default function App() {
   }, [auth, state.connection, state.detail]);
   const metaCache = federation?.metaCache;
   const narrow = useMedia(NARROW);
-  const layout = useLayout();
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
   const { drawerOpen, setDrawerOpen, drawerKept, drawer } = useDrawer(narrow, state.loaded);
@@ -576,22 +571,21 @@ export default function App() {
     setTaskDialogOpen(false);
   }
 
-  const sidebarProps = {
-    loaded: state.loaded,
-    projects: state.projects,
-    sessions: state.sessions,
-    selectedId: state.selectedId,
-    hasNews,
-    actions,
-    connection,
-    version: meta?.version,
-    machineActions: machines ? machineActions : undefined,
-    count: needsYouTasks,
-    progressive: narrow,
-  };
-  const classicSidebar = <Sidebar {...sidebarProps} />;
-  // The notebook layout's Contents is the same sidebar with the open Thread's turns in it; the sidebar stands in while its code loads.
-  const sidebar = layout === 'notebook' ? <Suspense fallback={classicSidebar}><Contents {...sidebarProps} detail={shown} /></Suspense> : classicSidebar;
+  const sidebar = (
+    <Sidebar
+      loaded={state.loaded}
+      projects={state.projects}
+      sessions={state.sessions}
+      selectedId={state.selectedId}
+      hasNews={hasNews}
+      actions={actions}
+      connection={connection}
+      version={meta?.version}
+      machineActions={machines ? machineActions : undefined}
+      count={needsYouTasks}
+      progressive={narrow}
+    />
+  );
 
   // The sidebar's column steps between its width and the rail's; the track never animates.
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
@@ -691,7 +685,6 @@ export default function App() {
 
   return (
     <AppContext.Provider value={ctx}>
-      <TurnJumpProvider>
       <ModelCallsContext.Provider value={state.modelCalls}>
       <MessagePairsContext.Provider value={state.messagePairs}>
       <MessageOutcomesContext.Provider value={state.messageOutcomes}>
@@ -867,7 +860,6 @@ export default function App() {
       </MessageOutcomesContext.Provider>
       </MessagePairsContext.Provider>
       </ModelCallsContext.Provider>
-      </TurnJumpProvider>
     </AppContext.Provider>
   );
 }

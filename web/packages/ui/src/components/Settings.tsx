@@ -32,7 +32,6 @@ import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, vi
 import { MOTION_NOTICE, loadMotion, markMotionNoticed, motionNoticeDue, saveMotion, type Motion } from '../lib/motion';
 import { loadTodoGraph, saveTodoGraph, type TodoGraphStyle } from '../lib/todoGraph';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
-import { saveLayout, useLayout, type Layout } from '../lib/layout';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
@@ -505,7 +504,7 @@ function accountSummary(accounts: ProviderInfo[], cliUpdate: ProviderInfo['cli_u
 }
 
 /** The current values under each page's name in the phone's list. */
-function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility, accounts, cliUpdate, configured, theme, layout }: Readonly<{ settings: Settings; meta: Catalog; taskDefaults: ReturnType<typeof resolveTaskDefaults>; defaultModel: Model | null | undefined; menuModels: { owner: string; id: string }[]; utility: ProviderInfo | undefined; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; configured: CustomProvider[]; theme: Theme; layout: Layout }>): Partial<Record<SettingsPage, string>> {
+function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility, accounts, cliUpdate, configured, theme }: Readonly<{ settings: Settings; meta: Catalog; taskDefaults: ReturnType<typeof resolveTaskDefaults>; defaultModel: Model | null | undefined; menuModels: { owner: string; id: string }[]; utility: ProviderInfo | undefined; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; configured: CustomProvider[]; theme: Theme }>): Partial<Record<SettingsPage, string>> {
   const utilityChoice = utility ? settings.title_model?.[utility.name] ?? '' : '';
   const customCount = configured.reduce((n, p) => n + p.models.length, 0);
   const customNoun = customCount === 1 ? 'model' : 'models';
@@ -517,7 +516,7 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
     copilot: accountSummary(accounts, cliUpdate),
     providers: configured.length ? `${configured.map((p) => p.name).join(', ')} · ${customCount} ${customNoun}` : 'None added',
     uam: [meta?.service && `Running ${meta.service.running}`, `Terminal ${settings.terminal ? 'on' : 'off'}`].filter(Boolean).join(' · '),
-    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]} · Interface: ${layout === 'notebook' ? 'Notebook (beta)' : 'Current'}`,
+    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]}`,
     worktrees: meta?.disk && `${sizeText(meta.disk.free_bytes)} free · ${percentFree(meta.disk)}%`,
   };
 }
@@ -651,7 +650,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [motionDue] = useState(motionNoticeDue);
   const [todoGraph, setTodoGraph] = useState(loadTodoGraph);
   const [theme, setTheme] = useState(loadTheme);
-  const layout = useLayout();
   const [scrolled, sentinel] = useScrolled();
   const cliUpdate = meta?.providers.find((p) => p.cli_update)?.cli_update;
   const restart = restartOffered(meta?.service);
@@ -750,7 +748,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem, motionNotice: motionDue && !visited.has('browser') });
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
-  const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme, layout });
+  const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme });
   const pages = offeredPages(Boolean(connections), meta, accounts.length > 0);
   // On screen: the matches while searching on a wide screen (stacked), else the page shown.
   const matches = searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])) : [];
@@ -986,18 +984,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             { value: 'light', label: 'Light' },
             { value: 'dark', label: 'Dark' },
             { value: 'system', label: 'Match system' },
-          ]}
-        />
-      </Row>
-      <Row id="interface" label="Interface" help="Notebook shows a thread's turns as numbered cells, with your other threads beside them; both show the same threads.">
-        <Segmented
-          aria-labelledby="interface-label"
-          aria-describedby="interface-help"
-          value={layout}
-          onValueChange={(v) => saveLayout(v as Layout)}
-          items={[
-            { value: 'classic', label: 'Current' },
-            { value: 'notebook', label: 'Notebook (beta)' },
           ]}
         />
       </Row>
