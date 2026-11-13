@@ -1,12 +1,14 @@
 // Development-only: the surface routes of the in-browser mock service (see install.ts). The
-// Cards Thread (t-cards) holds four drawn surfaces, three a model drew in real runs (real-*.json,
-// verbatim) and one the agent deleted. The first read of the board starts its patches, a few
+// Cards Thread (t-cards) holds the drawn surfaces, five a model drew in real runs (real-*.json and
+// live-*.json, verbatim) and one the agent deleted. The first read of the board starts its patches, a few
 // seconds apart; the first read of the load test starts the agent's one change to it (the
 // duration), 6 seconds later, over whatever the owner has edited by then. The media are in surfaces/media, served by the dev server (vite.config.ts).
 
 import type { Surface } from '../api';
 import { applyMessage } from '../lib/surface';
 import board from './surfaces/board.json';
+import liveRelease from './surfaces/live-release.json';
+import liveReview from './surfaces/live-review.json';
 import params from './surfaces/params.json';
 import realBoard from './surfaces/real-board.json';
 import realRelease from './surfaces/real-release.json';
@@ -28,6 +30,9 @@ export function surfaceMock(broadcast: (name: string, payload: Record<string, un
     'call-real-board': build('call-real-board', realBoard.create, ...realBoard.patches),
     'call-real-release': build('call-real-release', realRelease.create),
     'call-real-review': build('call-real-review', realReview.create),
+    'call-live-review': build('call-live-review', liveReview.create),
+    // Its own id here: a Thread holds one surface per id, and real-release.json took this one.
+    'call-live-release': { ...build('call-live-release', liveRelease.create), surface_id: 'release-signoff-live' },
   };
   const patching = new Set<string>();
   const patch = (callId: string, patches: Payload[], every: number) => {

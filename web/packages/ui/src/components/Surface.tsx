@@ -62,23 +62,28 @@ const NO_BLOCKS: ReadonlyMap<string, string> = new Map();
 const instance = (id: string, base: string) => `${id}\n${base}`;
 const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
-/** The local copy: the model shown, the pointers edited since the last send, the agent's changes over them, and the server's model and version it came from. */
-interface Local { model: Model; dirty: ReadonlySet<string>; updated: ReadonlySet<string>; server: Model; seen: number }
+/**
+ * The local copy: the model shown, the pointers edited since the last send with the edit count
+ * at each one's last edit (`edits` counts every edit), the agent's changes over them, and the
+ * server's model and version it came from.
+ */
+interface Local { model: Model; dirty: ReadonlyMap<string, number>; edits: number; updated: ReadonlySet<string>; server: Model; seen: number }
+const CLEAN: ReadonlyMap<string, number> = new Map();
 
 /** A newer server version, keeping each unsent edit whose value the agent left alone; where the agent changed it too, the agent wins and the field says so. */
 function merge(local: Local, surface: Surface): Local {
   let model = surface.data_model;
-  const dirty = new Set<string>();
+  const dirty = new Map<string, number>();
   const updated = new Set(local.updated);
-  for (const p of local.dirty) {
+  for (const [p, at] of local.dirty) {
     const mine = get(local.model, p);
     if (same(get(model, p), mine)) continue;
     if (same(get(local.server, p), get(model, p))) {
       model = set(model, p, mine ?? null);
-      dirty.add(p);
+      dirty.set(p, at);
     } else updated.add(p);
   }
-  return { model, dirty, updated, server: surface.data_model, seen: surface.version };
+  return { model, dirty, edits: local.edits, updated, server: surface.data_model, seen: surface.version };
 }
 
 /** Every binding in a component's own props: none, only relative ones, or an absolute one. */
@@ -95,8 +100,18 @@ function ownReads(value: unknown): Reads {
   return found;
 }
 
-/** Where a component sits, when that changes its look: `tight` is a caption under a line of text; `beside` is beside a Text in a Row (the Text grows, an input's own label is read, not shown). */
-type Place = 'tight' | 'beside' | undefined;
+/**
+ * Where a component sits, when that changes its look: `tight` is a caption under a line of text;
+ * `label` a short caption naming the media or row under it; `beside` is beside a Text in a Row
+ * (the Text grows, an input's own label is read, not shown); `cell` is a cell of template rows or
+ * of a packed row, where the layout sets the width (its weight is dropped) and an input's label,
+ * the same on every row, is read with the row's words, not shown.
+ */
+type Place = 'tight' | 'label' | 'beside' | 'cell' | undefined;
+const labelHidden = (place: Place) => place === 'beside' || place === 'cell';
+/** An input's name when its label is not enough: no label, the row's words; a hidden repeated label, the label and the row's words. */
+const ariaName = (label: string, place: Place, name: string | undefined) => (label ? (place === 'cell' && name && name !== label ? `${label}: ${name}` : undefined) : name || undefined);
+
 
 export const SurfaceCard = memo(function SurfaceCard({ sessionId, callId }: Readonly<{ sessionId: string; callId: string }>) {
   const api = useApi();
@@ -143,7 +158,7 @@ function FromAgent() {
 
 /** The surface itself, with its local data model; exported for the DOM test. */
 export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Surface; onAction: (body: SurfaceAction) => Promise<void>; media: (path: string) => string }>) {
-  const [local, setLocal] = useState<Local>(() => ({ model: surface.data_model, dirty: NONE, updated: NONE, server: surface.data_model, seen: surface.version }));
+  const [local, setLocal] = useState<Local>(() => ({ model: surface.data_model, dirty: CLEAN, edits: 0, updated: NONE, server: surface.data_model, seen: surface.version }));
   const [sending, setSending] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [failed, setFailed] = useState('');
@@ -191,7 +206,7 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
 
   const write = useCallback((path: string, value: unknown) => setLocal((s) => {
     const updated = s.updated.has(path) ? new Set([...s.updated].filter((p) => p !== path)) : s.updated;
-    return { ...s, model: set(s.model, path, value), dirty: s.dirty.has(path) ? s.dirty : new Set(s.dirty).add(path), updated };
+    return { ...s, model: set(s.model, path, value), dirty: new Map(s.dirty).set(path, s.edits + 1), edits: s.edits + 1, updated };
   }), []);
   const act = useCallback((component: SurfaceComponent, base: string) => {
     const event = (component.action as { event?: { name?: string; context?: unknown } } | undefined)?.event;
@@ -213,7 +228,8 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
         retry.current = null;
         setSent(key);
         setPressed(new Map());
-        setLocal((s) => ({ ...s, dirty: new Set([...s.dirty].filter((p) => !now.dirty.has(p))) }));
+        // An edit made while the press was in flight is not in what was sent, so it stays protected.
+        setLocal((s) => ({ ...s, dirty: new Map([...s.dirty].filter(([p, at]) => now.dirty.get(p) !== at)) }));
       }, (err: unknown) => {
         // A refusal is final, so the next press is a new one; a lost answer may have queued it, so that id is kept.
         if (err instanceof ApiError && err.status < 500) retry.current = null;
@@ -246,6 +262,8 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
       {count > NODE_BUDGET ? <Note>This card is too large to show</Note> : <Node ctx={ctx} id="root" base="" depth={0} />}
       {failed && <Note tone="error" role="alert">Could not send: {failed}</Note>}
       {changed && <Note role="status" className="first-letter:uppercase">{changed}</Note>}
+      {/* Mounted with the card, so a screen reader hears when the agent changes a value the owner had edited. */}
+      <p role="status" className="sr-only">{local.updated.size ? 'Updated by the agent' : ''}</p>
     </section>
   );
 }
@@ -255,6 +273,16 @@ const SPREAD = new Set(['spaceBetween', 'spaceAround', 'spaceEvenly']);
 const ALIGN: Record<string, string> = { start: 'items-start', center: 'items-center', end: 'items-end', stretch: 'items-stretch' };
 const INPUTS = new Set(['TextField', 'Slider', 'ChoicePicker', 'DateTimeInput']);
 const CONTROLS = new Set([...INPUTS, 'Button', 'Modal', 'CheckBox']);
+const MEDIA = new Set(['Image', 'Video', 'AudioPlayer']);
+const LABELLED = new Set([...MEDIA, 'Row']);
+/** Words that name what follows rather than say something: short, one line, no sentence stop. */
+const isLabel = (words: string) => words.length <= 40 && !words.includes('\n') && !/[.:;?!]$/.test(words);
+/** Two lines that say the same thing: every word of one is in the other ("Voice note", "Release voice note"). */
+function repeats(a: string, b: string) {
+  const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const [x, y] = [words(a), words(b)];
+  return x.length > 0 && y.length > 0 && (x.every((w) => y.includes(w)) || y.every((w) => x.includes(w)));
+}
 const TONE = {
   neutral: { chip: 'muted', Icon: CircleDashed },
   running: { chip: 'accent', Icon: null },
@@ -279,9 +307,9 @@ const ICONS: Record<string, LucideIcon> = {
 };
 const SVG_PATH = /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s-]{1,2048}$/;
 const FIT: Record<string, string> = { contain: 'object-contain', cover: 'object-cover', fill: 'object-fill', none: 'object-none', scaleDown: 'object-scale-down' };
-// Every feature image fills its column up to a height; only `smallFeature`, `icon` and `avatar` are small on purpose.
+// A feature image keeps its own shape up to the column's width and a height, so it is never letterboxed; only `smallFeature`, `icon` and `avatar` are small on purpose, and `header` is a full-width band.
 const IMAGE_SIZE: Record<string, string> = {
-  icon: 'size-6 shrink-0', avatar: 'size-10 shrink-0 rounded-full', smallFeature: 'max-h-32 w-auto max-w-full', mediumFeature: 'max-h-72 w-full', largeFeature: 'max-h-[28rem] w-full', header: 'h-40 w-full',
+  icon: 'size-6 shrink-0', avatar: 'size-10 shrink-0 rounded-full', smallFeature: 'max-h-32 w-auto max-w-full self-start', mediumFeature: 'max-h-72 w-auto max-w-full self-start', largeFeature: 'max-h-[28rem] w-auto max-w-full self-start', header: 'h-40 w-full',
 };
 
 /** A Button's look: its variant, and its label (a Text child in the button's own colour; any other child draws as itself). */
@@ -299,13 +327,25 @@ function compact(ctx: Ctx, c: SurfaceComponent | undefined, base: string, depth 
   return ['Icon', 'Button', 'Modal', 'Status', 'CheckBox'].includes(c.component);
 }
 
-/** Template rows that read as a table: a Row per item, or a Column per item holding a Status or a Progress. */
-function tableItem(ctx: Ctx, spec: unknown): SurfaceComponent | null {
+/** A control small enough to end a table row: a CheckBox, a Button, or a single choice of up to five segments. */
+const compactControl = (c: SurfaceComponent | undefined) =>
+  c?.component === 'CheckBox' || c?.component === 'Button' || (c?.component === 'ChoicePicker' && c.variant !== 'multipleSelection' && Array.isArray(c.options) && c.options.length <= 5);
+
+/**
+ * Template rows that read as a table, as each row's cells: a Row per item, or a Column per item
+ * holding a Status or a Progress, a cell per child; or a Column per item of lines of text over
+ * one compact control, the text one cell and the control the trailing one, so the controls line
+ * up down the card instead of stretching under each item.
+ */
+function tableCells(ctx: Ctx, spec: unknown): string[][] | null {
   const id = spec && typeof spec === 'object' && !Array.isArray(spec) ? (spec as { componentId?: unknown }).componentId : undefined;
   const item = typeof id === 'string' ? ctx.byId.get(id) : undefined;
   if (!item || !Array.isArray(item.children) || item.children.length < 2) return null;
-  const kinds = item.children.map((k) => ctx.byId.get(String(k))?.component);
-  return item.component === 'Row' || (item.component === 'Column' && kinds.some((k) => k === 'Status' || k === 'Progress')) ? item : null;
+  const ids = item.children.filter((k): k is string => typeof k === 'string');
+  const specs = ids.map((k) => ctx.byId.get(k));
+  if (item.component === 'Row' || (item.component === 'Column' && specs.some((k) => k?.component === 'Status' || k?.component === 'Progress'))) return ids.map((k) => [k]);
+  const words = specs.slice(0, -1);
+  return item.component === 'Column' && words.every((k) => k?.component === 'Text' && !isHeading(k)) && compactControl(specs.at(-1)) ? [ids.slice(0, -1), ids.slice(-1)] : null;
 }
 
 type NodeProps = Readonly<{ ctx: Ctx; id: string; base: string; depth: number; place?: Place; /** The row's words, naming an input that has no label. */ name?: string }>;
@@ -323,14 +363,14 @@ const Node = memo(
   if (!c || depth > MAX_DEPTH) return null;
   const { model } = ctx;
   // A weighted child shares the row by its weight, and wraps to its own line once the row is narrower than 8rem a child.
-  const weight = typeof c.weight === 'number' ? ({ flexGrow: c.weight, flexBasis: 0, minWidth: '8rem' } as CSSProperties) : undefined;
+  const weight = place !== 'cell' && typeof c.weight === 'number' ? ({ flexGrow: c.weight, flexBasis: 0, minWidth: '8rem' } as CSSProperties) : undefined;
   switch (c.component) {
     case 'Text': {
       const value = text(c.text, model, base);
       if (!value) return null;
       const title = isHeading(c) || c.id === ctx.title;
       return (
-        <p style={weight} className={cn('min-w-0 [overflow-wrap:anywhere] whitespace-pre-wrap', title ? 'text-title text-ink' : c.variant === 'caption' ? 'text-caption text-muted' : 'text-ui text-body', place === 'tight' && '-mt-2', place === 'beside' && 'flex-1 basis-48')}>
+        <p style={weight} className={cn('min-w-0 [overflow-wrap:anywhere] whitespace-pre-wrap', title ? 'text-title text-ink' : c.variant === 'caption' ? 'text-caption text-muted' : 'text-ui text-body', place === 'tight' && '-mt-2', place === 'label' && '-mb-2', place === 'beside' && 'flex-1 basis-48')}>
           {value}
         </p>
       );
@@ -343,46 +383,56 @@ const Node = memo(
       const buttons = kinds.length > 0 && kinds.every((k) => k === 'Button' || k === 'Modal');
       // Short items pack to the start with the house gap: spreading three icons to the card's edges reads as a layout bug, not a design.
       // Two items, or words with a control, keep the spread the agent asked for.
+      // Weights on such items spread them as surely as `justify` does, so they pack too.
       const mixed = kinds.includes('Text') && kinds.some((k) => CONTROLS.has(k));
-      const packed = buttons || (SPREAD.has(String(c.justify)) && list.length !== 2 && !mixed && specs.every((k, i) => compact(ctx, k, list[i].base)));
+      const spread = SPREAD.has(String(c.justify)) || specs.some((k) => typeof k?.weight === 'number');
+      const packed = buttons || (spread && list.length !== 2 && !mixed && specs.every((k, i) => compact(ctx, k, list[i].base)));
       const beside = kinds.includes('Text') && kinds.some((k) => INPUTS.has(k));
-      const row = Array.isArray(c.children) ? rowName(ctx.byId, model, c.children, base) : '';
+      const row = (Array.isArray(c.children) ? rowName(ctx.byId, model, c.children, base) : '') || name;
       // An icon and its words read as one label.
       const gap = specs.some((k) => k?.component === 'Icon') ? 'gap-x-2' : 'gap-x-4';
       return (
         <div style={weight} className={cn('flex min-w-0 flex-row flex-wrap gap-y-2', gap, packed ? undefined : JUSTIFY[String(c.justify)], ALIGN[String(c.align ?? 'center')])}>
-          {list.map((k) => <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={beside ? 'beside' : undefined} name={row} />)}
+          {list.map((k) => <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={beside ? 'beside' : packed ? 'cell' : undefined} name={row} />)}
         </div>
       );
     }
     case 'Column': {
-      const item = tableItem(ctx, c.children);
-      if (item) return <TableRows ctx={ctx} spec={c.children} item={item} base={base} depth={depth} weight={weight} />;
+      const cells = tableCells(ctx, c.children);
+      if (cells) return <TableRows ctx={ctx} spec={c.children} cells={cells} base={base} depth={depth} weight={weight} />;
       const list = children(c.children, model, base);
-      const tight = list.every((k) => compact(ctx, ctx.byId.get(k.id), k.base));
+      const specs = list.map((k) => ctx.byId.get(k.id));
+      const tight = specs.every((k, i) => compact(ctx, k, list[i].base));
+      // Each template item is a row: its own words name its unlabelled inputs, however deep they sit.
+      const template = !Array.isArray(c.children);
       return (
         <div style={weight} className={cn('flex min-w-0 flex-col', tight ? 'gap-1' : 'gap-3', ALIGN[String(c.align ?? 'stretch')])}>
           {list.map((k, i) => {
-            // A caption hugs the line above it (a title's subtitle, a name's path).
-            const caption = !tight && i > 0 && ctx.byId.get(k.id)?.variant === 'caption' && ctx.byId.get(list[i - 1].id)?.component === 'Text';
-            return <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={caption ? 'tight' : undefined} />;
+            const own = specs[i];
+            const before = specs[i - 1]?.component === 'Text' ? text(specs[i - 1]!.text, model, list[i - 1].base) : '';
+            // A short caption over media or a row names it and hugs it; any other caption hugs the line of text above it (a title's subtitle, a name's path).
+            const label = !tight && own?.variant === 'caption' && LABELLED.has(String(specs[i + 1]?.component)) && isLabel(text(own.text, model, k.base));
+            const caption = !tight && !label && i > 0 && own?.variant === 'caption' && !!before;
+            // Media take the caption above them as their name; elsewhere the row's words pass through.
+            const named = template ? rowName(ctx.byId, model, [k.id], k.base) || name : MEDIA.has(String(own?.component)) && before ? before : name;
+            return <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={label ? 'label' : caption ? 'tight' : undefined} name={named} />;
           })}
         </div>
       );
     }
     case 'List': {
-      const item = c.direction === 'horizontal' ? null : tableItem(ctx, c.children);
-      if (item) return <TableRows ctx={ctx} spec={c.children} item={item} base={base} depth={depth} weight={weight} />;
+      const cells = c.direction === 'horizontal' ? null : tableCells(ctx, c.children);
+      if (cells) return <TableRows ctx={ctx} spec={c.children} cells={cells} base={base} depth={depth} weight={weight} />;
       return (
         <div style={weight} role="list" className={cn('flex min-w-0', c.direction === 'horizontal' ? 'flex-row gap-4 overflow-x-auto' : 'flex-col gap-3', ALIGN[String(c.align)])}>
           {children(c.children, model, base).map((k) => (
-            <div key={`${k.id}:${k.base}`} role="listitem" className="min-w-0"><Node ctx={ctx} id={k.id} base={k.base} depth={depth + 1} /></div>
+            <div key={`${k.id}:${k.base}`} role="listitem" className="min-w-0"><Node ctx={ctx} id={k.id} base={k.base} depth={depth + 1} name={(Array.isArray(c.children) ? '' : rowName(ctx.byId, model, [k.id], k.base)) || name} /></div>
           ))}
         </div>
       );
     }
     case 'Card':
-      return <SurfaceGroup ctx={ctx} c={c} base={base} depth={depth} weight={weight} />;
+      return <SurfaceGroup ctx={ctx} c={c} base={base} depth={depth} weight={weight} name={name} />;
     case 'Divider':
       return c.axis === 'vertical' ? <span aria-hidden="true" className="w-px self-stretch fade-rule-y" /> : <div role="separator" className="fade-rule" />;
     case 'Tabs':
@@ -449,17 +499,20 @@ const Node = memo(
       const url = text(c.url, model, base);
       const poster = text(c.posterUrl, model, base);
       // An agent's clip has no captions to offer, as in the file preview (common.tsx).
+      // At the clip's own shape (no bars beside it), up to the column's width and 320px high.
       // eslint-disable-next-line jsx-a11y/media-has-caption
-      return url ? <video style={weight} controls preload="metadata" src={ctx.media(url)} poster={poster ? ctx.media(poster) : undefined} className="block max-h-80 w-full min-w-0 rounded-md bg-sunken" /> : null;
+      return url ? <video style={weight} controls preload="metadata" src={ctx.media(url)} poster={poster ? ctx.media(poster) : undefined} className="block max-h-80 w-auto max-w-full min-w-0 self-start rounded-md bg-sunken" /> : null;
     }
     case 'AudioPlayer': {
       const url = text(c.url, model, base);
       const description = text(c.description, model, base);
+      // A description that repeats the caption just above says it once.
+      const shown = description && !(name && repeats(name, description)) ? description : '';
       return url ? (
         <div style={weight} className="flex min-w-0 flex-col gap-1">
-          {description && <span className="text-caption text-muted">{description}</span>}
+          {shown && <span className="text-caption text-muted">{shown}</span>}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio controls preload="metadata" src={ctx.media(url)} aria-label={description || 'Audio'} className="h-10 w-full min-w-0" />
+          <audio controls preload="metadata" src={ctx.media(url)} aria-label={description || name || 'Audio'} className="h-10 w-full min-w-0" />
         </div>
       ) : null;
     }
@@ -479,9 +532,9 @@ const Node = memo(
  * one house card and a box in a box reads as a grey slab; a Card inside one of those is a
  * hairline group, so a deliberate grouping still reads.
  */
-function SurfaceGroup({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: number }>) {
+function SurfaceGroup({ ctx, c, base, depth, weight, name }: Part & Readonly<{ depth: number }>) {
   const inner = useContext(InCard);
-  const body = typeof c.child === 'string' && <Node ctx={ctx} id={c.child} base={base} depth={depth + 1} />;
+  const body = typeof c.child === 'string' && <Node ctx={ctx} id={c.child} base={base} depth={depth + 1} name={name} />;
   if (c.id === 'root') return <div style={weight} className="flex min-w-0 flex-col gap-3">{body}</div>;
   return (
     <div style={weight} className={cn('flex min-w-0 flex-col gap-3', inner && 'rounded-md border border-hairline p-3')}>
@@ -492,14 +545,14 @@ function SurfaceGroup({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: 
 const InCard = createContext(false);
 
 /**
- * Template rows as one grid, so their names, chips and bars line up down the card: each item's
- * children are cells of a shared column (a Progress takes the room left, else the first
- * text-like cell does; the rest keep their own width), and a missing value keeps its cell.
- * On a narrow card (under 32rem) each row wraps instead: a leading name takes its own line.
+ * Template rows as one grid, so their names, chips, bars and controls line up down the card:
+ * each cell is a shared column (a Progress takes the room left, else the first text-like cell
+ * does; the rest keep their own width, weights dropped), and a missing value keeps its cell.
+ * On a narrow card (under 32rem) each row wraps instead: the name takes a line of its own, so
+ * a severity chip before it sits above it rather than squeezing it.
  */
-function TableRows({ ctx, spec, item, base, depth, weight }: Readonly<{ ctx: Ctx; spec: unknown; item: SurfaceComponent; base: string; depth: number; weight?: CSSProperties }>) {
-  const cells = (item.children as unknown[]).filter((k): k is string => typeof k === 'string');
-  const kinds = cells.map((k) => ctx.byId.get(k)?.component);
+function TableRows({ ctx, spec, cells, base, depth, weight }: Readonly<{ ctx: Ctx; spec: unknown; cells: string[][]; base: string; depth: number; weight?: CSSProperties }>) {
+  const kinds = cells.map((ids) => (ids.length > 1 ? 'Column' : ctx.byId.get(ids[0])?.component));
   const bar = kinds.includes('Progress');
   const first = kinds.findIndex((k) => k === 'Text' || k === 'Column' || k === 'Row');
   const columns = kinds.map((k, i) => {
@@ -507,15 +560,21 @@ function TableRows({ ctx, spec, item, base, depth, weight }: Readonly<{ ctx: Ctx
     if (i === first) return bar ? 'fit-content(24rem)' : 'minmax(0,1fr)';
     return k === 'Text' || k === 'Column' || k === 'Row' ? 'fit-content(16rem)' : 'auto';
   });
-  const narrow = (k: string | undefined, i: number) => (k === 'Progress' ? 'min-w-24 flex-1' : i === first ? (i === 0 ? 'basis-full' : 'flex-1 basis-48') : undefined);
+  const narrow = (k: string | undefined, i: number) => (k === 'Progress' ? 'min-w-24 flex-1' : i === first ? 'basis-full' : undefined);
   return (
     <div style={weight} className="@container min-w-0">
       <div style={{ gridTemplateColumns: columns.join(' ') }} role="list" className="flex flex-col gap-2 @lg:grid @lg:gap-x-4 @lg:gap-y-0">
         {children(spec, ctx.model, base).map((row) => {
-          const name = rowName(ctx.byId, ctx.model, cells, row.base);
+          const name = rowName(ctx.byId, ctx.model, cells.flat(), row.base);
           return (
             <div key={row.base} role="listitem" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg:col-span-full @lg:grid @lg:min-h-8 @lg:grid-cols-subgrid @lg:py-1">
-              {cells.map((k, i) => <div key={k} className={cn('flex min-w-0 items-center', narrow(kinds[i], i))}><Node ctx={ctx} id={k} base={row.base} depth={depth + 2} name={name} /></div>)}
+              {cells.map((ids, i) => (
+                <div key={ids[0]} className={cn('flex min-w-0 items-center', narrow(kinds[i], i))}>
+                  {ids.length === 1
+                    ? <Node ctx={ctx} id={ids[0]} base={row.base} depth={depth + 2} place="cell" name={name} />
+                    : <div className="flex min-w-0 flex-1 flex-col gap-1">{ids.map((k) => <Node key={k} ctx={ctx} id={k} base={row.base} depth={depth + 2} place="cell" name={name} />)}</div>}
+                </div>
+              ))}
             </div>
           );
         })}
@@ -543,7 +602,7 @@ function fieldNote(ctx: Ctx, path: string | null, id: string, labelShown: boolea
 function Labelled({ id, label, weight, place, note, children: body }: Readonly<{ id: string; label: string; weight?: CSSProperties; place?: Place; note?: ReactNode; children: ReactNode }>) {
   return (
     <div style={weight} className="flex min-w-0 flex-col gap-1">
-      {label && <label htmlFor={id} className={place === 'beside' ? 'sr-only' : 'text-caption text-muted'}>{label}</label>}
+      {label && <label htmlFor={id} className={labelHidden(place) ? 'sr-only' : 'text-caption text-muted'}>{label}</label>}
       {body}
       {note}
     </div>
@@ -556,8 +615,8 @@ function SurfaceField({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
   const label = text(c.label, ctx.model, base);
-  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
-  const common = { id, value: text(c.value, ctx.model, base), placeholder: text(c.placeholder, ctx.model, base) || undefined, readOnly: !path, 'aria-label': label ? undefined : name || undefined, ...aria };
+  const { aria, note } = fieldNote(ctx, path, id, !!label && !labelHidden(place));
+  const common = { id, value: text(c.value, ctx.model, base), placeholder: text(c.placeholder, ctx.model, base) || undefined, readOnly: !path, 'aria-label': ariaName(label, place, name), ...aria };
   return (
     <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       {c.variant === 'longText'
@@ -571,7 +630,7 @@ function SurfaceSlider({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
   const label = text(c.label, ctx.model, base);
-  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
+  const { aria, note } = fieldNote(ctx, path, id, !!label && !labelHidden(place));
   const min = typeof c.min === 'number' ? c.min : 0;
   const max = typeof c.max === 'number' ? c.max : 100;
   const value = Number(resolve(c.value, ctx.model, base)) || min;
@@ -579,7 +638,7 @@ function SurfaceSlider({ ctx, c, base, weight, place, name }: Part) {
   return (
     <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       <div className="flex items-center gap-3">
-        <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={!path} aria-label={label ? undefined : name || undefined} {...aria} className="h-8 min-w-0 flex-1 accent-accent pointer-coarse:h-11" onChange={(e) => path && ctx.write(path, e.target.valueAsNumber)} />
+        <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={!path} aria-label={ariaName(label, place, name)} {...aria} className="h-8 min-w-0 flex-1 accent-accent pointer-coarse:h-11" onChange={(e) => path && ctx.write(path, e.target.valueAsNumber)} />
         <output htmlFor={id} className="w-10 shrink-0 text-right text-ui text-ink tabular-nums">{Number.isInteger(value) ? value : value.toFixed(2)}</output>
       </div>
     </Labelled>
@@ -610,23 +669,23 @@ function SurfaceChoice({ ctx, c, base, weight, place, name }: Part) {
   const options = (Array.isArray(c.options) ? c.options : []).map((o: { label?: unknown; value?: unknown }) => ({ value: String(o?.value ?? ''), label: text(o?.label, ctx.model, base) }));
   const label = text(c.label, ctx.model, base);
   // An unlabelled picker is named by its row's words, so six of them in a list are not six "Choice"s.
-  const named = label ? undefined : name || 'Choice';
-  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
+  const named = ariaName(label, place, name) ?? (label ? undefined : 'Choice');
+  const { aria, note } = fieldNote(ctx, path, id, !!label && !labelHidden(place));
   const multiple = c.variant === 'multipleSelection';
   const choose = (v: string[]) => path && ctx.write(path, v);
   if (!multiple && options.length <= 5) {
     return (
       <div style={weight} className="flex min-w-0 flex-col gap-1">
-        {label && <span id={id} className={place === 'beside' ? 'sr-only' : 'text-caption text-muted'}>{label}</span>}
-        {/* With nothing chosen yet (or a value no segment has) the thumb hides, so no segment reads as picked. */}
-        <Segmented aria-labelledby={label ? id : undefined} aria-label={named} aria-invalid={aria['aria-invalid']} aria-describedby={aria['aria-describedby']} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('min-w-48', !options.some((o) => o.value === chosen[0]) && '[&>span:first-child]:opacity-0', aria['aria-invalid'] && 'shadow-[inset_0_0_0_1px_var(--color-error)]')} />
+        {label && <span id={id} className={labelHidden(place) ? 'sr-only' : 'text-caption text-muted'}>{label}</span>}
+        {/* Sized to its segments' words, never stretched across the card. With nothing chosen yet (or a value no segment has) the thumb hides, so no segment reads as picked. */}
+        <Segmented aria-labelledby={label && !named ? id : undefined} aria-label={named} aria-invalid={aria['aria-invalid']} aria-describedby={aria['aria-describedby']} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('max-w-full min-w-48 self-start', !options.some((o) => o.value === chosen[0]) && '[&>span:first-child]:opacity-0', aria['aria-invalid'] && 'shadow-[inset_0_0_0_1px_var(--color-error)]')} />
         {note}
       </div>
     );
   }
   return (
     <fieldset style={weight} className="flex min-w-0 flex-col gap-0.5" disabled={!path} aria-label={named} aria-describedby={aria['aria-describedby']}>
-      {label && <legend className={place === 'beside' ? 'sr-only' : 'mb-1 text-caption text-muted'}>{label}</legend>}
+      {label && <legend className={labelHidden(place) ? 'sr-only' : 'mb-1 text-caption text-muted'}>{label}</legend>}
       {options.map((o) => {
         const on = chosen.includes(o.value);
         return (
@@ -676,7 +735,7 @@ function SurfaceModal({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: 
   if (!trigger || typeof c.content !== 'string') return null;
   // A Button trigger keeps its look but only opens the dialog; any other component is drawn inside a borderless button.
   const look = trigger.component === 'Button' ? buttonLook(ctx, trigger, base, depth) : { variant: 'ghost', label: <Node ctx={ctx} id={trigger.id} base={base} depth={depth + 1} /> } as const;
-  const lead = leadTitle(ctx.byId, ctx.model, c.content);
+  const lead = leadTitle(ctx.byId, ctx.model, c.content, base);
   const content = ctx.byId.get(c.content);
   const body = lead && content?.component === 'Column' && Array.isArray(content.children) ? content.children.slice(1).map(String) : [c.content];
   return (
@@ -695,7 +754,7 @@ function SurfaceDateTime({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
   const label = text(c.label, ctx.model, base);
-  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
+  const { aria, note } = fieldNote(ctx, path, id, !!label && !labelHidden(place));
   const date = c.enableDate === true;
   const clock = c.enableTime === true;
   const type = date && clock ? 'datetime-local' : clock ? 'time' : 'date';
@@ -705,7 +764,7 @@ function SurfaceDateTime({ ctx, c, base, weight, place, name }: Part) {
     <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       <Input
         id={id}
-        aria-label={label ? undefined : name || undefined}
+        aria-label={ariaName(label, place, name)}
         {...aria}
         type={type}
         value={shown(text(c.value, ctx.model, base))}

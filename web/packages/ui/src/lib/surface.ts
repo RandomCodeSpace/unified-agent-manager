@@ -192,13 +192,13 @@ export function isSurfaceCall(item: Item): boolean {
 const HEADINGS = new Set(['title', 'h1', 'h2', 'h3', 'h4', 'h5']);
 export const isHeading = (c: SurfaceComponent | undefined) => c?.component === 'Text' && HEADINGS.has(String(c.variant));
 
-/** The first child of a Column at `id` (Cards unwrapped) when it is a Text that reads as a title: a heading, or one short line with no sentence stop. */
-export function leadTitle(byId: ReadonlyMap<string, SurfaceComponent>, model: unknown, id: string): { id: string; text: string } | null {
+/** The first child of a Column at `id` (Cards unwrapped; bindings read under the template item `base`) when it is a Text that reads as a title: a heading, or one short line with no sentence stop. */
+export function leadTitle(byId: ReadonlyMap<string, SurfaceComponent>, model: unknown, id: string, base = ''): { id: string; text: string } | null {
   let at = byId.get(id);
   for (let i = 0; at?.component === 'Card' && i < 8; i++) at = byId.get(String(at.child));
   const first = at?.component === 'Column' && Array.isArray(at.children) ? byId.get(String(at.children[0])) : undefined;
   if (first?.component !== 'Text' || !(first.variant === undefined || first.variant === 'body' || isHeading(first))) return null;
-  const line = text(first.text, model).trim();
+  const line = text(first.text, model, base).trim();
   return line && (isHeading(first) || (line.length <= 80 && !line.includes('\n') && !/[.:;?!]$/.test(line))) ? { id: first.id, text: line } : null;
 }
 

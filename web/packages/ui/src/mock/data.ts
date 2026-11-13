@@ -2,6 +2,8 @@
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
 import surfaceBoard from './surfaces/board.json';
+import surfaceLiveRelease from './surfaces/live-release.json';
+import surfaceLiveReview from './surfaces/live-review.json';
 import surfaceParams from './surfaces/params.json';
 import surfaceRealBoard from './surfaces/real-board.json';
 import surfaceRealRelease from './surfaces/real-release.json';
@@ -948,6 +950,11 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'r5', kind: 'user', time: ago(2), text: 'I reviewed a pull request and found six issues. Give me a card where I can pick Fix, Skip or Later for each one and send all my choices at once.' },
         tool('call-real-review', 2, { name: 'uam_surface', title: 'Surface: pr-review-issue-choices', status: 'completed', surface_id: 'pr-review-issue-choices', input: JSON.stringify(surfaceRealReview.create), output: 'created surface pr-review-issue-choices' }),
         { id: 'r6', kind: 'assistant', time: ago(1), text: 'Every finding starts on Later; send when your choices are in.' },
+        // Two more from a later real run (gpt-6-luna), payloads verbatim: rows wrapped in a Column, and media with their captions.
+        { id: 'r7', kind: 'user', time: ago(1), text: 'Same six issues: let me choose Fix, Skip or Later for each and send them together.' },
+        tool('call-live-review', 1, { name: 'uam_surface', title: 'Surface: pr-review-choices', status: 'completed', surface_id: 'pr-review-choices', input: JSON.stringify(surfaceLiveReview.create), output: 'created surface pr-review-choices' }),
+        { id: 'r8', kind: 'user', time: ago(1), text: 'And the v0.23.0 sign-off with the screenshot, the demo video and the voice note.' },
+        tool('call-live-release', 1, { name: 'uam_surface', title: 'Surface: release-signoff-live', status: 'completed', surface_id: 'release-signoff-live', input: JSON.stringify(surfaceLiveRelease.create), output: 'created surface release-signoff-live' }),
       ],
     }),
     task({

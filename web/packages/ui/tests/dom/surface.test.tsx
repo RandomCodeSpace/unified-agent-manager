@@ -7,6 +7,8 @@ import { SurfaceCard, SurfaceView } from '../../src/components/Surface';
 import { SurfaceActionChip } from '../../src/components/SurfaceActionChip';
 import { applyMessage, cardTitle, drawnCount, filled, isSurfaceCall, parseActionLine, rememberSurface, set, SurfaceVersions } from '../../src/lib/surface';
 import board from '../../src/mock/surfaces/board.json';
+import liveRelease from '../../src/mock/surfaces/live-release.json';
+import liveReview from '../../src/mock/surfaces/live-review.json';
 import params_ from '../../src/mock/surfaces/params.json';
 import realBoard from '../../src/mock/surfaces/real-board.json';
 import realRelease from '../../src/mock/surfaces/real-release.json';
@@ -120,11 +122,12 @@ describe('the card keeps its design whatever the model sends', () => {
     for (const row of [icons, actions]) expect(row.className).not.toContain('justify-between');
   });
 
-  test('an image without a variant fills its column, contained and rounded', () => {
+  test('an image without a variant keeps its shape up to the column, contained and rounded', () => {
     draw(build(realRelease.create));
     const image = screen.getByRole('img', { name: 'Settings page screenshot' });
     expect(image.getAttribute('src')).toBe('/api/sessions/t/files/raw?path=shots%2Fsettings-page.png');
-    for (const name of ['w-full', 'max-h-[28rem]', 'object-contain', 'rounded-md']) expect(image.classList.contains(name)).toBe(true);
+    // At its own shape, up to the column's width and 448px high: never letterboxed.
+    for (const name of ['w-auto', 'max-w-full', 'max-h-[28rem]', 'object-contain', 'rounded-md']) expect(image.classList.contains(name)).toBe(true);
   });
 
   test('template rows share one grid, a missing note keeps its cell, and Progress shows its share instead of its own name', () => {
@@ -191,7 +194,7 @@ describe('the transcript', () => {
 
   test('the Cards Thread: cards for creating calls only, a deleted card says so, and the action line copies as sent', async () => {
     const { user } = await openTask('t-cards');
-    await waitFor(() => expect(document.querySelectorAll('[data-surface]')).toHaveLength(7), { timeout: 5000 });
+    await waitFor(() => expect(document.querySelectorAll('[data-surface]')).toHaveLength(9), { timeout: 5000 });
     expect(screen.getAllByText('Removed by the agent')).toHaveLength(1);
     expect(screen.queryByText(/no longer kept/)).toBeNull();
     const chip = await screen.findByRole('button', { name: 'You: Pressed Send decisions · Review of #863: 6 findings' }, { timeout: 5000 });
@@ -264,7 +267,7 @@ describe('the review fixes', () => {
     const note = screen.getByLabelText('Note') as HTMLInputElement;
     expect(note.value).toBe('agent');
     expect(note.getAttribute('aria-describedby')).toBeTruthy();
-    expect(screen.getByText('Updated by the agent')).toBeTruthy();
+    expect(document.getElementById(note.getAttribute('aria-describedby')!)!.textContent).toBe('Updated by the agent');
     await user.type(note, '!');
     expect(screen.queryByText('Updated by the agent')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Go' }));
@@ -356,6 +359,103 @@ describe('the review fixes', () => {
   });
 });
 
+describe('review 4 and the live run', () => {
+  test('an edit made while a press is in flight stays protected after the press succeeds', async () => {
+    const user = userEvent.setup();
+    let finish = () => {};
+    const onAction = vi.fn(() => new Promise<void>((r) => { finish = r; }));
+    const components = [
+      { id: 'root', component: 'Column', children: ['name', 'go'] }, { id: 'name', component: 'TextField', label: 'Name', value: { '@path': '/name' } },
+      { id: 'go', component: 'Button', child: 'go-label', action: { event: { name: 'go', context: { name: { '@path': '/name' } } } } }, text('go-label', 'Go'),
+    ];
+    const view = (model: Record<string, unknown>, version: number) => <SurfaceView surface={surfaceOf(components, model, version)} onAction={onAction} media={media} />;
+    const { rerender } = render(view({ name: 'a' }, 1));
+    const name = screen.getByLabelText('Name') as HTMLInputElement;
+    await user.type(name, 'b');
+    await user.click(screen.getByRole('button', { name: 'Go' }));
+    await user.type(name, 'c');
+    await act(async () => finish());
+    await screen.findByText('Sent to the agent');
+    rerender(view({ name: 'a', other: 1 }, 2));
+    expect(name.value).toBe('abc');
+  });
+
+  test('a template row names an unlabelled input through the Columns, Rows and Cards around it', () => {
+    const field = { id: 'field', component: 'TextField', label: '', value: { '@path': 'note' } };
+    const rows = { rows: [{ name: 'alpha', note: '' }, { name: 'beta', note: '' }] };
+    const { unmount } = draw(surfaceOf([
+      { id: 'root', component: 'List', children: { componentId: 'row', path: '/rows' } },
+      { id: 'row', component: 'Row', children: ['words', 'box'] }, { id: 'words', component: 'Text', text: { '@path': 'name' } },
+      { id: 'box', component: 'Column', children: ['field'] }, field,
+    ], rows));
+    expect(screen.getAllByRole('textbox').map((t) => t.getAttribute('aria-label'))).toEqual(['alpha', 'beta']);
+    unmount();
+    draw(surfaceOf([
+      { id: 'root', component: 'Column', children: { componentId: 'item', path: '/rows' } },
+      { id: 'item', component: 'Column', children: ['words', 'group'] }, { id: 'words', component: 'Text', text: { '@path': 'name' } },
+      { id: 'group', component: 'Card', child: 'inner' }, { id: 'inner', component: 'Column', children: ['field'] }, field,
+    ], rows));
+    expect(screen.getAllByRole('textbox').map((t) => t.getAttribute('aria-label'))).toEqual(['alpha', 'beta']);
+  });
+
+  test('"Updated by the agent" is announced by a live region mounted with the card', async () => {
+    const user = userEvent.setup();
+    const components = [{ id: 'root', component: 'TextField', label: 'Note', value: { '@path': '/note' } }];
+    const view = (model: Record<string, unknown>, version: number) => <SurfaceView surface={surfaceOf(components, model, version)} onAction={vi.fn()} media={media} />;
+    const { container, rerender } = render(view({ note: 'x' }, 1));
+    const region = container.querySelector('section > [role="status"].sr-only');
+    expect(region?.textContent).toBe('');
+    await user.type(screen.getByLabelText('Note'), 'y');
+    rerender(view({ note: 'agent' }, 2));
+    expect(region!.isConnected && region!.textContent).toBe('Updated by the agent');
+  });
+
+  test('a dialog in a template row is titled by that row\'s line', async () => {
+    const user = userEvent.setup();
+    draw(surfaceOf([
+      { id: 'root', component: 'List', children: { componentId: 'item', path: '/items' } },
+      { id: 'item', component: 'Modal', trigger: 'open', content: 'body' }, { id: 'open', component: 'Button', child: 'open-label' }, text('open-label', 'Details'),
+      { id: 'body', component: 'Column', children: ['head', 'line'] }, { id: 'head', component: 'Text', text: { '@path': 'title' } }, { id: 'line', component: 'Text', text: { '@path': 'detail' } },
+    ], { items: [{ title: 'Alpha release', detail: 'Ships Friday' }] }));
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+    expect(within(await screen.findByRole('dialog', { name: 'Alpha release' })).getByText('Ships Friday')).toBeTruthy();
+  });
+
+  test('in a table row the layout sets the widths: a severity chip keeps its own width and the name takes a line of its own on a phone', () => {
+    draw(build(review.create));
+    const row = screen.getAllByRole('listitem')[0];
+    expect([...row.querySelectorAll<HTMLElement>('[style]')].filter((n) => n.style.minWidth)).toHaveLength(0);
+    expect(within(row).getByText('Action context is posted without checking the surface still exists').closest('.basis-full')).toBeTruthy();
+  });
+
+  test('the live review: words over a picker per item read as table rows, the repeated label read with the row, not shown, the picker sized to its words', () => {
+    draw(build(liveReview.create));
+    const list = screen.getByRole('list');
+    expect((list as HTMLElement).style.gridTemplateColumns).toBe('minmax(0,1fr) auto');
+    const groups = within(list).getAllByRole('radiogroup');
+    expect(groups).toHaveLength(6);
+    expect(groups[0].getAttribute('aria-label')).toBe('Decision: 1. High — action context is posted without checking the surface still exists');
+    expect(screen.getAllByText('Decision').every((n) => n.classList.contains('sr-only'))).toBe(true);
+    expect(groups.every((g) => g.classList.contains('self-start'))).toBe(true);
+    // A lone labelled picker in a form keeps its label shown, and is sized to its words too.
+    const params = draw(build(params_.create));
+    const env = within(params.container).getByRole('radiogroup', { name: 'Environment' });
+    expect(env.classList.contains('self-start')).toBe(true);
+    expect(within(params.container).getByText('Environment').classList.contains('sr-only')).toBe(false);
+  });
+
+  test('the live release: weighted icon groups pack to the start, a caption names its media, and the voice note says itself once', () => {
+    const { container } = draw(build(liveRelease.create));
+    const icons = screen.getByText('Notifications').closest('div.flex-row')!;
+    expect([...icons.children].map((n) => (n as HTMLElement).style.flexGrow)).toEqual(['', '', '']);
+    expect(screen.getByText('Settings screenshot').classList.contains('-mb-2')).toBe(true);
+    expect(screen.getByText('Voice note').classList.contains('-mb-2')).toBe(true);
+    expect(screen.queryByText('Release voice note')).toBeNull();
+    expect(container.querySelector('audio')!.getAttribute('aria-label')).toBe('Release voice note');
+    expect(container.querySelector('video')!.classList.contains('w-auto')).toBe(true);
+  });
+});
+
 describe('the card in the transcript', () => {
   const client = (surface: (signal?: AbortSignal) => Promise<Surface>) => ({ surface: (_: string, __: string, signal?: AbortSignal) => surface(signal), surfaceAction: vi.fn(), rawFileUrl: (_: string, p: string) => p }) as unknown as ApiClient;
   const mount = (api: ApiClient, version: number) => <ApiContext.Provider value={api}><SurfaceVersions value={{ c: version }}><SurfaceCard sessionId="t" callId="c" /></SurfaceVersions></ApiContext.Provider>;
@@ -387,7 +487,7 @@ describe('the card in the transcript', () => {
     await user.type(await screen.findByLabelText('Name'), 'b');
     await user.click(screen.getByRole('button', { name: 'Go' }));
     expect(vi.mocked(api.surfaceAction).mock.calls[0][1]).toMatchObject({ version: 1, context: { name: 'ab' } });
-    expect((await screen.findByRole('status')).textContent).toBe('the card changed; review it and press again');
+    expect((await screen.findByText('the card changed; review it and press again')).getAttribute('role')).toBe('status');
     await screen.findByText('new');
     expect(screen.queryByRole('alert')).toBeNull();
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('ab');
