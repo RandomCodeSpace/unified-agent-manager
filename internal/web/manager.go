@@ -97,9 +97,9 @@ type Manager struct {
 	persistMu sync.Mutex
 	wake      chan struct{}
 
-	// surfaces holds each Task's uam_surface cards by surface id, under mu.
-	// PROTOTYPE: in memory only.
-	surfaces map[string]map[string]*surface
+	// surfaceMu serializes uam_surface calls' changes to the Threads'
+	// surfaces files (surface.go).
+	surfaceMu sync.Mutex
 
 	// timeSplits caches each journal's model/local time split.
 	timeSplits timeSplitCache
