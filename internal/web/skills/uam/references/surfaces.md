@@ -23,8 +23,15 @@ Components are a flat list `{"id", "component", ...props}`; one has id
 - Layout: `Card` child · `Column`/`Row` children, justify, align · `List`
   children, direction · `Tabs` tabs [{title, child}] · `Divider` axis ·
   `Modal` trigger (a Button; it needs no action), content.
-- Content: `Text` text, variant title|body|caption · `Icon` name (check,
-  info, warning, error, star…) · `Status` label, tone
+- Content: `Text` text, variant title|body|caption · `Icon` name (only
+  these: accountCircle add arrowBack arrowForward attachFile calendarToday
+  call camera check close delete download edit event error fastForward
+  favorite favoriteOff folder help home info locationOn lock lockOpen mail
+  menu moreVert moreHoriz notificationsOff notifications pause payment person
+  phone photo play print refresh rewind search send settings share
+  shoppingCart skipNext skipPrevious star starHalf starOff stop upload
+  visibility visibilityOff volumeDown volumeMute volumeOff volumeUp
+  warning) · `Status` label, tone
   neutral|running|ok|warn|fail · `Progress` value, max, label · `Image` url,
   description, fit · `Video` url, posterUrl · `AudioPlayer` url, description.
 - Input: `Button` child, action, variant default|primary|borderless ·

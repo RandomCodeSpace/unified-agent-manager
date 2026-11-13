@@ -181,3 +181,19 @@ func TestTaskConversationsLoadBuiltinSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The cards reference lists exactly the icon names uam_surface accepts, so a
+// model picks one instead of guessing and being refused.
+func TestSurfacesSkillListsIconNames(t *testing.T) {
+	data, err := builtinSkills.ReadFile("skills/uam/references/surfaces.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`\x60Icon\x60 name \(only\s+these: ([^)]+)\)`).FindSubmatch(data)
+	if m == nil {
+		t.Fatal("references/surfaces.md does not list the Icon names")
+	}
+	if got := strings.Fields(string(m[1])); !reflect.DeepEqual(got, surfaceEnums["Icon.name"]) {
+		t.Errorf("references/surfaces.md lists Icon names %v, want %v", got, surfaceEnums["Icon.name"])
+	}
+}
