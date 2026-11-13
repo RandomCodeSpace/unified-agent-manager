@@ -727,3 +727,41 @@ func TestSurfacesReadRetired(t *testing.T) {
 		t.Errorf("c2 after update = %+v", s)
 	}
 }
+
+// An earlier build's file with eight live surfaces and a retired one loads,
+// survives a rewrite past the card limit, and still refuses a new card.
+func TestSurfacesReadRetiredPastLimit(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	root := `{"id":"root","component":"Text","text":"hi"}`
+	if res := callSurface(t, conv, "c0", string(surfaceArgs(surfaceCreate("seed", root)))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	live := make([]string, 0, maxSurfaces)
+	for i := range maxSurfaces {
+		live = append(live, fmt.Sprintf(`{"surface_id":"s%d","call_id":"c%d","catalog_id":"urn:uam:catalog:v1","version":1,"deleted":false,"components":[%s],"data_model":{}}`, i, i+10, root))
+	}
+	old := `{"surface_id":"gone","call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":2,"deleted":true,"components":[],"data_model":{}}`
+	file := `{"surfaces":[` + strings.Join(live, ",") + `],"retired":[` + old + `]}`
+	if err := os.WriteFile(m.surfacesPath(sum.ID), []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res := callSurface(t, conv, "c2", string(surfaceArgs(`{"version":"1.0","updateDataModel":{"surfaceId":"s0","path":"/x","value":1}}`))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	if s, err := m.TaskSurface(sum.ID, "c1"); err != nil || !s.Deleted {
+		t.Fatalf("retired call after rewrite = %+v, %v", s, err)
+	}
+	if res := callSurface(t, conv, "c3", string(surfaceArgs(surfaceCreate("new", root)))); !res.Failed || !strings.Contains(res.Text, "card limit") {
+		t.Fatalf("new card past the limit: %+v", res)
+	}
+}
+
+func TestSurfacesFileTrailingData(t *testing.T) {
+	if _, err := loadSurfaces([]byte(`{"surfaces":[]} {"surfaces":[]}`), t.TempDir()); err == nil {
+		t.Fatal("a second JSON value after the first was accepted")
+	}
+	if _, err := loadSurfaces([]byte(`{"surfaces":[]}`+"\n"), t.TempDir()); err != nil {
+		t.Fatalf("a trailing newline was refused: %v", err)
+	}
+}

@@ -30,9 +30,12 @@ const (
 	maxSurfaceComponentBytes = 64 << 10
 	maxSurfaceParts          = 200
 	maxSurfaces              = 8
-	maxSurfaceID             = 64
-	maxSurfaceErrors         = 12
-	maxSurfaceContext        = 4 << 10
+	// maxLegacyRetired was an earlier build's cap on its "retired" list; a
+	// file it wrote may hold that many deleted surfaces beyond maxSurfaces.
+	maxLegacyRetired  = 64
+	maxSurfaceID      = 64
+	maxSurfaceErrors  = 12
+	maxSurfaceContext = 4 << 10
 	// maxSurfaceDepth bounds JSON Pointers and how deeply a data model nests.
 	maxSurfaceDepth = 32
 	// maxSurfaceRender bounds the components a card shows, counting shared
@@ -157,7 +160,13 @@ func surfaceMessages(raw json.RawMessage) ([]json.RawMessage, error) {
 func decodeStrict(raw json.RawMessage, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("unexpected data after the JSON value")
+	}
+	return nil
 }
 
 // applySurfaceCall validates and applies the call callID's messages to t in
@@ -421,7 +430,11 @@ func loadSurfaces(data []byte, workdir string) (*threadSurfaces, error) {
 		return nil, errors.New("the file is not an object")
 	case file.Version != 0 && file.Version != surfacesFileVersion:
 		return nil, fmt.Errorf("unknown version %d", file.Version)
-	case len(file.Surfaces) > maxSurfaces:
+	case len(file.Retired) > maxLegacyRetired:
+		return nil, fmt.Errorf("%d retired surfaces; the limit was %d", len(file.Retired), maxLegacyRetired)
+	case len(file.Surfaces) > maxSurfaces+maxLegacyRetired:
+		// An earlier build's retired surfaces, folded in on the first rewrite,
+		// may take a Thread past maxSurfaces; creating more stays refused.
 		return nil, fmt.Errorf("%d surfaces; the limit is %d", len(file.Surfaces), maxSurfaces)
 	}
 	var errs surfaceErrs
