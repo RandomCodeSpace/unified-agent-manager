@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
-import { ApiError, type ApiClient, type Item, type Surface, type SurfaceComponent } from '../../src/api';
+import { ApiError, type ApiClient, type Item, type Surface, type SurfaceAction, type SurfaceComponent } from '../../src/api';
 import { SurfaceCard, SurfaceView } from '../../src/components/Surface';
 import { SurfaceActionChip } from '../../src/components/SurfaceActionChip';
 import { applyMessage, cardTitle, drawnCount, filled, isSurfaceCall, parseActionLine, rememberSurface, set, SurfaceVersions } from '../../src/lib/surface';
@@ -65,7 +65,7 @@ describe('uam_surface', () => {
     expect(onAction).toHaveBeenCalledWith({
       surface_id: 'review-surface-pr', name: 'review_decisions', source_component_id: 'send',
       context: { F1: ['fix'], F2: ['skip'], F3: ['fix'], F4: ['skip'], F5: ['fix'], F6: ['skip'] },
-      request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      base_path: '', request_id: expect.stringMatching(/^[0-9a-f-]{36}$/), version: 1,
     });
   });
 
@@ -85,7 +85,7 @@ describe('uam_surface', () => {
     // The trigger has no action: opening the dialog sends nothing.
     expect(onAction).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Approve release' }));
-    expect(onAction).toHaveBeenCalledWith({ surface_id: 'release-notes', name: 'approve_release', source_component_id: 'approve', context: { date: '2026-11-20' }, request_id: expect.any(String) });
+    expect(onAction).toHaveBeenCalledWith({ surface_id: 'release-notes', name: 'approve_release', source_component_id: 'approve', context: { date: '2026-11-20' }, base_path: '', request_id: expect.any(String), version: 1 });
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(within(dialog).getByText('Card from the agent')).toBeTruthy();
     expect(within(dialog).getByText('Sent to the agent')).toBeTruthy();
@@ -287,7 +287,7 @@ describe('the review fixes', () => {
     fireEvent.click(first);
     fireEvent.click(second);
     expect(onAction).toHaveBeenCalledTimes(1);
-    expect(onAction.mock.calls[0][0]).toMatchObject({ context: { name: 'first' } });
+    expect(onAction.mock.calls[0][0]).toMatchObject({ context: { name: 'first' }, base_path: '/rows/0', version: 1 });
     await waitFor(() => expect(first.getAttribute('aria-busy')).toBe('true'));
     expect(second.disabled).toBe(true);
     await act(async () => finish());
@@ -295,6 +295,22 @@ describe('the review fixes', () => {
     fireEvent.click(second);
     expect(onAction).toHaveBeenCalledTimes(2);
     expect(onAction.mock.calls[1][0].request_id).not.toBe(onAction.mock.calls[0][0].request_id);
+  });
+
+  test('a press names the version shown; pressed again after a lost answer it keeps its request id, after an answer it gets a new one', async () => {
+    const onAction = vi.fn<(body: SurfaceAction) => Promise<void>>().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+    draw(surfaceOf([{ id: 'root', component: 'Button', child: 'go-label', action: { event: { name: 'go' } } }, text('go-label', 'Go')], {}, 4), onAction);
+    const go = screen.getByRole('button', { name: 'Go' });
+    fireEvent.click(go);
+    await screen.findByText('Could not send: offline');
+    fireEvent.click(go);
+    await screen.findByText('Sent to the agent');
+    fireEvent.click(go);
+    await waitFor(() => expect(onAction).toHaveBeenCalledTimes(3));
+    const [first, retried, next] = onAction.mock.calls.map(([body]) => body);
+    expect(first).toMatchObject({ surface_id: 's', name: 'go', source_component_id: 'root', base_path: '', version: 4 });
+    expect(retried.request_id).toBe(first.request_id);
+    expect(next.request_id).not.toBe(first.request_id);
   });
 
   test('typing in one template row redraws that row, not the others', async () => {
@@ -346,6 +362,26 @@ describe('the card in the transcript', () => {
     expect(screen.getByRole('region', { name: 'Review of #863: 6 findings' })).toBeTruthy();
     await user.click(within(stale).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.queryByText(/May be out of date/)).toBeNull());
+  });
+
+  test('a press on a card that changed meanwhile fetches it, says so quietly and keeps the unsent edit', async () => {
+    const user = userEvent.setup();
+    const components = [
+      { id: 'root', component: 'Column', children: ['name', 'state', 'go'] },
+      { id: 'name', component: 'TextField', label: 'Name', value: { '@path': '/name' } }, { id: 'state', component: 'Text', text: { '@path': '/state' } },
+      { id: 'go', component: 'Button', child: 'go-label', action: { event: { name: 'go', context: { name: { '@path': '/name' } } } } }, text('go-label', 'Go'),
+    ];
+    const answers = [surfaceOf(components, { name: 'a', state: 'old' }, 1), surfaceOf(components, { name: 'a', state: 'new' }, 2)];
+    const api = client(() => Promise.resolve(answers.shift()!));
+    vi.mocked(api.surfaceAction).mockRejectedValueOnce(new ApiError(409, 'the card changed; review it and press again'));
+    render(mount(api, 1));
+    await user.type(await screen.findByLabelText('Name'), 'b');
+    await user.click(screen.getByRole('button', { name: 'Go' }));
+    expect(vi.mocked(api.surfaceAction).mock.calls[0][1]).toMatchObject({ version: 1, context: { name: 'ab' } });
+    expect((await screen.findByRole('status')).textContent).toBe('the card changed; review it and press again');
+    await screen.findByText('new');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('ab');
   });
 
   test('a surface the server does not know draws nothing; only a tombstone says the agent removed it', async () => {

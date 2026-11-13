@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, isStatus, newRequestId, type Surface, type SurfaceAction, type SurfaceComponent } from '../api';
+import { ApiError, describeError, isStatus, newRequestId, type Surface, type SurfaceAction, type SurfaceComponent } from '../api';
 import { cn } from '../lib/cn';
 import { actionContext, boundPath, cardTitle, children, drawnCount, failedChecks, get, isHeading, leadTitle, MAX_DEPTH, rememberSurface, resolve, rowName, set, SurfaceVersions, text } from '../lib/surface';
 import { Note, Skeleton } from './common';
@@ -114,7 +114,11 @@ export const SurfaceCard = memo(function SurfaceCard({ sessionId, callId }: Read
     });
     return () => controller.abort();
   }, [sessionId, callId, api, version, attempt]);
-  const onAction = useCallback((body: SurfaceAction) => api.surfaceAction(sessionId, body), [api, sessionId]);
+  const onAction = useCallback((body: SurfaceAction) => api.surfaceAction(sessionId, body).catch((err: unknown) => {
+    // The card changed since it was drawn: fetch it, so the owner sees what they would press now.
+    if (isStatus(err, 409)) setAttempt((n) => n + 1);
+    throw err;
+  }), [api, sessionId]);
   const media = useCallback((path: string) => api.rawFileUrl(sessionId, path), [api, sessionId]);
   const retry = <Button size="sm" variant="ghost" onClick={() => { setError(''); setAttempt((n) => n + 1); }}>Retry</Button>;
   // Only a tombstone says the agent removed the card; a surface the server does not know draws nothing.
@@ -144,6 +148,8 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
   const [sending, setSending] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [failed, setFailed] = useState('');
+  // The server's word on a press of a card that had changed since it was drawn.
+  const [changed, setChanged] = useState('');
   // The Button instances whose press a check blocked; their failures mark fields until they pass.
   const [pressed, setPressed] = useState<ReadonlyMap<string, { id: string; base: string }>>(new Map());
   if (local.seen !== surface.version) setLocal(merge(local, surface));
@@ -155,6 +161,8 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
   });
   // One action in flight per card, taken before the request so a second press in the same tick finds it.
   const busy = useRef(false);
+  // The last press and its request id, kept until the server answers it, so pressing again retries it under the same id.
+  const retry = useRef<{ key: string; id: string } | null>(null);
 
   const byId = useMemo(() => new Map(surface.components.map((c) => [c.id, c])), [surface.components]);
   const reads = useMemo(() => {
@@ -198,12 +206,21 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
     busy.current = true;
     setSending(key);
     setFailed('');
-    onAction({ surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), request_id: newRequestId() })
+    setChanged('');
+    const id = retry.current?.key === key ? retry.current.id : newRequestId();
+    retry.current = { key, id };
+    onAction({ surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), base_path: base, request_id: id, version: now.seen })
       .then(() => {
+        retry.current = null;
         setSent(key);
         setPressed(new Map());
         setLocal((s) => ({ ...s, dirty: new Set([...s.dirty].filter((p) => !now.dirty.has(p))) }));
-      }, (err: unknown) => setFailed(describeError(err)))
+      }, (err: unknown) => {
+        // A refusal is final, so the next press is a new one; a lost answer may have queued it, so that id is kept.
+        if (err instanceof ApiError && err.status < 500) retry.current = null;
+        if (isStatus(err, 409)) setChanged(describeError(err));
+        else setFailed(describeError(err));
+      })
       .finally(() => {
         busy.current = false;
         setSending(null);
@@ -229,6 +246,7 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
       <FromAgent />
       {count > NODE_BUDGET ? <Note>This card is too large to show</Note> : <Node ctx={ctx} id="root" base="" depth={0} />}
       {failed && <Note tone="error" role="alert">Could not send: {failed}</Note>}
+      {changed && <Note role="status" className="first-letter:uppercase">{changed}</Note>}
     </section>
   );
 }

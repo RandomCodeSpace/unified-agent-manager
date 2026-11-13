@@ -52,6 +52,8 @@ export function surfaceMock(broadcast: (name: string, payload: Record<string, un
       return reply(200, s);
     }
     if (url.pathname === '/api/sessions/t-cards/surface/action' && method === 'POST') {
+      const shown = Object.values(surfaces).find((s) => s.surface_id === body.surface_id);
+      if (shown && shown.version !== body.version) return reply(409, { error: 'the card changed; review it and press again' });
       console.info('[uam_surface action]', JSON.stringify(body));
       return reply(202);
     }

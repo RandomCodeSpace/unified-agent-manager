@@ -526,6 +526,14 @@ func TestSurfaceActionOverHTTP(t *testing.T) {
 	if queue := detail(t, ts.m, sum.ID).Queue; len(queue) != 1 {
 		t.Fatalf("a stale press queued: %+v", queue)
 	}
+	// The page retries its first press under the same request ID: that
+	// press's outcome, not a conflict, and nothing new queued.
+	if w := post(sum.ID, press); w.Code != http.StatusAccepted {
+		t.Fatalf("retried press = %d %s", w.Code, w.Body.String())
+	}
+	if queue := detail(t, ts.m, sum.ID).Queue; len(queue) != 1 {
+		t.Fatalf("a retried press queued again: %+v", queue)
+	}
 	drawn.Version += 2
 	if w := post(sum.ID, stale); w.Code != http.StatusAccepted {
 		t.Fatalf("current press = %d %s", w.Code, w.Body.String())

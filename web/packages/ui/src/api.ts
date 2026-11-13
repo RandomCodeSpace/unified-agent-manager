@@ -894,8 +894,12 @@ export interface Surface {
   components: SurfaceComponent[];
   data_model: Record<string, unknown>;
 }
-/** A Button's press; `request_id` is new per press, so a retry after a lost answer is queued once. */
-export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown>; request_id: string }
+/**
+ * A Button's press: `version` is the card version shown (the server refuses any other with 409), `base_path` the
+ * template item it was pressed in ("" outside a template), and `request_id` stays the same when the press is retried,
+ * so a retry after a lost answer is queued once.
+ */
+export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown>; base_path: string; request_id: string; version: number }
 
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
