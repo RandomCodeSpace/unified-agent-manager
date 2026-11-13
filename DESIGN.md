@@ -1544,7 +1544,7 @@ A menu of choices (Model, Effort, Permissions) opens with its checked item highl
 They scale from 0.97 and fade over 100ms from the transform origin, as do popovers, the selects' lists and tooltips.
 Context menus open at the pointer (long-press on touch) and hold exactly the items of the matching "…" button.
 An item's action runs once the menu has finished closing, and an action that takes focus itself (inline rename) tells the menu to leave focus alone (`takesFocus`), so the menu's focus return never undoes it.
-Tooltips are `ink` on `on-primary`, 400ms delay, no delay while another is open; they are hints for sighted users and never the only name of a control.
+Tooltips are `ink` on `on-primary`, 400ms delay, no delay while another is open; they are never the only name of a control, and while open a tip describes its trigger (`aria-describedby`) unless the trigger has its own description or the tip only repeats its name.
 Selects (project dialogs, Settings) are filled `sunken` triggers like inputs and open below with a check on the chosen row.
 Dialogs: `raised`, `lg`, 20px padding, 440px max (560px, `--spacing-sheet-wide`, while Add project browses folders), the `modal` shadow on the backdrop, scaling in from 0.97 with the backdrop's fade; a close button in the title row; on phone they become a bottom sheet with full-width buttons.
 A dialog is never taller than the viewport (its part above an on-screen keyboard) less its 16px gutters: the title row and the footer (Cancel, the primary) stay and the body scrolls between them.

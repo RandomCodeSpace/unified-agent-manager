@@ -231,7 +231,8 @@ function AnchoredAlert({ open, onOpenChange, onClosed, title, description, child
     <BasePopover.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()} modal="trap-focus">
       <BasePopover.Portal>
         <BasePopover.Positioner anchor={anchor} side="bottom" align="end" sideOffset={6} collisionPadding={8} className="z-50 outline-hidden">
-          <BasePopover.Popup data-popup="" role="alertdialog" initialFocus={cancel} className={cn(floatingClass, 'flex w-max max-w-80 flex-col gap-1 p-3 text-ui text-body', className)}>
+          {/* Modal like the centred one (focus trapped, the page aria-hidden), so it says so. */}
+          <BasePopover.Popup data-popup="" role="alertdialog" aria-modal="true" initialFocus={cancel} className={cn(floatingClass, 'flex w-max max-w-80 flex-col gap-1 p-3 text-ui text-body', className)}>
             <BasePopover.Title className="text-ui font-medium text-ink">{title}</BasePopover.Title>
             {description && <BasePopover.Description className="text-caption text-muted">{description}</BasePopover.Description>}
             {children}
