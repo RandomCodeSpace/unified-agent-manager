@@ -113,7 +113,7 @@ func TestSurfaceAccepts(t *testing.T) {
 		t.Fatalf("update: %q, %v", lines, err)
 	}
 	b, _ := json.Marshal(state.byID("ci"))
-	if want := `"data_model":{"jobs":[{"name":"lint","tone":"ok"},{"name":"e2e","tone":"neutral"}]}`; !strings.Contains(string(b), want) || !strings.Contains(string(b), `"call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":4`) {
+	if want := `"data_model":{"jobs":[{"name":"lint","pct":40,"tone":"ok"},{"name":"e2e","tone":"neutral"}]}`; !strings.Contains(string(b), want) || !strings.Contains(string(b), `"call_id":"c1","catalog_id":"urn:uam:catalog:v1","version":4`) {
 		t.Errorf("surface JSON = %s", b)
 	}
 }
