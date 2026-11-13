@@ -1,0 +1,276 @@
+{
+  "create": {
+    "messages": [
+      {
+        "version": "1.0",
+        "createSurface": {
+          "surfaceId": "migrate-staging",
+          "catalogId": "urn:uam:catalog:v1",
+          "components": [
+            {
+              "id": "root",
+              "component": "Column",
+              "children": [
+                "title",
+                "summary",
+                "rule",
+                "rows"
+              ]
+            },
+            {
+              "id": "title",
+              "component": "Text",
+              "text": {
+                "@path": "/title"
+              }
+            },
+            {
+              "id": "summary",
+              "component": "Text",
+              "variant": "caption",
+              "text": {
+                "@path": "/summary"
+              }
+            },
+            {
+              "id": "rule",
+              "component": "Divider"
+            },
+            {
+              "id": "rows",
+              "component": "List",
+              "children": {
+                "componentId": "row",
+                "path": "/rows"
+              }
+            },
+            {
+              "id": "row",
+              "component": "Row",
+              "align": "center",
+              "children": [
+                "row_name",
+                "row_status",
+                "row_progress"
+              ]
+            },
+            {
+              "id": "row_name",
+              "component": "Text",
+              "weight": 3,
+              "text": {
+                "@path": "name"
+              }
+            },
+            {
+              "id": "row_status",
+              "component": "Status",
+              "weight": 2,
+              "label": {
+                "@path": "status"
+              },
+              "tone": {
+                "@path": "tone"
+              }
+            },
+            {
+              "id": "row_progress",
+              "component": "Progress",
+              "weight": 3,
+              "value": {
+                "@path": "done"
+              },
+              "label": {
+                "@path": "note"
+              }
+            }
+          ],
+          "dataModel": {
+            "title": "Migrations 0041 to 0048 on staging",
+            "summary": "3 of 8 done, 1 running, 4 queued",
+            "rows": [
+              {
+                "name": "0041_thread_budget",
+                "status": "Done",
+                "tone": "ok",
+                "done": 100,
+                "note": "1.2 s"
+              },
+              {
+                "name": "0042_turn_timings_index",
+                "status": "Done",
+                "tone": "ok",
+                "done": 100,
+                "note": "4.8 s"
+              },
+              {
+                "name": "0043_drop_planner_tables",
+                "status": "Done",
+                "tone": "ok",
+                "done": 100,
+                "note": "0.3 s"
+              },
+              {
+                "name": "0044_receipts_backfill",
+                "status": "Running",
+                "tone": "running",
+                "done": 40,
+                "note": "41k of 102k rows"
+              },
+              {
+                "name": "0045_output_styles",
+                "status": "Queued",
+                "tone": "neutral",
+                "done": 0,
+                "note": ""
+              },
+              {
+                "name": "0046_surface_store",
+                "status": "Queued",
+                "tone": "neutral",
+                "done": 0,
+                "note": ""
+              },
+              {
+                "name": "0047_rename_tasks_threads",
+                "status": "Queued",
+                "tone": "neutral",
+                "done": 0,
+                "note": ""
+              },
+              {
+                "name": "0048_vacuum_history",
+                "status": "Queued",
+                "tone": "neutral",
+                "done": 0,
+                "note": ""
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "patches": [
+    {
+      "messages": [
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/3",
+            "value": {
+              "name": "0044_receipts_backfill",
+              "status": "Done",
+              "tone": "ok",
+              "done": 100,
+              "note": "38 s"
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/4",
+            "value": {
+              "name": "0045_output_styles",
+              "status": "Running",
+              "tone": "running",
+              "done": 55,
+              "note": ""
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/summary",
+            "value": "4 of 8 done, 1 running, 3 queued"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/4",
+            "value": {
+              "name": "0045_output_styles",
+              "status": "Done",
+              "tone": "ok",
+              "done": 100,
+              "note": "2.1 s"
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/5",
+            "value": {
+              "name": "0046_surface_store",
+              "status": "Lock timeout, retrying",
+              "tone": "warn",
+              "done": 20,
+              "note": "try 2 of 3"
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/summary",
+            "value": "5 of 8 done, 1 retrying, 2 queued"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/5",
+            "value": {
+              "name": "0046_surface_store",
+              "status": "Failed",
+              "tone": "fail",
+              "done": 20,
+              "note": "lock timeout"
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/rows/6",
+            "value": {
+              "name": "0047_rename_tasks_threads",
+              "status": "Running",
+              "tone": "running",
+              "done": 70,
+              "note": ""
+            }
+          }
+        },
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "migrate-staging",
+            "path": "/summary",
+            "value": "5 of 8 done, 1 failed, 1 running, 1 queued"
+          }
+        }
+      ]
+    }
+  ]
+}

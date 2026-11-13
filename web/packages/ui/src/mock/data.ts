@@ -1,6 +1,10 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
+import surfaceBoard from './surfaces/board.json';
+import surfaceParams from './surfaces/params.json';
+import surfaceRelease from './surfaces/release.json';
+import surfaceReview from './surfaces/review.json';
 import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall, TurnTodos } from '../api';
 
 export interface MockTask extends SessionDetail {
@@ -900,6 +904,33 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'd2', kind: 'assistant', time: ago(9), text: 'The request path, browser to model:\n\n```mermaid\nflowchart LR\n  A[Browser] -->|HTTPS| B[Sign-in proxy] --> C[uam web]\n  C --> D[(Session state)]\n  C -.-> E{Copilot CLI}\n```' },
         { id: 'd3', kind: 'assistant', time: ago(9), text: 'And the release timeline:\n\n```mermaid\ngantt\n  title Release\n  dateFormat YYYY-MM-DD\n  section Build\n  Web bundle :a1, 2026-10-01, 3d\n  Go binary :a2, after a1, 2d\n```' },
         { id: 'd4', kind: 'assistant', time: ago(8), text: 'Here is the request flow with the state store. Click it to edit; I see your changes with your next message.\n\n```mermaid\nflowchart LR\n  browser[Browser] -->|HTTPS| proxy[Sign-in proxy] --> web[uam web Go]\n  web -->|SDK stdio| cli[Copilot CLI] --> model[Model API]\n  web -->|reads| disk[Session state]\n  cli -->|writes| disk\n```' },
+      ],
+    }),
+    // PROTOTYPE: uam_surface (A2UI v1.0). Throwaway. Four surfaces; mock/surfaces.ts serves them and patches the board.
+    task({
+      id: 't-surface',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'gpt-6-luna',
+      name: 'Surface prototype',
+      title: '',
+      state: 'completed',
+      created_at: ago(7),
+      updated_at: ago(1),
+      items: [
+        { id: 's1', kind: 'user', time: ago(7), text: 'Run the staging migrations and keep me posted on a board.' },
+        tool('call-surface-board', 7, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', input: JSON.stringify(surfaceBoard.create), output: 'created surface migrate-staging' }),
+        { id: 's2', kind: 'assistant', time: ago(6), text: 'The board above follows the run; I update it as each migration finishes.' },
+        { id: 's3', kind: 'user', time: ago(5), text: 'Review the surface PR and let me pick what to fix.' },
+        tool('call-surface-review', 5, { name: 'uam_surface', title: 'Surface: review-surface-pr', status: 'completed', input: JSON.stringify(surfaceReview.create), output: 'created surface review-surface-pr' }),
+        { id: 's4', kind: 'assistant', time: ago(4), text: 'Six findings, two of them high. Choose for each and send; I start on the fixes when your decisions arrive.' },
+        { id: 's5', kind: 'user', time: ago(4), text: 'Then set up a load test I can tune.' },
+        tool('call-surface-params', 3, { name: 'uam_surface', title: 'Surface: load-test-params', status: 'completed', input: JSON.stringify(surfaceParams.create), output: 'created surface load-test-params' }),
+        tool('call-surface-patch', 3, { name: 'uam_surface', title: 'Surface: migrate-staging', status: 'completed', input: JSON.stringify(surfaceBoard.patches[0]), output: 'updated data model of migrate-staging at /rows/3' }),
+        { id: 's6', kind: 'assistant', time: ago(3), text: 'Set the load and press Run when ready.' },
+        { id: 's7', kind: 'user', time: ago(2), text: 'Put the release notes on a card with the demo clip.' },
+        tool('call-surface-release', 2, { name: 'uam_surface', title: 'Surface: release-notes', status: 'completed', input: JSON.stringify(surfaceRelease.create), output: 'created surface release-notes' }),
+        { id: 's8', kind: 'assistant', time: ago(1), text: 'Pick the release date, and approve from the changelog when it reads right.' },
       ],
     }),
     task({

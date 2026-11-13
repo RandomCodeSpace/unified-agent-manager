@@ -330,6 +330,10 @@ export function reducer(state: State, action: Action): State {
           return { ...state, messagePairs: d.message_pairs, messageOutcomes: d.message_outcomes ?? [] };
         case 'save_status':
           return { ...state, saveError: d.save_error ?? '' };
+        // PROTOTYPE uam_surface: an open surface card refetches when its version moves; no seq is needed.
+        case 'surface':
+          if (state.detail?.id !== d.session_id) return state;
+          return { ...state, detail: { ...state.detail, surface_versions: { ...state.detail.surface_versions, [d.call_id]: d.version } } };
       }
       const detail = state.detail;
       if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;

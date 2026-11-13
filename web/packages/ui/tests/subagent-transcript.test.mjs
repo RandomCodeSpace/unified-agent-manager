@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
+import * as surfaceLib from '../src/lib/surface.ts';
 import * as history from '../src/lib/historyState.ts';
 import * as subagentsLib from '../src/lib/subagents.ts';
 import * as receiptsLib from '../src/lib/receipts.ts';
@@ -33,6 +34,7 @@ const modules = {
   '../lib/fileReferences': { localHints: () => [] },
   '../lib/previewContext': { usePreview: () => null },
   '../lib/chart': chart,
+  '../lib/surface': surfaceLib,
   './Chart': { ChartCard: () => null },
   './GitLabReviewRequest': { GitLabReviewRequest: () => null, gitLabReviewRequest: () => null },
   '../lib/clipboard': { useCopied: () => [false, () => {}] },

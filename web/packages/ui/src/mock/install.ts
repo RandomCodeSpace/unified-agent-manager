@@ -8,6 +8,7 @@ import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
 import { worktreesMock } from './worktrees';
 import { chartMock } from './charts';
+import { surfaceMock } from './surfaces';
 import { drawingsMock } from './drawings';
 import { routinesMock } from './routines';
 import { accountMock } from './account';
@@ -234,6 +235,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
   const mcp = mcpMock(() => !!st.settings.terminal, () => !!st.settings.github_mcp);
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const drawings = drawingsMock();
+  const surfaces = surfaceMock((name, payload, sessionId) => broadcast(name, payload, sessionId));
   const assist = assistMock({
     broadcast: (name, payload) => broadcast(name, payload),
     settings: () => st.settings,
@@ -840,6 +842,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
     if (gitted) return gitted;
     const charted = charts(method, url, body);
     if (charted) return charted;
+    const surfaced = surfaces(method, url, body);
+    if (surfaced) return surfaced;
     const routined = routines.route(method, path, body);
     if (routined) return routined;
     const configured = configuration.route(method, url, body);

@@ -59,6 +59,9 @@ const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.a
 import type { GitLabOpenItem } from './GitLabSheet';
 import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
 import type { GitLabRef } from '../lib/gitlabRefs';
+// PROTOTYPE uam_surface: open surface cards refetch on the `surface` event's version.
+import { SurfaceVersions } from '../lib/surface';
+const NO_SURFACES: Readonly<Record<string, number>> = {};
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
 const ChangesSheet = lazy(() => import('./Changes').then((m) => { lazyShown.add('changes'); return { default: m.ChangesSheet }; }));
 /** The pinned charts load with their first opening, never with the Task. */
@@ -1065,6 +1068,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
               <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-4">
               <Contained what="This conversation" of={session.id}>
+              <SurfaceVersions value={session.surface_versions ?? NO_SURFACES}>
               <Transcript
                 sessionId={session.id}
                 planVersion={session.plan_version}
@@ -1093,6 +1097,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 onRewind={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseRewind : undefined}
                 onEdit={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && !answering && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseEdit : undefined}
               />
+              </SurfaceVersions>
               </Contained>
               </HistoryAnchor>
               {rewindAt && active && connected && <RewindPanel session={session} userItemId={rewindAt.userItemId} anchor={rewindAt.anchor} onClose={() => setRewindAt(null)} />}

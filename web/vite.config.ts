@@ -278,7 +278,14 @@ function mockAttachmentRoute(): Plugin {
     configureServer(server) {
       server.middlewares.use((rawReq, rawRes, next) => {
         const req = rawReq as unknown as { url?: string; method?: string };
-        const res = rawRes as unknown as { setHeader(name: string, value: string): void; end(body: string | Uint8Array): void };
+        const res = rawRes as unknown as { statusCode: number; setHeader(name: string, value: string): void; end(body?: string | Uint8Array): void };
+        // PROTOTYPE: uam_surface. The release card's media, by their path in the Thread's folder, from the mock folder.
+        const media = /^\/api\/sessions\/t-surface\/files\/raw\?path=release%2F([\w.-]+)$/.exec(req.url ?? '');
+        if (media && req.method === 'GET') {
+          res.statusCode = 302;
+          res.setHeader('Location', `/packages/ui/src/mock/surfaces/release/${media[1]}`);
+          return res.end();
+        }
         const m = /^\/api\/sessions\/[^/]+\/attachments\/([^/?]+)/.exec(req.url ?? '');
         if (!m || req.method !== 'GET') return next();
         const id = decodeURIComponent(m[1]);

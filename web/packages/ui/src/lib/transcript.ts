@@ -5,6 +5,7 @@
 
 import { lineCountsText } from './cost.ts';
 import { isChartCall } from './chart.ts';
+import { isSurfaceCall } from './surface.ts';
 import type { Interaction, InteractionState, Item, Subagent, ToolCall, TurnTiming } from '../api';
 
 /** Argument keys per tool name, most telling first; `GENERIC` serves every other tool. */
@@ -936,9 +937,10 @@ export function isFileDeclaration(item: Item): boolean {
 }
 
 /** Charts and returned images stand in the answer; file declarations stay in activity. */
-export function callProduct(item: Item): 'chart' | 'images' | null {
+export function callProduct(item: Item): 'chart' | 'surface' | 'images' | null {
   if (item.kind !== 'tool') return null;
   if (isChartCall(item)) return 'chart';
+  if (isSurfaceCall(item)) return 'surface';
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 
