@@ -7,7 +7,8 @@ import { useApi } from '../ApiContext';
 import { todoTally } from '../lib/todos';
 import { proseOnly } from '../lib/richMarkdown';
 import { isChartCall } from '../lib/chart';
-import { isSurfaceCall } from '../lib/surface';
+import { isSurfaceCall, parseActionLine } from '../lib/surface';
+import { SurfaceActionChip } from './SurfaceActionChip';
 import { localHints } from '../lib/fileReferences';
 import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
@@ -1192,7 +1193,9 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }
   const chips = attachments.length > 0 && !!sessionId;
   const accepted = item.steer_status === 'accepted';
   const width = 'max-w-[min(88%,720px)] max-sm:max-w-[88%]';
-  const bubble = (
+  // A card's Button press is stored and copied as the line the model reads, and shown as a chip.
+  const action = peer ? null : parseActionLine(text);
+  const bubble = action ? <SurfaceActionChip action={action} sessionId={sessionId} /> : (
     // A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text.
     <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-1.5 text-chat text-ink', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
       {peer ? <PeerCaption peer={peer} /> : <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>}

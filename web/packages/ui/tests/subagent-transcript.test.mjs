@@ -36,6 +36,7 @@ const modules = {
   '../lib/chart': chart,
   '../lib/surface': surfaceLib,
   './Chart': { ChartCard: () => null },
+  './SurfaceActionChip': { SurfaceActionChip: () => null },
   './GitLabReviewRequest': { GitLabReviewRequest: () => null, gitLabReviewRequest: () => null },
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
