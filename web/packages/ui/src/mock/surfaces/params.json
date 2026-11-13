@@ -187,5 +187,18 @@
       }
     ]
   },
-  "patches": []
+  "patches": [
+    {
+      "messages": [
+        {
+          "version": "1.0",
+          "updateDataModel": {
+            "surfaceId": "load-test-params",
+            "path": "/minutes",
+            "value": 15
+          }
+        }
+      ]
+    }
+  ]
 }

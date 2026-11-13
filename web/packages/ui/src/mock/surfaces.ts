@@ -1,7 +1,8 @@
 // Development-only: the surface routes of the in-browser mock service (see install.ts). The
 // Cards Thread (t-cards) holds four drawn surfaces, three a model drew in real runs (real-*.json,
 // verbatim) and one the agent deleted. The first read of the board starts its patches, a few
-// seconds apart. The media are in surfaces/media, served by the dev server (vite.config.ts).
+// seconds apart; the first read of the load test starts the agent's one change to it (the
+// duration), 6 seconds later, over whatever the owner has edited by then. The media are in surfaces/media, served by the dev server (vite.config.ts).
 
 import type { Surface } from '../api';
 import { applyMessage } from '../lib/surface';
@@ -28,15 +29,15 @@ export function surfaceMock(broadcast: (name: string, payload: Record<string, un
     'call-real-release': build('call-real-release', realRelease.create),
     'call-real-review': build('call-real-review', realReview.create),
   };
-  let patching = false;
-  const patch = () => {
-    if (patching) return;
-    patching = true;
-    board.patches.forEach((p: Payload, i) => setTimeout(() => {
-      const s = p.messages.reduce<Surface | null>((at, m) => applyMessage(at, m), surfaces['call-surface-board'])!;
-      surfaces['call-surface-board'] = s;
-      broadcast('surface', { session_id: 't-cards', call_id: 'call-surface-board', surface_id: s.surface_id, version: s.version }, 't-cards');
-    }, 2500 * (i + 1)));
+  const patching = new Set<string>();
+  const patch = (callId: string, patches: Payload[], every: number) => {
+    if (patching.has(callId)) return;
+    patching.add(callId);
+    patches.forEach((p, i) => setTimeout(() => {
+      const s = p.messages.reduce<Surface | null>((at, m) => applyMessage(at, m), surfaces[callId])!;
+      surfaces[callId] = s;
+      broadcast('surface', { session_id: 't-cards', call_id: callId, surface_id: s.surface_id, version: s.version }, 't-cards');
+    }, every * (i + 1)));
   };
   const reply = (status: number, body?: unknown) =>
     body === undefined ? new Response(null, { status }) : new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -46,7 +47,8 @@ export function surfaceMock(broadcast: (name: string, payload: Record<string, un
       const callId = url.searchParams.get('call') ?? '';
       const s = surfaces[callId];
       if (!s) return reply(404, { error: 'no surface' });
-      if (callId === 'call-surface-board') patch();
+      if (callId === 'call-surface-board') patch(callId, board.patches, 2500);
+      if (callId === 'call-surface-params') patch(callId, params.patches, 6000);
       return reply(200, s);
     }
     if (url.pathname === '/api/sessions/t-cards/surface/action' && method === 'POST') {
