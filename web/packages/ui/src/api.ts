@@ -894,7 +894,8 @@ export interface Surface {
   components: SurfaceComponent[];
   data_model: Record<string, unknown>;
 }
-export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown> }
+/** A Button's press; `request_id` is new per press, so a retry after a lost answer is queued once. */
+export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown>; request_id: string }
 
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {

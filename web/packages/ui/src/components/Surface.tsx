@@ -1,10 +1,11 @@
 /**
  * A `uam_surface` call's card: the A2UI v1.0 surface the call created, drawn with uam's own
  * components and kept live by the `surface` event. Inputs write to a local copy of the data
- * model; a newer version from the server replaces it. Text is always plain text; an unknown
- * component draws nothing. The renderer, not the model, keeps the card designed (DESIGN.md
- * Cards): one house card, nested Cards flat, a title line, packed short rows, template rows
- * as one grid, media at the column's width.
+ * model; a newer version from the server replaces it but keeps the owner's unsent edits where
+ * the agent left that value alone. Text is always plain text; an unknown component draws
+ * nothing. The renderer, not the model, keeps the card designed (DESIGN.md Cards): uam's own
+ * "Card from the agent" line, one house card, nested Cards flat, a title line, packed short
+ * rows, template rows as one grid, media at the column's width.
  */
 import {
   ArrowLeft, ArrowRight, Bell, BellOff, Calendar, CalendarDays, Camera, Check, CircleAlert, CircleCheck, CircleDashed, CircleQuestionMark, CircleUserRound, CreditCard,
@@ -12,11 +13,11 @@ import {
   Pencil, Phone, PhoneCall, Play, Plus, Printer, RefreshCw, Rewind, Search, Send, Settings, Share2, ShoppingCart, SkipBack, SkipForward, Square, Star, StarHalf,
   StarOff, Trash, TriangleAlert, Upload, User, Volume, Volume1, Volume2, VolumeX, X, type LucideIcon,
 } from 'lucide-react';
-import { memo, useContext, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type Surface, type SurfaceAction, type SurfaceComponent } from '../api';
+import { describeError, isStatus, newRequestId, type Surface, type SurfaceAction, type SurfaceComponent } from '../api';
 import { cn } from '../lib/cn';
-import { actionContext, boundPath, cardTitle, checksPass, children, isHeading, leadTitle, rememberSurface, resolve, set, SurfaceVersions, text } from '../lib/surface';
+import { actionContext, boundPath, cardTitle, children, drawnCount, failedChecks, get, isHeading, leadTitle, MAX_DEPTH, rememberSurface, resolve, rowName, set, SurfaceVersions, text } from '../lib/surface';
 import { Note, Skeleton } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -27,17 +28,71 @@ import { Segmented } from './ui/segmented';
 
 type Model = Record<string, unknown>;
 
-interface Ctx {
+/** What a component and everything it draws read from the data model: nothing, only paths under their template item, or anything. */
+type Reads = 'none' | 'relative' | 'absolute';
+
+/** The part of the card's context that does not change as the owner types. */
+interface Shared {
   byId: Map<string, SurfaceComponent>;
-  model: Model;
   /** The Text styled as the card's title though the agent left it `body`. */
   title: string | null;
   write: (path: string, value: unknown) => void;
   act: (component: SurfaceComponent, base: string) => void;
   /** The raw file route's URL for a path in the Thread's working folder: media never load from anywhere else. */
   media: (path: string) => string;
+  /** The Button instance (`id`, newline, template base) whose action is in flight, and the one last sent. */
   sending: string | null;
   sent: string | null;
+  /** Pointers a blocked press marked empty, and the blocked Button instances with what they say. */
+  invalid: ReadonlySet<string>;
+  blocked: ReadonlyMap<string, string>;
+  /** Pointers the agent changed over an unsent edit. */
+  updated: ReadonlySet<string>;
+  reads: (id: string) => Reads;
+}
+interface Ctx extends Shared {
+  model: Model;
+  shared: Shared;
+}
+
+/** A card the renderer stops drawing past this many components (a shared child counts per reference, a template per item). */
+export const NODE_BUDGET = 2000;
+const NONE: ReadonlySet<string> = new Set();
+const NO_BLOCKS: ReadonlyMap<string, string> = new Map();
+const instance = (id: string, base: string) => `${id}\n${base}`;
+const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+/** The local copy: the model shown, the pointers edited since the last send, the agent's changes over them, and the server's model and version it came from. */
+interface Local { model: Model; dirty: ReadonlySet<string>; updated: ReadonlySet<string>; server: Model; seen: number }
+
+/** A newer server version, keeping each unsent edit whose value the agent left alone; where the agent changed it too, the agent wins and the field says so. */
+function merge(local: Local, surface: Surface): Local {
+  let model = surface.data_model;
+  const dirty = new Set<string>();
+  const updated = new Set(local.updated);
+  for (const p of local.dirty) {
+    const mine = get(local.model, p);
+    if (same(get(model, p), mine)) continue;
+    if (same(get(local.server, p), get(model, p))) {
+      model = set(model, p, mine ?? null);
+      dirty.add(p);
+    } else updated.add(p);
+  }
+  return { model, dirty, updated, server: surface.data_model, seen: surface.version };
+}
+
+/** Every binding in a component's own props: none, only relative ones, or an absolute one. */
+function ownReads(value: unknown): Reads {
+  if (!value || typeof value !== 'object') return 'none';
+  const path = (value as { '@path'?: unknown; path?: unknown })['@path'] ?? (value as { componentId?: unknown; path?: unknown }).path;
+  if (typeof path === 'string') return path.startsWith('/') ? 'absolute' : 'relative';
+  let found: Reads = 'none';
+  for (const v of Object.values(value)) {
+    const r = ownReads(v);
+    if (r === 'absolute') return r;
+    if (r === 'relative') found = r;
+  }
+  return found;
 }
 
 /** Where a component sits, when that changes its look: `tight` is a caption under a line of text; `beside` is beside a Text in a Row (the Text grows, an input's own label is read, not shown). */
@@ -48,54 +103,131 @@ export const SurfaceCard = memo(function SurfaceCard({ sessionId, callId }: Read
   const version = useContext(SurfaceVersions)[callId];
   const [surface, setSurface] = useState<Surface | null>(null);
   const [error, setError] = useState('');
+  const [missing, setMissing] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     api.surface(sessionId, callId, controller.signal).then((s) => { setSurface(s); setError(''); rememberSurface(sessionId, s); }, (err: unknown) => {
-      if (!controller.signal.aborted) setError(describeError(err));
+      if (controller.signal.aborted) return;
+      setMissing(isStatus(err, 404));
+      setError(describeError(err));
     });
     return () => controller.abort();
   }, [sessionId, callId, api, version, attempt]);
-  if (error && !surface) return <Note tone="error" role="alert">Could not load this card: {error} <Button size="sm" onClick={() => { setError(''); setAttempt((n) => n + 1); }}>Retry</Button></Note>;
+  const onAction = useCallback((body: SurfaceAction) => api.surfaceAction(sessionId, body), [api, sessionId]);
+  const media = useCallback((path: string) => api.rawFileUrl(sessionId, path), [api, sessionId]);
+  const retry = <Button size="sm" variant="ghost" onClick={() => { setError(''); setAttempt((n) => n + 1); }}>Retry</Button>;
+  // Only a tombstone says the agent removed the card; a surface the server does not know draws nothing.
+  if (missing && !surface) return null;
+  if (error && !surface) return <Note tone="error" role="alert">Could not load this card: {error} {retry}</Note>;
   if (!surface) return <Skeleton label="Loading the card…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />;
   if (surface.deleted) return <Note>Removed by the agent</Note>;
-  return <SurfaceView surface={surface} onAction={(body) => api.surfaceAction(sessionId, body)} media={(path) => api.rawFileUrl(sessionId, path)} />;
+  const view = <SurfaceView surface={surface} onAction={onAction} media={media} />;
+  if (!error) return view;
+  // A failed refresh keeps the card it has and says it may be behind.
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {view}
+      <Note role="status" className="flex flex-wrap items-center gap-x-2 px-1">May be out of date · {error} {retry}</Note>
+    </div>
+  );
 });
+
+/** uam's own line at the top of every card and in every card dialog: the agent draws below it and cannot move or restyle it. */
+function FromAgent() {
+  return <p className="text-caption text-muted">Card from the agent</p>;
+}
 
 /** The surface itself, with its local data model; exported for the DOM test. */
 export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Surface; onAction: (body: SurfaceAction) => Promise<void>; media: (path: string) => string }>) {
-  const [model, setModel] = useState(surface.data_model);
-  const [seen, setSeen] = useState(surface.version);
+  const [local, setLocal] = useState<Local>(() => ({ model: surface.data_model, dirty: NONE, updated: NONE, server: surface.data_model, seen: surface.version }));
   const [sending, setSending] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [failed, setFailed] = useState('');
-  // A newer version from the server replaces the local copy, edits included.
-  if (seen !== surface.version) {
-    setSeen(surface.version);
-    setModel(surface.data_model);
-  }
+  // The Button instances whose press a check blocked; their failures mark fields until they pass.
+  const [pressed, setPressed] = useState<ReadonlyMap<string, { id: string; base: string }>>(new Map());
+  if (local.seen !== surface.version) setLocal(merge(local, surface));
+  const { model } = local;
+  // Read by the action at press time, after the render that showed it.
+  const latest = useRef(local);
+  useLayoutEffect(() => {
+    latest.current = local;
+  });
+  // One action in flight per card, taken before the request so a second press in the same tick finds it.
+  const busy = useRef(false);
+
+  const byId = useMemo(() => new Map(surface.components.map((c) => [c.id, c])), [surface.components]);
+  const reads = useMemo(() => {
+    const known = new Map<string, Reads>();
+    const of = (id: string): Reads => {
+      const hit = known.get(id);
+      if (hit) return hit;
+      // A cycle reads as anything until it resolves, which only re-renders more.
+      known.set(id, 'absolute');
+      const c = byId.get(id);
+      let r: Reads = c ? ownReads(c) : 'none';
+      const next = c ? [c.children, c.child, c.trigger, c.content, ...(Array.isArray(c.tabs) ? c.tabs.map((t: { child?: unknown }) => t?.child) : [])] : [];
+      const ids = next.flatMap((k) => (typeof k === 'string' ? [k] : Array.isArray(k) ? k.map(String) : k && typeof k === 'object' && typeof (k as { componentId?: unknown }).componentId === 'string' ? [String((k as { componentId: string }).componentId)] : []));
+      for (const k of ids) {
+        if (r === 'absolute') break;
+        const child = of(k);
+        if (child !== 'none') r = child;
+      }
+      known.set(id, r);
+      return r;
+    };
+    return of;
+  }, [byId]);
+  const count = useMemo(() => drawnCount(byId, model, NODE_BUDGET), [byId, model]);
   const title = cardTitle({ components: surface.components, data_model: model });
-  const ctx: Ctx = {
-    byId: new Map(surface.components.map((c) => [c.id, c])),
-    model,
-    title: title && !isHeading(surface.components.find((c) => c.id === title.id)) ? title.id : null,
-    write: (path, value) => setModel((m) => set(m, path, value)),
-    act: (component, base) => {
-      const event = (component.action as { event?: { name?: string; context?: unknown } } | undefined)?.event;
-      if (!event?.name) return;
-      setSending(component.id);
-      setFailed('');
-      onAction({ surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, model, base) })
-        .then(() => setSent(component.id), (err: unknown) => setFailed(describeError(err)))
-        .finally(() => setSending(null));
-    },
-    sending,
-    sent,
-    media,
-  };
+  const titleId = title && !isHeading(byId.get(title.id)) ? title.id : null;
+
+  const write = useCallback((path: string, value: unknown) => setLocal((s) => {
+    const updated = s.updated.has(path) ? new Set([...s.updated].filter((p) => p !== path)) : s.updated;
+    return { ...s, model: set(s.model, path, value), dirty: s.dirty.has(path) ? s.dirty : new Set(s.dirty).add(path), updated };
+  }), []);
+  const act = useCallback((component: SurfaceComponent, base: string) => {
+    const event = (component.action as { event?: { name?: string; context?: unknown } } | undefined)?.event;
+    if (!event?.name || busy.current) return;
+    const key = instance(component.id, base);
+    const now = latest.current;
+    if (failedChecks(component, now.model, base).length) {
+      setPressed((m) => new Map(m).set(key, { id: component.id, base }));
+      return;
+    }
+    busy.current = true;
+    setSending(key);
+    setFailed('');
+    onAction({ surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), request_id: newRequestId() })
+      .then(() => {
+        setSent(key);
+        setPressed(new Map());
+        setLocal((s) => ({ ...s, dirty: new Set([...s.dirty].filter((p) => !now.dirty.has(p))) }));
+      }, (err: unknown) => setFailed(describeError(err)))
+      .finally(() => {
+        busy.current = false;
+        setSending(null);
+      });
+  }, [onAction, surface.surface_id]);
+
+  // The failures of the blocked presses, as a key, so the sets below change only when the failures do.
+  const failures = JSON.stringify([...pressed].map(([key, { id, base }]) => {
+    const c = byId.get(id);
+    const failed = c ? failedChecks(c, model, base) : [];
+    return [key, failed.flatMap((f) => (f.path ? [f.path] : [])), failed.length ? failed.find((f) => f.message)?.message || 'Fill in the required fields' : ''] as const;
+  }));
+  const { invalid, blocked } = useMemo(() => {
+    const list = JSON.parse(failures) as [string, string[], string][];
+    if (!list.length) return { invalid: NONE, blocked: NO_BLOCKS };
+    return { invalid: new Set(list.flatMap(([, paths]) => paths)), blocked: new Map(list.filter(([, , m]) => m).map(([key, , m]) => [key, m])) };
+  }, [failures]);
+  const shared = useMemo<Shared>(() => ({ byId, title: titleId, write, act, media, sending, sent, invalid, blocked, updated: local.updated, reads }), [byId, titleId, write, act, media, sending, sent, invalid, blocked, local.updated, reads]);
+  const ctx: Ctx = { ...shared, shared, model };
   return (
-    <section aria-label={title?.text || 'Card from the agent'} data-surface={surface.surface_id} className="flex min-w-0 flex-col gap-3 rounded-lg bg-raised p-4 text-ui text-body tabular-nums shadow-raised sm:px-5">
-      <Node ctx={ctx} id="root" base="" depth={0} />
+    // An untitled card is no landmark: two of them in a Thread would share one name.
+    <section aria-label={title?.text || undefined} data-surface={surface.surface_id} className="flex min-w-0 flex-col gap-3 rounded-lg bg-raised p-4 text-ui text-body tabular-nums shadow-raised sm:px-5">
+      <FromAgent />
+      {count > NODE_BUDGET ? <Note>This card is too large to show</Note> : <Node ctx={ctx} id="root" base="" depth={0} />}
       {failed && <Note tone="error" role="alert">Could not send: {failed}</Note>}
     </section>
   );
@@ -105,6 +237,7 @@ const JUSTIFY: Record<string, string> = { start: 'justify-start', center: 'justi
 const SPREAD = new Set(['spaceBetween', 'spaceAround', 'spaceEvenly']);
 const ALIGN: Record<string, string> = { start: 'items-start', center: 'items-center', end: 'items-end', stretch: 'items-stretch' };
 const INPUTS = new Set(['TextField', 'Slider', 'ChoicePicker', 'DateTimeInput']);
+const CONTROLS = new Set([...INPUTS, 'Button', 'Modal', 'CheckBox']);
 const TONE = {
   neutral: { chip: 'muted', Icon: CircleDashed },
   running: { chip: 'accent', Icon: null },
@@ -131,7 +264,7 @@ const SVG_PATH = /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s-]{1,2048}$/;
 const FIT: Record<string, string> = { contain: 'object-contain', cover: 'object-cover', fill: 'object-fill', none: 'object-none', scaleDown: 'object-scale-down' };
 // Every feature image fills its column up to a height; only `smallFeature`, `icon` and `avatar` are small on purpose.
 const IMAGE_SIZE: Record<string, string> = {
-  icon: 'size-6', avatar: 'size-10 rounded-full', smallFeature: 'max-h-32 w-auto max-w-full', mediumFeature: 'max-h-72 w-full', largeFeature: 'max-h-[28rem] w-full', header: 'h-40 w-full',
+  icon: 'size-6 shrink-0', avatar: 'size-10 shrink-0 rounded-full', smallFeature: 'max-h-32 w-auto max-w-full', mediumFeature: 'max-h-72 w-full', largeFeature: 'max-h-[28rem] w-full', header: 'h-40 w-full',
 };
 
 /** A Button's look: its variant, and its label (a Text child in the button's own colour; any other child draws as itself). */
@@ -158,10 +291,19 @@ function tableItem(ctx: Ctx, spec: unknown): SurfaceComponent | null {
   return item.component === 'Row' || (item.component === 'Column' && kinds.some((k) => k === 'Status' || k === 'Progress')) ? item : null;
 }
 
-function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; base: string; depth: number; place?: Place }>): ReactNode {
+type NodeProps = Readonly<{ ctx: Ctx; id: string; base: string; depth: number; place?: Place; /** The row's words, naming an input that has no label. */ name?: string }>;
+
+/** The part of the model a component's drawing depends on; a node redraws only when it changes, so a keystroke redraws its own row, not the card. */
+const scope = (p: NodeProps) => {
+  const r = p.ctx.reads(p.id);
+  return r === 'none' ? null : r === 'absolute' ? p.ctx.model : get(p.ctx.model, p.base);
+};
+
+const Node = memo(
+  function Node({ ctx, id, base, depth, place, name }: NodeProps): ReactNode {
   const c = ctx.byId.get(id);
   // A cycle or a runaway tree draws nothing past this depth.
-  if (!c || depth > 24) return null;
+  if (!c || depth > MAX_DEPTH) return null;
   const { model } = ctx;
   // A weighted child shares the row by its weight, and wraps to its own line once the row is narrower than 8rem a child.
   const weight = typeof c.weight === 'number' ? ({ flexGrow: c.weight, flexBasis: 0, minWidth: '8rem' } as CSSProperties) : undefined;
@@ -179,14 +321,20 @@ function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; 
     case 'Row': {
       const list = children(c.children, model, base);
       const specs = list.map((k) => ctx.byId.get(k.id));
+      const kinds = specs.map((k) => String(k?.component));
+      // A row of only buttons starts at the start: uam's own prompts end theirs at the right, and a card must not look like one.
+      const buttons = kinds.length > 0 && kinds.every((k) => k === 'Button' || k === 'Modal');
       // Short items pack to the start with the house gap: spreading three icons to the card's edges reads as a layout bug, not a design.
-      const packed = SPREAD.has(String(c.justify)) && specs.every((k, i) => compact(ctx, k, list[i].base));
-      const beside = specs.some((k) => k?.component === 'Text') && specs.some((k) => INPUTS.has(String(k?.component)));
+      // Two items, or words with a control, keep the spread the agent asked for.
+      const mixed = kinds.includes('Text') && kinds.some((k) => CONTROLS.has(k));
+      const packed = buttons || (SPREAD.has(String(c.justify)) && list.length !== 2 && !mixed && specs.every((k, i) => compact(ctx, k, list[i].base)));
+      const beside = kinds.includes('Text') && kinds.some((k) => INPUTS.has(k));
+      const row = Array.isArray(c.children) ? rowName(ctx.byId, model, c.children, base) : '';
       // An icon and its words read as one label.
       const gap = specs.some((k) => k?.component === 'Icon') ? 'gap-x-2' : 'gap-x-4';
       return (
         <div style={weight} className={cn('flex min-w-0 flex-row flex-wrap gap-y-2', gap, packed ? undefined : JUSTIFY[String(c.justify)], ALIGN[String(c.align ?? 'center')])}>
-          {list.map((k) => <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={beside ? 'beside' : undefined} />)}
+          {list.map((k) => <Node key={`${k.id}:${k.base}`} ctx={ctx} id={k.id} base={k.base} depth={depth + 1} place={beside ? 'beside' : undefined} name={row} />)}
         </div>
       );
     }
@@ -217,39 +365,32 @@ function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; 
       );
     }
     case 'Card':
-      // Every Card draws flat: the surface is already the one house card, and a box in a box reads as a grey slab.
-      return <div style={weight} className="flex min-w-0 flex-col gap-3">{typeof c.child === 'string' && <Node ctx={ctx} id={c.child} base={base} depth={depth + 1} />}</div>;
+      return <SurfaceGroup ctx={ctx} c={c} base={base} depth={depth} weight={weight} />;
     case 'Divider':
       return c.axis === 'vertical' ? <span aria-hidden="true" className="w-px self-stretch fade-rule-y" /> : <div role="separator" className="fade-rule" />;
     case 'Tabs':
       return <SurfaceTabs ctx={ctx} c={c} base={base} depth={depth} />;
     case 'Button': {
       const { variant, label } = buttonLook(ctx, c, base, depth);
-      const ok = checksPass(c, model, base);
+      const key = instance(c.id, base);
+      const blocked = ctx.blocked.get(key);
       return (
-        <span style={weight} className="inline-flex items-center gap-2">
-          <Button variant={variant} disabled={!ok} loading={ctx.sending === c.id} onClick={() => ctx.act(c, base)}>
+        <span style={weight} className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Button variant={variant} disabled={!!ctx.sending && ctx.sending !== key} loading={ctx.sending === key} onClick={() => ctx.act(c, base)}>
             {label}
           </Button>
-          {ctx.sent === c.id && ctx.sending !== c.id && <span role="status" className="text-caption text-muted">Sent to the agent</span>}
+          {blocked ? <span role="alert" className="text-caption text-error">{blocked}</span> : ctx.sent === key && !ctx.sending && <span role="status" className="text-caption text-muted">Sent to the agent</span>}
         </span>
       );
     }
-    case 'CheckBox': {
-      const path = boundPath(c.value, base);
-      return (
-        <label style={weight} className="flex min-h-8 cursor-pointer items-center gap-2.5 text-ui text-ink pointer-coarse:min-h-11">
-          <input type="checkbox" className="size-3.5 accent-accent" checked={!!resolve(c.value, model, base)} disabled={!path} onChange={(e) => path && ctx.write(path, e.target.checked)} />
-          <span className="min-w-0">{text(c.label, model, base)}</span>
-        </label>
-      );
-    }
+    case 'CheckBox':
+      return <SurfaceCheck ctx={ctx} c={c} base={base} weight={weight} name={name} />;
     case 'TextField':
-      return <SurfaceField ctx={ctx} c={c} base={base} weight={weight} place={place} />;
+      return <SurfaceField ctx={ctx} c={c} base={base} weight={weight} place={place} name={name} />;
     case 'Slider':
-      return <SurfaceSlider ctx={ctx} c={c} base={base} weight={weight} place={place} />;
+      return <SurfaceSlider ctx={ctx} c={c} base={base} weight={weight} place={place} name={name} />;
     case 'ChoicePicker':
-      return <SurfaceChoice ctx={ctx} c={c} base={base} weight={weight} place={place} />;
+      return <SurfaceChoice ctx={ctx} c={c} base={base} weight={weight} place={place} name={name} />;
     case 'Status': {
       const tone = TONE[String(resolve(c.tone, model, base)) as keyof typeof TONE] ?? TONE.neutral;
       const Icon = tone.Icon;
@@ -262,14 +403,15 @@ function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; 
     }
     case 'Progress': {
       const value = Number(resolve(c.value, model, base)) || 0;
-      const max = Number(resolve(c.max, model, base)) || 100;
+      const top = Number(resolve(c.max, model, base));
+      const max = top > 0 ? top : 100;
       const own = text(c.label, model, base).trim();
       // The component's own name is no label: the bar shows its share instead of repeating "Progress" on every row.
       const label = own.toLowerCase() === 'progress' ? '' : own;
       const share = Math.min(1, Math.max(0, value / max));
       const shown = label || `${Math.round(share * 100)}%`;
       return (
-        <div style={weight} role="progressbar" aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} aria-valuetext={shown} aria-label={label || 'Progress'} className="flex min-w-24 flex-1 items-center gap-2.5">
+        <div style={weight} role="progressbar" aria-valuemin={0} aria-valuemax={max} aria-valuenow={share * max} aria-valuetext={shown} aria-label={label || 'Progress'} className="flex min-w-24 flex-1 items-center gap-2.5">
           <Meter share={share} fill={share >= 1 ? 'bg-success' : 'bg-accent'} className="flex-1" />
           <span className={cn('shrink-0 text-right text-caption text-muted tabular-nums', label ? 'max-w-32 truncate' : 'w-9')}>{shown}</span>
         </div>
@@ -281,7 +423,7 @@ function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; 
       if (typeof svgPath === 'string' && SVG_PATH.test(svgPath)) {
         return <svg style={weight} aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="size-4 shrink-0 text-muted"><path d={svgPath} /></svg>;
       }
-      const Icon = typeof name === 'string' ? ICONS[name] : undefined;
+      const Icon = typeof name === 'string' && Object.hasOwn(ICONS, name) ? ICONS[name] : undefined;
       return Icon ? <Icon style={weight} aria-hidden="true" className="size-4 shrink-0 text-muted" /> : null;
     }
     case 'Image':
@@ -307,11 +449,30 @@ function Node({ ctx, id, base, depth, place }: Readonly<{ ctx: Ctx; id: string; 
     case 'Modal':
       return <SurfaceModal ctx={ctx} c={c} base={base} depth={depth} weight={weight} />;
     case 'DateTimeInput':
-      return <SurfaceDateTime ctx={ctx} c={c} base={base} weight={weight} place={place} />;
+      return <SurfaceDateTime ctx={ctx} c={c} base={base} weight={weight} place={place} name={name} />;
     default:
       return null;
   }
+  },
+  (a, b) => a.id === b.id && a.base === b.base && a.depth === b.depth && a.place === b.place && a.name === b.name && a.ctx.shared === b.ctx.shared && scope(a) === scope(b),
+);
+
+/**
+ * A Card: the root and the Cards directly inside it draw flat, since the surface is already the
+ * one house card and a box in a box reads as a grey slab; a Card inside one of those is a
+ * hairline group, so a deliberate grouping still reads.
+ */
+function SurfaceGroup({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: number }>) {
+  const inner = useContext(InCard);
+  const body = typeof c.child === 'string' && <Node ctx={ctx} id={c.child} base={base} depth={depth + 1} />;
+  if (c.id === 'root') return <div style={weight} className="flex min-w-0 flex-col gap-3">{body}</div>;
+  return (
+    <div style={weight} className={cn('flex min-w-0 flex-col gap-3', inner && 'rounded-md border border-hairline p-3')}>
+      <InCard value>{body}</InCard>
+    </div>
+  );
 }
+const InCard = createContext(false);
 
 /**
  * Template rows as one grid, so their names, chips and bars line up down the card: each item's
@@ -333,33 +494,55 @@ function TableRows({ ctx, spec, item, base, depth, weight }: Readonly<{ ctx: Ctx
   return (
     <div style={weight} className="@container min-w-0">
       <div style={{ gridTemplateColumns: columns.join(' ') }} role="list" className="flex flex-col gap-2 @lg:grid @lg:gap-x-4 @lg:gap-y-0">
-        {children(spec, ctx.model, base).map((row) => (
-          <div key={row.base} role="listitem" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg:col-span-full @lg:grid @lg:min-h-8 @lg:grid-cols-subgrid @lg:py-1">
-            {cells.map((k, i) => <div key={k} className={cn('flex min-w-0 items-center', narrow(kinds[i], i))}><Node ctx={ctx} id={k} base={row.base} depth={depth + 2} /></div>)}
-          </div>
-        ))}
+        {children(spec, ctx.model, base).map((row) => {
+          const name = rowName(ctx.byId, ctx.model, cells, row.base);
+          return (
+            <div key={row.base} role="listitem" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @lg:col-span-full @lg:grid @lg:min-h-8 @lg:grid-cols-subgrid @lg:py-1">
+              {cells.map((k, i) => <div key={k} className={cn('flex min-w-0 items-center', narrow(kinds[i], i))}><Node ctx={ctx} id={k} base={row.base} depth={depth + 2} name={name} /></div>)}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function Labelled({ id, label, weight, place, children: body }: Readonly<{ id: string; label: string; weight?: CSSProperties; place?: Place; children: ReactNode }>) {
+/**
+ * What a bound input says about its value under it: "Required" in `error` once a press it
+ * blocks marked it empty, or "Updated by the agent" where the agent changed a value the owner
+ * had edited; `aria` wires it to the input. Where the input's label is not shown either (a
+ * table row), "Required" is only read: the error ring and the Button's message say it.
+ */
+function fieldNote(ctx: Ctx, path: string | null, id: string, labelShown: boolean) {
+  const error = !!path && ctx.invalid.has(path);
+  const updated = !error && !!path && ctx.updated.has(path);
+  const noteId = `${id}-note`;
+  return {
+    aria: { 'aria-invalid': error || undefined, 'aria-describedby': error || updated ? noteId : undefined },
+    note: error ? <span id={noteId} className={labelShown ? 'text-caption text-error' : 'sr-only'}>Required</span> : updated ? <span id={noteId} className="text-caption text-muted">Updated by the agent</span> : null,
+  };
+}
+
+function Labelled({ id, label, weight, place, note, children: body }: Readonly<{ id: string; label: string; weight?: CSSProperties; place?: Place; note?: ReactNode; children: ReactNode }>) {
   return (
     <div style={weight} className="flex min-w-0 flex-col gap-1">
       {label && <label htmlFor={id} className={place === 'beside' ? 'sr-only' : 'text-caption text-muted'}>{label}</label>}
       {body}
+      {note}
     </div>
   );
 }
 
-type Part = Readonly<{ ctx: Ctx; c: SurfaceComponent; base: string; weight?: CSSProperties; place?: Place }>;
+type Part = Readonly<{ ctx: Ctx; c: SurfaceComponent; base: string; weight?: CSSProperties; place?: Place; name?: string }>;
 
-function SurfaceField({ ctx, c, base, weight, place }: Part) {
+function SurfaceField({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
-  const common = { id, value: text(c.value, ctx.model, base), placeholder: text(c.placeholder, ctx.model, base) || undefined, readOnly: !path };
+  const label = text(c.label, ctx.model, base);
+  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
+  const common = { id, value: text(c.value, ctx.model, base), placeholder: text(c.placeholder, ctx.model, base) || undefined, readOnly: !path, 'aria-label': label ? undefined : name || undefined, ...aria };
   return (
-    <Labelled id={id} label={text(c.label, ctx.model, base)} weight={weight} place={place}>
+    <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       {c.variant === 'longText'
         ? <textarea {...common} rows={3} className={cn(inputVariants(), 'h-auto min-h-20 resize-y py-2')} onChange={(e) => path && ctx.write(path, e.target.value)} />
         : <Input {...common} type={c.variant === 'number' ? 'number' : c.variant === 'obscured' ? 'password' : 'text'} onChange={(e) => path && ctx.write(path, c.variant === 'number' ? e.target.valueAsNumber : e.target.value)} />}
@@ -367,30 +550,51 @@ function SurfaceField({ ctx, c, base, weight, place }: Part) {
   );
 }
 
-function SurfaceSlider({ ctx, c, base, weight, place }: Part) {
+function SurfaceSlider({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
+  const label = text(c.label, ctx.model, base);
+  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
   const min = typeof c.min === 'number' ? c.min : 0;
   const max = typeof c.max === 'number' ? c.max : 100;
   const value = Number(resolve(c.value, ctx.model, base)) || min;
   const step = typeof c.steps === 'number' && c.steps > 0 ? (max - min) / c.steps : 'any';
   return (
-    <Labelled id={id} label={text(c.label, ctx.model, base)} weight={weight} place={place}>
+    <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       <div className="flex items-center gap-3">
-        <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={!path} className="h-8 min-w-0 flex-1 accent-accent pointer-coarse:h-11" onChange={(e) => path && ctx.write(path, e.target.valueAsNumber)} />
+        <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={!path} aria-label={label ? undefined : name || undefined} {...aria} className="h-8 min-w-0 flex-1 accent-accent pointer-coarse:h-11" onChange={(e) => path && ctx.write(path, e.target.valueAsNumber)} />
         <output htmlFor={id} className="w-10 shrink-0 text-right text-ui text-ink tabular-nums">{Number.isInteger(value) ? value : value.toFixed(2)}</output>
       </div>
     </Labelled>
   );
 }
 
-function SurfaceChoice({ ctx, c, base, weight, place }: Part) {
+function SurfaceCheck({ ctx, c, base, weight, name }: Part) {
+  const id = useId();
+  const path = boundPath(c.value, base);
+  const label = text(c.label, ctx.model, base);
+  const { aria, note } = fieldNote(ctx, path, id, !!label);
+  return (
+    <div style={weight} className="flex min-w-0 flex-col gap-0.5">
+      <label className="flex min-h-8 cursor-pointer items-center gap-2.5 text-ui text-ink pointer-coarse:min-h-11">
+        <input type="checkbox" className="size-3.5 accent-accent" checked={!!resolve(c.value, ctx.model, base)} disabled={!path} aria-label={label ? undefined : name || undefined} {...aria} onChange={(e) => path && ctx.write(path, e.target.checked)} />
+        <span className="min-w-0">{label}</span>
+      </label>
+      {note}
+    </div>
+  );
+}
+
+function SurfaceChoice({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
   const raw = resolve(c.value, ctx.model, base);
   const chosen = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : [];
   const options = (Array.isArray(c.options) ? c.options : []).map((o: { label?: unknown; value?: unknown }) => ({ value: String(o?.value ?? ''), label: text(o?.label, ctx.model, base) }));
   const label = text(c.label, ctx.model, base);
+  // An unlabelled picker is named by its row's words, so six of them in a list are not six "Choice"s.
+  const named = label ? undefined : name || 'Choice';
+  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
   const multiple = c.variant === 'multipleSelection';
   const choose = (v: string[]) => path && ctx.write(path, v);
   if (!multiple && options.length <= 5) {
@@ -398,22 +602,24 @@ function SurfaceChoice({ ctx, c, base, weight, place }: Part) {
       <div style={weight} className="flex min-w-0 flex-col gap-1">
         {label && <span id={id} className={place === 'beside' ? 'sr-only' : 'text-caption text-muted'}>{label}</span>}
         {/* With nothing chosen yet the thumb hides, so no segment reads as picked. */}
-        <Segmented aria-labelledby={label ? id : undefined} aria-label={label ? undefined : 'Choice'} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('min-w-48', !chosen.length && '[&>span:first-child]:opacity-0')} />
+        <Segmented aria-labelledby={label ? id : undefined} aria-label={named} aria-invalid={aria['aria-invalid']} aria-describedby={aria['aria-describedby']} value={chosen[0] ?? ''} disabled={!path} items={options} onValueChange={(v) => choose([v])} className={cn('min-w-48', !chosen.length && '[&>span:first-child]:opacity-0', aria['aria-invalid'] && 'shadow-[inset_0_0_0_1px_var(--color-error)]')} />
+        {note}
       </div>
     );
   }
   return (
-    <fieldset style={weight} className="flex min-w-0 flex-col gap-0.5" disabled={!path}>
+    <fieldset style={weight} className="flex min-w-0 flex-col gap-0.5" disabled={!path} aria-label={named} aria-describedby={aria['aria-describedby']}>
       {label && <legend className={place === 'beside' ? 'sr-only' : 'mb-1 text-caption text-muted'}>{label}</legend>}
       {options.map((o) => {
         const on = chosen.includes(o.value);
         return (
           <label key={o.value} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-            <input type={multiple ? 'checkbox' : 'radio'} name={id} checked={on} className="size-3.5 accent-accent" onChange={() => choose(multiple ? (on ? chosen.filter((x) => x !== o.value) : [...chosen, o.value]) : [o.value])} />
+            <input type={multiple ? 'checkbox' : 'radio'} name={id} checked={on} aria-invalid={aria['aria-invalid']} className="size-3.5 accent-accent" onChange={() => choose(multiple ? (on ? chosen.filter((x) => x !== o.value) : [...chosen, o.value]) : [o.value])} />
             <span className="min-w-0 flex-1">{o.label}</span>
           </label>
         );
       })}
+      {note}
     </fieldset>
   );
 }
@@ -459,7 +665,7 @@ function SurfaceModal({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: 
   return (
     <span style={weight} className="inline-flex">
       <Button variant={look.variant} aria-haspopup="dialog" onClick={() => setOpen(true)}>{look.label}</Button>
-      <Dialog open={open} onOpenChange={setOpen} title={lead?.text || (typeof look.label === 'string' ? look.label : 'Details')}>
+      <Dialog open={open} onOpenChange={setOpen} title={lead?.text || (typeof look.label === 'string' ? look.label : 'Details')} description="Card from the agent">
         <div className="flex min-w-0 flex-col gap-3 text-ui text-body tabular-nums">
           {body.map((id) => <Node key={id} ctx={ctx} id={id} base={base} depth={depth + 1} />)}
         </div>
@@ -468,18 +674,22 @@ function SurfaceModal({ ctx, c, base, depth, weight }: Part & Readonly<{ depth: 
   );
 }
 
-function SurfaceDateTime({ ctx, c, base, weight, place }: Part) {
+function SurfaceDateTime({ ctx, c, base, weight, place, name }: Part) {
   const id = useId();
   const path = boundPath(c.value, base);
+  const label = text(c.label, ctx.model, base);
+  const { aria, note } = fieldNote(ctx, path, id, !!label && place !== 'beside');
   const date = c.enableDate === true;
   const clock = c.enableTime === true;
   const type = date && clock ? 'datetime-local' : clock ? 'time' : 'date';
   // shortcut: datetime-local shows no zone or seconds, so a stored "…T14:30:00Z" shows its first 16 characters; convert zones if agents send them.
   const shown = (s: string) => (type === 'datetime-local' ? s.slice(0, 16) : s);
   return (
-    <Labelled id={id} label={text(c.label, ctx.model, base)} weight={weight} place={place}>
+    <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       <Input
         id={id}
+        aria-label={label ? undefined : name || undefined}
+        {...aria}
         type={type}
         value={shown(text(c.value, ctx.model, base))}
         min={shown(text(c.min, ctx.model, base)) || undefined}

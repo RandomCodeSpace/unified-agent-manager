@@ -29,6 +29,7 @@ export function Segmented({
   'aria-label': ariaLabel,
   'aria-labelledby': labelledBy,
   'aria-describedby': describedBy,
+  'aria-invalid': invalid,
 }: Readonly<{
   value: string;
   onValueChange: (value: string) => void;
@@ -39,6 +40,7 @@ export function Segmented({
   'aria-label'?: string;
   'aria-labelledby'?: string;
   'aria-describedby'?: string;
+  'aria-invalid'?: boolean;
 }>) {
   const index = Math.max(0, items.findIndex((it) => it.value === value));
   const vars = { '--seg-n': items.length, '--seg-i': index } as CSSProperties;
@@ -50,6 +52,7 @@ export function Segmented({
       aria-label={ariaLabel}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
+      aria-invalid={invalid || undefined}
       style={vars}
       className={cn('relative isolate grid h-6 shrink-0 auto-cols-fr grid-flow-col rounded-sm bg-sunken p-px shadow-well pointer-coarse:h-9', className)}
       data-size={size}
