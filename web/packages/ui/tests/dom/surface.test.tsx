@@ -316,6 +316,31 @@ describe('the review fixes', () => {
     expect(next.request_id).not.toBe(first.request_id);
   });
 
+  test('a press with no answer at all keeps its id for the same press; a refusal or changed values make a new press', async () => {
+    const onAction = vi.fn<(body: SurfaceAction) => Promise<void>>()
+      .mockRejectedValueOnce(new ApiError(0, 'offline'))
+      .mockRejectedValueOnce(new ApiError(0, 'offline'))
+      .mockRejectedValueOnce(new ApiError(400, 'refused'))
+      .mockResolvedValue(undefined);
+    draw(surfaceOf([
+      { id: 'root', component: 'Column', children: ['note', 'go'] },
+      { id: 'note', component: 'TextField', label: 'Note', value: { '@path': '/note' } },
+      { id: 'go', component: 'Button', child: 'go-label', action: { event: { name: 'go', context: { note: { '@path': '/note' } } } } }, text('go-label', 'Go'),
+    ], { note: 'a' }, 2), onAction);
+    const go = screen.getByRole('button', { name: 'Go' });
+    const press = async (n: number) => { fireEvent.click(go); await waitFor(() => expect(onAction).toHaveBeenCalledTimes(n)); await waitFor(() => expect(go.hasAttribute('disabled')).toBe(false)); };
+    await press(1);
+    await press(2);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'b' } });
+    await press(3);
+    await press(4);
+    const ids = onAction.mock.calls.map(([body]) => body.request_id);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[1]);
+    expect(onAction.mock.calls[2][0].context).toEqual({ note: 'b' });
+    expect(ids[3]).not.toBe(ids[2]);
+  });
+
   test('a picker whose value is blank or no option\'s shows no segment as picked', () => {
     const { container } = draw(surfaceOf([
       { id: 'root', component: 'List', children: { componentId: 'pick', path: '/rows' } },

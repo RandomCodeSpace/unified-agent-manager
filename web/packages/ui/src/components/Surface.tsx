@@ -176,7 +176,7 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
   // One action in flight per card, taken before the request so a second press in the same tick finds it.
   const busy = useRef(false);
   // The last press and its request id, kept until the server answers it, so pressing again retries it under the same id.
-  const retry = useRef<{ key: string; id: string } | null>(null);
+  const retry = useRef<{ key: string; id: string; sent: string } | null>(null);
 
   const byId = useMemo(() => new Map(surface.components.map((c) => [c.id, c])), [surface.components]);
   const reads = useMemo(() => {
@@ -221,9 +221,12 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
     setSending(key);
     setFailed('');
     setChanged('');
-    const id = retry.current?.key === key ? retry.current.id : newRequestId();
-    retry.current = { key, id };
-    onAction({ surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), base_path: base, request_id: id, version: now.seen })
+    const press = { surface_id: surface.surface_id, name: event.name, source_component_id: component.id, context: actionContext(event.context, now.model, base), base_path: base, version: now.seen };
+    // The same press again after a lost answer keeps its id, so the server can answer it once; anything changed makes it a new press.
+    const sent = JSON.stringify(press);
+    const id = retry.current?.key === key && retry.current.sent === sent ? retry.current.id : newRequestId();
+    retry.current = { key, id, sent };
+    onAction({ ...press, request_id: id })
       .then(() => {
         retry.current = null;
         setSent(key);
@@ -232,7 +235,8 @@ export function SurfaceView({ surface, onAction, media }: Readonly<{ surface: Su
         setLocal((s) => ({ ...s, dirty: new Map([...s.dirty].filter(([p, at]) => now.dirty.get(p) !== at)) }));
       }, (err: unknown) => {
         // A refusal is final, so the next press is a new one; a lost answer may have queued it, so that id is kept.
-        if (err instanceof ApiError && err.status < 500) retry.current = null;
+        // A status of 0 is a request that got no answer at all.
+        if (err instanceof ApiError && err.status > 0 && err.status < 500) retry.current = null;
         if (isStatus(err, 409)) setChanged(describeError(err));
         else setFailed(describeError(err));
       })
