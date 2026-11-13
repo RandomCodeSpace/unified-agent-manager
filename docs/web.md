@@ -1274,7 +1274,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Opening another preview or switching Threads discards the old preview and
   cancels its pending read.
 - **Declared files**: `uam_show_file` records a file reference and optional
-  title. Its tool call folds into the turn's activity in both layouts;
+  title. Its tool call folds into the turn's activity;
   the conversation's inline file link opens the preview without a separate
   card. Opening a file still checks current availability, and temporary
   files require an explicit grant. Declaration metadata does not grant access.
