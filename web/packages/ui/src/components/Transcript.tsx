@@ -1688,7 +1688,7 @@ function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string;
     case 'declined':
       return { answer: 'Declined', tone: 'text-muted' };
     case 'cancelled':
-      return { answer: 'Cancelled', tone: 'text-muted' };
+      return { answer: asked.form ? 'Dismissed' : 'Cancelled', tone: 'text-muted' };
     case 'failed':
       return { answer: asked.error ? `Failed: ${asked.error}` : 'Failed', tone: 'text-error' };
     case 'answered':
@@ -1698,7 +1698,7 @@ function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string;
   }
   if (asked.link) return { answer: 'Done', tone: 'text-muted' };
   if (!answer) return { answer: 'Answered', tone: 'text-muted' };
-  if (asked.questions.length > 1) return { marker: 'You answered', answer, tone: 'text-ink' };
+  if (asked.questions.length > 1 || asked.form) return { marker: 'You answered', answer, tone: 'text-ink' };
   // Picked: the answer is chosen labels and nothing else; anything more was typed.
   const choices = asked.questions[0]?.choices ?? [];
   const picked = asked.chosen.length > 0 && (asked.chosen.includes(answer) || answer.split(/;\s*|,\s*/).every((p) => choices.includes(p.trim())));

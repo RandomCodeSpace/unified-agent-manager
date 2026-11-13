@@ -222,7 +222,7 @@ type Manager struct {
 	// hostTools, when set, returns the host tools the conversation of a Task
 	// registers, spawned when uam_create_task or a routine's run created the
 	// Task, and the CallTool bound to that Task. It runs with mu held, so it
-	// takes no lock. NewManager sets it to uam_create_task and uam_chart
+	// takes no lock. NewManager sets it to uam_create_task, uam_chart, uam_form and the others
 	// (create_task.go).
 	hostTools func(taskID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 	// skillDirs hold the built-in skills every Task's conversation loads

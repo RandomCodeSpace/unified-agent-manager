@@ -254,6 +254,8 @@ export function approvalMark(ix: Interaction): { word: string; full: string; ton
 
 /** Copilot's question tool; its input and output stand in for the interaction when history has no interactions. */
 const ASK_TOOL = 'ask_user';
+/** uam's own form tool (internal/web/form.go): one question with fields and actions, answered at once. */
+export const FORM_TOOL = 'uam_form';
 
 export interface Links {
   /** Requests by the tool item they sit on, oldest first; every request is kept. */
@@ -355,6 +357,8 @@ export interface AskedQuestion {
   link?: boolean;
   /** What the tool reported when it failed. */
   error?: string;
+  /** A `uam_form` call: one question (the form's title) whose answer is the action and the field values. */
+  form?: boolean;
 }
 
 /** The answer in Copilot's `ask_user` output: "User selected: <choice>", "User responded: <text>". */
@@ -377,10 +381,19 @@ const RESOLVED = /^Answered:\s*/;
  */
 export function questionOf(tool: ToolCall | undefined, interaction: Interaction | undefined, live: boolean): AskedQuestion | null {
   const isAsk = tool?.name === ASK_TOOL;
-  if (!isAsk && interaction?.kind !== 'question') return null;
+  const isForm = tool?.name === FORM_TOOL;
+  if (!isAsk && !isForm && interaction?.kind !== 'question') return null;
+  // A form refused before it was shown is an ordinary failed call.
+  if (isForm && !interaction && tool.status === 'failed') return null;
   const q: AskedQuestion = { questions: [], chosen: [], outcome: 'pending' };
-  if (tool?.question_outcome && !tool.input && !interaction) return { ...q, outcome: tool.question_outcome === 'pending' && !live ? 'none' : tool.question_outcome };
-  if (interaction?.questions?.length) {
+  if (tool?.question_outcome && !tool.input && !interaction) return { ...q, outcome: tool.question_outcome === 'pending' && !live ? 'none' : tool.question_outcome, ...(isForm ? { form: true } : {}) };
+  if (isForm) {
+    const title = inputOf(tool)?.title;
+    q.form = true;
+    q.questions = [{ text: interaction?.title || (typeof title === 'string' ? title : '') || 'The agent showed a form.', choices: [] }];
+    const got = tool.status === 'completed' ? formAnswer(tool) : null;
+    if (got) return got.dismissed ? { ...q, outcome: 'cancelled' } : answered(q, got.text);
+  } else if (interaction?.questions?.length) {
     q.questions = interaction.questions.map((x) => ({ text: x.text, header: x.header || undefined, choices: x.choices ?? [] }));
   } else if (isAsk) {
     const obj = inputOf(tool) ?? {};
@@ -422,6 +435,27 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
   // No interaction and the call is still open: waiting only while the turn runs.
   q.outcome = live ? 'pending' : 'none';
   return q;
+}
+
+/** A finished `uam_form` call's JSON result in words, labels from its input: the action's, then each field's value in order. Null when the output is not one. */
+function formAnswer(tool: ToolCall): { dismissed: boolean; text: string } | null {
+  let out: unknown;
+  try {
+    out = JSON.parse(tool.output ?? '');
+  } catch {
+    return null;
+  }
+  const r = (out && typeof out === 'object' ? out : {}) as { status?: unknown; action?: unknown; values?: unknown };
+  if (r.status === 'dismissed') return { dismissed: true, text: '' };
+  if (r.status !== 'submitted' || typeof r.action !== 'string') return null;
+  const input = inputOf(tool) ?? {};
+  const named = (list: unknown) => (Array.isArray(list) ? list : []).filter((x): x is { name: unknown; label?: unknown } => !!x && typeof x === 'object');
+  const label = (x: { name: unknown; label?: unknown } | undefined, fallback: string) => (typeof x?.label === 'string' && x.label ? x.label : fallback);
+  const values = (r.values && typeof r.values === 'object' ? r.values : {}) as Record<string, unknown>;
+  const word = (v: unknown) => (v === null || v === undefined || (Array.isArray(v) && !v.length) ? '—' : Array.isArray(v) ? v.join(', ') : v === true ? 'yes' : v === false ? 'no' : String(v));
+  const fields = named(input.fields).filter((f) => typeof f.name === 'string' && Object.hasOwn(values, f.name));
+  const action = label(named(input.actions).find((a) => a.name === r.action), r.action);
+  return { dismissed: false, text: [action, ...fields.map((f) => `${label(f, f.name as string)}: ${word(values[f.name as string])}`)].join(' · ') };
 }
 
 /** What a tool row asked: Copilot's `ask_user` call, or any call a question request names; null for every other call. */
@@ -647,7 +681,7 @@ export function toolKind(name: string): ActivityKind {
   if (READ_TOOLS.has(n) || CHANGE_TOOLS.includes(n)) return 'file';
   if (SEARCH_TOOLS.has(n)) return 'search';
   if (n === 'task') return 'subagent';
-  if (n === 'ask_user') return 'question';
+  if (n === 'ask_user' || n === FORM_TOOL) return 'question';
   return 'tool';
 }
 

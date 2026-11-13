@@ -66,6 +66,12 @@ type Field struct {
 	// MinItems and MaxItems bound how many choices an array field takes.
 	MinItems *int `json:"min_items,omitempty"`
 	MaxItems *int `json:"max_items,omitempty"`
+	// Help is a line shown under the field, Multiline asks for a text box
+	// rather than a line, and Default is the answer the field starts with.
+	// uam's own forms set them; a provider's form leaves them empty.
+	Help      string   `json:"help,omitempty"`
+	Multiline bool     `json:"multiline,omitempty"`
+	Default   []string `json:"default,omitempty"`
 }
 
 // Clone returns a copy of f that shares nothing with it.
@@ -74,7 +80,7 @@ func (f *Field) Clone() *Field {
 		return nil
 	}
 	c := *f
-	c.Values = slices.Clone(f.Values)
+	c.Values, c.Default = slices.Clone(f.Values), slices.Clone(f.Default)
 	c.Minimum, c.Maximum = clonePtr(f.Minimum), clonePtr(f.Maximum)
 	c.MinLength, c.MaxLength = clonePtr(f.MinLength), clonePtr(f.MaxLength)
 	c.MinItems, c.MaxItems = clonePtr(f.MinItems), clonePtr(f.MaxItems)

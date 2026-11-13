@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
-import { lazy, Suspense, useId, useState, type SubmitEvent , type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState, type SubmitEvent , type ReactNode } from 'react';
 import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { fieldHint } from '../lib/answer';
@@ -8,8 +8,11 @@ import { approvalMark } from '../lib/transcript';
 import { Markdown, Note } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { Input } from './ui/input';
+import { Input, inputVariants } from './ui/input';
 import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
+
+/** A touch screen, where focusing a field would raise the keyboard over the conversation. */
+const COARSE = '(pointer: coarse)';
 
 const InlinePatch = lazy(() => import('./Changes').then((m) => ({ default: m.InlinePatch })));
 
@@ -101,6 +104,8 @@ export function InteractionCard({ session, interaction, onUpdate, place }: Reado
     }
   }
 
+  // A question with options is uam's own form (`uam_form`): they are its actions.
+  const actions = permission ? [] : (interaction.options ?? []);
   // Footer order: reject at the left, the first (default) option as the primary at the right.
   const options = interaction.options ?? [];
   const primary = options.find((o) => !o.reject);
@@ -132,6 +137,9 @@ export function InteractionCard({ session, interaction, onUpdate, place }: Reado
             <p className="px-3 py-2 text-caption text-muted"><span className="font-mono text-ink">{write.path}</span>: no text change to show.</p>
           )}
         </div>
+      ) : interaction.detail && actions.length > 0 ? (
+        // A form's body is the agent's plain text, never markdown.
+        <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere] text-ui text-body">{interaction.detail}</p>
       ) : interaction.detail && (
         <pre translate="no" className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">
           {interaction.detail}
@@ -160,6 +168,15 @@ export function InteractionCard({ session, interaction, onUpdate, place }: Reado
             </div>
           )}
         </>
+      ) : actions.length > 0 ? (
+        <ActionForm
+          questions={interaction.questions ?? []}
+          actions={actions}
+          disabled={!permitted}
+          sending={busy}
+          onSubmit={(decision, answers) => respond({ decision, answers }, decision)}
+          onDismiss={() => respond({ cancel: true }, 'cancel')}
+        />
       ) : (
         <QuestionForm
           interactionId={interaction.id}
@@ -187,14 +204,14 @@ export function InteractionCard({ session, interaction, onUpdate, place }: Reado
  * A radio's change fires only when it turns on; `again` takes the click on the chosen one too
  * (a radio's click fires either way), and `hint` sits at the chosen row's end to say what it does.
  */
-function ChoiceRow({ name, choice, multiple, on, again = false, hint, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; onToggle: () => void }>) {
+function ChoiceRow({ name, choice, multiple, on, again = false, hint, describedBy, disabled, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; describedBy?: string; disabled?: boolean; onToggle: () => void }>) {
   const hintId = useId();
   const shown = on && !!hint;
   const change = !multiple && again ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
   return (
     <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
       {/* The name stays the choice; the hint is its description, so a screen reader announces it too. */}
-      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} aria-label={choice} aria-describedby={shown ? hintId : undefined} className="size-3.5 accent-accent" {...change} />
+      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} aria-label={choice} aria-describedby={shown ? hintId : describedBy} disabled={disabled} className="size-3.5 accent-accent" {...change} />
       <span className="min-w-0 flex-1">{choice}</span>
       {shown && <span id={hintId} className="shrink-0 text-caption text-muted animate-fade-in">{hint}</span>}
     </label>
@@ -274,6 +291,115 @@ export function ComposerPlan({ plan, sessionId, planVersion, chosen, disabled, o
     </fieldset>
     <div className="fade-rule" aria-hidden="true" />
   </div>;
+}
+
+/** A form field's answer as sent: typed text trimmed (nothing when blank), else the chosen options. */
+const fieldAnswer = (q: Question, v: string[]): string[] => (q.custom ? v.map((t) => t.trim()).filter(Boolean) : v);
+
+/**
+ * uam's own form for an agent's `uam_form` call (DESIGN.md Forms): every field at once in the agent's order, then
+ * Dismiss and the actions, the first the default (Enter in a line chooses it). Every string is plain text. Choosing
+ * an action with a required field empty says so under that field and moves focus to it; nothing is sent. The first
+ * field takes focus on a fine pointer unless the person is typing elsewhere or another form holds it.
+ */
+function ActionForm({ questions, actions, disabled, sending, onSubmit, onDismiss }: Readonly<{
+  questions: Question[];
+  actions: Option[];
+  /** The provider takes no answers from UAM. */
+  disabled: boolean;
+  /** The action in flight (an action's id or `cancel`): the buttons stay, disabled, the chosen one spinning. */
+  sending: string | null;
+  onSubmit: (decision: string, answers: string[][]) => void;
+  onDismiss: () => void;
+}>) {
+  const id = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [values, setValues] = useState<string[][]>(() => questions.map((q) => q.field?.default ?? []));
+  const [tried, setTried] = useState(false);
+  const missing = questions.map((q, i) => !!q.field?.required && fieldAnswer(q, values[i] ?? []).length === 0);
+  const set = (i: number, v: string[]) => setValues((prev) => prev.map((x, k) => (k === i ? v : x)));
+
+  useEffect(() => {
+    if (window.matchMedia(COARSE).matches) return;
+    const active = document.activeElement;
+    // Never from someone typing, nor from another form already holding it.
+    if (((active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && active.value) || active?.closest('[data-uam-form]')) return;
+    formRef.current?.querySelector<HTMLElement>('input, textarea, button[type="submit"]')?.focus();
+  }, []);
+
+  function submit(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (sending || disabled) return;
+    // The button pressed, or the first action for Enter in a line.
+    const decision = (e.nativeEvent.submitter as HTMLButtonElement | null)?.value || actions[0].id;
+    const first = missing.indexOf(true);
+    if (first >= 0) {
+      setTried(true);
+      formRef.current?.querySelector<HTMLElement>(`[data-field="${first}"] :is(input, textarea)`)?.focus();
+      return;
+    }
+    onSubmit(decision, questions.map((q, i) => fieldAnswer(q, values[i] ?? [])));
+  }
+
+  return (
+    <form ref={formRef} onSubmit={submit} noValidate data-uam-form className="mt-2 flex flex-col gap-3">
+      {questions.map((q, i) => {
+        const f = q.field;
+        const key = `${id}-${i}`;
+        const v = values[i] ?? [];
+        const error = tried && missing[i] ? (q.custom ? 'Fill this in to continue.' : 'Choose an option to continue.') : null;
+        const describedBy = [f?.help && `${key}-help`, error && `${key}-error`].filter(Boolean).join(' ') || undefined;
+        const help = f?.help && <p id={`${key}-help`} className="text-caption text-muted">{f.help}</p>;
+        const errorLine = error && <p id={`${key}-error`} className="text-caption text-error">{error}</p>;
+        const required = f?.required && <span className="ml-1.5 text-caption text-muted">Required</span>;
+        if (q.custom) {
+          const common = { id: key, value: v[0] ?? '', maxLength: f?.max_length, disabled: disabled || !!sending, 'aria-invalid': !!error || undefined, 'aria-required': f?.required || undefined, 'aria-describedby': describedBy };
+          return (
+            <div key={i} data-field={i} className="flex min-w-0 flex-col gap-1">
+              <label htmlFor={key} className="text-ui text-ink">{q.text}{required}</label>
+              {f?.multiline ? (
+                <textarea {...common} rows={3} className={cn(inputVariants(), 'h-auto min-h-20 resize-y py-2')} onChange={(e) => set(i, [e.target.value])} />
+              ) : (
+                <Input {...common} onChange={(e) => set(i, [e.target.value])} />
+              )}
+              {help}
+              {errorLine}
+            </div>
+          );
+        }
+        if (f?.type === 'boolean') {
+          return (
+            <div key={i} data-field={i} className="flex min-w-0 flex-col gap-1">
+              <ChoiceRow name={key} choice={q.text} multiple on={v[0] === 'Yes'} describedBy={describedBy} disabled={disabled || !!sending} onToggle={() => set(i, [v[0] === 'Yes' ? 'No' : 'Yes'])} />
+              {help}
+            </div>
+          );
+        }
+        return (
+          <fieldset key={i} data-field={i} className="flex min-w-0 flex-col gap-0.5" disabled={disabled || !!sending} aria-describedby={describedBy}>
+            <legend className="mb-1 text-ui text-ink">{q.text}{required}</legend>
+            {(q.choices ?? []).map((c) => (
+              <ChoiceRow key={c} name={key} choice={c} multiple={!!q.multiple} on={v.includes(c)} onToggle={() => set(i, q.multiple ? (v.includes(c) ? v.filter((x) => x !== c) : [...v, c]) : [c])} />
+            ))}
+            {help}
+            {errorLine}
+          </fieldset>
+        );
+      })}
+      {!disabled && (
+        <div className="flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" loading={sending === 'cancel'} disabled={!!sending} onClick={onDismiss}>
+            Dismiss
+          </Button>
+          {actions.map((a, k) => (
+            <Button key={a.id} type="submit" value={a.id} variant={k === 0 ? 'primary' : 'secondary'} loading={sending === a.id} disabled={!!sending}>
+              {a.label}
+            </Button>
+          ))}
+        </div>
+      )}
+    </form>
+  );
 }
 
 function QuestionForm({

@@ -1355,6 +1355,10 @@ export interface FormField {
   max_length?: number;
   min_items?: number;
   max_items?: number;
+  /** On uam's own form (`uam_form`): a line under the field, a text box instead of a line, and the starting answer. */
+  help?: string;
+  multiline?: boolean;
+  default?: string[];
 }
 
 /** A question that stands for a provider's form or link (an MCP elicitation). */
@@ -1373,6 +1377,7 @@ export interface Interaction {
   detail?: string;
   /** The agent's own short reason for a permission request, when the provider sends one. */
   intention?: string;
+  /** A permission's decisions; on a question, a form's actions (buttons): its answer names one as `decision`. */
   options?: Option[];
   questions?: Question[];
   plan?: PlanReview;
