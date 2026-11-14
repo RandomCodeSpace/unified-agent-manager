@@ -28,10 +28,10 @@ const (
 	maxTitleInputRunes = 2000
 )
 
-// titlerLocked returns the provider's Titler when it is available and has
-// the titles capability, else nil.
+// titlerLocked returns the provider's Titler when it is available, or signed
+// out (custom models title then), and has the titles capability, else nil.
 func (m *Manager) titlerLocked(name string) agentapi.Titler {
-	if info := m.infos[name]; !info.Available || !info.Capabilities.Titles {
+	if info := m.infos[name]; !info.Available && !info.SignedOut || !info.Capabilities.Titles {
 		return nil
 	}
 	t, _ := m.providers[name].(agentapi.Titler)
@@ -135,7 +135,7 @@ func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload
 		return nil
 	}
 	model := m.threadUtilityModelLocked(s)
-	if model == "" {
+	if model == "" || !m.runsLocked(s.provider, model) {
 		return nil
 	}
 	models := []titleCandidate{{model: model}}

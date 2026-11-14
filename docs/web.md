@@ -232,11 +232,21 @@ restarting UAM.
   or the GitHub CLI (`gh`) sign-in.
 - **Signed out**, with Copilot's own reason. While Copilot is signed out a
   banner over the main pane says "GitHub Copilot is signed out. Sign in in
-  Settings." with **Open Settings**; creating a Thread or sending to one is
-  refused with that sentence (code `provider_signed_out`, HTTP 409) instead of
-  the runtime's error, and a turn that fails because the sign-in was lost says
-  so in place of that error. `GET /api/meta` lists the provider as
-  `available: false` with `signed_out: true`.
+  Settings." with **Open Settings**; creating a Thread on one of Copilot's
+  models (or on the default), sending to one or switching it to one is
+  refused with that sentence (code
+  `provider_signed_out`, HTTP 409) instead of the runtime's error, and a turn
+  that fails because the sign-in was lost says so in place of that error.
+  `GET /api/meta` lists the provider as `available: false` with
+  `signed_out: true`, and its models are only the custom models.
+  Custom models (**Custom models** under [Use it](#use-it)) need no sign-in: a
+  Thread on one is created, takes messages, resumes after a restart and
+  switches to another custom model while signed out, and a failed turn on one
+  keeps its own error. Utility jobs (titles, suggested replies) run signed out
+  only on a custom model: the Utility model when it is one, else a Thread's
+  own; the decision API and Assisted permissions, whose reviewer is a Copilot
+  model, are unavailable. A subagent of a Thread on a custom model starts on a
+  custom model: an allowed one, else the Thread's.
 
 **Sign in with GitHub.** Offered while Copilot is signed out and no
 environment token is set. Choose **Sign in with GitHub**: Settings gets a
@@ -2288,6 +2298,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   failed that way opens again with its next message, once you switch it to
   another model or set the variable and restart the service. Custom models
   report no prices and cost no AI credits; the endpoint bills you directly.
+  They work while Copilot is signed out (see
+  [GitHub Copilot sign-in](#github-copilot-sign-in)).
   This uses the Copilot SDK's experimental multi-provider support.
 - **Since you left**: when you open a Thread that changed since you last had it
   on screen in this browser, a line under the header says how long ago that

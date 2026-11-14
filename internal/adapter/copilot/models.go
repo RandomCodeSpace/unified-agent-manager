@@ -16,12 +16,16 @@ import (
 
 // Models lists the models the signed-in account can select: entries with no
 // policy or an enabled one. Others are listed by the CLI but not selectable.
+// Signed out, the CLI lists none, and only the custom models are offered.
 func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
 		return nil, err
 	}
 	models, err := client.ListModels(ctx)
+	if err != nil && p.signedOut(ctx) {
+		return customCatalog(p.customModels()), nil
+	}
 	if err != nil {
 		p.poke()
 		return nil, fmt.Errorf("list copilot models: %s", errText(err))

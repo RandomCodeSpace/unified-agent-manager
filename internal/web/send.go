@@ -58,7 +58,7 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 	if err != nil {
 		return Submission{}, err
 	}
-	if err := m.refuseSignedOut(s); err != nil {
+	if err := m.refuseSignedOut(s, req.Settings); err != nil {
 		return Submission{}, err
 	}
 	return m.submit(s, turnInput{text: req.Text, files: req.Files, attachments: req.Attachments, settings: req.Settings}, req.RequestID, mode)

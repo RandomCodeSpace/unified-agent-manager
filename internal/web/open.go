@@ -64,7 +64,7 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 // by a page load.
 func (m *Manager) autoOpenableLocked(s *webSession) bool {
 	return !s.removed && s.stage == StageActive && s.conv == nil && s.convID != "" && s.base != StateFailed && s.base != StateClosed &&
-		m.providers[s.provider] != nil && m.infos[s.provider].Available
+		m.providers[s.provider] != nil && m.runsLocked(s.provider, s.model)
 }
 
 func (m *Manager) finishOpeningLocked(s *webSession) {

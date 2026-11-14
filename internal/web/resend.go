@@ -90,7 +90,7 @@ func (m *Manager) checkResendPrompt(id string, p PromptRequest) error {
 	if err != nil {
 		return err
 	}
-	if err := m.refuseSignedOut(s); err != nil {
+	if err := m.refuseSignedOut(s, nil); err != nil {
 		return err
 	}
 	m.mu.Lock()

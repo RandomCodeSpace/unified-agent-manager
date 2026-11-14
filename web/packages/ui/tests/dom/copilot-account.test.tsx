@@ -40,6 +40,26 @@ describe('GitHub Copilot sign-in', () => {
     await waitFor(() => expect(screen.queryByText('GitHub Copilot is signed out. Sign in in Settings.')).toBeNull());
   });
 
+  test('signed out, a new thread on an account model is refused with the sign-in reason, and one on a custom model starts', async () => {
+    const { user } = renderApp('?copilot=out');
+    expect(await screen.findByText('GitHub Copilot is signed out. Sign in in Settings.')).toBeTruthy();
+    const side = await sidebar();
+    await user.click(side.getByRole('button', { name: 'New thread' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
+    const box = await screen.findByRole('textbox', { name: 'Message' });
+    await user.type(box, 'Add a sitemap');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/Could not start the thread: GitHub Copilot is signed out\. Sign in in Settings\./)).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: /^Model: / }));
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitemradio', { name: /Qwen3 Coder/ }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(window.location.hash).toMatch(/^#task=t\d+$/));
+    expect(await within(await screen.findByRole('log')).findByText('Add a sitemap')).toBeTruthy();
+    // The banner still says the account is signed out.
+    expect(screen.getByText('GitHub Copilot is signed out. Sign in in Settings.')).toBeTruthy();
+  });
+
   test('Sign in with GitHub shows the code and the link, copies the code, and signs in once GitHub approves', async () => {
     const { user } = renderApp('?copilot=out#settings');
     const card = await account();

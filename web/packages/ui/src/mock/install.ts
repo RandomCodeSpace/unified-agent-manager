@@ -232,6 +232,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
     });
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
+  /** Whether a model ID is one of the custom models, which run without the Copilot sign-in. */
+  const customModel = (id: unknown) => !!st.settings.custom_models?.some((c) => `${c.name}/${c.model_id}` === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
   const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
   const account = accountMock(st.meta);
@@ -1115,7 +1117,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
 
     if (path === '/api/sessions' && method === 'GET') return json(200, st.tasks.map(summary));
     if (path === '/api/sessions' && method === 'POST') {
-      const signedOut = body.provider === 'copilot' && account.refusal();
+      const signedOut = body.provider === 'copilot' && account.refusal(customModel(body.model));
       if (signedOut) return signedOut;
       // A repeated request_id answers with the Task it created, as the service does.
       const again = typeof body.request_id === 'string' && st.tasks.find((x) => createdBy.get(x.id) === body.request_id);
@@ -1467,7 +1469,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       return json(200, { accepted: true, background_tasks: t.background_tasks });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
-      const signedOut = r[2] === 'prompt' && account.refusal();
+      const model = (body.settings as { model?: string } | undefined)?.model ?? find(decodeURIComponent(r[1]))?.model;
+      const signedOut = r[2] === 'prompt' && account.refusal(customModel(model));
       if (signedOut) return signedOut;
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');

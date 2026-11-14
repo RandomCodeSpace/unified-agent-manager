@@ -70,7 +70,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 // It cleans req's name, fills in its context size, and returns its provider,
 // its Project's directory and its mode.
 func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, store.Mode, error) {
-	prov, err := m.availableProvider(req.Provider)
+	prov, err := m.availableProvider(req.Provider, req.Model)
 	if err != nil {
 		return nil, "", "", err
 	}

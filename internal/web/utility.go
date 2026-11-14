@@ -75,16 +75,16 @@ type UtilityModel struct {
 }
 
 // utilityProviderLocked returns the provider that runs Utility jobs, and
-// its Utility model from Settings: the first provider, in order, that is
-// available, registers host tools and has a Utility model. ok is false when
+// its Utility model from Settings: the first provider, in order, that
+// registers host tools and has a Utility model it can run. ok is false when
 // none does. The caller holds mu.
 func (m *Manager) utilityProviderLocked() (runner agentapi.UtilityRunner, model UtilityModel, ok bool) {
 	for _, name := range m.order {
 		runner, ok := m.providers[name].(agentapi.UtilityRunner)
-		if info := m.infos[name]; !ok || !info.Available || !info.Capabilities.HostTools {
+		if info := m.infos[name]; !ok || !info.Capabilities.HostTools {
 			continue
 		}
-		if id := m.utilityModelLocked(name); id != "" {
+		if id := m.utilityModelLocked(name); id != "" && m.runsLocked(name, id) {
 			return runner, UtilityModel{Provider: name, Model: id}, true
 		}
 	}
@@ -103,7 +103,7 @@ func (m *Manager) startUtilityLocked(s *webSession) (agentapi.UtilityRunner, Uti
 		runner, isRunner = m.providers[s.provider].(agentapi.UtilityRunner)
 		info := m.infos[s.provider]
 		model = UtilityModel{Provider: s.provider, Model: m.threadUtilityModelLocked(s)}
-		ok = isRunner && info.Available && info.Capabilities.HostTools && model.Model != ""
+		ok = isRunner && m.runsLocked(s.provider, model.Model) && info.Capabilities.HostTools && model.Model != ""
 	}
 	switch {
 	case m.closed:

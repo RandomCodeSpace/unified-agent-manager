@@ -183,3 +183,20 @@ func TestAccountRestartsASignedOutCLIToFindALoginMadeElsewhere(t *testing.T) {
 		t.Fatalf("CLI started %d times, want 2", n)
 	}
 }
+
+// Signed out, the CLI lists no models, so only the custom models are
+// offered; any other listing failure is still an error.
+func TestModelsSignedOutOfferTheCustomModels(t *testing.T) {
+	p, fc := accountProvider(t, nil)
+	p.SetCustomModels([]agentapi.CustomModel{{Name: "mock", BaseURL: "http://127.0.0.1:9/v1", ModelID: "m1", APIKey: "k"}})
+	fc.modelsErr = errors.New("Not authenticated. Please authenticate first.")
+	models, err := p.Models(context.Background())
+	if err != nil || len(models) != 1 || models[0].ID != "mock/m1" {
+		t.Fatalf("signed-out Models = %+v, %v", models, err)
+	}
+	fc.status = copilot.GetAuthStatusResponse{IsAuthenticated: true}
+	fc.modelsErr = errors.New("models.list timed out")
+	if _, err := p.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("signed-in Models failure = %v", err)
+	}
+}

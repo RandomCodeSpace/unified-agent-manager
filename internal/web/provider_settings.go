@@ -126,7 +126,7 @@ func (m *Manager) reloadCustomCatalogs() {
 	for _, name := range m.order {
 		p := m.providers[name]
 		m.mu.Lock()
-		available := m.infos[name].Available
+		available := m.infos[name].Available || m.infos[name].SignedOut
 		m.mu.Unlock()
 		if _, ok := p.(agentapi.CustomModelUser); !ok || !available {
 			continue

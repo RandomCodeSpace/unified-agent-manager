@@ -62,9 +62,9 @@ export function accountMock(meta: Meta) {
     copilot.reason = !account.signed_in ? REASON : mismatch ? mismatchReason() : undefined;
   }
   sync();
-  /** The refusal a create or send gets while signed out or signed in as another account, or null. */
-  function refusal() {
-    if (!account.signed_in) return fail(409, REASON, 'provider_signed_out');
+  /** The refusal a create or send gets while signed out or signed in as another account, or null. A custom model runs signed out. */
+  function refusal(custom = false) {
+    if (!account.signed_in && !custom) return fail(409, REASON, 'provider_signed_out');
     return other(account) ? fail(409, mismatchReason(), 'account_not_linked') : null;
   }
   /** Signs in as `next`, or refuses another account than the linked one and removes that sign-in again. */

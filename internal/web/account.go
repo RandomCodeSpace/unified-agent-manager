@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -192,27 +193,62 @@ func (m *Manager) kickQuota(name string) {
 }
 
 // refuseSignedOut refuses a send to a Task whose provider was found signed
-// out, unless it has been signed in since, or whose runtime is signed in as
-// another account than the linked one.
-func (m *Manager) refuseSignedOut(s *webSession) error {
+// out, unless it has been signed in since or the send's model is a custom
+// model, or whose runtime is signed in as another account than the linked
+// one. The send's model is settings' when given, else the Task's.
+func (m *Manager) refuseSignedOut(s *webSession, settings *PromptSettings) error {
 	m.mu.Lock()
-	name := s.provider
+	name, model := s.provider, s.model
 	info := m.infos[name]
 	m.mu.Unlock()
+	if settings != nil {
+		model = settings.Model
+	}
 	if info.SignedOut {
-		_, err := m.availableProvider(name)
+		_, err := m.availableProvider(name, model)
 		return err
 	}
-	return m.verifyAccount(name, info.AccountMismatch)
+	if err := m.verifyAccount(name, info.AccountMismatch); !m.signedOutOK(err, model) {
+		return err
+	}
+	return nil
+}
+
+// customModel reports whether id selects a custom model. A custom model runs
+// on the owner's endpoint, so it needs no sign-in to the provider's account.
+func (m *Manager) customModel(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.customModelLocked(id)
+}
+
+func (m *Manager) customModelLocked(id string) bool {
+	return slices.ContainsFunc(m.settings.CustomModels, func(c CustomModel) bool { return c.Name+"/"+c.ModelID == id })
+}
+
+// signedOutOK reports whether err is only a signed-out refusal and model is
+// a custom model, which runs signed out.
+func (m *Manager) signedOutOK(err error, model string) bool {
+	var webErr *Error
+	return err == nil || errors.As(err, &webErr) && webErr.Code == codeSignedOut && m.customModel(model)
+}
+
+// runsLocked reports whether the provider can run model now: it is
+// available, or only signed out and model is a custom model. The caller
+// holds mu.
+func (m *Manager) runsLocked(name, model string) bool {
+	info := m.infos[name]
+	return info.Available || info.SignedOut && m.customModelLocked(model)
 }
 
 // kickSignedOutLocked checks, after s's turn failed with detail, whether its
 // provider is signed out. If so the provider is marked so and the Task's
-// failure says to sign in instead of the runtime's own error.
+// failure says to sign in instead of the runtime's own error. A turn on a
+// custom model did not use the sign-in: its failure stays its own.
 func (m *Manager) kickSignedOutLocked(s *webSession, detail string) {
 	p := m.providers[s.provider]
 	am, ok := p.(agentapi.AccountManager)
-	if !ok || m.closed || !p.Capabilities().Account {
+	if !ok || m.closed || !p.Capabilities().Account || m.customModelLocked(s.model) {
 		return
 	}
 	m.wg.Add(1)

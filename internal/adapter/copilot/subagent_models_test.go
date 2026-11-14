@@ -274,3 +274,28 @@ func TestPreToolUseAllowsSkillFileViews(t *testing.T) {
 		t.Fatalf("refused reference file = %q, want deny", got)
 	}
 }
+
+// Signed out, account models cannot run: a custom-model Task's subagent
+// leaves on a custom model even when the allowlist names only account
+// models. Signed in, the allowlist applies as before.
+func TestPreToolUseKeepsSubagentsOnCustomModelsSignedOut(t *testing.T) {
+	p, fc := accountProvider(t, nil)
+	p.SetCustomModels(subagentCustom)
+	p.SetSubagentModels([]string{"gpt-6-luna"})
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/w", Model: "keyed/m", Events: &recSink{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := conv.(*conversation)
+	out, err := c.preToolUse(taskCall(map[string]any{"prompt": "look", "model": "gpt-6-luna"}), copilot.HookInvocation{})
+	if err != nil || out == nil {
+		t.Fatalf("signed out preToolUse = %+v, %v", out, err)
+	}
+	if got, _ := out.ModifiedArgs.(map[string]any); got["model"] != "keyed/m" || !strings.Contains(out.AdditionalContext, "signed out") {
+		t.Fatalf("signed out output = %+v", out)
+	}
+	fc.status = copilot.GetAuthStatusResponse{IsAuthenticated: true}
+	if out, err := c.preToolUse(taskCall(map[string]any{"prompt": "look", "model": "gpt-6-luna"}), copilot.HookInvocation{}); out != nil || err != nil {
+		t.Fatalf("signed in preToolUse = %+v, %v", out, err)
+	}
+}

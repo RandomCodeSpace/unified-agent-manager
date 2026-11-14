@@ -29,6 +29,15 @@ func (m *Manager) SetModel(id string, model, effort, contextSize *string) (Sessi
 func (m *Manager) setModelLocked(s *webSession, model, effort, contextSize *string) (SessionSummary, error) {
 	id := s.id
 	m.mu.Lock()
+	// Signed out, a Task switches only to a custom model.
+	switching := model != nil && *model != s.model && m.infos[s.provider].SignedOut
+	m.mu.Unlock()
+	if switching {
+		if _, err := m.availableProvider(s.provider, *model); err != nil {
+			return SessionSummary{}, err
+		}
+	}
+	m.mu.Lock()
 	if s.removed {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
