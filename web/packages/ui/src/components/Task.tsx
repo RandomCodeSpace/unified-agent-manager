@@ -605,7 +605,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     }
   }
 
-  // The badge count follows turn boundaries and completed file-changing tools. The open sheet
+  // The badge count follows turn boundaries, completed file-changing tools and captured turn changes. The open sheet
   // also reports its refreshed default list; a tool completion during a badge read queues another.
   const fetching = useRef(false);
   const again = useRef(false);
@@ -636,7 +636,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       alive = false;
     };
   }, [session.id, live, changesTick, api]);
-  const edits = liveItems.filter(item => completedChanges([item]) > 0).map(item => item.id).join('\n');
+  // A turn's captured changes can land after the read at its boundary, and a shell command changes files with no file tool.
+  const captured = (session.turn_timings ?? []).flatMap(timing => timing.changes?.event_id ?? []);
+  const edits = [...liveItems.filter(item => completedChanges([item]) > 0).map(item => item.id), ...captured].join('\n');
   const seenEdits = useRef(new Set(edits.split('\n')));
   useEffect(() => {
     const current = new Set(edits.split('\n'));

@@ -29,6 +29,18 @@ describe('changes', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('changes-link'));
   });
 
+  test('the header count is read again when a turn\'s captured changes arrive after the turn ended', async () => {
+    const { mock } = await openTask('t1');
+    await screen.findByRole('button', { name: /^Open changes, 3 files$/ });
+    const fetch = vi.spyOn(window, 'fetch');
+    onTestFinished(() => fetch.mockRestore());
+    const reads = () => fetch.mock.calls.filter(([input]) => String(input).includes('/api/sessions/t1/changes?scope=task')).length;
+    // A shell command changed the files, so no file tool completed: the capture is the only sign the count is stale.
+    const at = new Date().toISOString();
+    mock.broadcast('turn_timing', { session_id: 't1', turn_timing: { id: 'late-capture', started_at: at, ended_at: at, state: 'completed', changes: { status: 'available', event_id: 'capture-1', files: 2, additions: 2, deletions: 0 } } });
+    await waitFor(() => expect(reads()).toBe(1), { timeout: 3000 });
+  });
+
   test('the file map scrolls to a file smoothly, and at once when Motion matches a system asking for reduced motion', async () => {
     const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
     const original = window.matchMedia.bind(window);
