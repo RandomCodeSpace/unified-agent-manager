@@ -56,7 +56,15 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 			s.op.Unlock()
 		}
 	}()
-	if result, pending, err := m.recordedFork(id, req); err != nil || result.ID != "" {
+	if result, pending, err := m.recordedFork(id, req); errors.Is(err, errForkRegistered) {
+		// register saves the record before it lists the branch, holding
+		// projectMu throughout; wait out one still in flight, without s.op.
+		s.op.Unlock()
+		locked = false
+		m.projectMu.Lock()
+		m.projectMu.Unlock()
+		return m.Summary(result.ID)
+	} else if err != nil {
 		return result, err
 	} else if pending != nil {
 		if pending.ProviderSessionID == "" {
@@ -282,8 +290,7 @@ func (m *Manager) recordedFork(source string, req ForkRequest) (SessionSummary, 
 		if !forkMatches(*rec.Web.Fork, source, req) {
 			return SessionSummary{}, nil, newError(http.StatusConflict, "this branch request ID was already used for a different selection")
 		}
-		sum, err := m.Summary(rec.ID)
-		return sum, nil, err
+		return SessionSummary{ID: rec.ID}, nil, errForkRegistered
 	}
 	if pending, exists := cfg.WebForks[req.RequestID]; exists {
 		if !forkMatches(pending.Lineage, source, req) {

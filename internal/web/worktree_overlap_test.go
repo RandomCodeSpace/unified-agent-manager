@@ -182,3 +182,25 @@ func TestWorktreeOverlapScope(t *testing.T) {
 		})
 	}
 }
+
+// A Thread whose checkout was not located, as when its worktree was missing
+// at Start, is located when it opens again.
+func TestWorktreeOverlapLocatesOnReopen(t *testing.T) {
+	repo := worktreeRepo(t)
+	m, prov, _ := newTestManager(t)
+	m.worktreeRoot = t.TempDir()
+	project := addProject(t, m, repo)
+	sum, conv := createOverlapThread(t, m, prov, CreateRequest{ProjectID: project, Name: "Restored", Place: &PlaceRequest{Mode: placeWorktree}})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	setSession(m, sum.ID, func(s *webSession) { s.checkout = checkoutLocation{} })
+	mustSubmit(t, m, sum.ID, "again", mustUUID(t), "send", "accepted")
+	waitUntil(t, "reopened Thread's checkout located", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		loc := m.sessions[sum.ID].checkout
+		return loc.Common != "" && loc.Root != ""
+	})
+}

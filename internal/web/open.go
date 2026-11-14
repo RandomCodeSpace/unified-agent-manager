@@ -165,6 +165,16 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.mu.Unlock()
 
 	m.restoreWorktree(m.ctx, s)
+	// A worktree missing at Start was not located; restoring brings it back.
+	m.mu.Lock()
+	located := s.checkout.Common != ""
+	m.mu.Unlock()
+	if !located {
+		loc := m.locateCheckout(m.ctx, s.workdir)
+		m.mu.Lock()
+		s.checkout = loc
+		m.mu.Unlock()
+	}
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	defer cancel()
 	var conv agentapi.Conversation
