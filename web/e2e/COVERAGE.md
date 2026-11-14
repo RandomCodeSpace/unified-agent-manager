@@ -188,8 +188,8 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-45 | A transcript row that throws renders as one muted line; the rest stays | none | planned |
 | WSP-01 | The Thread header's Changes button and the sidebar row show the number of files the Thread changed | changes.test.mjs | spec: changes.spec.ts |
 | WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | planned |
-| WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | planned |
-| WSP-04 | Edits the Thread then committed stay in Changes | none | planned |
+| WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | spec: workspace-changes.spec.ts |
+| WSP-04 | Edits the Thread then committed stay in Changes | none | spec: workspace-changes.spec.ts |
 | WSP-05 | Unfolding a file card loads its diff | changes.test.mjs | planned |
 | WSP-06 | A file renamed in the index (`git mv`) names its old path ("from old") and counts only the changed lines | none | planned |
 | WSP-07 | A binary file, untracked included, reads `binary` in the list and "Binary file: no textual diff is available." in… | changes.test.mjs | planned |
@@ -200,31 +200,31 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-12 | **Viewed** marks and line comments are kept per Thread in this browser and survive a reload | changes.test.mjs | planned |
 | WSP-13 | Files that deserve a closer look (CI workflows, lockfiles, Dockerfiles, migrations, secrets code) come first with a… | none | planned |
 | WSP-14 | The panel's inner edge can be dragged to resize it (arrow keys work, double-click resets) and the width is kept per… | none | planned |
-| WSP-15 | A turn's **Changed N files** chip and the reply menu's "This turn's changes" open a read-only reader with that… | none | planned |
+| WSP-15 | A turn's **Changed N files** chip and the reply menu's "This turn's changes" open a read-only reader with that… | none | spec: workspace-changes.spec.ts |
 | WSP-16 | Inline edit-tool diffs in the transcript (edit-diff-cache) render at most 400 rows until **Show all**, and a… | none | planned |
-| WSP-17 | The rewind preview (reply menu "Rewind to before this prompt…") names how many prompts go and, under **Conversation… | none | planned |
-| WSP-18 | Confirming **Conversation and files** restores the files on disk, removes the prompt and later turns from the… | none | planned |
+| WSP-17 | The rewind preview (reply menu "Rewind to before this prompt…") names how many prompts go and, under **Conversation… | none | spec: workspace-rewind.spec.ts |
+| WSP-18 | Confirming **Conversation and files** restores the files on disk, removes the prompt and later turns from the… | none | spec: workspace-rewind.spec.ts |
 | WSP-19 | **Conversation only** shortens the conversation and leaves every file as it is | none | planned |
-| WSP-20 | A file edited outside after the preview makes the preview stale: it is read again and needs a new confirmation | none | planned |
+| WSP-20 | A file edited outside after the preview makes the preview stale: it is read again and needs a new confirmation | none | spec: workspace-rewind.spec.ts |
 | WSP-21 | Rewind is offered only while the Thread is idle, with nothing queued, waiting or running in the background | none | planned |
 | WSP-22 | A lost rewind result holds the Thread ("Reread conversation", then "Release thread" after a failed reread) and… | dom/rewind (4 tests) | planned (needs fault injection) |
 | WSP-23 | **Edit and resend** rewinds to before the prompt, then sends the edited text once | none | planned |
-| WSP-24 | A new Thread placed in **New worktree** gets `git worktree add -b uam/<slug>` at `<repo>.worktrees/<branch slug>` | routines.test.mjs | planned |
+| WSP-24 | A new Thread placed in **New worktree** gets `git worktree add -b uam/<slug>` at `<repo>.worktrees/<branch slug>` | routines.test.mjs | spec: workspace-worktrees.spec.ts |
 | WSP-25 | `worktreeBaseRef` (repository `.github/copilot/settings*.json`, then the user's) and `worktreePathTemplate` (user… | none | planned |
 | WSP-26 | **New branch** (`uam/<8 hex>`) and **Switch** in the Project folder | none | planned |
-| WSP-27 | Settle or Archive of a Thread with its own unsaved git work asks first ("Settle…", counts, first 3 files, **Open… | none | planned |
-| WSP-28 | Using a settled worktree Thread again (Reopen + message, or Run again) brings the worktree back from its branch,… | none | planned |
+| WSP-27 | Settle or Archive of a Thread with its own unsaved git work asks first ("Settle…", counts, first 3 files, **Open… | none | spec: workspace-worktrees.spec.ts |
+| WSP-28 | Using a settled worktree Thread again (Reopen + message, or Run again) brings the worktree back from its branch,… | none | spec: workspace-worktrees.spec.ts |
 | WSP-29 | Branch from here on a worktree Thread makes a new worktree on a new branch at the source's commit, carrying its… | none | planned |
 | WSP-30 | A worktree Thread whose branch landed on origin's default branch settles itself (`settled_by: merged`) and its… | none | planned (needs a clock or sweep trigger) |
 | WSP-31 | Settings → Projects & worktrees lists worktrees biggest first with Thread, stage and unsaved state | none | planned |
 | WSP-32 | Below 10% free disk, the Worktrees rail row and the Settings gear carry a warning dot | none | planned (needs a full disk) |
 | WSP-33 | Settings: **Commit messages** and **Pull and merge requests** prompts (Save, Reset to default), and the… | dom/git-settings (1 test) | planned |
 | WSP-34 | The commit rules reach Threads opened afterwards in their system message: no attribution by default, otherwise a… | none | planned |
-| WSP-35 | For a project folder that is no git repository, the header shows "Not a Git repository" in place of Changes and Files | dom/panels ("a project without Git offer | planned |
+| WSP-35 | For a project folder that is no git repository, the header shows "Not a Git repository" in place of Changes and Files | dom/panels ("a project without Git offer | spec: workspace-git-setup.spec.ts |
 | WSP-36 | When git is not installed, the warning reads "Git not installed" with no Set up action | none | planned (needs PATH without git) |
-| WSP-37 | Terminal access gate: Settings → Server → UAM and access → Access → **Terminal** is off by default and the header… | none | planned |
-| WSP-38 | Opening the terminal slides up a dock reading "Connecting…" and "Starting a shell…", then "Connected" | none | planned |
-| WSP-39 | Shell lifetime: × or Restart on a connected shell asks first ("Close the terminal?" / "Restart the terminal?") | terminal.test.mjs | planned |
+| WSP-37 | Terminal access gate: Settings → Server → UAM and access → Access → **Terminal** is off by default and the header… | none | spec: workspace-terminal.spec.ts |
+| WSP-38 | Opening the terminal slides up a dock reading "Connecting…" and "Starting a shell…", then "Connected" | none | spec: workspace-terminal.spec.ts |
+| WSP-39 | Shell lifetime: × or Restart on a connected shell asks first ("Close the terminal?" / "Restart the terminal?") | terminal.test.mjs | spec: workspace-terminal.spec.ts |
 | WSP-40 | A terminal opened from a worktree Thread runs in the worktree | none | planned |
 | WSP-41 | Dragging the dock's top edge (or using the keyboard) resizes it, and the PTY receives the new cols and rows | none | planned |
 | WSP-42 | Clipboard: releasing a selection copies it ("Copied"), right- or middle-click pastes, Ctrl+Shift+C/V work, and a… | dom/terminal-clipboard (8 tests) | planned |
