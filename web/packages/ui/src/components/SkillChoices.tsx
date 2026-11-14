@@ -2,6 +2,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type SkillOption } from '../api';
+import { byCodeUnit } from '../lib/order';
 import { Note } from './common';
 import { Spinner } from './ui/spinner';
 import { Switch } from './ui/switch';
@@ -51,7 +52,7 @@ export function SkillChoices({ projectId, value, thread, reason, onChange }: Rea
   };
   const toggle = (name: string) => {
     const from = effective ?? names;
-    onChange(from.includes(name) ? from.filter((n) => n !== name) : [...from, name].sort());
+    onChange(from.includes(name) ? from.filter((n) => n !== name) : [...from, name].sort(byCodeUnit));
   };
   const missing = (effective ?? []).filter((n) => skills && !names.includes(n));
   return (
