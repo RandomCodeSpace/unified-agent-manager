@@ -21,8 +21,8 @@ test('Set up git here makes the folder a repository and the Thread offers Change
   const popover = page.getByRole('dialog', { name: 'Not a Git repository' });
   await expect(popover).toContainText(dir);
   await popover.getByRole('button', { name: 'Set up git here' }).click();
-  await expect.poll(() => fs.existsSync(path.join(dir, '.git'))).toBe(true);
-  expect(git(dir, 'rev-parse', '--is-inside-work-tree')).toBe('true');
+  // git init makes the .git folder before the repository is usable, so git itself is asked.
+  await expect.poll(() => { try { return git(dir, 'rev-parse', '--is-inside-work-tree'); } catch { return ''; } }).toBe('true');
   expect(() => git(dir, 'rev-parse', '--verify', 'HEAD')).toThrow();
 
   // Without a reload.
