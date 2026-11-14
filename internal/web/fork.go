@@ -58,11 +58,11 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	}()
 	if result, pending, err := m.recordedFork(id, req); errors.Is(err, errForkRegistered) {
 		// register saves the record before it lists the branch, holding
-		// projectMu throughout; wait out one still in flight, without s.op.
+		// projectMu throughout; read it under projectMu, without s.op.
 		s.op.Unlock()
 		locked = false
 		m.projectMu.Lock()
-		m.projectMu.Unlock()
+		defer m.projectMu.Unlock()
 		return m.Summary(result.ID)
 	} else if err != nil {
 		return result, err
