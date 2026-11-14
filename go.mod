@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/dustin/go-humanize v1.1.0
-	github.com/github/copilot-sdk/go v1.0.31
+	github.com/github/copilot-sdk/go v1.0.34
 	github.com/google/uuid v1.6.0
 	github.com/sourcegraph/go-diff v0.9.0
 	golang.org/x/mod v0.42.0
@@ -20,7 +20,7 @@ require (
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect

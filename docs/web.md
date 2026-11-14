@@ -3360,7 +3360,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   must first restore the recorded settings successfully.
 - **Detached shells (Copilot).** Copilot CLI reports a running detached
   shell's process id as a decimal number (`3892667.0`), which the Copilot
-  SDK (still in 1.0.31) cannot read, so it rejects the whole task list. UAM
+  SDK (still in 1.0.34) cannot read, so it rejects the whole task list. UAM
   reads the list itself, one entry at a time, so detached shells are listed
   and can be stopped like any other. An entry UAM still cannot read is left
   out and the rest stay listed. Only when no entry can be read does the chip
