@@ -19,5 +19,7 @@ graphify-out/
 web/node_modules/
 web/packages/*/node_modules/
 web/coverage/
+web/e2e/test-results/
+web/e2e/playwright-report/
 
 /internal/web/dist/
