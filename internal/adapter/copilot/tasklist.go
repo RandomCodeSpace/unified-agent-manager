@@ -26,7 +26,7 @@ type rawRequestFunc = func(context.Context, string, any) (json.RawMessage, error
 // list strictly, so one entry it cannot read hides every task. ok is false
 // when the SDK's layout no longer matches; the caller then uses the typed call.
 // shortcut: reads an unexported SDK field; drop once the SDK decodes
-// TaskShellInfo.pid as a number (still int64 in v1.0.31).
+// TaskShellInfo.pid as a number (still int64 in v1.0.34).
 func listTasksRaw(ctx context.Context, api any, sessionID string) (raw json.RawMessage, ok bool, err error) {
 	v := reflect.ValueOf(api)
 	if v.Kind() != reflect.Pointer || v.IsNil() || v.Elem().Kind() != reflect.Struct {
