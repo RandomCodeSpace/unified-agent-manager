@@ -166,6 +166,42 @@ jobs:
       - name: Test with race detector
         run: go test -race -count=1 ./...
 
+  # The real Copilot CLI against aimock, a local mock of the model API, with
+  # no sign-in, secrets or AI credits. The CLI version is pinned here.
+  test-aimock:
+    name: test-aimock
+    if: github.event_name != 'pull_request'
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COPILOT_CLI_VERSION: 1.0.110
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm --prefix web ci
+
+      - name: Install the Copilot CLI
+        run: npm install -g --no-audit --no-fund "@github/copilot@${COPILOT_CLI_VERSION}"
+
+      - name: Test the Copilot CLI against aimock
+        run: make test-aimock
+
   coverage:
     name: coverage
     if: github.event_name != 'pull_request'
@@ -528,7 +564,7 @@ jobs:
   ci:
     name: ci
     if: ${{ always() }}
-    needs: [web, web-tests, lint, test-race, coverage, sonarcloud, build-artifacts, distros, snapshot, darwin-native, govulncheck, gosec, dependency-review]
+    needs: [web, web-tests, lint, test-race, test-aimock, coverage, sonarcloud, build-artifacts, distros, snapshot, darwin-native, govulncheck, gosec, dependency-review]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to pass

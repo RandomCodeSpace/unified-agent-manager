@@ -7,7 +7,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell scripts/version 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-race test-e2e cover lint tidy clean web check-web
+.PHONY: all build install run test test-race test-e2e test-aimock cover lint tidy clean web check-web
 
 all: build
 
@@ -49,6 +49,11 @@ test-race: web
 # directories and tokens are disposable; no provider model calls are made.
 test-e2e: build
 	UAM_WEB_TEST_BIN=$(CURDIR)/bin/$(BINARY) go test ./internal/cli/ -run '^TestWebServiceOutlivesLauncherTerminal$$' -count=1 -v
+
+# Run the real Copilot CLI against aimock, a local mock model: no sign-in and
+# no AI credits. Needs node, copilot on PATH and npm --prefix web ci.
+test-aimock:
+	UAM_AIMOCK_E2E=1 go test ./internal/adapter/copilot/ -run '^TestAimock' -count=1 -v
 
 cover: web
 	go test -coverprofile=coverage.out ./... >/dev/null
