@@ -32,18 +32,22 @@ test('/ lists the real CLI catalogue; unsupported commands are dimmed with the r
   await expect(box).toHaveValue('/re');
 
   await box.fill('');
-  await page.keyboard.type('/context');
-  // The first Enter picks the highlighted command, the second runs it.
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Run /context' })).toBeVisible();
-  await page.keyboard.press('Enter');
+  // The first Enter picks the highlighted command, the second runs it. Each
+  // key waits for what the one before it did, or a slow page runs neither.
+  const run = async (command: string) => {
+    await page.keyboard.type(command);
+    await expect(options.first()).toHaveAccessibleName(new RegExp(`^${command}\\. `));
+    await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: `Run ${command}` })).toBeVisible();
+    await page.keyboard.press('Enter');
+  };
+  await run('/context');
   const output = page.getByRole('complementary', { name: 'Command output' });
   await expect(output.getByRole('region', { name: 'Output of /context' })).toContainText('mock/mock-1');
   await expect(box).toHaveValue('');
 
-  await page.keyboard.type('/env');
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Enter');
+  await run('/env');
   const env = output.getByRole('region', { name: 'Output of /env' });
   await expect(env.getByText('Custom Instructions', { exact: true })).toBeVisible();
   await expect(env.getByRole('listitem').first()).toBeVisible();
