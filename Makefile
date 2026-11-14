@@ -7,7 +7,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell scripts/version 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-race test-e2e test-aimock cover lint tidy clean web check-web
+.PHONY: all build install run test test-race test-e2e test-aimock test-ui cover lint tidy clean web check-web
 
 all: build
 
@@ -54,6 +54,13 @@ test-e2e: build
 # no AI credits. Needs node, copilot on PATH and npm --prefix web ci.
 test-aimock:
 	UAM_AIMOCK_E2E=1 go test ./internal/adapter/copilot/ -run '^TestAimock' -count=1 -v
+
+# The browser regression pack (web/e2e): Chromium drives bin/uam, the real
+# Copilot CLI and aimock. Needs copilot on PATH and Playwright's Chromium
+# (npx --prefix web playwright install chromium). ARGS goes to Playwright,
+# e.g. ARGS='e2e/activity.spec.ts -g Deny'.
+test-ui: build
+	cd web && UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) npx playwright test -c e2e $(ARGS)
 
 cover: web
 	go test -coverprofile=coverage.out ./... >/dev/null

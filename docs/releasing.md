@@ -89,8 +89,9 @@ the 85% floor. Sonar imports the coverage reports without rerunning tests and fa
 when either input job failed. Missing coverage reports or Sonar credentials fail the
 check. Sonar does not run on a pull request: a fork's change is first scanned in
 the merge queue, after a maintainer has reviewed and queued it. `test-aimock` runs
-the real Copilot CLI, at the version the job pins, against aimock, a local mock
-model, with no sign-in or secrets (see `docs/testing.md`).
+the real Copilot CLI, at the version the workflow pins, against aimock, a local mock
+model, with no sign-in or secrets, and `test-ui` drives the web interface in
+Chromium against the same CLI and mock (see `docs/testing.md`).
 
 The snapshot job always cross-builds and checks the four release archives. It
 rehearses the release scripts (`scripts/test-release-packaging`,

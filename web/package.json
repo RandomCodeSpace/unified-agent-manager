@@ -11,8 +11,9 @@
     "lint": "eslint .",
     "test": "node --experimental-strip-types --test packages/ui/tests/*.test.mjs",
     "test:dom": "vitest run",
+    "test:e2e": "playwright test -c e2e",
     "prebuild": "npm run lint && npm test",
-    "build": "tsc --noEmit && vite build && node scripts/precompress.mjs ../internal/web/dist",
+    "build": "tsc --noEmit && tsc --noEmit -p e2e && vite build && node scripts/precompress.mjs ../internal/web/dist",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@copilotkit/aimock": "1.48.0",
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",

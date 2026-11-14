@@ -103,6 +103,7 @@ not create that isolation automatically.
 ```sh
 make build
 make test-e2e
+make test-ui
 ```
 
 Source builds require Go 1.26.6 or newer and Node.js with npm. The tested Node

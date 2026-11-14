@@ -8,7 +8,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['../internal/web/dist/**', '**/node_modules/**'] },
+  { ignores: ['../internal/web/dist/**', '**/node_modules/**', 'e2e/test-results/**', 'e2e/playwright-report/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -36,5 +36,12 @@ export default defineConfig(
   {
     files: ['packages/ui/tests/**/*.mjs', 'scripts/**/*.mjs', 'vite.config.ts', 'eslint.config.js'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['e2e/**/*.ts'],
+    languageOptions: { globals: globals.node },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
+    },
   },
 );
