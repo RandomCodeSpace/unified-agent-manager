@@ -58,16 +58,16 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | planned |
 | NAV-46 | Where this Thread runs (PlacePicker: Current branch / Worktree) on the draft; a worktree Thread's row shows the… | place-foot.test.tsx, needs-you.test.tsx | planned |
 | CMP-01 | New thread: the first Send creates the Thread (sidebar row appears only then) and its reply streams in | app.test.tsx | spec: first-thread.spec.ts |
-| CMP-02 | Enter sends on an idle Thread and clears the box; Shift+Enter adds a line; one Send button when idle | composer.test.tsx | planned |
+| CMP-02 | Enter sends on an idle Thread and clears the box; Shift+Enter adds a line; one Send button when idle | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-03 | A long multi-line message grows the box up to a cap (max-h 40dvh), then scrolls inside it; Send and the toolbar stay… | none | planned |
-| CMP-04 | Typing while a reply streams keeps every character and the caret; deltas do not re-render the composer | composer.test.tsx | planned |
+| CMP-04 | Typing while a reply streams keeps every character and the caret; deltas do not re-render the composer | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-05 | Typing a printable key on the Thread view with focus elsewhere focuses the composer and the first character lands in it | none | planned |
-| CMP-06 | A Thread's unsent draft (text, file chips, finished uploads, picker settings) survives a Thread switch and a page… | composer.test.tsx, drafts.test.mjs | planned |
+| CMP-06 | A Thread's unsent draft (text, file chips, finished uploads, picker settings) survives a Thread switch and a page… | composer.test.tsx, drafts.test.mjs | spec: composer-drafts.spec.ts |
 | CMP-07 | A New thread pane's typed text is kept per Project after leaving the pane (reload, other Thread); attachments are… | drafts.test.mjs | planned |
-| CMP-08 | Stop turn ends the running turn ("Turn stopped."), pauses the queue, and gives focus back to the textbox | composer.test.tsx | planned |
-| CMP-09 | While a turn runs, After this turn (Ctrl+Enter or the "More send options" menu) queues; "N waiting · Sent after this… | composer.test.tsx | planned |
+| CMP-08 | Stop turn ends the running turn ("Turn stopped."), pauses the queue, and gives focus back to the textbox | composer.test.tsx | spec: composer-send.spec.ts |
+| CMP-09 | While a turn runs, After this turn (Ctrl+Enter or the "More send options" menu) queues; "N waiting · Sent after this… | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-10 | A queue left by a service restart is Paused; Resume sends the next, Clear drops all (confirmed) | composer.test.tsx | planned (needs a service restart) |
-| CMP-11 | Send now (Enter during a turn) steers: the message shows bold italic (accepted), then normal (delivered); after Stop… | composer.test.tsx, messages.test.tsx | planned |
+| CMP-11 | Send now (Enter during a turn) steers: the message shows bold italic (accepted), then normal (delivered); after Stop… | composer.test.tsx, messages.test.tsx | spec: composer-send.spec.ts |
 | CMP-12 | Settings send default "After this turn" swaps what Enter and Ctrl+Enter do | composer.test.tsx | planned |
 | CMP-13 | A draft whose model differs from the running turn cannot steer: Send becomes After this turn, Send now is dimmed in… | composer.test.tsx | planned |
 | CMP-14 | Up on the first line recalls earlier prompts newest first; Down past the newest or Esc restores the draft | composer.test.tsx | planned |
@@ -75,19 +75,19 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-16 | The Model picker switches the Thread's model between turns; the next turn uses it; the choice is saved on the Thread | composer.test.tsx | planned |
 | CMP-17 | Effort and context size picker offers the model's levels/sizes | composer.test.tsx | not feasible: custom models offer no effort or context levels |
 | CMP-18 | Permissions and execution menu: Safe/Yolo × Interactive/Autopilot; Yolo · Autopilot asks to confirm | composer.test.tsx, assisted-mode.test.tsx | planned |
-| CMP-19 | A narrow toolbar folds labels in priority order (execution word, credits, effort/context, permissions → glyphs in… | composer.test.tsx | planned |
-| CMP-20 | Attach files (paper clip): chip shows progress then size/type; the file goes with the message; the transcript shows… | composer.test.tsx, app.test.tsx, attachments.test.mjs | planned |
+| CMP-19 | A narrow toolbar folds labels in priority order (execution word, credits, effort/context, permissions → glyphs in… | composer.test.tsx | spec: composer-layout.spec.ts |
+| CMP-20 | Attach files (paper clip): chip shows progress then size/type; the file goes with the message; the transcript shows… | composer.test.tsx, app.test.tsx, attachments.test.mjs | spec: composer-drafts.spec.ts |
 | CMP-21 | The service types an upload by its bytes; SVG/archives refused; image > 3 MiB, PDF > 10 MiB, text > 256 KiB, > 5 per… | attachments.test.mjs, composer.test.tsx | planned |
 | CMP-22 | Pasting an image uploads it; pasting text > 8 KiB becomes `pasted-text.txt` with "Keep pasted-text.txt as text";… | composer.test.tsx | planned |
 | CMP-23 | Dropping files on the composer shows an overlay with the limits line and uploads them | none | planned |
 | CMP-24 | A message of only attachments sends, steers and queues; blank text beside them is not sent | composer.test.tsx, app.test.tsx | planned |
 | CMP-25 | `@` lists the repository's files (untracked included) and directories, fuzzy matched; picking inserts the path | composer.test.tsx, file-references.test.mjs | planned |
-| CMP-26 | `/` lists the real CLI catalogue; Up/Down/Enter/Tab/Esc; unsupported (`/share`, `/every`, `/cwd`) dimmed with… | composer.test.tsx | planned |
+| CMP-26 | `/` lists the real CLI catalogue; Up/Down/Enter/Tab/Esc; unsupported (`/share`, `/every`, `/cwd`) dimmed with… | composer.test.tsx | spec: composer-commands.spec.ts |
 | CMP-27 | Control commands change Thread state: `/rename X`, `/model <id>`, `/yolo on | none | planned |
 | CMP-28 | `/compact` shows Compacting, then a transcript notice | context.test.tsx | planned |
 | CMP-29 | `$` lists skills only; Esc closes | composer.test.tsx | planned |
 | CMP-30 | `/btw <q>`: tag "Aside · not sent to the agent"; answer in a reader over the composer; nothing added to the… | ask-aside.test.tsx | planned |
-| CMP-31 | Suggested reply: after a completed turn, ghost text in the empty box; Right Arrow/End or "Use suggestion" fills it,… | assist.test.tsx, assist.test.mjs | planned |
+| CMP-31 | Suggested reply: after a completed turn, ghost text in the empty box; Right Arrow/End or "Use suggestion" fills it,… | assist.test.tsx, assist.test.mjs | spec: composer-commands.spec.ts |
 | CMP-32 | Edit and resend: "Edit and resend…" in Turn actions fills the past prompt and stored uploads under "Editing a past… | edit-resend.test.tsx | planned |
 | CMP-33 | Branch from here: picker → "Branch thread" creates "<name> (branch)", Not started, with the transcript through that… | fork.test.tsx | planned |
 | CMP-34 | Credit/quota budget: set and remove in Tools → Usage; shows spent | task-usage.test.tsx | planned |
@@ -97,7 +97,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-38 | Agent tab: pick a Project custom agent (quiet Thread only); lists loaded skills | composer-tools.test.tsx | planned |
 | CMP-39 | Output styles: Settings library, Style tab on a new Thread, a started Thread shows its pinned style read only; the… | output-style-settings.test.tsx, composer-tools.test.tsx | planned |
 | CMP-40 | Settings → New threads (model, Safe/Yolo) applies to the next New thread's pickers and its first turn | settings.test.tsx, defaults.test.mjs | planned |
-| CMP-41 | Routines: create one, Run now starts a Thread with its first message (default Yolo with autopilot), card shows the… | routines.test.tsx, routines.test.mjs | planned |
+| CMP-41 | Routines: create one, Run now starts a Thread with its first message (default Yolo with autopilot), card shows the… | routines.test.tsx, routines.test.mjs | spec: composer-routines.spec.ts |
 | CMP-42 | "Scheduled in this Thread · N" chip lists native schedules read only | schedules.test.tsx | not feasible: web schedules are disabled |
 | CMP-43 | Background tasks chip counts running shells; Output and Stop per shell | composer.test.tsx, background-output.test.tsx | planned |
 | CMP-44 | Model or local line (ModelPhase) says what runs during a turn | model-phase.test.tsx | planned |
