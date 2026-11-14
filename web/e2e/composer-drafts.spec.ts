@@ -28,6 +28,8 @@ test('a Thread\'s unsent draft and its attached file survive a switch to another
 
   await row(page, 'Draft A').click();
   await expect(page).toHaveURL(a);
+  // Thread A must be open before typing: until it is, the box still belongs to Thread B.
+  await expect(conversation(page).getByText('Reply in A.')).toBeVisible();
   const box = page.getByRole('textbox', { name: 'Message' });
   await box.fill('half a thought');
   await attach(page, [{ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('some notes\n') }]);
