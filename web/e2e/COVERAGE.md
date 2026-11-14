@@ -240,44 +240,44 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-52 | Shell rules for agent glab calls: `glab api` and `search` are refused with a replacement, lists get `-P 10`, and… | glab_hooks_test.go | planned (needs a fake glab) |
 | WSP-53 | Before `git push`, committed CI changes get `glab ci lint` | none | planned (needs a fake glab) |
 | WSP-54 | `glab mr create` without a description gets one from the Utility model through `--description-file` | none | planned (needs a fake glab) |
-| SET-01 | The sidebar gear opens Settings over the main pane with `#settings` in the URL; × or Esc closes it and the Thread… | settings.test.tsx | planned |
+| SET-01 | The sidebar gear opens Settings over the main pane with `#settings` in the URL; × or Esc closes it and the Thread… | settings.test.tsx | spec: settings-view.spec.ts |
 | SET-02 | The rail lists the pages by group; Find a setting filters pages by words and Enter opens the first; a page mounts on… | settings.test.tsx, settings-groups.test.tsx | planned |
 | SET-03 | At phone width the rail is a list showing each page's current values; opening a page moves focus to its back button… | settings.test.tsx | planned |
-| SET-04 | Every service setting changed in the UI is saved at once and is still there after a reload and after a service… | settings.test.tsx | planned |
+| SET-04 | Every service setting changed in the UI is saved at once and is still there after a reload and after a service… | settings.test.tsx | spec: settings-saving.spec.ts (reload; after a service restart: planned) |
 | SET-05 | A save the service refuses puts the old value back and shows "Could not save the setting: <reason>" | settings.test.tsx | planned |
-| SET-06 | New threads defaults (model, effort, context size, Safe/Yolo) are saved as `task_defaults` and a new Thread starts… | settings.test.tsx | planned |
-| SET-07 | The compaction threshold (50-90 % in 5s; 80 stored as unset) is saved and applies to new Threads | settings.test.tsx | planned |
-| SET-08 | Conversation: the Enter-while-running default (Send now / After this turn), Suggest replies and Threads-can-message… | settings.test.tsx, settings-help.test.tsx, federation.test.tsx | planned |
+| SET-06 | New threads defaults (model, effort, context size, Safe/Yolo) are saved as `task_defaults` and a new Thread starts… | settings.test.tsx | spec: settings-saving.spec.ts |
+| SET-07 | The compaction threshold (50-90 % in 5s; 80 stored as unset) is saved and applies to new Threads | settings.test.tsx | spec: settings-saving.spec.ts (stored; reaching Copilot not assertable) |
+| SET-08 | Conversation: the Enter-while-running default (Send now / After this turn), Suggest replies and Threads-can-message… | settings.test.tsx, settings-help.test.tsx, federation.test.tsx | spec: settings-saving.spec.ts |
 | SET-09 | Custom providers: Add provider with name, base URL and API key, Load models lists what the endpoint serves (`POST… | settings.test.tsx | spec: settings.spec.ts |
-| SET-10 | A saved API key is never shown again; leaving the edit form's key blank keeps it | settings.test.tsx | planned |
+| SET-10 | A saved API key is never shown again; leaving the edit form's key blank keeps it | settings.test.tsx | spec: settings-saving.spec.ts |
 | SET-11 | Environment-variable key source: the name must start `UAM_BYOM_`; an unset variable shows "<VAR> is not set in the… | settings.test.tsx | planned |
-| SET-12 | Load models failure (endpoint down, 401) shows "Could not load the models: <upstream status line>"; more than 500… | none found (no test text "Could not load | planned |
+| SET-12 | Load models failure (endpoint down, 401) shows "Could not load the models: <upstream status line>"; more than 500… | none found (no test text "Could not load | spec: settings-saving.spec.ts (the 500-model cap: planned) |
 | SET-13 | Edit keeps the saved models selected; unchecking models asks "Remove models from this provider?"; Remove provider /… | settings.test.tsx | planned |
 | SET-14 | Vision toggle: "Enable vision for <id>" is enabled only for checked models and saves `vision: true`; an image sent… | settings.test.tsx | planned |
 | SET-15 | A saved custom model appears in the composer's model menu under its provider name and a Thread can switch to it… | settings.test.tsx | spec: settings.spec.ts |
-| SET-16 | The service refuses invalid custom models (provider name outside letters/digits/`.`/`_`/`-`, base URL with… | none (server-side; no DOM test of this t | planned |
+| SET-16 | The service refuses invalid custom models (provider name outside letters/digits/`.`/`_`/`-`, base URL with… | none (server-side; no DOM test of this t | spec: settings-saving.spec.ts (provider name; base URL and env name: planned) |
 | SET-17 | Models: the "Show <model>" switch hides a model from the pickers; a Thread already on it keeps it and shows "hidden… | settings.test.tsx | planned |
 | SET-18 | Subagent models: add, Make fallback, Remove; a subagent the agent launches on a model outside the list is moved to… | settings.test.tsx | planned |
-| SET-19 | Utility model: Cheapest / None / a model; with no priced model a Thread's title runs on the Thread's own model; None… | background-ai.test.tsx, settings.test.tsx | planned |
-| SET-20 | Background AI: today's calls against the daily limit, limit edit, No daily limit, 0 turns it off; Show log lists… | background-ai.test.tsx | planned |
+| SET-19 | Utility model: Cheapest / None / a model; with no priced model a Thread's title runs on the Thread's own model; None… | background-ai.test.tsx, settings.test.tsx | spec: settings-background-ai.spec.ts |
+| SET-20 | Background AI: today's calls against the daily limit, limit edit, No daily limit, 0 turns it off; Show log lists… | background-ai.test.tsx | spec: settings-background-ai.spec.ts |
 | SET-21 | Skills: list by source with filter and count, View, Disable (renames to `.uam-disabled`) / Enable, Remove; changes… | configuration.test.tsx | planned |
 | SET-22 | Agents, hooks and instructions: add/edit/view, Terminal gate for agents and hooks, conflict on a file edited elsewhere | configuration.test.tsx, configuration-ai.test.tsx | planned |
 | SET-23 | Install skills with npx (`skills@1.7.0 add`) | configuration.test.tsx | not feasible: needs the network |
-| SET-24 | MCP servers: cards grouped by source from Copilot's user-wide config; Add server (HTTP/SSE address, headers); header… | mcp.test.tsx | planned |
+| SET-24 | MCP servers: cards grouped by source from Copilot's user-wide config; Add server (HTTP/SSE address, headers); header… | mcp.test.tsx | not feasible: the signed-out CLI reports no MCP management (`available: false`) |
 | SET-25 | A stdio MCP server can be added or edited only while Terminal is on: with it off the form offers HTTP and SSE only… | mcp.test.tsx | planned |
 | SET-26 | The built-in GitHub MCP switch is off by default, is uam's setting (`github_mcp`) and reaches open Threads | mcp.test.tsx | planned (off state only: on needs GitHub sign-in) |
 | SET-27 | In a Thread, … → MCP servers… shows each server's state (Connected with Show tools / N tools, Failed with error and… | mcp.test.tsx | planned (needs a mock MCP server) |
-| SET-28 | Signed-out Copilot: Settings → GitHub Copilot says Signed out with Copilot's reason and Check again; a banner over… | copilot-account.test.tsx | planned |
+| SET-28 | Signed-out Copilot: Settings → GitHub Copilot says Signed out with Copilot's reason and Check again; a banner over… | copilot-account.test.tsx | spec: settings-copilot.spec.ts |
 | SET-29 | Sign in with GitHub (device code), token sign-in, sign out, Unlink, linked-account refusal, environment-token precedence | copilot-account.test.tsx | not feasible: needs a real GitHub account |
 | SET-30 | Copilot CLI panel shows the installed CLI version and the newest release, or "Could not check for a newer release:… | copilot-cli.test.tsx | planned |
-| SET-31 | Restart Copilot runtime: the confirmation names Threads working or waiting, they end Stopped with "Copilot runtime… | copilot-cli.test.tsx | planned |
+| SET-31 | Restart Copilot runtime: the confirmation names Threads working or waiting, they end Stopped with "Copilot runtime… | copilot-cli.test.tsx | spec: settings-copilot.spec.ts |
 | SET-32 | Copilot CLI update (stage, SDK handshake, install, restart when idle) | copilot-cli.test.tsx | not feasible: needs a CLI release to install |
 | SET-33 | UAM and access → UAM shows the running version; with another version installed at the started binary path it shows… | uam-service.test.tsx | planned (restart needs a second build) |
 | SET-34 | Terminal access gate: off by default; on adds a Terminal button to the Thread header and lets stdio MCP, skills,… | settings.test.tsx, configuration.test.tsx | planned |
-| SET-35 | The Usage button beside Settings opens a popover with Today / 7 days / 30 days / Lifetime; each model shows input,… | usage.test.tsx, usage-ai.test.tsx, usage-preload.test.tsx | planned |
-| SET-36 | The Usage popover fits the viewport without its own scrolling, on desktop and at phone width | none | planned |
+| SET-35 | The Usage button beside Settings opens a popover with Today / 7 days / 30 days / Lifetime; each model shows input,… | usage.test.tsx, usage-ai.test.tsx, usage-preload.test.tsx | spec: settings-usage.spec.ts (after a service restart: planned) |
+| SET-36 | The Usage popover fits the viewport without its own scrolling, on desktop and at phone width | none | spec: settings-usage.spec.ts |
 | SET-37 | Models → Token costs: an unpriced model says so; saved input and output prices give it an estimated cost | token-pricing.test.tsx | planned |
-| SET-38 | Per-Thread usage (Tools → Usage tab): this Thread's tokens and model calls, subagent rows, Refresh; a closed Thread… | task-usage.test.tsx | planned |
+| SET-38 | Per-Thread usage (Tools → Usage tab): this Thread's tokens and model calls, subagent rows, Refresh; a closed Thread… | task-usage.test.tsx | spec: settings-usage.spec.ts (after a service restart: planned) |
 | SET-39 | Account quota and AI credits (allowance in Usage and the composer chip, budget in AI credits or quota %) | usage.test.tsx, usage-ai.test.tsx, task-usage.test.tsx | not feasible: custom models use no quota |
 | SET-40 | Session stats: scans every journal under `COPILOT_HOME/session-state`, shows counts grouped by prefix, writes… | session-stats-settings.test.tsx | planned |
 | SET-41 | Connected instances: Add instance (label, address, access key, private-address switch), a refused pairing clears the… | connected-instances-settings.test.tsx | planned (pairing needs a second instance) |
