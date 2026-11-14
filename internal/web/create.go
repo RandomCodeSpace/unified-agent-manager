@@ -180,6 +180,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	}()
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
+	s.checkout = m.locateCheckout(m.ctx, s.workdir)
 	s.projectID, s.model, s.mode = req.ProjectID, req.Model, mode
 	s.place, s.branch = place, project.Branch
 	if place != nil {

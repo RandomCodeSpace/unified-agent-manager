@@ -81,6 +81,8 @@ type webSession struct {
 	updatedAt   time.Time
 	base        string
 	detail      string
+	// checkout is workdir's Git checkout once located (checkout.go); under mu.
+	checkout checkoutLocation
 	// place is the branch or worktree the Thread started in, nil on the
 	// Project's current branch; branch is the branch checked out in workdir,
 	// as last read (refreshBranches), not persisted.
