@@ -862,7 +862,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       const root = log.current;
       const folds = root ? [...root.querySelectorAll<HTMLElement>('[data-subagent-items]'), ...root.querySelectorAll<HTMLElement>('[data-history-items]')] : [];
       fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
-      const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
+      const toggle = fold?.matches('button') ? fold : (fold?.querySelector<HTMLElement>('[data-turn-steps]') ?? fold?.querySelector('button'));
       if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
     }
     if (!document.getElementById(`item-${toolCallId}`) && !fold) return;
@@ -875,7 +875,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     (el.querySelector<HTMLElement>('[data-subagent-toggle]') ?? (el.matches('button') ? el : null))?.focus({ preventScroll: true });
   }
 
-  /** Scroll to the reply a user message started ("start": the one before any) and flash its turn line. */
+  /** Scroll to the reply a user message started ("start": the one before any) and flash its first entry. */
   async function jumpToReply(key: string) {
     setLocateError('');
     const first = (latestSession.current.history_index ?? latestSession.current.items)[0]?.id;
@@ -886,7 +886,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!turn) return;
     atBottom.current = false;
     await settle(0);
-    land(turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
+    land(turn.firstElementChild instanceof HTMLElement ? turn.firstElementChild : turn);
   }
 
   /**

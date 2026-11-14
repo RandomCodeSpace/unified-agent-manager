@@ -462,17 +462,23 @@
     flex: none;
     background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
   }
-  /* The rule before an ended turn's outcomes on its head (DESIGN.md turn outcome): gone while the turn has
-     none, since its chips and its "no record" line may still be on their way. */
-  .turn-outcome-rule {
-    width: 1px;
-    height: 14px;
-    flex: none;
-    margin-inline: 6px;
-    background: var(--color-hairline-strong);
+  /* A turn's sign-off after the reply that ends it (DESIGN.md turn sign-off): on the last paragraph's last
+     line, else on its own line under the reply's last block. Empty, it takes no room. */
+  .md > p:has(+ .md-sign:not(:empty)) {
+    display: inline;
   }
-  .turn-outcome-rule:not(:has(~ [data-outcome] > *, ~ [data-no-record] > *)) {
+  .md > :has(+ .md-sign:not(:empty)) {
+    margin-bottom: 6px;
+  }
+  .md > :has(+ .md-sign:empty) {
+    margin-bottom: 0;
+  }
+  .md-sign:empty {
     display: none;
+  }
+  :not(.md) > .md-sign {
+    display: block;
+    margin-top: 6px;
   }
   /* The sidebar's seam: the rail colour step and a full-height hairline at its right edge. */
   .rail-edge::after {

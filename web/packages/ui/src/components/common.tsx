@@ -1326,7 +1326,7 @@ function scrollPane(element: HTMLElement): HTMLElement | null {
  * `breaks` keeps single newlines as line breaks, for text the owner typed; provider text stays CommonMark.
  */
 /** `tally`: false for text a person wrote (a user message, a GitLab comment), whose counts get no test tally. */
-export function Markdown({ text, streaming = false, breaks = false, tally = true, rehypePlugins, className }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; tally?: boolean; rehypePlugins?: Options['rehypePlugins']; className?: string }>) {
+export function Markdown({ text, streaming = false, breaks = false, tally = true, rehypePlugins, className, after }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; tally?: boolean; rehypePlugins?: Options['rehypePlugins']; className?: string; /** Inline content after the last block, on its last line when that block is a paragraph (a turn's sign-off). */ after?: ReactNode }>) {
   const [hasStreamed, setHasStreamed] = useState(streaming);
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
@@ -1364,6 +1364,7 @@ export function Markdown({ text, streaming = false, breaks = false, tally = true
         {blocks.map((block, i) => (
           <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} first={i === 0} breaks={breaks} tally={tally} rehypePlugins={rehypePlugins} />
         ))}
+        {after}
       </div>
     </OutlineContext.Provider>
   );

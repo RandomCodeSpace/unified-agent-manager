@@ -15,21 +15,23 @@ const flash: TurnTiming = { id: 'flash', user_item_id: 'owner', started_at: at(0
 const show = (timing: TurnTiming) => render(<Transcript sessionId="task" items={items} turnTimings={[timing]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
 const sections = (dialog: HTMLElement) => Object.fromEntries([...dialog.querySelectorAll('dt')].map(dt => [dt.textContent, dt.nextElementSibling?.textContent]));
 
-test("the turn head's tokens are a dialog button that opens nothing until pressed", () => {
+test("the sign-off's Took is a dialog button that opens nothing until pressed, after the reply's last words", () => {
   show(luna);
-  const button = screen.getByRole('button', { name: '1,214 tokens, 39 tok/s' });
+  const button = screen.getByRole('button', { name: "Took 48s. Show this turn's waybill" });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
-  expect(button.title).toBe('128,412 tokens in · 1,214 out · 31s generating');
-  expect(button.textContent).toBe('1,214 tokens · 39 tok/s');
+  expect(button.title).toMatch(/^Ended .+ · model 31s · waiting on you 6s$/);
+  expect(button.textContent).toBe('Took 48s');
   expect(button.closest('[data-history-anchor^="turn-head-"]')).toBeTruthy();
+  // The reply that ends the turn holds the sign-off after its last paragraph.
+  expect(button.closest('[data-history-anchor="answer"] .md > .md-sign')).toBeTruthy();
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
 test('a priced turn opens and closes by keyboard: weight, carrier, postage with its premium request, route with paused time', async () => {
   const user = userEvent.setup();
   show(luna);
-  const button = screen.getByRole('button', { name: /1,214 tokens/ });
+  const button = screen.getByRole('button', { name: /^Took 48s/ });
   button.focus();
   await user.keyboard('{Enter}');
   const dialog = await screen.findByRole('dialog', { name: "This turn's waybill" });
@@ -49,7 +51,7 @@ test('a priced turn opens and closes by keyboard: weight, carrier, postage with 
 test('a turn without credits reads Unpriced, with no premium line and no paused time', async () => {
   const user = userEvent.setup();
   show(flash);
-  await user.click(screen.getByRole('button', { name: /61 tokens/ }));
+  await user.click(screen.getByRole('button', { name: /^Took 6s/ }));
   const dialog = await screen.findByRole('dialog', { name: "This turn's waybill" });
   const read = sections(dialog);
   expect(read.Postage).toBe('Unpriced · the provider reported no cost for this turn');
@@ -60,7 +62,7 @@ test('a turn without credits reads Unpriced, with no premium line and no paused 
 test('credits with no premium cost show no premium line', async () => {
   const user = userEvent.setup();
   show({ ...luna, premium_cost: 0 });
-  await user.click(screen.getByRole('button', { name: /1,214 tokens/ }));
+  await user.click(screen.getByRole('button', { name: /^Took 48s/ }));
   const dialog = await screen.findByRole('dialog', { name: "This turn's waybill" });
   expect(sections(dialog).Postage).toBe('0.42 AI credits');
 });

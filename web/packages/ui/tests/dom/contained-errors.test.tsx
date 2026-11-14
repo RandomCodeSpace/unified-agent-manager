@@ -16,10 +16,12 @@ vi.mock('../../src/components/common', async (original) => {
 test('a transcript row that throws is one muted line; the rest of the transcript and the composer stay', async () => {
   const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
   const { mock } = await openTask('t3');
-  const kept = log().getAllByText(/./).map((node) => node.textContent);
+  // A turn's sign-off speaks for the turn's end, which the new reply moves: everything else stays as it was.
+  const kept = log().getAllByText(/./).filter((node) => !node.closest('[data-history-anchor^="turn-head-"]')).map((node) => node.textContent);
   mock.broadcast('item', { session_id: 't3', item: { id: 'broken', kind: 'assistant', time: new Date().toISOString(), text: 'This reply cannot render.' } });
   expect(await log().findByText('This message could not be shown.')).toBeTruthy();
   for (const text of kept) expect(log().getAllByText((_, node) => node?.textContent === text).length).toBeGreaterThan(0);
+  expect(log().getAllByRole('button', { name: /activity of this turn/ }).length).toBeGreaterThan(0);
   expect(screen.queryByText('UAM could not show this page')).toBeNull();
   expect(composer().disabled).toBe(false);
   await sidebar();
