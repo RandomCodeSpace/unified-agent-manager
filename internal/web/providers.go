@@ -32,10 +32,14 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 				info.Available = false
 				info.Reason, info.SignedOut = unavailableReason(p, err)
 				log.Warn("web provider unavailable", "provider", name, "error", err)
-			} else if models, err := loadModels(ctx, p); err != nil {
-				log.Warn("load web provider models failed", "provider", name, "error", err)
-			} else {
-				info.Models = models
+			}
+			// A signed-out provider still offers its custom models.
+			if err == nil || info.SignedOut {
+				if models, err := loadModels(ctx, p); err != nil {
+					log.Warn("load web provider models failed", "provider", name, "error", err)
+				} else {
+					info.Models = models
+				}
 			}
 			info.Capabilities = p.Capabilities()
 			mu.Lock()
@@ -97,7 +101,7 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 	m.mu.Lock()
 	for _, name := range m.order {
 		info := m.infos[name]
-		if m.closed || !info.Available || m.fetching[name] || m.now().Sub(m.modelsAt[name]) < modelsMaxAge {
+		if m.closed || !info.Available && !info.SignedOut || m.fetching[name] || m.now().Sub(m.modelsAt[name]) < modelsMaxAge {
 			continue
 		}
 		m.fetching[name] = true
@@ -156,7 +160,9 @@ func (m *Manager) Providers() []ProviderInfo {
 	return out
 }
 
-func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
+// availableProvider returns the provider name when it is available, or
+// signed out and model is a custom model; else why it cannot run model.
+func (m *Manager) availableProvider(name, model string) (agentapi.Provider, error) {
 	m.mu.Lock()
 	prov := m.providers[name]
 	info := m.infos[name]
@@ -166,7 +172,7 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	}
 	if info.Available || info.AccountMismatch {
 		// The runtime may have been signed in to another account since.
-		if err := m.verifyAccount(name, info.AccountMismatch); err != nil {
+		if err := m.verifyAccount(name, info.AccountMismatch); !m.signedOutOK(err, model) {
 			return nil, err
 		}
 		return prov, nil
@@ -184,13 +190,16 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	}
 	m.infos[name] = info
 	m.mu.Unlock()
+	if info.SignedOut && m.customModel(model) {
+		return prov, nil
+	}
 	if info.SignedOut {
 		return nil, &Error{Status: http.StatusConflict, Code: codeSignedOut, Message: info.Reason}
 	}
 	if err != nil {
 		return nil, newError(http.StatusConflict, "%s is unavailable: %s", prov.DisplayName(), info.Reason)
 	}
-	if err := m.verifyAccount(name, true); err != nil {
+	if err := m.verifyAccount(name, true); !m.signedOutOK(err, model) {
 		return nil, err
 	}
 	return prov, nil

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // accountProvider is a fake provider with a sign-in the tests switch.
@@ -113,7 +115,7 @@ func errCode(err error) string {
 // reason, refuses new Tasks with the signed-out code, and is usable with its
 // models once signed in, without a restart.
 func TestSignedOutProviderRefusesTasksUntilSignedIn(t *testing.T) {
-	prov := newAccountProvider(false)
+	prov := newBYOMAccountProvider(false)
 	m := startManager(t, openTestStore(t), prov)
 	info := providerInfo(t, m, "fake")
 	if info.Available || !info.SignedOut || info.Reason != "Fake fake is signed out. Sign in in Settings." || len(info.Models) != 0 {
@@ -457,5 +459,222 @@ func TestDeviceSignInAsAnotherAccountFails(t *testing.T) {
 	}
 	if acct, _ := prov.Account(context.Background()); acct.SignedIn {
 		t.Fatalf("the refused device sign-in stayed: %+v", acct)
+	}
+}
+
+// byomAccountProvider is an accountProvider with custom models, listed as
+// the Copilot adapter lists them: after its own while signed in, alone while
+// signed out.
+type byomAccountProvider struct {
+	*accountProvider
+	custom []agentapi.Model
+}
+
+func newBYOMAccountProvider(signedIn bool) *byomAccountProvider {
+	caps := allCaps
+	caps.Account, caps.HostTools, caps.Titles = true, true, true
+	p := &accountProvider{Provider: agenttest.NewProvider("fake", caps), signedIn: signedIn}
+	p.SetModels([]agentapi.Model{{ID: "a", Name: "A"}}, nil)
+	return &byomAccountProvider{accountProvider: p}
+}
+
+func (p *byomAccountProvider) SetCustomModels(models []agentapi.CustomModel) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.custom = nil
+	for _, m := range models {
+		p.custom = append(p.custom, agentapi.Model{ID: m.SelectionID()})
+	}
+}
+
+func (p *byomAccountProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
+	own, err := p.Provider.Models(ctx)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.signedIn {
+		return slices.Clone(p.custom), nil
+	}
+	return append(own, p.custom...), err
+}
+
+var (
+	byomOne = store.WebCustomModel{Name: "mock", BaseURL: "http://127.0.0.1:9/v1", ModelID: "m1", APIKey: "k"}
+	byomTwo = store.WebCustomModel{Name: "mock", BaseURL: "http://127.0.0.1:9/v1", ModelID: "m2", APIKey: "k"}
+)
+
+// signedOutBYOM starts a manager whose provider is signed out and offers
+// two custom models, and adds a Project.
+func signedOutBYOM(t *testing.T, st *store.Store) (*Manager, *byomAccountProvider, string) {
+	t.Helper()
+	prov := newBYOMAccountProvider(false)
+	m := startManager(t, st, prov)
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(byomOne, byomTwo)}); err != nil {
+		t.Fatal(err)
+	}
+	return m, prov, addProject(t, m, t.TempDir())
+}
+
+// Signed out, a Task on a custom model is created, takes messages and
+// switches to another custom model, while the provider stays listed signed
+// out with its custom models. A Task on an account model, or the provider's
+// default, is refused as before, and so are a switch and a send to an
+// account model. Signed in again, account models work as before.
+func TestCustomModelRunsSignedOut(t *testing.T) {
+	m, prov, project := signedOutBYOM(t, openTestStore(t))
+	info := providerInfo(t, m, "fake")
+	if info.Available || !info.SignedOut || info.Reason != "Fake fake is signed out. Sign in in Settings." || fmt.Sprint(modelIDs(m, "fake")) != "[mock/m1 mock/m2]" {
+		t.Fatalf("signed out with custom models: %+v", info)
+	}
+	for _, model := range []string{"a", ""} {
+		_, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: model})
+		if statusOf(err) != http.StatusConflict || errCode(err) != codeSignedOut || err.Error() != "Fake fake is signed out. Sign in in Settings." {
+			t.Fatalf("Create on %q while signed out = %v (code %q)", model, err, errCode(err))
+		}
+	}
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "mock/m1"})
+	if err != nil {
+		t.Fatalf("Create on a custom model while signed out: %v", err)
+	}
+	conv := prov.Last()
+	if _, err := m.Submit(sum.ID, PromptRequest{RequestID: mustUUID(t), Text: "hi"}); err != nil || len(conv.Prompts()) != 1 {
+		t.Fatalf("Submit on a custom model = %v, prompts %v", err, conv.Prompts())
+	}
+	// With no Utility model the Thread's own custom model titles it.
+	waitUntil(t, "title on the custom model", func() bool {
+		reqs := prov.TitleRequests()
+		return len(reqs) == 1 && reqs[0].Model == "mock/m1"
+	})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "turn end", func() bool { return detail(t, m, sum.ID).State == StateCompleted })
+	account := "a"
+	if _, err := m.SetModel(sum.ID, &account, nil, nil); errCode(err) != codeSignedOut {
+		t.Fatalf("switch to an account model while signed out = %v", err)
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{RequestID: mustUUID(t), Text: "hi", Settings: &PromptSettings{Model: "a", ContextSize: "default"}}); errCode(err) != codeSignedOut {
+		t.Fatalf("send on an account model while signed out = %v", err)
+	}
+	other := "mock/m2"
+	if got, err := m.SetModel(sum.ID, &other, nil, nil); err != nil || got.Model != "mock/m2" {
+		t.Fatalf("switch to another custom model = %+v, %v", got, err)
+	}
+	if info := providerInfo(t, m, "fake"); info.Available || !info.SignedOut {
+		t.Fatalf("provider after custom-model turns: %+v", info)
+	}
+
+	if _, err := m.SignIn(context.Background(), "fake", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(modelIDs(m, "fake")) != "[a mock/m1 mock/m2]" {
+		t.Fatalf("models after sign-in = %v", modelIDs(m, "fake"))
+	}
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "a"}); err != nil {
+		t.Fatalf("Create on an account model after sign-in: %v", err)
+	}
+	if got, err := m.SetModel(sum.ID, &account, nil, nil); err != nil || got.Model != "a" {
+		t.Fatalf("switch to an account model after sign-in = %+v, %v", got, err)
+	}
+}
+
+// Signed out, a custom-model Task resumes after a restart and takes the
+// next message; an account-model Task is still refused.
+func TestCustomModelTaskResumesSignedOut(t *testing.T) {
+	st := openTestStore(t)
+	prov := newBYOMAccountProvider(true)
+	m := startManager(t, st, prov)
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(byomOne)}); err != nil {
+		t.Fatal(err)
+	}
+	project := addProject(t, m, t.TempDir())
+	custom, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "mock/m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prov2 := newBYOMAccountProvider(false)
+	prov2.AddConversation(custom.ConversationID, nil)
+	prov2.AddConversation(account.ConversationID, nil)
+	m2 := startManager(t, st, prov2)
+	if _, err := m2.Submit(custom.ID, PromptRequest{RequestID: mustUUID(t), Text: "again"}); err != nil {
+		t.Fatalf("Submit to a custom-model Task after a signed-out restart: %v", err)
+	}
+	if conv := prov2.Last(); conv == nil || conv.ID() != custom.ConversationID || len(conv.Prompts()) != 1 {
+		t.Fatalf("resumed conversation = %v", conv)
+	}
+	if _, err := m2.Submit(account.ID, PromptRequest{RequestID: mustUUID(t), Text: "again"}); errCode(err) != codeSignedOut {
+		t.Fatalf("Submit to an account-model Task after a signed-out restart = %v", err)
+	}
+}
+
+// A failed turn on a custom model keeps its own error, even while the
+// provider is signed out, and the next send on it goes through.
+func TestCustomModelTurnFailureKeepsItsError(t *testing.T) {
+	prov := newBYOMAccountProvider(true)
+	m := startManager(t, openTestStore(t), prov)
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(byomOne)}); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, m, t.TempDir()), Model: "mock/m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	prov.set(false)
+	const failure = "Failed to get response from the AI model; Last error: 500 upstream exploded"
+	conv.EmitTurn(agentapi.TurnFailed, failure)
+	waitUntil(t, "failed turn", func() bool { return detail(t, m, sum.ID).State == StateFailed })
+	// The signed-out check would run in the background: give it the time to.
+	time.Sleep(100 * time.Millisecond)
+	if d := detail(t, m, sum.ID); d.StateDetail != failure || d.FailureKind == string(agentapi.ErrorAuthentication) {
+		t.Fatalf("custom-model failure = %q (%s)", d.StateDetail, d.FailureKind)
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{RequestID: mustUUID(t), Text: "retry"}); err != nil {
+		t.Fatalf("Submit after a failed custom-model turn: %v", err)
+	}
+}
+
+// Signed out, Utility jobs run only on a custom model: the one Settings
+// name, else a Thread's own custom model. An account Utility model leaves
+// them unavailable, as a provider that is unavailable does.
+func TestUtilityJobsSignedOutRunOnlyOnCustomModels(t *testing.T) {
+	m, _, project := signedOutBYOM(t, openTestStore(t))
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "mock/m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	utility := func() (UtilityModel, bool, UtilityModel, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, model, ok := m.utilityProviderLocked()
+		_, threadModel, err := m.startUtilityLocked(m.sessions[sum.ID])
+		if err == nil {
+			m.titles.Done()
+		}
+		return model, ok, threadModel, err
+	}
+	// No Utility model: a Thread's job falls to its own custom model.
+	if _, ok, thread, err := utility(); ok || err != nil || thread.Model != "mock/m1" {
+		t.Fatalf("no Utility model: ok %v, thread %+v, %v", ok, thread, err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "mock/m2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if model, ok, thread, err := utility(); !ok || model.Model != "mock/m2" || err != nil || thread.Model != "mock/m2" {
+		t.Fatalf("custom Utility model: %+v %v, thread %+v, %v", model, ok, thread, err)
+	}
+	// An account Utility model, chosen while signed in, cannot run signed out.
+	m.mu.Lock()
+	m.settings.TitleModel = map[string]string{"fake": "a"}
+	info := m.infos["fake"]
+	info.Models = append(info.Models, agentapi.Model{ID: "a"})
+	m.infos["fake"] = info
+	m.mu.Unlock()
+	if _, ok, _, err := utility(); ok || errCode(err) != codeUtilityUnavailable {
+		t.Fatalf("account Utility model signed out: ok %v, %v", ok, err)
 	}
 }

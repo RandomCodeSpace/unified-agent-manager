@@ -87,7 +87,7 @@ func (m *Manager) AskAside(ctx context.Context, id, question, typed string) (*As
 		return nil, err
 	}
 	// An aside is a model call on the account, as a send is.
-	if err := m.refuseSignedOut(s); err != nil {
+	if err := m.refuseSignedOut(s, nil); err != nil {
 		return nil, err
 	}
 	s.op.Lock()

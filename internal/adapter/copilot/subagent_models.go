@@ -79,14 +79,26 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 	if in.ToolName != taskTool {
 		return nil, nil
 	}
-	if len(allowed) == 0 {
-		return contextOnly(note), nil
-	}
 	args, _ := in.ToolArgs.(map[string]any)
 	requested, _ := args["model"].(string)
 	c.mu.Lock()
 	task := cmp.Or(c.selected, c.turnModel)
 	c.mu.Unlock()
+	why := "the owner's settings let subagents use only"
+	// Signed out, only custom models run: the subagents of a Task on one
+	// keep to the allowed custom models, else to any custom model.
+	if _, custom := c.p.customModel(task); custom && c.p.signedOut(context.Background()) {
+		allowed = slices.DeleteFunc(allowed, func(id string) bool { _, ok := c.p.customModel(id); return !ok })
+		if len(allowed) == 0 {
+			for _, m := range c.p.customModels() {
+				allowed = append(allowed, m.SelectionID())
+			}
+		}
+		why = "Copilot is signed out, so subagents can use only the custom models"
+	}
+	if len(allowed) == 0 {
+		return contextOnly(note), nil
+	}
 	model := c.p.subagentModel(allowed, requested, task)
 	if model == "" {
 		return &copilot.PreToolUseHookOutput{PermissionDecision: "deny", PermissionDecisionReason: "No model allowed for subagents in UAM Settings is usable: a custom model's API key is missing. Do the work without a subagent."}, nil
@@ -101,7 +113,7 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 	out["model"] = model
 	// Without the reason an agent sees its arguments changed, takes it for its
 	// own mistake and starts the subagent again.
-	reason := fmt.Sprintf("UAM started this subagent on %s, because the owner's settings let subagents use only %s. This is expected and final: do not start it again to change the model.", model, strings.Join(allowed, ", "))
+	reason := fmt.Sprintf("UAM started this subagent on %s, because %s %s. This is expected and final: do not start it again to change the model.", model, why, strings.Join(allowed, ", "))
 	return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: strings.TrimSpace(note + "\n" + reason)}, nil
 }
 

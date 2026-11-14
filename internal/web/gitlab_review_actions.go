@@ -52,7 +52,7 @@ func (m *Manager) gitLabReviewAction(ctx context.Context, id string, iid int64, 
 	if err != nil {
 		return Submission{}, err
 	}
-	if err := m.refuseSignedOut(session); err != nil {
+	if err := m.refuseSignedOut(session, nil); err != nil {
 		return Submission{}, err
 	}
 	// Match normal prompt retries even if the remote thread has since changed
