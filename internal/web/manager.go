@@ -176,6 +176,10 @@ type Manager struct {
 	// oldWorktreeRoots are the folders new worktrees went in before
 	// Settings' worktrees_dir last changed (worktreeRoots); under mu.
 	oldWorktreeRoots []string
+	// checkouts caches each working directory's Git checkout by workdir;
+	// under checkoutsMu, never mu, since filling it runs git (checkout.go).
+	checkoutsMu sync.Mutex
+	checkouts   map[string]checkoutLocation
 	// worktrees is the removal, recreation and size bookkeeping of Thread
 	// worktrees (worktree_cleanup.go).
 	worktrees worktreeState
@@ -440,7 +444,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.pairsDirty = m.loadPairsLocked(cfg.WebMessagePairs)
 	usage := m.usageProviderLocked()
 	cliNames := m.cliProvidersLocked()
+	loaded := slices.Collect(maps.Values(m.sessions))
 	m.mu.Unlock()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.locateCheckouts(loaded)
+	}()
 	m.loadRoutines(cfg)
 	m.loadUploads()
 	m.sweepUploads()

@@ -325,6 +325,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusConflict, "the branch project directory changed")
 	}
 	s := newSession(fork.ID, fork.Provider, "", cmp.Or(fork.Folder, fork.Workdir), fork.ProviderSessionID, fork.CreatedAt)
+	s.checkout = m.locateCheckout(m.ctx, s.workdir)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
 	s.base, s.fork = StateClosed, &fork.Lineage
 	if s.place = loadedPlace(fork.Place); s.place != nil {

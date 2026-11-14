@@ -32,7 +32,7 @@ func (m *Manager) siblingEditsLocked(caller *webSession, path string) []siblingE
 		}
 		var last time.Time
 		for p, at := range s.edits {
-			if editPath(s.workdir, p) == path && at.After(last) {
+			if other := editPath(s.workdir, p); (other == path || sameRepositoryFile(caller, path, s, other)) && at.After(last) {
 				last = at
 			}
 		}
@@ -47,4 +47,28 @@ func (m *Manager) siblingEditsLocked(caller *webSession, path string) []siblingE
 		return cmp.Compare(a.Session.id, b.Session.id)
 	})
 	return out
+}
+
+// sameRepositoryFile reports whether a's path and b's name one
+// repository-relative path in two checkouts of the same repository, as two
+// worktrees can. This is advisory overlap, never file ownership.
+func sameRepositoryFile(a *webSession, ap string, b *webSession, bp string) bool {
+	if a.checkout.Common == "" || a.checkout.Common != b.checkout.Common {
+		return false
+	}
+	ar, aok := repositoryEditPath(a, ap)
+	br, bok := repositoryEditPath(b, bp)
+	return aok && bok && ar == br
+}
+
+// repositoryEditPath is path relative to s's checkout root, false when it
+// is outside the checkout.
+func repositoryEditPath(s *webSession, path string) (string, bool) {
+	if s.realWorkdir != "" {
+		if rel, err := filepath.Rel(s.workdir, path); err == nil && filepath.IsLocal(rel) {
+			path = filepath.Join(s.realWorkdir, rel)
+		}
+	}
+	rel, err := filepath.Rel(s.checkout.Root, path)
+	return rel, err == nil && filepath.IsLocal(rel)
 }

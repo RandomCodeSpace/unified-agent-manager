@@ -312,6 +312,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	}
 	now := m.now()
 	s := newSession(id, name, "", p.Dir, convID, now)
+	s.checkout = m.locateCheckout(m.ctx, s.workdir)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode = p.ID, model, effort, size, mode
 	s.imported = true
 	s.title = cleanTitle(found.Title)
