@@ -25,27 +25,27 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-12 | A new Thread takes its first message as title at once, then the Utility model's title replaces it; "Waiting for a… | thread-title.test.tsx, brand-title.test.tsx | spec: first-thread.spec.ts |
 | NAV-13 | Rename a Thread in place (row menu, F2, double-click, header menu); the name survives reload; focus returns to the row | app.test.tsx | planned |
 | NAV-14 | Sidebar: one flat list of unsettled Threads across Projects, newest created first whatever their state; Project… | needs-you.test.tsx, projects.test.tsx | planned |
-| NAV-15 | Each row's status follows the real turn: Working → Needs permission → Working → Finished (and Error, Stopped); the… | needs-you.test.tsx, sidebar-transition.test.tsx | planned |
+| NAV-15 | Each row's status follows the real turn: Working → Needs permission → Working → Finished (and Error, Stopped); the… | needs-you.test.tsx, sidebar-transition.test.tsx | spec: shell-stage.spec.ts |
 | NAV-16 | A Thread that finishes while another Thread is open (or the tab is hidden) shows as unread (teal, eye) until opened;… | needs-you.test.tsx | planned |
 | NAV-17 | Needs you count shows in the tab title "(N) UAM - <name>", on the sidebar toggle and on Home; Alt+J / Alt+K walk the… | brand-title.test.tsx, needs-you.test.tsx, home.test.tsx | planned |
 | NAV-18 | The row shows the folder's unsaved git work ("✎N ↑M") read from the real repo at page load and when a turn ends | unsaved-work.test.tsx | planned |
-| NAV-19 | Settle a clean, idle Thread from the row hover or header menu: it moves to the Settled shelf, opens read-only;… | app.test.tsx, sidebar-transition.test.tsx | planned |
-| NAV-20 | Settle/Archive are refused while a turn runs, with one reason ("Stop the turn, answer what is waiting…") | app.test.tsx | planned |
-| NAV-21 | Settle/Archive with the Thread's own unsaved files opens one anchored popover ("Settle with unsaved work?" /… | settle-guard.test.tsx, archive_test.go | planned |
-| NAV-22 | Archive → read-only; Settings → Archived lists it newest first; Unarchive restores it as Finished without a turn;… | archived-settings.test.tsx, app.test.tsx | planned |
+| NAV-19 | Settle a clean, idle Thread from the row hover or header menu: it moves to the Settled shelf, opens read-only;… | app.test.tsx, sidebar-transition.test.tsx | spec: shell-stage.spec.ts |
+| NAV-20 | Settle/Archive are refused while a turn runs, with one reason ("Stop the turn, answer what is waiting…") | app.test.tsx | spec: shell-stage.spec.ts |
+| NAV-21 | Settle/Archive with the Thread's own unsaved files opens one anchored popover ("Settle with unsaved work?" /… | settle-guard.test.tsx, archive_test.go | spec: shell-stage.spec.ts |
+| NAV-22 | Archive → read-only; Settings → Archived lists it newest first; Unarchive restores it as Finished without a turn;… | archived-settings.test.tsx, app.test.tsx | spec: shell-stage.spec.ts |
 | NAV-23 | Settled shelf: collapsible, newest ten then Show all, scrolls within 40% of height; settling while closed flashes… | sidebar-transition.test.tsx, web-ui-fixes.test.tsx, app.test.tsx | planned |
 | NAV-24 | A Thread quiet for 7 days settles itself (hourly check), unless it has unsaved work, a pending request or is open | auto_settle_test.go | planned (needs a clock or sweep trigger) |
 | NAV-25 | A worktree Thread whose branch landed on origin's default branch settles itself and its worktree/branch are removed | Go worktree/auto-settle tests | planned (needs a clock or sweep trigger) |
 | NAV-26 | Search threads matches names, titles, Project names and branches, archived included | projects.test.tsx, archived-settings.test.tsx, app.test.tsx | planned |
 | NAV-27 | From 3 characters, search adds "In conversations": Threads whose prompts/replies hold every word, read from the… | conversation-search.test.tsx, search_test.go | planned |
-| NAV-28 | Reload or a pasted link restores the same place: `#task=<id>`, `#settings`, `#routines`; Back/Forward move between… | app.test.tsx | spec: navigation.spec.ts |
+| NAV-28 | Reload or a pasted link restores the same place: `#task=<id>`, `#settings`, `#routines`; Back/Forward move between… | app.test.tsx | spec: navigation.spec.ts, shell-nav.spec.ts |
 | NAV-29 | Settings opens over the Thread; × or Esc brings the Thread back with its scroll position, open rows and side panels;… | app.test.tsx | planned |
 | NAV-30 | Ctrl+B (or the UAM mark) collapses the sidebar to the rail; kept per browser; keeps the selected Thread and URL; the… | app.test.tsx, empty-sidebar.test.tsx | planned |
-| NAV-31 | Narrow window: the sidebar is a drawer; its first rows are ready on first open; Esc closes it every time and gives… | app.test.tsx | planned |
+| NAV-31 | Narrow window: the sidebar is a drawer; its first rows are ready on first open; Esc closes it every time and gives… | app.test.tsx | spec: shell-nav.spec.ts |
 | NAV-32 | Home with no Thread open: "What are you working on?", New thread, Needs you list, Budgets, "Nothing needs you.";… | home.test.tsx | planned |
-| NAV-33 | Theme: Settings → This browser → Theme Light / Dark / Match system (default, follows the OS live); kept per browser… | theme.test.mjs, settings.test.tsx | planned |
-| NAV-34 | Connection indicator: after the service restarts the page shows "Connection lost, reconnecting…", then reconnects on… | event-stream.test.mjs, app.test.tsx, restart_test.go | planned |
-| NAV-35 | A turn running when uam restarts shows Interrupted afterwards; it is not resumed or resent | needs-you.test.tsx, queue_restart_test.go | planned |
+| NAV-33 | Theme: Settings → This browser → Theme Light / Dark / Match system (default, follows the OS live); kept per browser… | theme.test.mjs, settings.test.tsx | spec: shell-nav.spec.ts |
+| NAV-34 | Connection indicator: after the service restarts the page shows "Connection lost, reconnecting…", then reconnects on… | event-stream.test.mjs, app.test.tsx, restart_test.go | spec: shell-restart.spec.ts |
+| NAV-35 | A turn running when uam restarts shows Interrupted afterwards; it is not resumed or resent | needs-you.test.tsx, queue_restart_test.go | spec: shell-restart.spec.ts |
 | NAV-36 | Several tabs on plain HTTP keep working (live updates over one WebSocket each, not 2–3 EventSources per tab) | event-stream.test.mjs, event_socket_test.go | planned |
 | NAV-37 | A stream that goes silent without closing (no heartbeat for 2.5 × 15 s) is shown as lost and reopened; live updates… | event-stream.test.mjs | planned |
 | NAV-38 | After a new `uam web` build is deployed, an open page reloads itself on reconnect, or shows "UAM was updated." +… | update.test.mjs, uam-service.test.tsx | planned (needs a second build) |

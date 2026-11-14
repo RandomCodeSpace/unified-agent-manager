@@ -127,7 +127,7 @@ export class Model {
 
 const workerRoot = (index: number) => fs.mkdtempSync(path.join(os.tmpdir(), `uam-e2e-w${index}-`));
 
-function binary(): string {
+export function binary(): string {
   const bin = process.env.UAM_E2E_BIN;
   if (!bin) throw new Error('UAM_E2E_BIN must name a built uam binary (make build writes bin/uam; make test-ui sets it)');
   if (!path.isAbsolute(bin)) throw new Error(`UAM_E2E_BIN must be an absolute path, got ${bin}`);
@@ -142,7 +142,7 @@ function binary(): string {
 }
 
 /** Starts `uam __web`, the service process `uam web` spawns, so the harness owns its PID, its process group and its readiness report. */
-async function startService(bin: string, root: string): Promise<{ proc: ChildProcess; url: string }> {
+export async function startService(bin: string, root: string, listen = '127.0.0.1:0'): Promise<{ proc: ChildProcess; url: string }> {
   const dirs = { home: path.join(root, 'home'), config: path.join(root, 'config'), run: path.join(root, 'run'), cache: path.join(root, 'cache') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   // Keeps uam from installing a systemd unit for this service.
@@ -150,7 +150,7 @@ async function startService(bin: string, root: string): Promise<{ proc: ChildPro
   const out = fs.openSync(path.join(root, 'stdout.log'), 'a');
   // No GH_*, GITHUB_*, COPILOT_* or XDG_* variable: the CLI stays signed out and touches nothing of the developer's.
   const env = { PATH: process.env.PATH ?? '', HOME: dirs.home, LANG: 'C.UTF-8', UAM_CONFIG_DIR: dirs.config, UAM_SESSION_DIR: dirs.run, UAM_CACHE_DIR: dirs.cache, UAM_WEB_READY_FD: '3' };
-  const proc = spawn(bin, ['__web', '--listen', '127.0.0.1:0'], { cwd: dirs.home, env, stdio: ['ignore', out, out, 'pipe'], detached: true });
+  const proc = spawn(bin, ['__web', '--listen', listen], { cwd: dirs.home, env, stdio: ['ignore', out, out, 'pipe'], detached: true });
   fs.closeSync(out);
   const ready = proc.stdio[3] as NodeJS.ReadableStream;
   let report = '';
@@ -169,7 +169,7 @@ async function startService(bin: string, root: string): Promise<{ proc: ChildPro
 }
 
 /** SIGTERM lets uam stop its CLIs; whatever of its process group is left then gets SIGKILL. */
-async function stopService(proc: ChildProcess) {
+export async function stopService(proc: ChildProcess) {
   if (proc.exitCode === null && proc.signalCode === null) {
     const exited = once(proc, 'exit');
     proc.kill('SIGTERM');
