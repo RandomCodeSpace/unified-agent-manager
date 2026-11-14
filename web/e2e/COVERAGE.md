@@ -141,8 +141,8 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-34 | Reasoning shows inline in grey, three lines at a time with `Show more`, and `Thought for Ns` once done | none | planned |
 | TRN-35 | Closing Settings (or Routines) brings the Thread back at the same scroll position with open rows | none | planned |
 | TRN-36 | iOS WebKit paging and anchoring workarounds: a page lands only after the touch ends and 150 ms without scroll, and… | none | not feasible: iOS WebKit only |
-| ACT-01 | A tool call appears as a running step with its live output tail, then becomes a finished row with its output; the… | activity.test.mjs, state.test.mjs | planned |
-| ACT-02 | A failing command shows as failed on its row while the turn still ends Finished | activity.test.mjs | planned |
+| ACT-01 | A tool call appears as a running step with its live output tail, then becomes a finished row with its output; the… | activity.test.mjs, state.test.mjs | spec: activity-steps.spec.ts |
+| ACT-02 | A failing command shows as failed on its row while the turn still ends Finished | activity.test.mjs | spec: activity-steps.spec.ts |
 | ACT-03 | Long command output opens in the command output side panel | none | planned |
 | ACT-04 | A shell permission request shows a card; Allow once runs it, Deny returns a refusal to the model and the turn goes… | none | spec: activity.spec.ts |
 | ACT-05 | A file-write request shows the proposed change as a diff with the path once | none | planned |
@@ -150,9 +150,9 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-07 | "Allow for this session" appears only when Copilot offers it, and becomes the main button after two Allow once of… | none | planned |
 | ACT-08 | Yolo allows each request without a card (no flash), marks it "allowed (yolo)"; switching to yolo allows the waiting… | none | planned |
 | ACT-09 | Assisted: a reviewer model approves some requests; the rest wait, with the reason | none | planned (refusal path only: the reviewer is a Copilot model) |
-| ACT-10 | Autopilot keeps working turn after turn until the agent completes; Stop between autopilot turns ends it; Yolo ·… | composer ("Yolo with Autopilot is confir | planned |
-| ACT-11 | A single question sits on the composer with the recommended option picked; Enter/Answer or clicking it again sends;… | answer.test.mjs | spec: activity.spec.ts (typed answer) |
-| ACT-12 | A "(Choose any that apply)" question ticks several options and sends them together | none | planned |
+| ACT-10 | Autopilot keeps working turn after turn until the agent completes; Stop between autopilot turns ends it; Yolo ·… | composer ("Yolo with Autopilot is confir | spec: activity-agents.spec.ts (completion, Stop) |
+| ACT-11 | A single question sits on the composer with the recommended option picked; Enter/Answer or clicking it again sends;… | answer.test.mjs | spec: activity.spec.ts (typed answer), activity-attention.spec.ts (recommended on Enter, Decline) |
+| ACT-12 | A "(Choose any that apply)" question ticks several options and sends them together | none | spec: activity-attention.spec.ts |
 | ACT-13 | A draft typed before the question returns after it is settled; attaching while it waits says "Answer the question… | none | planned |
 | ACT-14 | An MCP elicitation (fields or link) shows on the composer or as a card; cancel vs decline | none | planned (needs a mock MCP server) |
 | ACT-15 | `uam_form` shows a card; a required empty field blocks the button; the pressed button and values reach the agent;… | form_test.go | spec: host-tools.spec.ts (submit) |
@@ -160,17 +160,17 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-17 | `uam_surface` draws a card and later `updateDataModel` calls update it in place | surface_test.go | spec: host-tools.spec.ts |
 | ACT-18 | Pressing a card button queues `[uam_surface action] …` as a short chip; the agent then updates the card; a stale… | none | spec: host-tools.spec.ts |
 | ACT-19 | A deleted card leaves a "removed" tombstone; cards survive a reload/restart | none | planned |
-| ACT-20 | `/plan` → "Plan ready" above composer, Thread Needs answer; Read plan; Approve plan sends the staged action; typed… | none | planned |
-| ACT-21 | The live todo list on the status line: "Todo 2/7", counts per stage, the reader by In progress/Blocked/To do/Done | todos.test.mjs | planned |
-| ACT-22 | A turn that changed the list keeps it on its outcome bar; "N turns" opens the todo history; both survive a reload | todos.test.mjs | planned |
+| ACT-20 | `/plan` → "Plan ready" above composer, Thread Needs answer; Read plan; Approve plan sends the staged action; typed… | none | spec: activity-agents.spec.ts (revise, approve, leave planning) |
+| ACT-21 | The live todo list on the status line: "Todo 2/7", counts per stage, the reader by In progress/Blocked/To do/Done | todos.test.mjs | spec: activity-agents.spec.ts |
+| ACT-22 | A turn that changed the list keeps it on its outcome bar; "N turns" opens the todo history; both survive a reload | todos.test.mjs | spec: activity-agents.spec.ts (outcome bar; history and reload planned) |
 | ACT-23 | Dependency rails and the graph/board view built from `todo_deps` | todo-graph.test.mjs | planned |
-| ACT-24 | Subagents: chip on the turn line, live rows at the foot, a row opens the subagent's own transcript at… | subagents.test.mjs, subagent-transcript.test.mjs, state.test.mjs | planned |
+| ACT-24 | Subagents: chip on the turn line, live rows at the foot, a row opens the subagent's own transcript at… | subagents.test.mjs, subagent-transcript.test.mjs, state.test.mjs | spec: activity-agents.spec.ts |
 | ACT-25 | A subagent waiting on permission reads "Needs permission: <tool>" and is answered like the Thread; yolo covers it | none | planned |
 | ACT-26 | A subagent's stalled model request is cancelled after 3 min; a stopped subagent's tool time ends | Go adapter tests | planned |
-| ACT-27 | Background shells: toolbar chip counts running shells; list with status/command; Output panel (8 KB, Load more, Jump… | none | planned |
-| ACT-28 | The status line says the agent's intent and elapsed time, "Retrying, attempt 2 · HTTP 429 · rate limited" during a… | none | planned |
-| ACT-29 | The strip's phase pill: "Model" + model name, "Local · no model" + tool, "Waiting on you" + what; sidebar foot… | model-phase (12), usage tests | planned |
-| ACT-30 | "Needs you": sidebar row reads Needs answer/Needs permission without moving, Needs you count beside the wordmark,… | none | planned |
+| ACT-27 | Background shells: toolbar chip counts running shells; list with status/command; Output panel (8 KB, Load more, Jump… | none | spec: activity-steps.spec.ts |
+| ACT-28 | The status line says the agent's intent and elapsed time, "Retrying, attempt 2 · HTTP 429 · rate limited" during a… | none | spec: activity-steps.spec.ts (retry); intent planned (no report_intent tool in this CLI) |
+| ACT-29 | The strip's phase pill: "Model" + model name, "Local · no model" + tool, "Waiting on you" + what; sidebar foot… | model-phase (12), usage tests | spec: activity-steps.spec.ts (status line and Usage and AI phases) |
+| ACT-30 | "Needs you": sidebar row reads Needs answer/Needs permission without moving, Needs you count beside the wordmark,… | none | spec: activity-attention.spec.ts (row order: fixme, row moves until reload) |
 | ACT-31 | Stop: "Stopping…" at once, then Stopped with the reason, conversation stays open, focus back in the composer, queue… | composer (Stop… tests), interrupted-card | spec: activity.spec.ts |
 | ACT-32 | Stop while a call waits on permission: the call reads as never run with "Ask again", which sends once | none | planned |
 | ACT-33 | A turn whose model calls fail (HTTP 500/429 exhausted) ends Failed with the cause first; the last prompt can be put… | none | spec: activity.spec.ts (429) |
@@ -178,8 +178,8 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-35 | Send now (steer) during a turn: bold italic when accepted, normal when delivered; Not delivered with a notice when… | none | planned |
 | ACT-36 | After this turn (queue) and the paused queue: Resume / Clear after a stop or failure | none | planned |
 | ACT-37 | A uam restart mid-turn leaves the Thread Interrupted; a call it cut off offers Ask again / Run again | none | planned (needs a service restart) |
-| ACT-38 | The same Thread in two tabs: transcript streams in both; a permission answered in one disappears in the other; first… | none | planned |
-| ACT-39 | Live updates reconnect after a dropped connection ("Connection lost, reconnecting | event-stream.test.mjs | planned |
+| ACT-38 | The same Thread in two tabs: transcript streams in both; a permission answered in one disappears in the other; first… | none | spec: activity-attention.spec.ts |
+| ACT-39 | Live updates reconnect after a dropped connection ("Connection lost, reconnecting | event-stream.test.mjs | spec: activity-attention.spec.ts (dropped socket; silent stream planned) |
 | ACT-40 | Compaction shows on the live line; background compaction is a quiet note, not a blocking state | none | planned |
 | ACT-41 | Subagent sheet from the strip: grouped by reply, state filters, reader beside the list or replacing it when narrow,… | subagents.test.mjs | planned |
 | ACT-42 | Thread MCP servers task view: server state, sign-in in progress | none | planned (needs a mock MCP server) |
