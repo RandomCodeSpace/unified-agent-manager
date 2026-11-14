@@ -204,8 +204,9 @@ function drawSkills(selected: SessionDetail, project?: string[], reason?: string
   vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as Awaited<ReturnType<typeof api.taskAgents>>);
   const read = vi.spyOn(api, 'projectSkills').mockResolvedValue({ skills: [{ name: 'code-review', description: 'Review a diff' }, { name: 'tdd' }], ...(project && { project_skills: project }) });
   const onSkills = vi.fn();
-  render(<ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={selected} onAgent={vi.fn()} onStyle={vi.fn()} onSkills={onSkills} styleReason={reason} /></AppContext.Provider></ApiContext.Provider>);
-  return { onSkills, read };
+  const draw = (s: SessionDetail) => <ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={s} onAgent={vi.fn()} onStyle={vi.fn()} onSkills={onSkills} styleReason={reason} /></AppContext.Provider></ApiContext.Provider>;
+  const view = render(draw(selected));
+  return { onSkills, read, redraw: (s: SessionDetail) => view.rerender(draw(s)) };
 }
 
 async function openSkills() {
@@ -216,7 +217,7 @@ async function openSkills() {
 }
 
 test('a new Thread starts from its Project\'s skill list and picks its own in the Skills tab', async () => {
-  const { onSkills, read } = drawSkills(session, ['tdd']);
+  const { onSkills, read, redraw } = drawSkills(session, ['tdd']);
   const panel = await openSkills();
   expect(read).toHaveBeenCalledWith('p1');
   const tdd = await panel.findByRole('checkbox', { name: 'tdd' });
@@ -228,6 +229,12 @@ test('a new Thread starts from its Project\'s skill list and picks its own in th
   // Every skill over a Project list names every skill found, since an absent list would inherit the Project's.
   await userEvent.click(panel.getByRole('switch', { name: 'Every skill' }));
   expect(onSkills).toHaveBeenLastCalledWith(['code-review', 'tdd']);
+  redraw({ ...session, skills: ['code-review', 'tdd'] } as SessionDetail);
+  await waitFor(() => expect(panel.getByRole('switch', { name: 'Every skill' }).getAttribute('aria-checked')).toBe('true'));
+  expect(panel.queryByRole('checkbox')).toBeNull();
+  // Off again goes back to the Project's list.
+  await userEvent.click(panel.getByRole('switch', { name: 'Every skill' }));
+  expect(onSkills).toHaveBeenLastCalledWith(undefined);
 });
 
 test('without a Project list a new Thread offers every skill until one is unchecked', async () => {

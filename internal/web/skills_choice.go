@@ -78,6 +78,15 @@ func (m *Manager) pinSkillsLocked(s *webSession, projectID string) {
 	}
 }
 
+// cloneSkills copies a skill list so two Threads never share one.
+func cloneSkills(list *[]string) *[]string {
+	if list == nil {
+		return nil
+	}
+	c := slices.Clone(*list)
+	return &c
+}
+
 // SkillOption is one skill a Thread's list can name.
 type SkillOption struct {
 	Name        string `json:"name"`

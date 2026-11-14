@@ -109,3 +109,40 @@ func TestSkillOptions(t *testing.T) {
 		t.Fatal("listed skills while discovery failed")
 	}
 }
+
+// A branch keeps its source Thread's skill list, across a restart, and
+// never shares it with the source.
+func TestForkKeepsTheSkillList(t *testing.T) {
+	m, p, st, source := taskForkManager(t)
+	setSession(m, source.ID, func(s *webSession) { s.skillChoice = &[]string{"review"} })
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.Skills == nil || !slices.Equal(*branch.Skills, []string{"review"}) {
+		t.Fatalf("branch skills = %v", branch.Skills)
+	}
+	setSession(m, source.ID, func(s *webSession) { (*s.skillChoice)[0] = "changed" })
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again, err := startManager(t, st, p).Summary(branch.ID)
+	if err != nil || again.Skills == nil || !slices.Equal(*again.Skills, []string{"review"}) {
+		t.Fatalf("after restart = %v %v", again.Skills, err)
+	}
+}
+
+// An imported conversation starts with its Project's skill list, as a new
+// Thread does.
+func TestImportPinsTheProjectSkillList(t *testing.T) {
+	m, prov, _, p := importManager(t)
+	prov.SetPrevious([]agentapi.PreviousConversation{{ID: prevA, Title: "imported"}}, nil)
+	prov.SetHistory(prevA, agentapi.History{Items: []agentapi.Item{{ID: "u1", Kind: agentapi.ItemUser, Text: "hi"}}})
+	m.mu.Lock()
+	m.projects[p.ID].Skills = &[]string{"tdd"}
+	m.mu.Unlock()
+	sum, err := m.Import(context.Background(), p.ID, prevA)
+	if err != nil || sum.Skills == nil || !slices.Equal(*sum.Skills, []string{"tdd"}) {
+		t.Fatalf("imported skills = %v %v", sum.Skills, err)
+	}
+}

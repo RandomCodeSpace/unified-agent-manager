@@ -41,11 +41,13 @@ export function SkillChoices({ projectId, value, thread, reason, onChange }: Rea
   const id = useId();
   const { skills, project, error } = useSkillOptions(projectId);
   const effective = value ?? (thread ? project : undefined);
-  const every = effective === undefined;
   const names = skills?.map((s) => s.name) ?? [];
+  // Over a Project list a Thread says every skill by naming each one found.
+  const everyNamed = !!thread && project !== undefined && value !== undefined && names.length > 0 && value.length === names.length && names.every((n) => value.includes(n));
+  const every = effective === undefined || everyNamed;
   const setEvery = (on: boolean) => {
-    if (!on) onChange(names);
-    else onChange(thread && project ? names : undefined);
+    if (on) onChange(thread && project ? names : undefined);
+    else onChange(everyNamed ? undefined : names);
   };
   const toggle = (name: string) => {
     const from = effective ?? names;
