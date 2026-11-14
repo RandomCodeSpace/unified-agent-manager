@@ -1,6 +1,7 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { BookOpen, Brain, Check, ChevronDown, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, FilePen, FilePlus, Files, FileText, FolderSearch, GitBranch, Globe, Image as ImageIcon, MessageCircleQuestion, Minus, Pencil, Plug, RotateCcw, Search, ShieldQuestionMark, Signpost, Terminal, Workflow, X, type LucideIcon } from 'lucide-react';
 import { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { Contained } from './VisualBoundary';
 import type { Interaction, Item, NativeFileEdit, Subagent, TodoCounts, ToolStatus, TurnPeer, TurnTiming } from '../api';
 import { useApi } from '../ApiContext';
@@ -296,7 +297,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
         notes.push(contained(item, <Turn item={item} sessionId={ctx.sessionId} streaming={false} note />));
         continue;
       }
-      push(contained(item, <Turn item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} className={ctx.arrival(item.id)} />));
+      push(contained(item, <Turn item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} ends={item.id === final} className={ctx.arrival(item.id)} />));
       continue;
     }
     const node = special(item);
@@ -333,20 +334,31 @@ const NOTES = "relative mt-0.5 -mb-0.5 flex flex-col gap-1 pl-3 before:absolute 
 /** Where the turn's head puts its slot for the reply's "no record" line (`NoRecordSlot`). */
 const NoRecordSlotRef = createContext<((slot: HTMLElement | null) => void) | undefined>(undefined);
 
-/** One turn: its head, then what stands in the answer, which reaches the head's slot for the "no record" line (Receipts). */
+/** Where the reply that ends a turn puts its slot for the turn's sign-off (`TurnHead`). */
+const SignOffSlotRef = createContext<((slot: HTMLElement | null) => void) | undefined>(undefined);
+/** The slot itself: the sign-off renders into it, else in place at the turn's foot. */
+const SignOffSlot = createContext<HTMLElement | null>(null);
+
+/**
+ * One turn: what stands in the answer, then its sign-off. The reply that ends the turn holds the
+ * sign-off's slot after its last words; the sign-off holds the slot for the reply's "no record" line (Receipts).
+ */
 function TurnShell({ replyKey, head, children }: Readonly<{ replyKey: string; head: ReactNode; children: ReactNode }>) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const [sign, setSign] = useState<HTMLElement | null>(null);
   return (
-    <div data-reply={replyKey} className="flex flex-col gap-3">
-      <NoRecordSlotRef.Provider value={setSlot}>{head}</NoRecordSlotRef.Provider>
-      <NoRecordSlot.Provider value={slot}>{children}</NoRecordSlot.Provider>
+    <div data-reply={replyKey} className="group/turn flex flex-col gap-3">
+      <SignOffSlotRef.Provider value={setSign}><NoRecordSlot.Provider value={slot}>{children}</NoRecordSlot.Provider></SignOffSlotRef.Provider>
+      <NoRecordSlotRef.Provider value={setSlot}><SignOffSlot.Provider value={sign}>{head}</SignOffSlot.Provider></NoRecordSlotRef.Provider>
     </div>
   );
 }
 
-/** The turn line (DESIGN.md turn card): its head on top, its steps under the head while open; flat on the page, no panel. */
-const CARD = 'flex flex-col';
-/** The card's head row: the turn's facts, then its counts at the end; it wraps on a narrow screen. */
+/** The turn sign-off (DESIGN.md turn sign-off): one caption line that wraps whole onto the next line, then within itself on a narrow screen. */
+const SIGN = 'inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-baseline text-caption tabular-nums text-faint select-none';
+/** A button on the sign-off: its hit area reaches past the caption line. */
+const SIGN_BUTTON = "relative -mx-1 flex h-5 min-w-0 max-w-full items-center gap-1 rounded-sm px-1 text-left whitespace-nowrap transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-3";
+/** The status row a turn shows before any of it lands: "Working 8s", then "Took 12s" when it ends without one. */
 const HEAD = 'flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-ui tabular-nums text-muted';
 
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
@@ -356,8 +368,6 @@ const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foregroun
 function dotted(nodes: ReactNode[]): ReactNode[] {
   return nodes.filter(Boolean).flatMap((node, i) => [...(i ? [<span key={`dot-${i}`} aria-hidden="true" className="text-faint">·</span>] : []), <Fragment key={i}>{node}</Fragment>]);
 }
-
-const SPLIT_TITLE = "Model: the model calls' own time, subagents' included. Local: the turn's own tool calls running, overlaps counted once. Waiting on you: approvals and answers, which the turn's time leaves out.";
 
 /** The ended turn's time split, "model 41s · local 3s · waiting on you 5m", each part only when recorded. */
 function timeSplit(timing: TurnTiming, entries: Entry[]): string {
@@ -388,45 +398,53 @@ function LiveClock({ timing }: Readonly<{ timing?: TurnTiming }>) {
   return elapsed ? <span className="font-medium text-ink">{elapsed}</span> : null;
 }
 
-/**
- * The head's facts before its counts. Ended: when it ended, "Took 28m" with the time split in
- * `muted` parentheses, then the turn's tokens and generation speed, a button to its waybill.
- * Running: "Working 8m" and the tokens and speed so far, which stay live.
- */
-function turnFacts({ working, timing, at, entries }: Readonly<{ working: boolean; timing?: TurnTiming; at?: string; entries: Entry[] }>): ReactNode[] {
-  const tokens = timing?.output_tokens ? <TurnTokens timing={timing} live={working} /> : null;
-  if (working) return [<span key="working" className="whitespace-nowrap"><span className="font-medium text-ink">Working</span> <LiveClock timing={timing} /></span>, tokens];
-  const elapsed = completedDuration(timing);
-  const split = elapsed && timing ? timeSplit(timing, entries) : '';
-  return [
-    at && <time dateTime={at} title={dateTime(at)} className="font-medium whitespace-nowrap text-ink">{clockTime(at)}</time>,
-    elapsed && (
-      <span title={durationTitle(elapsed)}>
-        <span className="whitespace-nowrap">Took <span className="font-medium text-ink">{elapsed}</span></span>
-        {split && <span className="text-muted" title={SPLIT_TITLE}> ({split})</span>}
-      </span>
-    ),
-    tokens,
-  ];
+/** A working turn's facts, on its status row and then its sign-off: "Working 8m", then the tokens and speed so far, which stay live. */
+function workingFacts(timing?: TurnTiming): ReactNode[] {
+  return [<span key="working" className="whitespace-nowrap"><span className="font-medium text-ink">Working</span> <LiveClock timing={timing} /></span>, timing?.output_tokens ? <TurnTokens timing={timing} /> : null];
 }
 
 /**
- * The head of a turn's card (DESIGN.md turn card), in the turn status row's slot: the turn's facts
- * (`turnFacts`), its failures in `error`, then at its end the counts, "1 thought · 2 commands ·
- * 1 question answered ›", updating in place as items append. With anything counted the counts are
- * a button that opens the turn's steps in the card under the head, mounted on the first open only;
- * they turn `attention` while a call waits for the user. The running step is the live step at the
- * transcript's foot: the head never names it.
+ * The sign-off's time: "Took 6s", a button to the turn's waybill once its tokens were counted.
+ * When the turn ended and how its time split are its tip; with no recorded duration it says when the turn ended.
  */
-const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, replyKey, tones = NO_TONES, reply, end, edits, gitlab }: Readonly<{ /** The reply that ends the turn: the head copies it. */ reply?: Item; /** The turn's end, once a reply ends it: its outcome and menu. */ end?: ReplyEnd; /** The files the turn's edit calls named. */ edits?: TurnChange; /** The turn's items that can name GitLab items. */ gitlab?: Item[]; id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list in the strip's sheet. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live rows at the foot show the same subagents under their own chip. */ chip?: boolean; /** The reply's key (its message's id, "start" before any): the chip opens the sheet's list filtered to it. */ replyKey?: string; tones?: ReadonlyMap<string, IdentityTone> }>) {
+function TurnTook({ timing, at, entries }: Readonly<{ timing?: TurnTiming; at?: string; entries: Entry[] }>) {
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
+  const elapsed = completedDuration(timing);
+  if (!elapsed && !at) return null;
+  const split = elapsed && timing ? timeSplit(timing, entries) : '';
+  const title = [at ? `Ended ${dateTime(at)}` : '', elapsed ? split : durationTitle(null)].filter(Boolean).join(' · ');
+  const words = elapsed ? <>Took <span className="font-medium text-muted">{elapsed}</span></> : <time dateTime={at}>{clockTime(at!)}</time>;
+  if (!elapsed || !timing?.output_tokens) return <span title={title} className="whitespace-nowrap">{words}</span>;
+  return (
+    <>
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`Took ${elapsed}. Show this turn's waybill`} title={title} className={cn(SIGN_BUTTON, 'aria-expanded:bg-tint-well aria-expanded:text-body')} onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
+        {words}
+      </button>
+      {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
+    </>
+  );
+}
+
+/**
+ * A turn's sign-off (DESIGN.md turn sign-off): after the last words of the reply that ends the turn,
+ * else on its own line at the turn's foot. Ended: "Took 6s" (`TurnTook`), the failures in `error`,
+ * the counts, "1 thought · 2 commands ›", a button that opens the turn's steps under the line
+ * (mounted on the first open only), the subagent chip, the outcome chips and, on hover or focus,
+ * copy and the turn's menu. Running: "Working 8m" and the tokens so far, live, then the counts and
+ * the edits so far, updating in place as items append; never the running step, which the live step
+ * at the transcript's foot shows. The counts turn `attention` while a call waits for the user.
+ */
+const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, replyKey, tones = NO_TONES, reply, end, edits, gitlab }: Readonly<{ /** The reply that ends the turn: the sign-off copies it. */ reply?: Item; /** The turn's end, once a reply ends it: its outcome and menu. */ end?: ReplyEnd; /** The files the turn's edit calls named. */ edits?: TurnChange; /** The turn's items that can name GitLab items. */ gitlab?: Item[]; id: string; agentId?: string; working: boolean; timing?: TurnTiming; /** When the turn ended: its recorded end, else its last reply's time. */ at?: string; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list in the strip's sheet. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live rows at the foot show the same subagents under their own chip. */ chip?: boolean; /** The reply's key (its message's id, "start" before any): the chip opens the sheet's list filtered to it. */ replyKey?: string; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
   const [open, setOpen] = useDisclosure(`${scope}:${scopedId}`);
   const [opened, setOpened] = useState(open);
-  const card = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLSpanElement>(null);
   const outcome = useTurnOutcome({ reply, end, edits, gitlab, replyActions: ctx.replyActions, anchor: card });
   const noRecord = useContext(NoRecordSlotRef);
+  const slot = useContext(SignOffSlot);
   const failures = summary.parts.filter((p) => p.tone === 'error');
   // The change chip states the files changed, with their lines: the counts leave them out then, unless nothing else would open the steps.
   const others = summary.parts.filter((p) => p.tone !== 'error' && !(outcome.changed && p.kind === 'changed'));
@@ -439,7 +457,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     setOpen((o) => !o);
   };
   const headButton = useRef<HTMLButtonElement>(null);
-  // The foot of open steps folds them too: the head comes back into view, so a long list
+  // The foot of open steps folds them too: the sign-off comes back into view, so a long list
   // never has to be scrolled back up to close, and focus returns to the counts.
   const collapse = () => {
     headButton.current?.scrollIntoView({ block: 'nearest' });
@@ -447,49 +465,48 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     setOpen(false);
   };
   // A failure says what broke beside its count; the whole line is its tooltip.
-  const facts = [...turnFacts({ working, timing, at, entries }), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
+  const took = !working && !!(completedDuration(timing) || at);
+  const facts = [...(working ? workingFacts(timing) : [took && <TurnTook timing={timing} at={at} entries={entries} />]), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
+  const line = (
+    <span ref={card} id={domId} data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={SIGN}>
+      {dotted(facts)}
+      {facts.length > 0 && counts.length + failures.length > 0 && <span aria-hidden="true" className="text-faint">·</span>}
+      {counts.length + failures.length > 0 && (
+        <button
+          ref={headButton}
+          data-turn-steps=""
+          type="button"
+          aria-expanded={open}
+          aria-controls={opened ? timelineId : undefined}
+          title={text}
+          aria-label={`${[...counts, ...failures].map((p) => p.text).join(', ')}. Show the activity of this turn`}
+          className={cn(SIGN_BUTTON, 'text-muted', summary.tone === 'attention' && 'text-attention')}
+          onClick={toggle}
+        >
+          <span className="min-w-0 truncate">
+            {counts.map((p, k) => (
+              <Fragment key={k}>
+                {k > 0 && <span aria-hidden="true" className="text-faint"> · </span>}
+                {p.text}
+              </Fragment>
+            ))}
+          </span>
+          <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
+        </button>
+      )}
+      {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
+      {/* What the turn left follows the counts; the reply's "no record" line (Receipts) lands in its slot once the turn ended. */}
+      <span data-outcome="" className="contents">{outcome.chips}</span>
+      {!working && <span ref={noRecord} data-no-record="" className="contents" />}
+      {outcome.actions && <span className="opacity-0 transition-opacity duration-100 group-hover/turn:opacity-100 focus-within:opacity-100 has-[[aria-expanded=true]]:opacity-100 pointer-coarse:opacity-100">{outcome.actions}</span>}
+    </span>
+  );
   return (
-    <div ref={card} id={domId} className={cn(CARD, '-mb-1')}>
-      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={HEAD} title={working || summary.count ? undefined : durationTitle(completedDuration(timing))}>
-        {dotted(facts)}
-        {facts.length > 0 && counts.length + failures.length > 0 && <span aria-hidden="true" className="text-faint">·</span>}
-        {counts.length + failures.length > 0 && (
-          <button
-            ref={headButton}
-            type="button"
-            aria-expanded={open}
-            aria-controls={opened ? timelineId : undefined}
-            title={text}
-            aria-label={`${[...counts, ...failures].map((p) => p.text).join(', ')}. Show the activity of this turn`}
-            className={cn("relative -mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-2.5", summary.tone === 'attention' && 'text-attention')}
-            onClick={toggle}
-          >
-            <span className="min-w-0 truncate">
-              {counts.map((p, k) => (
-                <Fragment key={k}>
-                  {k > 0 && <span aria-hidden="true" className="text-faint"> · </span>}
-                  {p.text}
-                </Fragment>
-              ))}
-            </span>
-            <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
-          </button>
-        )}
-        {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
-        {/* Ended, the turn's outcome joins its head after the counts; the reply's "no record" line (Receipts) lands in the slot. */}
-        {!working && (
-          <>
-            <span aria-hidden="true" className="turn-outcome-rule max-sm:hidden" />
-            <span data-outcome="" className="contents">{outcome.chips}</span>
-            <span ref={noRecord} data-no-record="" className="contents" />
-          </>
-        )}
-        {outcome.actions && <span className="ml-auto">{outcome.actions}</span>}
-      </div>
-      {working && <div data-outcome="" className="-mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 empty:hidden">{outcome.chips}</div>}
+    <>
+      {slot ? createPortal(line, slot) : <div className="not-first:-mt-2">{line}</div>}
       {outcome.reader}
       {opened && (
-        <Collapse open={open} appear>
+        <Collapse open={open} appear className="-mt-3" inner="pt-3">
           <div aria-hidden="true" className="fade-rule" />
           <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} agentId={agentId} /></DetailVisibility>
           <button type="button" aria-controls={timelineId} className="mb-1.5 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
@@ -498,7 +515,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           </button>
         </Collapse>
       )}
-    </div>
+    </>
   );
 }, (a, b) => {
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
@@ -912,7 +929,7 @@ function ReplyCopy({ reply }: Readonly<{ reply: Item }>) {
  * items it touched, its asides) in a row under it. Nothing the turn did not produce shows: no
  * change, no chip. A turn still running or without a reply has only its change chip.
  */
-function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Readonly<{ reply?: Item; end?: ReplyEnd; edits?: TurnChange; gitlab?: Item[]; replyActions?: ReplyActions; anchor: RefObject<HTMLDivElement | null> }>) {
+function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Readonly<{ reply?: Item; end?: ReplyEnd; edits?: TurnChange; gitlab?: Item[]; replyActions?: ReplyActions; anchor: RefObject<HTMLElement | null> }>) {
   const task = useContext(SessionContext) ?? '';
   const asides = useTurnHasAsides(task, end?.turn);
   const visible = useDetailVisibility();
@@ -1027,8 +1044,8 @@ function thoughtEnds(items: Item[]): Map<string, string> {
 const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries.some((e) => e.item?.id === id) ? id : undefined);
 
 /**
- * The head of a turn with nothing in it yet (DESIGN.md turn status), the card the turn head then
- * takes over in the same slot: "Working 3s" and its tokens while it starts, "Took 12s" once it
+ * The status row of a turn with nothing in it yet (DESIGN.md turn status), gone once its first
+ * entry lands: "Working 3s" and its tokens while it starts, "Took 12s" once it
  * ended, "Took 3s · No reply" when it ended with no reply, thought or call. Without a recorded
  * duration an ended turn keeps its slot, blank, with no card.
  */
@@ -1036,9 +1053,9 @@ function TurnStatus({ working = false, timing, empty = false }: Readonly<{ worki
   const elapsed = working ? null : completedDuration(timing);
   if (!working && !elapsed) return <div className="min-h-7" title={durationTitle(null)} />;
   return (
-    <div className={CARD}>
+    <div className="flex flex-col">
       <div className={HEAD} title={working ? undefined : durationTitle(elapsed)}>
-        {working ? dotted(turnFacts({ working, timing, entries: [] })) : <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
+        {working ? dotted(workingFacts(timing)) : <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
       </div>
     </div>
   );
@@ -1078,31 +1095,22 @@ function Copyable({ text, read, label, className, side = 'right', at, foot = tru
   );
 }
 
-/** The turn head's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count. Ended, a press opens the turn's waybill; `live`, they count on while it runs. */
-function TurnTokens({ timing, live = false }: Readonly<{ timing: TurnTiming; live?: boolean }>) {
-  const [button, setButton] = useState<HTMLButtonElement | null>(null);
-  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
+/** A working turn's tokens out so far and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count. */
+function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
   const out = timing.output_tokens ?? 0;
   if (!out) return null;
   const rate = timing.generation_ms ? Math.round(out / (timing.generation_ms / 1000)) : 0;
   const title = `${(timing.input_tokens ?? 0).toLocaleString()} tokens in · ${out.toLocaleString()} out${timing.generation_ms ? ` · ${Math.round(timing.generation_ms / 1000)}s generating` : ''}`;
-  const words = <>
-    {formatCount(out)} tokens
-    {rate > 0 && (
-      <>
-        <span aria-hidden="true" className="text-faint"> · </span>
-        {rate} tok/s
-      </>
-    )}
-  </>;
-  if (live) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
-    <>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`${formatCount(out)} tokens${rate > 0 ? `, ${rate} tok/s` : ''}`} title={title} className="relative -mx-1 h-6 rounded-sm px-1 whitespace-nowrap tabular-nums transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
-        {words}
-      </button>
-      {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
-    </>
+    <span title={title} className="whitespace-nowrap">
+      {formatCount(out)} tokens
+      {rate > 0 && (
+        <>
+          <span aria-hidden="true" className="text-faint"> · </span>
+          {rate} tok/s
+        </>
+      )}
+    </span>
   );
 }
 
@@ -1185,7 +1193,7 @@ function PeerCaption({ peer }: Readonly<{ peer: TurnPeer }>) {
 }
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** A process note: an ended turn's earlier reply of prose alone. */ note?: boolean; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string; peer?: TurnPeer }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** A process note: an ended turn's earlier reply of prose alone. */ note?: boolean; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; /** Takes the slot for the turn's sign-off, when the reply ends the turn. */ signOff?: (slot: HTMLElement | null) => void; asideTurn?: string; peer?: TurnPeer }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
@@ -1222,14 +1230,19 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, stamps, note }: MessageParts) {
-  // A reply has no foot: the turn card's head copies the reply that ends the turn, and any reply copies from its right-click menu.
+function assistantMessage({ item, text, streaming = false, className, whole, stamps, note, signOff }: MessageParts) {
+  // A reply has no foot: the turn's sign-off copies the reply that ends the turn, and any reply copies from its right-click menu.
+  // The sign-off follows the last paragraph's last words, else takes its own line under the last block; after plain text, under it.
+  const sign = signOff && <span ref={signOff} className="md-sign" />;
+  const inline = sign && !whole;
+  const after = inline ? <>{' '}{sign}</> : undefined;
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} data-note={note ? '' : undefined} className={note ? 'text-ui text-muted [&_:not(a)>code]:text-body [&_p:not(:last-child)]:mb-1' : 'text-chat text-body'}>
-        {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} />}
+        {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} after={after} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} after={after} />}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
+        {!inline && sign}
       </div>
     </Copyable>
   );
@@ -1783,7 +1796,8 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, className, stamps, note }: { /** Drawn as a process note (DESIGN.md process notes). */ note?: boolean; item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, className, stamps, note, ends = false }: { /** Drawn as a process note (DESIGN.md process notes). */ note?: boolean; /** The reply ends its turn: it holds the turn's sign-off after its last words. */ ends?: boolean; item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; className?: string }) {
+  const signOff = useContext(SignOffSlotRef);
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
@@ -1793,7 +1807,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
       if (item.kind === 'notice' && UAM_NOTES.test(item.text ?? '')) return <UamNotes text={item.text ?? ''} className={className} />;
       if (item.kind === 'notice' && RESUME_WARNING.test(item.text ?? '')) return <ResumeWarning text={item.text ?? ''} className={className} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps, note }) : noticeRow({ item, text: item.text ?? '', className });
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps, note, signOff: ends ? signOff : undefined }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':
