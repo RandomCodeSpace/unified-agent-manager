@@ -17,19 +17,21 @@ type ForkLineage struct {
 // ProviderSessionID means the native result is unknown; it must never cause
 // another fork RPC. A returned exact identity allows registration to retry.
 type WebFork struct {
-	ID                   string      `json:"id"`
-	Provider             string      `json:"provider"`
-	SourceConversationID string      `json:"source_conversation_id"`
-	ProviderSessionID    string      `json:"provider_session_id,omitempty"`
-	ProjectID            string      `json:"project_id"`
-	Workdir              string      `json:"workdir"`
-	Effort               string      `json:"effort,omitempty"`
-	ContextSize          string      `json:"context_size"`
-	Agent                string      `json:"agent,omitempty"`
-	Mode                 Mode        `json:"mode"`
-	CreatedAt            time.Time   `json:"created_at"`
-	TailEventID          string      `json:"tail_event_id"`
-	Lineage              ForkLineage `json:"lineage"`
+	ID                   string `json:"id"`
+	Provider             string `json:"provider"`
+	SourceConversationID string `json:"source_conversation_id"`
+	ProviderSessionID    string `json:"provider_session_id,omitempty"`
+	ProjectID            string `json:"project_id"`
+	Workdir              string `json:"workdir"`
+	Effort               string `json:"effort,omitempty"`
+	ContextSize          string `json:"context_size"`
+	Agent                string `json:"agent,omitempty"`
+	// Skills is the source Thread's skill list, which the branch keeps.
+	Skills      *[]string   `json:"skills,omitempty"`
+	Mode        Mode        `json:"mode"`
+	CreatedAt   time.Time   `json:"created_at"`
+	TailEventID string      `json:"tail_event_id"`
+	Lineage     ForkLineage `json:"lineage"`
 	// Place and Folder are the new worktree a branch of a Thread in its own
 	// worktree runs in, and its folder there; Workdir stays the Project's.
 	// Start is the commit its branch was made at.

@@ -297,7 +297,7 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).inclu
 
 /** A new Task's first message with the settings chosen for it; attachments are the files themselves, uploaded once the Task exists. */
 export interface FirstMessage {
-  settings: TaskSettings & { agent?: string; output_style?: string };
+  settings: TaskSettings & { agent?: string; output_style?: string; skills?: string[] };
   text: string;
   files: string[];
   uploads: { file: File; kind: Kind }[];
@@ -979,7 +979,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setBusy('send');
     setError(null);
     try {
-      await newTask.send({ settings: { provider: session.provider, model: session.model, effort, context_size: contextSize, mode, agent: session.agent, output_style: session.output_style }, text: t, files, uploads: heldUploads });
+      await newTask.send({ settings: { provider: session.provider, model: session.model, effort, context_size: contextSize, mode, agent: session.agent, output_style: session.output_style, skills: session.skills }, text: t, files, uploads: heldUploads });
       // The Task exists and holds the message now (or its composer does); this draft is done.
       latestDraft.current = { text: '', files: [], attachments: [] };
       writeDraft(storageKey, latestDraft.current);
@@ -1185,6 +1185,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The custom agent changes between turns only; a new Task keeps it for its create. */
   function chooseStyle(output_style: string) {
     if (newTask) onSessionUpdate({ ...session, output_style });
+  }
+
+  function chooseSkills(skills: string[] | undefined) {
+    if (newTask) onSessionUpdate({ ...session, skills });
   }
 
   function chooseAgent(agent: string) {
@@ -1877,6 +1881,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           subagent={subagent}
           onAgent={(agent) => void chooseAgent(agent)}
           onStyle={subagent ? undefined : chooseStyle}
+          onSkills={subagent ? undefined : chooseSkills}
           styleReason={newTask ? undefined : 'Fixed when the Thread started.'}
         />
         {!settledRow && <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />}

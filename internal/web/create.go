@@ -27,9 +27,12 @@ type CreateRequest struct {
 	// OutputStyle is the Thread's own output style name; "" uses its
 	// Project's (output_style.go).
 	OutputStyle string `json:"output_style,omitempty"`
-	Name        string `json:"name"`
-	Prompt      string `json:"prompt"`
-	RequestID   string `json:"request_id"`
+	// Skills is the Thread's own skill list; nil uses its Project's
+	// (skills_choice.go).
+	Skills    *[]string `json:"skills,omitempty"`
+	Name      string    `json:"name"`
+	Prompt    string    `json:"prompt"`
+	RequestID string    `json:"request_id"`
 	// Mode is safe (also when empty) or yolo.
 	Mode string `json:"mode"`
 	// Place is where the Thread runs; nil is the Project's current branch.
@@ -122,6 +125,9 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 	if err != nil {
 		return nil, "", "", err
 	}
+	if req.Skills, err = cleanSkillChoice(req.Skills); err != nil {
+		return nil, "", "", err
+	}
 	return prov, workdir, mode, nil
 }
 
@@ -190,9 +196,10 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	if switched && place == nil {
 		s.branch, _ = readBranch(m.ctx, workdir)
 	}
-	s.effort, s.contextSize, s.agent, s.style = req.Effort, req.ContextSize, req.Agent, req.OutputStyle
+	s.effort, s.contextSize, s.agent, s.style, s.skillChoice = req.Effort, req.ContextSize, req.Agent, req.OutputStyle, req.Skills
 	m.mu.Lock()
 	m.pinOutputStyleLocked(s, req.ProjectID)
+	m.pinSkillsLocked(s, req.ProjectID)
 	m.mu.Unlock()
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
@@ -236,7 +243,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, OutputStyle: s.style, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, OutputStyle: s.style, Skills: s.skillChoice, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
 	}
 	check := req.gitlabRegister
 	if req.spawnedBy != "" {
@@ -303,7 +310,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: rec.Web.Title, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, skills: skillsKey(s.skillChoice), title: rec.Web.Title, mode: s.mode}
 	if rec.Web.Place != nil {
 		s.persisted.place = *rec.Web.Place
 	}

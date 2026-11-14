@@ -153,7 +153,7 @@ func (m *Manager) flush() (err error) {
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt, queue: s.savedQueue(),
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
-				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Title: key.title,
+				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Skills: keySkills(key.skills), Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
 				StopReason: key.stopReason, FailureKind: string(key.failKind), NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),

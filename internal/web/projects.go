@@ -117,12 +117,12 @@ func projectExists(id string) *Error {
 // UpdateProject renames a Project. An empty name resets it to the
 // directory's base name.
 func (m *Manager) UpdateProject(id, name string) (Project, error) {
-	return m.patchProject(id, &name, nil, nil)
+	return m.patchProject(id, &name, nil, nil, nil)
 }
 
-// patchProject sets the Project's name and branch link, each when given.
-// An empty branch link turns the link off.
-func (m *Manager) patchProject(id string, name, branchLink, outputStyle *string) (Project, error) {
+// patchProject sets the Project's name, branch link, output style and skill
+// list, each when given. An empty branch link turns the link off.
+func (m *Manager) patchProject(id string, name, branchLink, outputStyle *string, skills *skillsPatch) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -157,12 +157,17 @@ func (m *Manager) patchProject(id string, name, branchLink, outputStyle *string)
 		}
 		next.OutputStyle = *outputStyle
 	}
+	if skills != nil {
+		if next.Skills, err = cleanSkillChoice(skills.list); err != nil {
+			return Project{}, err
+		}
+	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		stored.Name, stored.BranchLink, stored.OutputStyle = next.Name, next.BranchLink, next.OutputStyle
+		stored.Name, stored.BranchLink, stored.OutputStyle, stored.Skills = next.Name, next.BranchLink, next.OutputStyle, next.Skills
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {

@@ -79,7 +79,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		m.mu.Unlock()
 		return SessionSummary{}, err
 	}
-	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: req.Model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode), Agent: s.agent}
+	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: req.Model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode), Agent: s.agent, Skills: cloneSkills(s.skillChoice)}
 	if req.Model != s.model {
 		create.Effort, create.ContextSize = "", "default"
 	}
@@ -154,7 +154,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	reservation := store.WebFork{
 		Place: place, Folder: folder, Start: start,
 		ID: targetID, Provider: prov.Name(), SourceConversationID: convID, ProjectID: create.ProjectID, Workdir: workdir,
-		Effort: create.Effort, ContextSize: create.ContextSize, Agent: create.Agent, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
+		Effort: create.Effort, ContextSize: create.ContextSize, Agent: create.Agent, Skills: create.Skills, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
 		Lineage: store.ForkLineage{SourceTaskID: id, UserItemID: req.UserItemID, UserEventID: boundary.UserEventID, ToEventID: boundary.ToEventID, RequestID: req.RequestID, Model: req.Model},
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -334,6 +334,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	s := newSession(fork.ID, fork.Provider, "", cmp.Or(fork.Folder, fork.Workdir), fork.ProviderSessionID, fork.CreatedAt)
 	s.checkout = m.locateCheckout(m.ctx, s.workdir)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
+	s.skillChoice = fork.Skills
 	s.base, s.fork = StateClosed, &fork.Lineage
 	if s.place = loadedPlace(fork.Place); s.place != nil {
 		s.branch = s.place.Branch
@@ -347,7 +348,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	}
 	m.mu.Unlock()
 	rec := store.SessionRecord{ID: s.id, Agent: s.provider, Workdir: s.workdir, Mode: s.mode, CreatedAt: s.createdAt, LastSeenAt: s.createdAt, Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: s.convID,
-		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork, Title: s.title, Place: s.clonedPlace()}}
+		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Skills: s.skillChoice, Fork: s.fork, Title: s.title, Place: s.clonedPlace()}}
 	check := func(cfg *store.Config) error {
 		if existing, exists := cfg.Sessions[store.Key(fork.Provider, fork.ID)]; exists {
 			if existing.ID == fork.ID && existing.ProviderSessionID == fork.ProviderSessionID && existing.Web != nil && existing.Web.Fork != nil && existing.Web.Fork.RequestID == fork.Lineage.RequestID {

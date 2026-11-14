@@ -410,7 +410,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts), BranchLink: loadedBranchLink(p.BranchLink), OutputStyle: p.OutputStyle}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts), BranchLink: loadedBranchLink(p.BranchLink), OutputStyle: p.OutputStyle, Skills: p.Skills}
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,

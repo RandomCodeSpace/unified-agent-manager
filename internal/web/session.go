@@ -31,8 +31,9 @@ type webSession struct {
 	model       string
 	effort      string
 	contextSize string
-	agent       string // custom agent ID; "" is the provider's default
-	style       string // the Thread's output style name; "" is its Project's
+	agent       string    // custom agent ID; "" is the provider's default
+	style       string    // the Thread's output style name; "" is its Project's
+	skillChoice *[]string // the Thread's pinned skill list; nil offers every skill
 	// openStyle is the style text the open conversation was given.
 	openStyle string
 	context   *agentapi.Context
@@ -379,6 +380,7 @@ type persistKey struct {
 	handoff                                                                                                          store.WebHandoff
 	agent                                                                                                            string
 	style                                                                                                            string
+	skills                                                                                                           string // skillsKey
 	place                                                                                                            store.WebPlace
 }
 
@@ -451,7 +453,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, style: s.style, skills: skillsKey(s.skillChoice), title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode, failKind: s.failKind, budget: s.budget}
 	if s.handoff != nil {
 		k.handoff = *s.handoff

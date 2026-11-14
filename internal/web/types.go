@@ -131,6 +131,9 @@ type Project struct {
 	// OutputStyle names the Project's style (output_style.go); "" uses the
 	// default.
 	OutputStyle string `json:"output_style,omitempty"`
+	// Skills is the skill list its new Threads start with (skills_choice.go);
+	// nil offers every skill.
+	Skills *[]string `json:"skills,omitempty"`
 	// linkTried is set once this run tried to detect a nil BranchLink.
 	linkTried bool
 }
@@ -319,8 +322,11 @@ type SessionSummary struct {
 	Agent       string `json:"agent,omitempty"` // custom agent ID; "" is the provider's default
 	// OutputStyle names the Thread's own style; "" uses its Project's
 	// (output_style.go).
-	OutputStyle string            `json:"output_style,omitempty"`
-	Context     *agentapi.Context `json:"context,omitempty"`
+	OutputStyle string `json:"output_style,omitempty"`
+	// Skills names the only skills the Thread is offered, pinned when it
+	// started (skills_choice.go); nil offers every skill.
+	Skills  *[]string         `json:"skills,omitempty"`
+	Context *agentapi.Context `json:"context,omitempty"`
 	// Usage is the AI units the Task's conversation used, main agent and
 	// subagents together, once the provider reports them; it is not
 	// persisted and after a restart comes back only from provider history.

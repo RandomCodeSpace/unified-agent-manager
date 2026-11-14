@@ -329,12 +329,13 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	notes := notesOf(h.Items)
 	m.mu.Lock()
 	m.installHistoryLocked(s, h, notes) // not listed yet: nobody is told
+	m.pinSkillsLocked(s, p.ID)
 	s.historyUsed = now
 	m.mu.Unlock()
 	rec := store.SessionRecord{
 		ID: id, Agent: name, Mode: mode, Workdir: p.Dir, CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
 		ProviderSessionID: convID, Web: &store.WebState{Turn: StateClosed, UpdatedAt: now, ProjectID: p.ID, Model: model, Effort: effort,
-			ContextSize: size, Title: s.title, TerminalSession: s.terminalID, Imported: true},
+			ContextSize: size, Skills: s.skillChoice, Title: s.title, TerminalSession: s.terminalID, Imported: true},
 	}
 	unlinked := func(cfg *store.Config) error {
 		if ctx.Err() != nil {

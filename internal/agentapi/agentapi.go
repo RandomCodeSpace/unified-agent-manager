@@ -682,6 +682,10 @@ type OpenRequest struct {
 	// OutputStyle replaces the provider's own response style instructions;
 	// "" keeps them.
 	OutputStyle string
+	// Skills names the only discovered skills the conversation is offered,
+	// on create and on every reopen; skills in SkillDirectories are always
+	// offered. Nil offers every skill.
+	Skills *[]string
 	// CompactionThreshold is the share of the context window (0 to 1) at
 	// which the conversation starts compacting; 0 keeps the provider default.
 	// It applies on create and on every reopen.

@@ -29,6 +29,12 @@ const MOCK_AGENTS = [
   { id: 'docs-writer', name: 'docs-writer', display_name: 'Docs writer', source: 'user' },
 ];
 
+const MOCK_SKILLS = [
+  { name: 'code-review', description: 'Review a diff for bugs and missed cases.' },
+  { name: 'research', description: 'Answer a question from primary sources.' },
+  { name: 'tdd', description: 'Build features test first.' },
+];
+
 type Json = Record<string, unknown>;
 
 /** The service's history page size, and how many of its newest items a compact Task's main transcript keeps in memory; subagents keep none (read on open). */
@@ -1022,11 +1028,18 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}` });
     }
     const unknownStyle = (style: unknown) => typeof style === 'string' && style !== '' && style !== 'Copilot' && ![...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((o) => o.name === style);
+    if ((r = m(/^\/api\/projects\/([^/]+)\/skills$/))) {
+      const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
+      if (!p) return fail(404, 'project not found');
+      return json(200, { skills: MOCK_SKILLS, ...(p.skills && { project_skills: p.skills }) });
+    }
     if ((r = m(/^\/api\/projects\/([^/]+)$/))) {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        if (body.name === undefined && body.branch_link === undefined && body.output_style === undefined) return fail(400, 'name, branch_link or output_style is required');
+        if (body.name === undefined && body.branch_link === undefined && body.output_style === undefined && body.skills === undefined) return fail(400, 'name, branch_link, output_style or skills is required');
+        if (body.skills !== undefined && body.skills !== null && !Array.isArray(body.skills)) return fail(400, 'skills must be a list of skill names or null');
+        if (body.skills !== undefined) p.skills = body.skills === null ? undefined : [...new Set(body.skills as string[])].sort();
         if (unknownStyle(body.output_style)) return fail(400, `output style "${String(body.output_style)}" is not in the library`);
         if (body.output_style !== undefined) p.output_style = String(body.output_style) || undefined;
         const link = body.branch_link === undefined ? p.branch_link : String(body.branch_link).trim();
@@ -1154,6 +1167,10 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
         ...(body.agent ? { agent: String(body.agent) } : {}),
         // Pinned at creation like the service: the Thread's pick, else its Project's, else the default.
         output_style: [body.output_style, st.projects.find((p) => p.id === body.project_id)?.output_style, st.settings.output_style].find((n) => n === 'Copilot' || (typeof n === 'string' && [...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((o) => o.name === n))) as string | undefined ?? 'Copilot',
+        ...(() => {
+          const skills = (body.skills as string[] | undefined) ?? st.projects.find((p) => p.id === body.project_id)?.skills;
+          return skills ? { skills: [...skills] } : {};
+        })(),
         mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',

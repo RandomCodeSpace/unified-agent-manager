@@ -32,7 +32,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	out := SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, OutputStyle: s.style, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, OutputStyle: s.style, Skills: s.skillChoice, Context: s.context, Usage: s.usage, Budget: m.budgetViewLocked(s), Handoff: s.handoff,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, RealWorkdir: s.realWorkdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, InterruptedAt: s.interruptedAt, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),

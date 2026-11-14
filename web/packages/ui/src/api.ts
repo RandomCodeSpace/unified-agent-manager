@@ -880,6 +880,8 @@ export interface Project {
   branch_link?: string;
   /** The output style its Threads use (`output-style-v1`): a library name or `PROVIDER_STYLE`; absent uses the default. */
   output_style?: string;
+  /** The skills its new Threads are offered (`thread-skills-v1`), besides uam's own; absent offers every skill. */
+  skills?: string[];
 }
 
 /** One component of a surface: its `id`, its catalog name and the catalog's props for it. */
@@ -900,6 +902,9 @@ export interface Surface {
  * so a retry after a lost answer is queued once.
  */
 export interface SurfaceAction { surface_id: string; name: string; source_component_id: string; context: Record<string, unknown>; base_path: string; request_id: string; version: number }
+
+/** A skill a Thread's skill list can name (`thread-skills-v1`). */
+export interface SkillOption { name: string; description?: string }
 
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
@@ -974,6 +979,8 @@ export interface SessionSummary {
   /** The custom agent's ID, selected on every open before anything is sent; absent means the provider's default agent. */
   /** The Thread's output style (`output-style-v1`), pinned when it started: a library name or `PROVIDER_STYLE`; absent for Threads from before styles. On create, absent uses the Project's, else the default. */
   output_style?: string;
+  /** The only skills the Thread is offered besides uam's own (`thread-skills-v1`), pinned when it started; absent offers every skill. On create, absent uses the Project's list. */
+  skills?: string[];
   agent?: string;
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
@@ -2524,7 +2531,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
     createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
-    updateProject: (id: string, body: { name: string; branch_link?: string; output_style?: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
+    updateProject: (id: string, body: { name: string; branch_link?: string; output_style?: string; skills?: string[] | null }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
     detectBranchLink: (id: string) => call<{ branch_link: string }>('POST', `/api/projects/${enc(id)}/branch-link/detect`),
     deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
     /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
@@ -2597,6 +2604,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       context_size?: string;
       agent?: string;
       output_style?: string;
+      skills?: string[];
       mode?: PermissionMode;
       name?: string;
       prompt?: string;
@@ -2612,6 +2620,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
     taskAgents: (projectId: string, provider: string) =>
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
+    /** The skills a Thread of the Project can be offered, without uam's own, and the Project's own list, absent for every skill (`thread-skills-v1`). */
+    projectSkills: (projectId: string) => call<{ skills: SkillOption[]; project_skills?: string[] }>('GET', `/api/projects/${enc(projectId)}/skills`),
     /** `force`: settle or archive even though the Thread has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
     stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => slow<SessionSummary>(`/api/sessions/${enc(id)}/${action}`, body),
     /** Archive's dry run: the 409 `unsaved_work` an unforced Archive would meet now (see `unsavedRefusal`), else nothing; nothing moves. */

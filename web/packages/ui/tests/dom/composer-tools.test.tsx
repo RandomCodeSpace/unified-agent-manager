@@ -196,3 +196,71 @@ test('built-in styles from meta give every new Thread a Style tab', async () => 
   await userEvent.click(panel.getByRole('radio', { name: /Simplified Technical English/ }));
   expect(onStyle).toHaveBeenCalledWith('Simplified Technical English');
 });
+
+function drawSkills(selected: SessionDetail, project?: string[], reason?: string) {
+  vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  vi.spyOn(api, 'contextHeaviest').mockResolvedValue(null);
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as Awaited<ReturnType<typeof api.taskAgents>>);
+  const read = vi.spyOn(api, 'projectSkills').mockResolvedValue({ skills: [{ name: 'code-review', description: 'Review a diff' }, { name: 'tdd' }], ...(project && { project_skills: project }) });
+  const onSkills = vi.fn();
+  const draw = (s: SessionDetail) => <ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={s} onAgent={vi.fn()} onStyle={vi.fn()} onSkills={onSkills} styleReason={reason} /></AppContext.Provider></ApiContext.Provider>;
+  const view = render(draw(selected));
+  return { onSkills, read, redraw: (s: SessionDetail) => view.rerender(draw(s)) };
+}
+
+async function openSkills() {
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await userEvent.click(panel.getByRole('tab', { name: 'Skills' }));
+  return panel;
+}
+
+test('a new Thread starts from its Project\'s skill list and picks its own in the Skills tab', async () => {
+  const { onSkills, read, redraw } = drawSkills(session, ['tdd']);
+  const panel = await openSkills();
+  expect(read).toHaveBeenCalledWith('p1');
+  const tdd = await panel.findByRole('checkbox', { name: 'tdd' });
+  expect(tdd.getAttribute('aria-checked')).toBe('true');
+  expect(panel.getByRole('checkbox', { name: /code-review/ }).getAttribute('aria-checked')).toBe('false');
+  expect(panel.getByRole('switch', { name: 'Every skill' }).getAttribute('aria-checked')).toBe('false');
+  await userEvent.click(panel.getByRole('checkbox', { name: /code-review/ }));
+  expect(onSkills).toHaveBeenLastCalledWith(['code-review', 'tdd']);
+  // Every skill over a Project list names every skill found, since an absent list would inherit the Project's.
+  await userEvent.click(panel.getByRole('switch', { name: 'Every skill' }));
+  expect(onSkills).toHaveBeenLastCalledWith(['code-review', 'tdd']);
+  redraw({ ...session, skills: ['code-review', 'tdd'] } as SessionDetail);
+  await waitFor(() => expect(panel.getByRole('switch', { name: 'Every skill' }).getAttribute('aria-checked')).toBe('true'));
+  expect(panel.queryByRole('checkbox')).toBeNull();
+  // Off again goes back to the Project's list.
+  await userEvent.click(panel.getByRole('switch', { name: 'Every skill' }));
+  expect(onSkills).toHaveBeenLastCalledWith(undefined);
+});
+
+test('without a Project list a new Thread offers every skill until one is unchecked', async () => {
+  const { onSkills } = drawSkills(session);
+  const panel = await openSkills();
+  const every = await panel.findByRole('switch', { name: 'Every skill' });
+  await waitFor(() => expect(every.hasAttribute('data-disabled')).toBe(false));
+  expect(every.getAttribute('aria-checked')).toBe('true');
+  expect(panel.queryByRole('checkbox')).toBeNull();
+  await userEvent.click(every);
+  expect(onSkills).toHaveBeenLastCalledWith(['code-review', 'tdd']);
+});
+
+test('a started Thread shows its pinned skill list, read only; without one it has no Skills tab', async () => {
+  drawSkills({ ...session, skills: ['code-review'] } as SessionDetail, undefined, 'Fixed when the Thread started.');
+  const panel = await openSkills();
+  const review = await panel.findByRole('checkbox', { name: /code-review/ });
+  expect(review.getAttribute('aria-checked')).toBe('true');
+  expect((review as HTMLButtonElement).disabled).toBe(true);
+  expect(panel.queryByRole('checkbox', { name: 'tdd' })).toBeNull();
+  expect(panel.getByText(/Fixed when the Thread started\./)).toBeTruthy();
+});
+
+test('a started Thread that offers every skill has no Skills tab', async () => {
+  drawSkills(session, undefined, 'Fixed when the Thread started.');
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  expect(panel.queryByRole('tab', { name: 'Skills' })).toBeNull();
+});
