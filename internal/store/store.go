@@ -149,10 +149,11 @@ type WebGitLabInvestigation struct {
 // from clobbering fields it does not understand (F33).
 var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-only")
 
-// ErrSetAside is returned by every write once this Store set the file aside
-// after an earlier load had returned its records: the caller's in-memory state
-// came from that file, and saving onto fresh defaults would drop it unseen.
-var ErrSetAside = errors.New("store: the config file could not be read and was set aside; changes are not saved")
+// ErrSetAside is returned by every write once this Store set the file aside:
+// saving onto fresh defaults would leave the backup as the only copy of the
+// owner's state and start a new one nobody chose. A new Store on the same
+// path (a restart) finds no file and starts empty and writable.
+var ErrSetAside = errors.New("the saved state could not be read and was set aside; nothing is saved until uam restarts")
 
 // configAlias mirrors Config without the custom marshaller (and without the
 // in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
@@ -1308,12 +1309,10 @@ type Store struct {
 	migrationBackup func() error
 	migrationWrite  func(Config) error
 
-	// mu guards loaded and setAside (the file lock is invisible to -race).
+	// mu guards setAside (the file lock is invisible to -race).
 	mu sync.Mutex
-	// loaded is set once a load returned the file's records (or no file).
-	loaded bool
-	// setAside is the backup path of a file set aside after loaded was set;
-	// non-empty makes every write fail with ErrSetAside.
+	// setAside is the backup path of a file this Store set aside; non-empty
+	// makes every write fail with ErrSetAside.
 	setAside string
 	// swept is set once Load removed the temp files of killed saves.
 	swept bool
@@ -1455,9 +1454,6 @@ func (s *Store) Update(fn func(*Config) error) error {
 func (s *Store) loadNoLock() (Config, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		s.mu.Lock()
-		s.loaded = true
-		s.mu.Unlock()
 		return DefaultConfig(), nil
 	}
 	if err != nil {
@@ -1465,27 +1461,25 @@ func (s *Store) loadNoLock() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		// Quarantine the corrupt file before starting fresh. If the move-aside
-		// fails the original is still on disk, so returning DefaultConfig here
-		// would let the next Save overwrite it with defaults and lose the only
-		// copy. Propagate the error instead so the app refuses to clobber it
+		// Quarantine the corrupt file; writes are then refused (ErrSetAside).
+		// If the move-aside fails the original is still on disk, so returning
+		// DefaultConfig here would let the next Save overwrite it with defaults
+		// and lose the only copy. Propagate the error instead so the app refuses to clobber it
 		// (F43). normalize guarantees a non-nil Sessions map on the success path.
 		backup, mvErr := s.moveAside()
 		if mvErr != nil {
 			return Config{}, fmt.Errorf("quarantine corrupt config %s: %w", s.path, mvErr)
 		}
 		// The decode error can quote the file, so only the paths are logged.
-		log.Error("config file could not be read; set it aside and started from defaults", "path", s.path, "backup", backup)
+		log.Error("config file could not be read; set it aside and refusing writes until a restart", "path", s.path, "backup", backup)
 		s.mu.Lock()
-		if s.loaded {
+		// The first backup holds the state the owner last had; keep naming it.
+		if s.setAside == "" {
 			s.setAside = backup
 		}
 		s.mu.Unlock()
 		return normalize(DefaultConfig()), nil
 	}
-	s.mu.Lock()
-	s.loaded = true
-	s.mu.Unlock()
 	// Untrusted on-disk records are validated and coerced on every load path,
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
@@ -1881,11 +1875,8 @@ func migrate(cfg Config) Config {
 }
 
 func (s *Store) saveNoLock(cfg Config) error {
-	s.mu.Lock()
-	backup := s.setAside
-	s.mu.Unlock()
-	if backup != "" {
-		return fmt.Errorf("%w (backup %s)", ErrSetAside, backup)
+	if err := s.SetAside(); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
@@ -1956,6 +1947,18 @@ func (s *Store) lock() (func(), error) {
 		return nil, err
 	}
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+}
+
+// SetAside reports, once a load set the file aside, the ErrSetAside every
+// write returns, naming the backup and how to recover; nil otherwise.
+func (s *Store) SetAside() error {
+	s.mu.Lock()
+	backup := s.setAside
+	s.mu.Unlock()
+	if backup == "" {
+		return nil
+	}
+	return fmt.Errorf("%w. The old file is kept as %s: to get it back, move it to %s and restart uam; to start empty, restart uam", ErrSetAside, backup, s.path)
 }
 
 func (s *Store) backupPath() string { return fmt.Sprintf("%s.bak.%d", s.path, time.Now().UnixNano()) }

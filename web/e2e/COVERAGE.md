@@ -57,6 +57,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-44 | With browser storage refusing reads/writes the app still renders, opens Threads and shelves | storage-refused.test.tsx | planned |
 | NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | planned |
 | NAV-46 | Where this Thread runs (PlacePicker: Current branch / Worktree) on the draft; a worktree Thread's row shows the… | place-foot.test.tsx, needs-you.test.tsx | planned |
+| NAV-47 | A `sessions.json` that cannot be read at start: the first view says it was set aside, names the backup and how to recover, and keeps this browser's drafts | drafts.test.mjs, store_write_failure_test.go | spec: shell-state-set-aside.spec.ts |
 | CMP-01 | New thread: the first Send creates the Thread (sidebar row appears only then) and its reply streams in | app.test.tsx | spec: first-thread.spec.ts |
 | CMP-02 | Enter sends on an idle Thread and clears the box; Shift+Enter adds a line; one Send button when idle | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-03 | A long multi-line message grows the box up to a cap (max-h 40dvh), then scrolls inside it; Send and the toolbar stay… | none | planned |

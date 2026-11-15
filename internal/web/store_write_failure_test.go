@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -158,5 +159,35 @@ func TestFlushReportsAStateFileSetAsideWhileRunning(t *testing.T) {
 	m.mu.Unlock()
 	if saveError == "" {
 		t.Fatal("the failed save was not reported")
+	}
+}
+
+// A state file that cannot be read at start is set aside, and the very first
+// snapshot says so with the backup's path, before any save is tried; a flush
+// with nothing to write must not clear it.
+func TestFirstSnapshotReportsAStateFileSetAsideAtStart(t *testing.T) {
+	st := openTestStore(t)
+	if err := os.WriteFile(st.Path(), []byte(`{"sessions": `), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if err := m.flush(); err != nil {
+		t.Fatalf("flush with nothing to write = %v", err)
+	}
+	sub, payload, err := m.captureSubscription("", true, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	snapshot, ok := payload.(snapshotEvent)
+	backups, _ := filepath.Glob(st.Path() + ".bak.*")
+	if !ok || len(backups) != 1 || !strings.Contains(snapshot.SaveError, backups[0]) || !strings.Contains(snapshot.SaveError, "restart uam") {
+		t.Fatalf("snapshot save_error = %q, backups = %v", snapshot.SaveError, backups)
+	}
+	if _, err := m.AddProject(t.TempDir(), ""); !errors.Is(err, store.ErrSetAside) {
+		t.Fatalf("AddProject after the set-aside = %v, want %v", err, store.ErrSetAside)
+	}
+	if _, err := os.Stat(st.Path()); !os.IsNotExist(err) {
+		t.Fatalf("a new state file was written: %v", err)
 	}
 }

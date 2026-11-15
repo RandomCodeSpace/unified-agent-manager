@@ -3184,6 +3184,22 @@ and stall every request. Over HTTPS the updates use ordinary event streams.
 If WebSockets cannot reach the service (a proxy that does not pass them), the
 page falls back to event streams.
 
+## When Threads cannot be saved
+
+A failed save shows a strip over the pane, "Threads could not be saved", with
+the reason; UAM tries again with the next change and the strip goes when a
+save succeeds.
+
+If `sessions.json` cannot be read (a hand edit, a disk fault, a bad restore),
+the service moves it aside as `sessions.json.bak.<number>` beside it and
+saves nothing until it restarts, so no new state is written while the old
+one exists only in the backup. This happens whether the file breaks at start
+or while the service runs. The strip names the backup and says what to do: move the
+backup back to `sessions.json` and restart `uam web` to get the old state
+back, or restart `uam web` to start empty. While the strip shows, the browser
+keeps its composer drafts, review marks and cached conversations of Threads
+the service does not list.
+
 ## Stop
 
 ```sh

@@ -62,6 +62,15 @@ export function parseDraft(raw: string | null): Draft | null {
   }
 }
 
+/**
+ * Whether a snapshot may drop this browser's drafts, review keys, cached archives and marks of
+ * Tasks it does not list: not while the service cannot save, as then its list may be an empty
+ * state started after the saved one was set aside.
+ */
+export function sweepsStale(snapshot: { save_error?: string }): boolean {
+  return !snapshot.save_error;
+}
+
 /** Draft keys whose Task (or, for a new Task's, Project) is gone, from every storage key and the ids that still exist. */
 export function staleDraftKeys(keys: readonly string[], liveIds: Iterable<string>, liveProjects: Iterable<string>): string[] {
   const live = new Set(liveIds);

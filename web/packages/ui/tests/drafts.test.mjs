@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DRAFT_PREFIX, changeSettings, createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, staleDraftKeys } from '../src/lib/drafts.ts';
+import { DRAFT_PREFIX, changeSettings, createRequest, draftKey, newTaskKey, parseDraft, serializeDraft, staleDraftKeys, sweepsStale } from '../src/lib/drafts.ts';
 
 const full = { text: 'Fix @docs/web.md', files: ['docs/web.md'], attachments: [{ id: 'att-1', name: 'shot.png', size: 2048, kind: 'image' }] };
 
@@ -66,4 +66,10 @@ test('a new Task changes settings by the service rule and creates with them, wit
   // The default agent sends no agent; a chosen one goes with the create.
   assert.ok(!('agent' in createRequest('p1', { ...s, agent: '' }, 'r1')));
   assert.equal(createRequest('p1', { ...s, agent: 'reviewer' }, 'r1').agent, 'reviewer');
+});
+
+test('a snapshot sweeps local state of missing Tasks only while the service can save', () => {
+  assert.equal(sweepsStale({}), true);
+  assert.equal(sweepsStale({ save_error: '' }), true);
+  assert.equal(sweepsStale({ save_error: 'the saved state could not be read and was set aside' }), false);
 });
