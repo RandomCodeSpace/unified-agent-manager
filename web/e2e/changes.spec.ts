@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, startThread, test, threadState } from './harness';
+import { changesPanel } from './workspace-helpers';
 
 test('the files the agent creates and edits are counted and listed in Changes, with their diff', async ({ page, project, model, workdir }) => {
   model.toolRound('make two changes', [
@@ -21,7 +22,7 @@ test('the files the agent creates and edits are counted and listed in Changes, w
 
   const open = page.getByRole('button', { name: /^Open changes, 2 files/ });
   await open.click();
-  const panel = page.getByRole('complementary', { name: 'Changes' });
+  const panel = await changesPanel(page);
   const files = panel.getByRole('navigation', { name: 'Changed files' }).getByRole('button');
   await expect(files).toHaveCount(2);
   await expect(files.nth(0)).toHaveAccessibleName('Go to README.md, +1 −1');

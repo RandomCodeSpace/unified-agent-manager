@@ -1,6 +1,6 @@
 // Helpers for the workspace specs (changes, rewind, worktrees, git, terminal).
 import { execFileSync } from 'node:child_process';
-import { expect, type Page } from '@playwright/test';
+import { expect, type ElementHandle, type Page } from '@playwright/test';
 import { conversation, type Model } from './harness';
 
 /** Runs git in `dir` and returns its trimmed output. */
@@ -16,11 +16,22 @@ export const git = (dir: string, ...args: string[]) =>
 export async function allowEach(page: Page, count: number) {
   const allow = conversation(page).getByRole('button', { name: 'Allow once' }).first();
   for (let i = 0; i < count; i++) {
-    await expect(allow).toBeVisible();
-    const button = await allow.elementHandle();
-    await button!.click();
+    let button: ElementHandle | null = null;
+    // A card can be drawn again just after it shows, which detaches the button held here; the click has not happened then.
+    await expect(async () => {
+      await expect(allow).toBeVisible();
+      button = await allow.elementHandle();
+      await button!.click({ timeout: 2000 });
+    }).toPass();
     await button!.waitForElementState('hidden');
   }
+}
+
+/** The open Changes panel once its content has stopped sliding in: a press on a moving control can be released beside it. */
+export async function changesPanel(page: Page) {
+  const panel = page.getByRole('complementary', { name: 'Changes' });
+  await expect.poll(() => panel.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+  return panel;
 }
 
 /** The worktrees git lists for `repo` besides the repository itself. */

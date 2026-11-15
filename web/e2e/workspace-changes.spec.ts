@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, send, startThread, test, threadState } from './harness';
-import { allowEach, bash, capturedTurn, chain, commit, git } from './workspace-helpers';
+import { allowEach, bash, capturedTurn, chain, changesPanel, commit, git } from './workspace-helpers';
 
 test("a turn's changes stay as that turn left them after a later turn", async ({ page, project, model, workdir }) => {
   const one = path.join(workdir, 'one.txt');
@@ -59,13 +59,15 @@ test('a shell-written file reads Session tracking and cannot be reverted; outsid
   fs.appendFileSync(path.join(workdir, 'outside.txt'), 'x\n');
 
   await page.getByRole('button', { name: /^Open changes, 2 files/ }).click();
-  const panel = page.getByRole('complementary', { name: 'Changes' });
+  const panel = await changesPanel(page);
   await panel.getByRole('button', { name: 'Refresh' }).click();
   const shell = panel.getByRole('region', { name: 'shell.txt', exact: true });
   await expect(shell.getByText('Session tracking', { exact: true })).toBeVisible();
   await shell.getByRole('button', { name: 'Actions for shell.txt' }).click();
   await expect(page.getByRole('menuitem', { name: 'Revert file…' })).toBeDisabled();
   await page.keyboard.press('Escape');
+  // The next menu must not open while this one closes, or it closes with it.
+  await expect(page.getByRole('menu')).toBeHidden();
 
   const readme = panel.getByRole('region', { name: 'README.md', exact: true });
   await expect(readme.getByText('Session tracking', { exact: true })).toHaveCount(0);
@@ -96,7 +98,7 @@ test('a file the Thread committed stays in Changes, and the filters split commit
   expect(git(workdir, 'status', '--porcelain')).toBe('?? c2.txt');
 
   await page.getByRole('button', { name: /^Open changes, 2 files/ }).click();
-  const panel = page.getByRole('complementary', { name: 'Changes' });
+  const panel = await changesPanel(page);
   const files = panel.getByRole('navigation', { name: 'Changed files' }).getByRole('button');
   const show = panel.getByRole('radiogroup', { name: 'Show files' });
   await expect(files).toHaveCount(2);
