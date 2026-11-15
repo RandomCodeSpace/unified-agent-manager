@@ -4,6 +4,8 @@ import { conversation, expect, startThread, test, threadState } from './harness'
 test('the toolbar folds its labels as the window narrows, never overflows, and moves pickers into More on a phone', async ({ page, project, model }) => {
   model.reply('fold check', 'Folding reply.');
   await page.setViewportSize({ width: 1400, height: 900 });
+  // The time chip shares the row, and after a fast turn it can stay away; a fixed one keeps the row's width the same every run.
+  await page.route('**/api/sessions/*/time-split', (route) => route.fulfill({ json: { model_ms: 500, model_calls: 1, local_ms: 500, local_runs: 1, waiting_ms: 0, waits: 0, tools: [] } }));
   await startThread(page, project, 'fold check');
   await expect(conversation(page).getByText('Folding reply.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
@@ -20,6 +22,7 @@ test('the toolbar folds its labels as the window narrows, never overflows, and m
     for (const b of [attach, modelButton, sendButton]) await expect(b).toBeInViewport({ ratio: 1 });
   };
 
+  await expect(form.getByRole('button', { name: /^Time in this Thread/ })).toBeVisible();
   await expect(run).toHaveText('Safe · Interactive', { useInnerText: true });
   await expect(modelButton).toHaveText('Mock', { useInnerText: true });
   await expect(more).toBeHidden();
