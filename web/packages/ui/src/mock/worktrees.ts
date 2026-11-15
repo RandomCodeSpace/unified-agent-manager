@@ -35,7 +35,7 @@ export function worktreesMock(dir: () => string | undefined = () => undefined) {
         const w = rows.find((r) => r.path === body.path);
         if (!w) return new Response(JSON.stringify({ error: 'worktree not found' }), { status: 404 });
         if (w.uncommitted && !body.force) {
-          return new Response(JSON.stringify({ error: `${w.uncommitted} changed files are not committed and would be lost.`, code: 'worktree_unsaved', refs: [String(w.uncommitted)] }), { status: 409 });
+          return new Response(JSON.stringify({ error: `${w.uncommitted} files are not committed and would be lost.`, code: 'worktree_unsaved', refs: [String(w.uncommitted)] }), { status: 409 });
         }
         rows = rows.filter((r) => r !== w);
         disk.free_bytes += w.size_bytes ?? 0;

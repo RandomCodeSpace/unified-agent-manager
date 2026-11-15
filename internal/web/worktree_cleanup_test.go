@@ -101,6 +101,57 @@ func TestSettleKeepsAWorktreeWithChanges(t *testing.T) {
 	}
 }
 
+// Settling keeps a worktree holding ignored files that nothing makes again,
+// lists them as not committed, and Remove asks before losing them. One
+// holding only regenerable folders goes.
+func TestSettleKeepsAWorktreeWithIgnoredFiles(t *testing.T) {
+	repo := worktreeRepo(t)
+	writeRepoFile(t, repo, ".gitignore", ".env\nout/\nnode_modules/\nbin/\n")
+	gitIn(t, repo, "add", ".gitignore")
+	gitIn(t, repo, "commit", "-q", "-m", "ignore")
+	ts := newTestServer(t, ServerConfig{})
+	kept, project := worktreeThread(t, ts, repo, "")
+	clean, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sum := range []SessionSummary{kept, clean} {
+		writeRepoFile(t, sum.Worktree.Path, "node_modules/pkg/index.js", "x\n")
+		writeRepoFile(t, sum.Worktree.Path, "web/bin/tool", "x\n")
+	}
+	writeRepoFile(t, kept.Worktree.Path, ".env", "KEY=1\n")
+	writeRepoFile(t, kept.Worktree.Path, "out/report.csv", "a,b\n")
+	for _, sum := range []SessionSummary{kept, clean} {
+		if _, err := ts.m.Settle(sum.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, "regenerable-only worktree removed", func() bool { return worktreeGone(clean.Worktree.Path) })
+	// What settling runs, called here so the refusal does not depend on timing.
+	if err := removeWorktree(t.Context(), kept.Worktree.Path, false); err == nil || !strings.Contains(err.Error(), "2 ignored files or folders would be lost") {
+		t.Fatalf("unforced removal = %v", err)
+	}
+	for _, name := range []string{".env", "out/report.csv"} {
+		if worktreeGone(filepath.Join(kept.Worktree.Path, name)) {
+			t.Fatalf("%s was deleted with the worktree", name)
+		}
+	}
+	list, err := ts.m.ListWorktrees(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Worktrees) != 1 || list.Worktrees[0].Path != kept.Worktree.Path || list.Worktrees[0].Uncommitted != 2 {
+		t.Fatalf("listed = %+v", list.Worktrees)
+	}
+	var unsaved *Error
+	if err := ts.m.RemoveWorktree(t.Context(), kept.Worktree.Path, false); !errors.As(err, &unsaved) || unsaved.Code != codeWorktreeUnsaved {
+		t.Fatalf("unforced remove = %v", err)
+	}
+	if err := ts.m.RemoveWorktree(t.Context(), kept.Worktree.Path, true); err != nil || !worktreeGone(kept.Worktree.Path) {
+		t.Fatalf("forced remove = %v", err)
+	}
+}
+
 // Remove asks before losing changes, keeps the branch, and needs a path
 // from the list.
 func TestRemoveWorktreeRoute(t *testing.T) {
@@ -117,7 +168,7 @@ func TestRemoveWorktreeRoute(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &reply)
 		return w.Code, reply
 	}
-	if code, reply := remove(map[string]any{"path": path}); code != http.StatusConflict || reply["code"] != codeWorktreeUnsaved || reply["error"] != "1 changed file is not committed and would be lost." {
+	if code, reply := remove(map[string]any{"path": path}); code != http.StatusConflict || reply["code"] != codeWorktreeUnsaved || reply["error"] != "1 file is not committed and would be lost." {
 		t.Fatalf("unforced = %d %v", code, reply)
 	}
 	for _, bad := range []string{repo, filepath.Dir(path), path + "/..", "/etc"} {

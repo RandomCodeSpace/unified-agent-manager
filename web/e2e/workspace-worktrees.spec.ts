@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Page } from '@playwright/test';
 import { conversation, expect, newThread, openHome, send, test, threadState, type Project } from './harness';
+import { openSettings } from './settings-helpers';
 import { allowEach, bash, commit, git, worktrees } from './workspace-helpers';
 
 /** Starts a Thread in a new worktree of `project` with `prompt`, and returns the worktree git made. */
@@ -107,4 +108,33 @@ test('Settle anyway on a worktree with uncommitted work keeps its folder', async
   expect(worktrees(project.dir)).toEqual([tree]);
   expect(fs.readFileSync(path.join(tree.path, 'README.md'), 'utf8')).toBe('# Fixture\nleft\n');
   expect(fs.readFileSync(path.join(tree.path, 'new.txt'), 'utf8')).toBe('new\n');
+});
+
+test('settling keeps a worktree that holds an ignored file, and Settings counts the file as not committed', async ({ page, project, model, workdir }) => {
+  fs.writeFileSync(path.join(workdir, '.gitignore'), 'out/\nnode_modules/\n');
+  git(workdir, 'add', '.gitignore');
+  git(workdir, 'commit', '-q', '-m', 'ignore out');
+  model.toolRound('write a report', [bash('call_report', 'mkdir -p out node_modules && echo r > out/report.csv && echo x > node_modules/x')], 'Wrote the report.');
+  const tree = await startWorktreeThread(page, project, 'write a report');
+  await allowEach(page, 1);
+  await expect(conversation(page).getByText('Wrote the report.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  expect(git(tree.path, 'status', '--porcelain')).toBe('');
+
+  // Nothing git tracks is pending, so it settles without asking.
+  await settle(page);
+  await expect(threadState(page, 'Settled')).toBeVisible();
+
+  await openSettings(page, 'Projects & worktrees');
+  const row = page.getByRole('list', { name: 'Worktrees' }).getByRole('listitem').filter({ hasText: tree.branch });
+  // out/ counts; node_modules/ is made again by an install and does not.
+  await expect(row).toContainText('1 not committed');
+  expect(fs.readFileSync(path.join(tree.path, 'out/report.csv'), 'utf8')).toBe('r\n');
+  expect(worktrees(project.dir)).toEqual([tree]);
+
+  await row.getByRole('button', { name: `Remove worktree ${tree.branch}` }).click();
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm).toContainText('1 file is not committed and will be lost.');
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  expect(fs.existsSync(path.join(tree.path, 'out/report.csv'))).toBe(true);
 });
