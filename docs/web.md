@@ -2807,6 +2807,15 @@ timeout reuses the same request ID, and the service answers a repeated
 request ID with the recorded result instead of sending again. If the provider may or may not have
 received a prompt, the page says so and nothing is resent.
 
+The service saves a prompt's request ID as unconfirmed before it contacts the
+provider, and saves the outcome after; the last 64 prompt and command outcomes
+of a Thread are kept, across restarts. A retry of a request whose outcome was
+never saved, for example after the service stopped mid-send, is answered
+`uncertain` and not sent again. A queued prompt is reported `queued` only
+once the queue holding it is saved. When the service cannot save, the prompt
+is neither sent nor queued, the request returns 503, and the message stays in
+the composer.
+
 ## Terminal
 
 Settings → Server → UAM and access → Access → Terminal, off by

@@ -1,6 +1,8 @@
 // Sending while idle and while a turn runs: Enter, Shift+Enter, After this turn, Send now and Stop.
+import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, lastUserText, startThread, test, threadState } from './harness';
+import { ownService } from './shell-helpers';
 
 const slow = (word: string, lines: number) => Array.from({ length: lines }, (_, i) => `${word} line ${i + 1}`).join('\n\n');
 
@@ -150,4 +152,38 @@ test('typing while a reply streams keeps every character and the caret', async (
   await page.getByRole('button', { name: 'Stop turn' }).click();
   await expect(threadState(page, 'Stopped')).toBeVisible();
   await expect(box).toHaveValue(expected);
+});
+
+test('a message queued while the service cannot save stays in the box and queues once saving works again', async ({ browser, uam, workdir, model }) => {
+  model.toolRound('hold for the save', [{ id: 'call_hold_save', name: 'create', arguments: { path: path.join(workdir, 'held.txt'), file_text: 'held\n' } }], 'Held job done.');
+  model.reply('kept while unsaved', 'Reply to kept.');
+  const own = await ownService(browser, uam.mock.url, workdir);
+  // sessions.json lives here: a folder that takes no new files refuses every save.
+  const config = path.join(own.root, 'config');
+  try {
+    const { page } = own;
+    await startThread(page, own.project, 'hold for the save');
+    const allow = conversation(page).getByRole('button', { name: 'Allow once' });
+    await expect(allow).toBeVisible();
+
+    const box = page.getByRole('textbox', { name: 'Message' });
+    fs.chmodSync(config, 0o500);
+    await box.fill('kept while unsaved');
+    await box.press('Control+Enter');
+    await expect(page.getByText(/the prompt was not queued/)).toBeVisible();
+    await expect(box).toHaveValue('kept while unsaved');
+    await expect(page.getByText(/\d+ waiting/)).toHaveCount(0);
+
+    fs.chmodSync(config, 0o700);
+    await box.press('Control+Enter');
+    await expect(box).toHaveValue('');
+    await expect(page.getByText('1 waiting', { exact: true })).toBeVisible();
+    await allow.click();
+    await expect(conversation(page).getByText('Reply to kept.')).toBeVisible();
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    expect(model.served().map((s) => s.fixture)).toEqual(['tools for hold for the save', 'result of call_hold_save', 'reply kept while unsaved']);
+  } finally {
+    fs.chmodSync(config, 0o700);
+    await own.stop();
+  }
 });

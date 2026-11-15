@@ -232,13 +232,7 @@ func (m *Manager) saveCommandSubmission(s *webSession, sub Submission, publish b
 	}
 	m.mu.Lock()
 	before := m.summaryLocked(s)
-	s.commandSubmissions = slices.DeleteFunc(s.commandSubmissions, func(old Submission) bool { return old.RequestID == sub.RequestID })
-	s.commandSubmissions = append(s.commandSubmissions, sub)
-	if len(s.commandSubmissions) > retainedCommandRequests {
-		s.commandSubmissions = s.commandSubmissions[len(s.commandSubmissions)-retainedCommandRequests:]
-	}
-	encoded, _ := json.Marshal(s.commandSubmissions)
-	s.commandLedger = string(encoded)
+	s.ledgerLocked(sub.RequestID, &sub)
 	s.remember(sub)
 	last := sub
 	s.last = &last
@@ -251,6 +245,21 @@ func (m *Manager) saveCommandSubmission(s *webSession, sub Submission, publish b
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	return m.flush()
+}
+
+// ledgerLocked keeps sub as reqID's saved outcome, or with a nil sub drops
+// it. The ledger holds the last retainedCommandRequests command and prompt
+// outcomes, so a retry after a restart is answered from it. The caller holds mu.
+func (s *webSession) ledgerLocked(reqID string, sub *Submission) {
+	s.commandSubmissions = slices.DeleteFunc(s.commandSubmissions, func(old Submission) bool { return old.RequestID == reqID })
+	if sub != nil {
+		s.commandSubmissions = append(s.commandSubmissions, *sub)
+	}
+	if len(s.commandSubmissions) > retainedCommandRequests {
+		s.commandSubmissions = s.commandSubmissions[len(s.commandSubmissions)-retainedCommandRequests:]
+	}
+	encoded, _ := json.Marshal(s.commandSubmissions)
+	s.commandLedger = string(encoded)
 }
 
 func cleanCommandResult(value agentapi.CommandResult) *agentapi.CommandResult {
