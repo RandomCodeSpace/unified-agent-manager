@@ -45,7 +45,7 @@ describe('Settings → Worktrees', () => {
 
     await user.click(unsaved);
     const confirm = within(await screen.findByRole('alertdialog', { name: 'Remove this worktree?' }));
-    expect(confirm.getByText('2 changed files are not committed and will be lost.')).toBeTruthy();
+    expect(confirm.getByText('2 files are not committed and will be lost.')).toBeTruthy();
     expect(confirm.getByText(/stays, with 3 commits not pushed/)).toBeTruthy();
     await user.click(confirm.getByRole('button', { name: 'Remove worktree' }));
     await waitFor(() => expect(list.queryByText('Fix re-attach redraw regression')).toBeNull());

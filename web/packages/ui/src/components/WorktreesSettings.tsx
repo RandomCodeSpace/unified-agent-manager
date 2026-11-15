@@ -168,7 +168,7 @@ function WorktreeList({ list, total, measuring, onChanged }: Readonly<{ list: Wo
         {...confirm.props}
         className="max-w-88"
         title="Remove this worktree?"
-        description={target ? `${target.uncommitted} changed ${target.uncommitted === 1 ? 'file is' : 'files are'} not committed and will be lost.` : undefined}
+        description={target ? `${target.uncommitted} ${target.uncommitted === 1 ? 'file is' : 'files are'} not committed and will be lost.` : undefined}
         confirmLabel="Remove worktree"
         busy={busy !== null}
         onConfirm={() => { if (target) void remove(target, true); }}

@@ -64,8 +64,9 @@ type WorktreeEntry struct {
 	// stopped early, so the size is at least that.
 	SizeBytes   *int64 `json:"size_bytes,omitempty"`
 	SizePartial bool   `json:"size_partial,omitempty"`
-	// Uncommitted counts changed files, untracked ones included, which a
-	// removal loses; Unpushed counts commits on no remote.
+	// Uncommitted counts the files a removal loses: changed ones, untracked
+	// ones, and ignored ones outside regenerable folders. Unpushed counts
+	// commits on no remote.
 	Uncommitted int `json:"uncommitted"`
 	Unpushed    int `json:"unpushed"`
 }
@@ -338,8 +339,9 @@ func (m *Manager) worktreeInUseLocked(path string) bool {
 	return m.worktrees.keep[path] > 0 || len(users) > 0 && users[0].stage == StageActive
 }
 
-// worktreePending reads the branch of the worktree at dir, its changed
-// files (untracked included) and its commits on no remote.
+// worktreePending reads the branch of the worktree at dir, its files a
+// removal would lose (changed, untracked, and ignored ones to keep) and its
+// commits on no remote.
 func worktreePending(ctx context.Context, dir string) (branch string, uncommitted, unpushed int) {
 	repo, _, err := openRepo(ctx, dir)
 	if err != nil || repo == nil {
@@ -348,6 +350,9 @@ func worktreePending(ctx context.Context, dir string) (branch string, uncommitte
 	branch, _ = readBranch(ctx, dir)
 	if entries, _, err := repo.status(ctx); err == nil {
 		uncommitted = len(entries)
+	}
+	if n, err := ignoredToKeep(ctx, repo.git, repo.top); err == nil {
+		uncommitted += n
 	}
 	if out, code, _, err := runGit(ctx, repo.git, repo.top, 64, "rev-list", "--count", "HEAD", "--not", "--remotes"); err == nil && code == 0 {
 		unpushed, _ = strconv.Atoi(strings.TrimSpace(string(out)))
@@ -435,8 +440,42 @@ func measureDir(ctx context.Context, dir string) (int64, bool) {
 	return total, errors.Is(err, stopped)
 }
 
+// regenerable names the folders whose ignored content an install, a build or
+// a test run makes again. An ignored file anywhere else may be the only copy.
+var regenerable = map[string]bool{
+	"node_modules": true, "dist": true, "build": true, "bin": true, "target": true,
+	".venv": true, "venv": true, "__pycache__": true,
+	".cache": true, ".pytest_cache": true, ".mypy_cache": true, ".ruff_cache": true, ".tox": true,
+	".gradle": true, ".next": true, ".turbo": true,
+	"coverage": true, "test-results": true, "playwright-report": true, ".DS_Store": true,
+}
+
+// ignoredToKeep counts the ignored paths in the worktree at dir that are
+// outside regenerable folders: git removes a worktree holding them without a
+// word. An ignored folder counts once, and a list too long to read as one more.
+func ignoredToKeep(ctx context.Context, git, dir string) (int, error) {
+	out, code, stderr, err := runGit(ctx, git, dir, maxStatusBytes+1, "status", "--porcelain=v1", "-z", "--ignored=matching")
+	if err != nil {
+		return 0, err
+	}
+	if code != 0 {
+		return 0, newError(http.StatusBadGateway, "git status failed: %s", gitMessage(stderr))
+	}
+	n := 0
+	if len(out) > maxStatusBytes {
+		n = 1
+	}
+	for field := range strings.SplitSeq(string(out), "\x00") {
+		if path, ok := strings.CutPrefix(field, "!! "); ok && !slices.ContainsFunc(strings.Split(strings.TrimSuffix(path, "/"), "/"), func(part string) bool { return regenerable[part] }) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // removeWorktree removes the worktree at path and keeps its branch. Without
-// force git refuses one with changed or untracked files.
+// force git refuses one with changed or untracked files, and this refuses
+// one with ignored files to keep.
 func removeWorktree(ctx context.Context, path string, force bool) error {
 	git, err := lookGit()
 	if err != nil {
@@ -452,6 +491,10 @@ func removeWorktree(ctx context.Context, path string, force bool) error {
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
+	} else if n, err := ignoredToKeep(ctx, git, path); err != nil {
+		return err
+	} else if n > 0 {
+		return newError(http.StatusConflict, "%d ignored %s would be lost", n, plural(n, "file or folder", "files or folders"))
 	}
 	if _, err := runGitWrite(ctx, strings.TrimSpace(string(common)), nil, append(args, path)...); err != nil {
 		return gitFailed("Could not remove the worktree", err)
@@ -709,7 +752,7 @@ func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) e
 	if !force {
 		if _, uncommitted, _ := worktreePending(ctx, path); uncommitted > 0 {
 			return &Error{Status: http.StatusConflict, Code: codeWorktreeUnsaved, Refs: []string{strconv.Itoa(uncommitted)},
-				Message: strconv.Itoa(uncommitted) + " changed " + plural(uncommitted, "file is", "files are") + " not committed and would be lost."}
+				Message: strconv.Itoa(uncommitted) + " " + plural(uncommitted, "file is", "files are") + " not committed and would be lost."}
 		}
 	}
 	if err := removeWorktree(ctx, path, force); err != nil {

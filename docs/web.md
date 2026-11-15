@@ -548,7 +548,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - Settling, archiving or deleting a Thread removes its worktree with
     `git worktree remove`; the branch stays, so its commits do too, and the
     Thread still shows it. A worktree with changed or untracked files is
-    kept, and so is one another active Thread runs in. Using the Thread
+    kept, and so is one another active Thread runs in. So is one holding
+    git-ignored files or folders outside the ones an install, a build or a
+    test run makes again (any path with a part named `node_modules`, `dist`,
+    `build`, `bin`, `target`, `.venv`, `venv`, `__pycache__`, `.cache`,
+    `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.gradle`,
+    `.next`, `.turbo`, `coverage`, `test-results`, `playwright-report` or
+    `.DS_Store`): git would delete an ignored `.env` or `out/` with the
+    worktree without asking. Ignored content inside the named folders is
+    deleted with the worktree. A kept worktree is listed in Settings with
+    those files counted as not committed. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
   - A Thread whose branch has landed on the default branch settles itself

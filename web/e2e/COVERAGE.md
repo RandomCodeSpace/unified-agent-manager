@@ -242,6 +242,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-52 | Shell rules for agent glab calls: `glab api` and `search` are refused with a replacement, lists get `-P 10`, and… | glab_hooks_test.go | planned (needs a fake glab) |
 | WSP-53 | Before `git push`, committed CI changes get `glab ci lint` | none | planned (needs a fake glab) |
 | WSP-54 | `glab mr create` without a description gets one from the Utility model through `--description-file` | none | planned (needs a fake glab) |
+| WSP-55 | Settling keeps a worktree holding git-ignored files outside regenerable folders; Settings counts them as not committed and Remove asks first | worktree_cleanup_test.go | spec: workspace-worktrees.spec.ts |
 | SET-01 | The sidebar gear opens Settings over the main pane with `#settings` in the URL; × or Esc closes it and the Thread… | settings.test.tsx | spec: settings-view.spec.ts |
 | SET-02 | The rail lists the pages by group; Find a setting filters pages by words and Enter opens the first; a page mounts on… | settings.test.tsx, settings-groups.test.tsx | planned |
 | SET-03 | At phone width the rail is a list showing each page's current values; opening a page moves focus to its back button… | settings.test.tsx | planned |
