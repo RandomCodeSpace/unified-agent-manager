@@ -79,8 +79,9 @@ func TestChangesThatMustBeSavedFailOnAStoreRefusingWrites(t *testing.T) {
 	wantUnchanged(t, st, frozen)
 }
 
-// Prompts, closing and settling go on when the store refuses writes; the
-// failed writes are logged and retried with the next change.
+// Closing and settling go on when the store refuses writes; the failed writes
+// are logged and retried with the next change. A prompt is not sent: its
+// request could not be reserved, so a retry after a restart might send it again.
 func TestTasksKeepWorkingOnAStoreRefusingWrites(t *testing.T) {
 	var logs lockedBuffer
 	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -89,22 +90,19 @@ func TestTasksKeepWorkingOnAStoreRefusingWrites(t *testing.T) {
 	sum, conv := createSession(t, m, prov)
 	frozen := freezeStore(t, st)
 
-	rid := mustUUID(t)
-	mustSubmit(t, m, sum.ID, "work", rid, ModeSend, SubmissionAccepted)
-	conv.EmitTurn(agentapi.TurnCompleted, "")
+	sub, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t)})
+	wantUnavailable(t, sub, err)
 	if closed, err := m.Close(sum.ID); err != nil || closed.State != StateClosed || conv.Closes() != 1 {
 		t.Fatalf("close = %+v, %v", closed, err)
 	}
 	if settled, err := m.Settle(sum.ID); err != nil || settled.Stage != StageSettled {
 		t.Fatalf("settle = %+v, %v", settled, err)
 	}
-	// The request ID is still known to this run: a retry is not sent again.
-	mustSubmit(t, m, sum.ID, "work", rid, ModeSend, SubmissionAccepted)
-	if sends := conv.Sends(); len(sends) != 1 {
+	if sends := conv.Sends(); len(sends) != 0 {
 		t.Fatalf("sends = %v", sends)
 	}
 	waitUntil(t, "the background write to fail", func() bool { return strings.Contains(logs.String(), "persist web sessions failed") })
-	for _, want := range []string{"persist web submission failed", "persist closed web session failed", "persist web task stage failed"} {
+	for _, want := range []string{"persist closed web session failed", "persist web task stage failed"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("log lacks %q:\n%s", want, logs.String())
 		}

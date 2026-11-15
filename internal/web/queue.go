@@ -48,7 +48,7 @@ func loadedQueue(saved json.RawMessage) []QueuedPrompt {
 }
 
 // enqueueLocked adds a prompt to the queue. Nothing reaches the provider
-// before the running turn completes.
+// before the running turn completes. saveQueued then makes it durable.
 func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, reqID string) (Submission, error) {
 	if len(s.queue) >= maxQueue {
 		return Submission{}, newError(http.StatusConflict, "the queue is full (%d prompts)", maxQueue)
@@ -58,10 +58,34 @@ func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, 
 	s.queue = append(s.queue, q)
 	s.queueChanged = true
 	m.changedLocked(s, before)
+	return Submission{RequestID: reqID, Status: SubmissionQueued, Time: q.QueuedAt}, nil
+}
+
+// saveQueued saves the queue with reqID in it before the prompt is reported
+// queued: the browser drops its draft on that answer. When the save fails the
+// prompt leaves the queue again, so the browser keeps it and a retry with the
+// same request ID queues it once. The caller holds s.op, so no drain has
+// taken it meanwhile.
+func (m *Manager) saveQueued(s *webSession, reqID string) error {
+	err := m.flush()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		if i := slices.IndexFunc(s.queue, func(q QueuedPrompt) bool { return q.RequestID == reqID }); i >= 0 {
+			before := m.summaryLocked(s)
+			s.queue = slices.Delete(s.queue, i, i+1)
+			if len(s.queue) == 0 {
+				s.queuePaused = false
+			}
+			s.queueChanged = true
+			m.changedLocked(s, before)
+		}
+		return newError(http.StatusServiceUnavailable, "the prompt was not queued: uam could not save it: %s", shortError(err))
+	}
 	if !busy(s.state()) {
 		m.kickDrainLocked(s)
 	}
-	return Submission{RequestID: reqID, Status: SubmissionQueued, Time: q.QueuedAt}, nil
+	return nil
 }
 
 // pauseQueueLocked keeps a non-empty queue from draining until the user

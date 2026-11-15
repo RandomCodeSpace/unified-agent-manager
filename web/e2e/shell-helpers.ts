@@ -9,9 +9,10 @@ import { binary, expect, MOCK_MODEL, startService, stopService, type Project } f
 /**
  * A service of the test's own, for cases that restart it: the worker's service
  * is shared by every test of the worker. It uses the worker's aimock, so the
- * test's `model` scripts answer it; `dir` is registered as its Project.
+ * test's `model` scripts answer it; `dir` is registered as its Project. `root`
+ * holds its HOME, config (sessions.json), session and cache directories.
  */
-export type OwnService = { url: string; context: BrowserContext; page: Page; project: Project; restart: () => Promise<void>; stop: () => Promise<void> };
+export type OwnService = { url: string; root: string; context: BrowserContext; page: Page; project: Project; restart: () => Promise<void>; stop: () => Promise<void> };
 
 export async function ownService(browser: Browser, mockURL: string, dir: string): Promise<OwnService> {
   const bin = binary();
@@ -45,7 +46,7 @@ export async function ownService(browser: Browser, mockURL: string, dir: string)
       await stopService(proc!);
       proc = (await startService(bin, root, new URL(url).host)).proc;
     };
-    return { url, context, page, project, restart, stop };
+    return { url, root, context, page, project, restart, stop };
   } catch (err) {
     await stop();
     throw err;

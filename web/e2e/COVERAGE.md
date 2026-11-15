@@ -106,6 +106,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-46 | A settled Thread's composer is one row with Reopen; Reopen focuses the box | composer.test.tsx | planned |
 | CMP-47 | Phone on-screen keyboard does not hide the prompt | none | not feasible: iOS WebKit only |
 | CMP-48 | A failed command catalogue load holds slash input and offers "Retry commands" | none | planned |
+| CMP-49 | A message queued while the service cannot save stays in the box with the error, is not queued, and queues once on retry after saving works | prompt_reserve_test.go | spec: composer-send.spec.ts |
 | TRN-01 | While a reply streams in and the reader is at the bottom, the conversation stays pinned to the newest text,… | none | spec: transcript.spec.ts |
 | TRN-02 | Scrolling up while text arrives leaves the view where the reader put it | none | spec: transcript-scroll.spec.ts |
 | TRN-03 | Replies render as Markdown while streaming (headings, lists, emphasis, blockquote, inline code) | markdown.test.mjs | spec: transcript.spec.ts, transcript-markdown.spec.ts |

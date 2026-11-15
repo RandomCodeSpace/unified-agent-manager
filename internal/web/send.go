@@ -144,10 +144,17 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	// Behind queued prompts that are about to be sent, a queued prompt waits
 	// its turn even when no turn is running.
 	case willQueue:
-		defer m.mu.Unlock()
 		m.count("prompt_queued")
 		m.countLargeText(in.text, uploads)
-		return m.enqueueLocked(s, in, uploads, reqID)
+		sub, err := m.enqueueLocked(s, in, uploads, reqID)
+		m.mu.Unlock()
+		if err == nil {
+			err = m.saveQueued(s, reqID)
+		}
+		if err != nil {
+			return Submission{}, err
+		}
+		return sub, nil
 	case mode == ModeSteer && turnRunning(state):
 		m.mu.Unlock()
 		m.count("prompt_steered")
@@ -285,14 +292,18 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
-	prompt := agentapi.Prompt{Text: in.text, Files: files, Attachments: blobs}
-	if in.command == "" {
-		err = conv.Send(ctx, prompt)
-	} else {
-		err = conv.RunCommand(ctx, in.command, prompt)
+	reserveErr := m.reservePrompt(s, reqID)
+	err = reserveErr
+	if err == nil {
+		ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
+		prompt := agentapi.Prompt{Text: in.text, Files: files, Attachments: blobs}
+		if in.command == "" {
+			err = conv.Send(ctx, prompt)
+		} else {
+			err = conv.RunCommand(ctx, in.command, prompt)
+		}
+		cancel()
 	}
-	cancel()
 	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		m.markUsed(s, uploads)
 	}
@@ -330,9 +341,13 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	m.mu.Unlock()
 	log.Warn("web prompt submission failed", "session", s.id, "error", err)
 	switch {
+	case reserveErr != nil:
+		return Submission{}, errNotReserved(reserveErr)
 	case errors.Is(err, agentapi.ErrBusy):
+		m.unreserve(s, reqID)
 		return Submission{}, newError(http.StatusConflict, "the provider is still running a turn")
 	case errors.Is(err, agentapi.ErrUnsupported):
+		m.unreserve(s, reqID)
 		return Submission{}, newError(http.StatusConflict, "this provider has no commands")
 	case errors.Is(err, agentapi.ErrSubmissionUncertain):
 		// Never resubmit: the provider may already be working on it.
@@ -364,6 +379,9 @@ func (m *Manager) steer(s *webSession, conv agentapi.Conversation, in turnInput,
 	if err != nil {
 		return Submission{}, err
 	}
+	if err := m.reservePrompt(s, reqID); err != nil {
+		return Submission{}, errNotReserved(err)
+	}
 	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
 	err = conv.Steer(ctx, agentapi.Prompt{Text: in.text, Files: files, Attachments: blobs})
 	cancel()
@@ -374,6 +392,7 @@ func (m *Manager) steer(s *webSession, conv agentapi.Conversation, in turnInput,
 	case err == nil:
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	case errors.Is(err, agentapi.ErrUnsupported):
+		m.unreserve(s, reqID)
 		return Submission{}, newError(http.StatusConflict, "this provider cannot steer a running turn")
 	}
 	log.Warn("web steer submission failed", "session", s.id, "error", err)
@@ -437,6 +456,7 @@ func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string, pau
 	// Another Thread's message is not the owner's: the composer never shows
 	// its outcome.
 	if !isPeerRequest(reqID) {
+		s.ledgerLocked(reqID, &sub)
 		last := sub
 		s.last = &last
 		m.broadcastLocked("submission", s.id, func(seq uint64) any {
@@ -454,4 +474,42 @@ func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string, pau
 		log.Warn("persist web submission failed", "session", s.id, "error", err)
 	}
 	return sub
+}
+
+// reservePrompt saves reqID as uncertain before the provider is contacted, as
+// executeCommand does for commands: a retry after a crash is answered from the
+// record instead of being sent again. An error means nothing is reserved and
+// nothing may be sent. A peer message is not reserved: it is never retried by
+// its request ID, and a restart ends it as interrupted (loadPairsLocked).
+func (m *Manager) reservePrompt(s *webSession, reqID string) error {
+	if isPeerRequest(reqID) {
+		return nil
+	}
+	reserved := Submission{RequestID: reqID, Status: SubmissionUncertain, Error: "prompt outcome has not been confirmed; it will not be repeated", Time: m.now()}
+	m.mu.Lock()
+	s.ledgerLocked(reqID, &reserved)
+	// Only saved: viewers hear the outcome, not the reservation.
+	m.dirty[s.id] = struct{}{}
+	m.mu.Unlock()
+	err := m.flush()
+	if err != nil {
+		m.unreserve(s, reqID)
+	}
+	return err
+}
+
+// unreserve drops reqID's reservation when the provider surely did not get the
+// prompt, so a retry with the same request ID may send it.
+func (m *Manager) unreserve(s *webSession, reqID string) {
+	if isPeerRequest(reqID) {
+		return
+	}
+	m.mu.Lock()
+	s.ledgerLocked(reqID, nil)
+	m.dirty[s.id] = struct{}{}
+	m.mu.Unlock()
+}
+
+func errNotReserved(err error) error {
+	return newError(http.StatusServiceUnavailable, "the prompt was not sent: uam could not save its request: %s", shortError(err))
 }
