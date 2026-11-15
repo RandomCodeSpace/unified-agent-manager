@@ -739,7 +739,8 @@ export default function App() {
               {state.saveError && (
                 <output className="flex items-center gap-2 bg-error-wash px-4 py-1 text-caption text-error animate-fade-in">
                   <Dot tone="error" />
-                  <span className="flex-1">Threads could not be saved: {state.saveError}. UAM tries again with the next change.</span>
+                  {/* shortcut: matches the store's ErrSetAside text, whose message says what to do instead; a typed field if more kinds need their own advice */}
+                  <span className="flex-1">Threads could not be saved: {state.saveError}.{state.saveError.includes('was set aside') ? '' : ' UAM tries again with the next change.'}</span>
                 </output>
               )}
               {notice && (

@@ -85,26 +85,57 @@ func TestLoadCorruptJSONQuarantineSuccessStartsFreshWithNonNilMap(t *testing.T) 
 	}
 }
 
-// A file set aside on the store's first read leaves nothing in memory to lose,
-// so writes go on; the log names the backup and never quotes the file.
-func TestFirstLoadSetAsideLogsBackupAndKeepsWriting(t *testing.T) {
+// A file set aside on the store's first read must not quietly start a new
+// state: writes fail with ErrSetAside naming the backup, the log names it and
+// never quotes the file, and a new Store on the path (a restart) starts empty
+// and writable.
+func TestFirstLoadSetAsideRefusesWritesUntilRestart(t *testing.T) {
 	var logs bytes.Buffer
 	previous := log.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { log.SetLogger(previous) })
 	path := filepath.Join(t.TempDir(), "sessions.json")
-	if err := os.WriteFile(path, []byte(`{"default_agent": FILE-CONTENT}`), 0o600); err != nil {
+	corrupt := []byte(`{"default_agent": FILE-CONTENT}`)
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Update(func(cfg *Config) error { cfg.DefaultAgent = "copilot"; return nil }); err != nil {
-		t.Fatalf("update after a first-read set-aside: %v", err)
+	if s.SetAside() != nil {
+		t.Fatal("set aside before any load")
+	}
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := s.Update(func(cfg *Config) error { cfg.DefaultAgent = "copilot"; return nil }); !errors.Is(err, ErrSetAside) {
+		t.Fatalf("update after a first-read set-aside = %v, want %v", err, ErrSetAside)
+	}
+	if err := s.Save(DefaultConfig()); !errors.Is(err, ErrSetAside) {
+		t.Fatalf("save after a first-read set-aside = %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a new state was written after the set-aside: %v", err)
 	}
 	backups, _ := filepath.Glob(path + ".bak.*")
 	if len(backups) != 1 || !strings.Contains(logs.String(), backups[0]) || strings.Contains(logs.String(), "FILE-CONTENT") {
 		t.Fatalf("backups=%v logs=%s", backups, logs.String())
+	}
+	if got, _ := os.ReadFile(backups[0]); !bytes.Equal(got, corrupt) {
+		t.Fatalf("backup = %q", got)
+	}
+	if msg := s.SetAside(); !errors.Is(msg, ErrSetAside) || !strings.Contains(msg.Error(), backups[0]) || !strings.Contains(msg.Error(), path) {
+		t.Fatalf("SetAside = %v", msg)
+	}
+	restarted, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Update(func(cfg *Config) error { cfg.DefaultAgent = "copilot"; return nil }); err != nil {
+		t.Fatalf("update after a restart: %v", err)
+	}
+	if cfg, err := restarted.Load(); err != nil || cfg.DefaultAgent != "copilot" || restarted.SetAside() != nil {
+		t.Fatalf("restarted load = %+v, %v", cfg.DefaultAgent, err)
 	}
 }
 

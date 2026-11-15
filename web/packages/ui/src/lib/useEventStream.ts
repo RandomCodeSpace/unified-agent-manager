@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useRef, useState, type Dispatch, type RefObj
 import { UPDATE_EVENTS, isStatus, type ApiClient, type Aside, type SessionDetail, type SnapshotData, type UpdateData } from '../api';
 import { loggedIn, type Action, type Auth } from '../state';
 import { keepAside, rereadAsides } from '../components/AskAside';
-import { staleDraftKeys } from './drafts';
+import { staleDraftKeys, sweepsStale } from './drafts';
 import { openEventStream } from './eventStream';
 import { forgetArchive, retainArchive } from './historyArchive';
 import { handleNotice, streamOpened, type Notice } from './notify';
@@ -155,6 +155,7 @@ export function useEventStream({ api, auth, selectedId, dispatch, forwardEvent, 
       if (data.session?.id === selected) markViewed(selected, data.session.updated_at);
       // This stream is new to the service: it learns again which Task this tab shows.
       streamOpened();
+      if (!sweepsStale(data)) return;
       // Composer drafts of Tasks that no longer exist go with them.
       const taskIds = data.sessions.map((s) => s.id);
       const projectIds = data.projects.map((p) => p.id);

@@ -237,8 +237,12 @@ func (m *Manager) flush() (err error) {
 
 // noteSave keeps the latest flush's failure, or clears it, and tells the
 // browsers when that changes: a failed save is retried with the next change,
-// and until one succeeds the owner's latest changes are not on disk.
+// and until one succeeds the owner's latest changes are not on disk. A state
+// file set aside stays reported until a restart, even when nothing was written.
 func (m *Manager) noteSave(err error) {
+	if err == nil {
+		err = m.store.SetAside()
+	}
 	msg := ""
 	if err != nil {
 		msg = err.Error()
