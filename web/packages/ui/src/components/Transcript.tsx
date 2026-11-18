@@ -27,7 +27,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, Summary, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
-import { LiveSubagents, SubagentChip, SubagentTag, useLiveSubagentIds, useScope, useSubagentReplies } from './Subagents';
+import { LiveSubagents, SubagentChip, SubagentTag, useFusionRoute, useLiveSubagentIds, useScope, useSubagentReplies } from './Subagents';
 import { todoBlocks } from './StatusLine';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
@@ -142,6 +142,8 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
   const inline = !agentId && subagents.length > 0;
+  // Background commands or Fusion's phases at work bring the live rows up without a subagent.
+  const liveWork = useScope((d) => d.commands.length > 0 || !!d.fusion) ?? false;
   // Which reply spawned which subagent comes from the identity index (the Task's `SubagentScope`), never from the window.
   const scoped = useSubagentReplies();
   const unscoped = useMemo(() => (scoped || !inline ? undefined : replyIndex(identityItems, subagents)), [scoped, inline, identityItems, subagents]);
@@ -252,7 +254,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working timing={turnTimings.at(-1)?.state === 'working' ? turnTimings.at(-1) : undefined} />}
-        {inline && liveCard && <LiveSubagents />}
+        {!agentId && liveCard && (inline || liveWork) && <LiveSubagents />}
         <WorkingTail working={working} turnId={userItemId ?? 'start'} current={current} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
@@ -297,7 +299,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
         notes.push(contained(item, <Turn item={item} sessionId={ctx.sessionId} streaming={false} note />));
         continue;
       }
-      push(contained(item, <Turn item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} ends={item.id === final} className={ctx.arrival(item.id)} />));
+      push(contained(item, <Turn item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId && !!item.partial} endedAt={ctx.thoughtEnd.get(item.id)} stamps={ctx.receipts?.get(item.id)} ends={item.id === final} className={ctx.arrival(item.id)} />));
       continue;
     }
     const node = special(item);
@@ -398,9 +400,13 @@ function LiveClock({ timing }: Readonly<{ timing?: TurnTiming }>) {
   return elapsed ? <span className="font-medium text-ink">{elapsed}</span> : null;
 }
 
-/** A working turn's facts, on its status row and then its sign-off: "Working 8m", then the tokens and speed so far, which stay live. */
-function workingFacts(timing?: TurnTiming): ReactNode[] {
-  return [<span key="working" className="whitespace-nowrap"><span className="font-medium text-ink">Working</span> <LiveClock timing={timing} /></span>, timing?.output_tokens ? <TurnTokens timing={timing} /> : null];
+/** A working turn's facts, on its status row and then its sign-off: "Working 8m", Copilot Fusion's route, then the tokens and speed so far, which stay live. */
+function workingFacts(timing?: TurnTiming, route?: { text: string; hint?: string }): ReactNode[] {
+  return [
+    <span key="working" className="whitespace-nowrap"><span className="font-medium text-ink">Working</span> <LiveClock timing={timing} /></span>,
+    route ? <span className="whitespace-nowrap" title={route.hint}>{route.text}</span> : null,
+    timing?.output_tokens ? <TurnTokens timing={timing} /> : null,
+  ];
 }
 
 /**
@@ -465,8 +471,11 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
     setOpen(false);
   };
   // A failure says what broke beside its count; the whole line is its tooltip.
+  // Only the main agent's turn runs through Fusion.
+  const fusionRoute = useFusionRoute();
+  const route = agentId ? undefined : fusionRoute;
   const took = !working && !!(completedDuration(timing) || at);
-  const facts = [...(working ? workingFacts(timing) : [took && <TurnTook timing={timing} at={at} entries={entries} />]), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
+  const facts = [...(working ? workingFacts(timing, route) : [took && <TurnTook timing={timing} at={at} entries={entries} />]), ...failures.map((p) => <span className="min-w-0 max-w-full truncate whitespace-nowrap text-error" title={p.reason}>{p.reason ? `${p.text}: ${p.reason}` : p.text}</span>)].filter(Boolean);
   const line = (
     <span ref={card} id={domId} data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className={SIGN}>
       {dotted(facts)}
@@ -1050,12 +1059,13 @@ const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries
  * duration an ended turn keeps its slot, blank, with no card.
  */
 function TurnStatus({ working = false, timing, empty = false }: Readonly<{ working?: boolean; timing?: TurnTiming; /** The turn ended without a reply, a thought or a call: say so after its duration. */ empty?: boolean }>) {
+  const route = useFusionRoute();
   const elapsed = working ? null : completedDuration(timing);
   if (!working && !elapsed) return <div className="min-h-7" title={durationTitle(null)} />;
   return (
     <div className="flex flex-col">
       <div className={HEAD} title={working ? undefined : durationTitle(elapsed)}>
-        {working ? dotted(workingFacts(timing)) : <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
+        {working ? dotted(workingFacts(timing, route)) : <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
       </div>
     </div>
   );

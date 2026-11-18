@@ -15,7 +15,7 @@ type Service = {
 const PROVIDER = 'copilot';
 const MOCK_MODEL_ID = `${MOCK_MODEL.name}/${MOCK_MODEL.modelId}`;
 
-const systemText = (req: ChatCompletionRequest) =>
+export const systemText = (req: ChatCompletionRequest) =>
   req.messages.filter((m) => m.role === 'system').map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n');
 
 /**

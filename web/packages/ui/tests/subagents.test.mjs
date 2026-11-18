@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, families, followUps, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, subagentName, totalTokens } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, followUps, indexGroups, inFilter, liveCommands, liveSet, mainCall, matches, mergeOutline, namedSubagent, parentMap, replyIndex, runLines, subagentName, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -71,6 +71,33 @@ test('the live set is the latest reply\'s subagents plus earlier running ones; e
   const kept = liveSet(replyIndex(index, after).list.at(-1), after, 'old');
   assert.deepEqual(kept.map((x) => [x.subagent.id, x.earlier]), [['new', false], ['done', false], ['old', true]]);
   assert.deepEqual(liveSet(replyIndex(index, after).list.at(-1), after, 'new').map((x) => x.subagent.id), ['new', 'done']);
+});
+
+test('the live rows hold every running background command and the ones the latest turn started; a running one keeps the latest reply\'s settled subagents up', () => {
+  const shell = (id, status, m) => ({ id, command: `cmd ${id}`, status, started_at: at(m) });
+  const tasks = { known: true, tasks: [shell('old-done', 'completed', 1), shell('old-server', 'running', 2), shell('idle', 'idle', 3), shell('new-done', 'failed', 11)] };
+  assert.deepEqual(liveCommands(tasks, at(10)).map((c) => c.id), ['old-server', 'idle', 'new-done']);
+  // Before any turn only the running ones; none while their status is unknown.
+  assert.deepEqual(liveCommands(tasks, undefined).map((c) => c.id), ['old-server', 'idle']);
+  assert.deepEqual(liveCommands({ ...tasks, known: false }, at(10)), []);
+  assert.deepEqual(liveCommands(undefined, at(10)), []);
+  const index = [user('u1', 0), call('c3', 1)];
+  const settled = [agent('new', 'c3')];
+  assert.deepEqual(liveSet(replyIndex(index, settled).list.at(-1), settled, undefined, undefined, true).map((x) => x.subagent.id), ['new']);
+});
+
+test('background commands join the reply whose span holds their start, Fusion turns the message they routed; one without a start, the last group', () => {
+  const index = [user('u1', 0), call('c1', 1), user('u2', 10)];
+  const groups = indexGroups(index, [], [agent('a', 'c1')], new Map(), {
+    commands: [{ id: 'early', command: 'make', status: 'completed', started_at: at(2) }, { id: 'late', command: 'npm test', status: 'running', started_at: at(12) }, { id: 'unknown', command: 'ls', status: 'completed' }],
+    // Fusion routes the prompt before Copilot records it.
+    fusions: [{ id: 'f', pattern: 'critique', started_at: at(9), phases: [] }],
+  });
+  assert.deepEqual(groups.map((g) => [g.key, g.subagents.map((s) => s.id), g.commands.map((c) => c.id), g.fusions.map((f) => f.id)]), [
+    ['u2', [], ['late'], ['f']],
+    ['u1', ['a'], ['early'], []],
+    ['', [], ['unknown'], []],
+  ]);
 });
 
 test('a subagent with several runs lists each: when, who started it, and how it ended', () => {

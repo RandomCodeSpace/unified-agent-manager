@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -137,6 +138,11 @@ func (c *conversation) retryLocked(agentID string, reason *string, at time.Time)
 
 func (c *conversation) emitActivityLocked() {
 	a := c.act.now
+	if c.fusion != nil {
+		f := *c.fusion
+		f.Models, f.Phases = slices.Clone(f.Models), slices.Clone(f.Phases)
+		a.Fusion = &f
+	}
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventActivity, Activity: &a})
 }
 

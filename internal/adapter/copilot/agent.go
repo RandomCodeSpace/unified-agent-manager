@@ -67,6 +67,9 @@ func (c *conversation) selectAgentKeepingModel(ctx context.Context, id string) e
 			return modelNotKept(id, errors.New("the model in use before the agent change is unknown"))
 		}
 		want = &modelSelection{model: *before.ModelID, effort: deref(before.ReasoningEffort), contextSize: "default"}
+		if tier := deref(before.FusionTier); *before.ModelID == fusionModel && tier != "" {
+			want.effort = fusionEffort + tier
+		}
 		if before.ContextTier != nil {
 			want.contextSize = cmp.Or(string(*before.ContextTier), "default")
 		}

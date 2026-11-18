@@ -274,7 +274,7 @@ describe('subagents', () => {
   // An open dimming layer: a dialog's backdrop, not a popover's anchored positioner.
   const BACKDROP = '[role="presentation"][data-open]:not([data-side])';
   // The strip's sheet: one box for the subagents.
-  const sheet = async () => within(await screen.findByRole('dialog', { name: 'Subagents' }));
+  const sheet = async () => within(await screen.findByRole('dialog', { name: 'Agents and commands' }));
   const live = () => within(screen.getByRole('region', { name: 'Subagents at work' }));
   const flashed = () => document.querySelector<HTMLElement>('.animate-flash');
   // A subagent opens in the Conversation pane: its transcript, under the header's bar.
@@ -301,7 +301,7 @@ describe('subagents', () => {
     // Its reader (in the list's place: no room beside the sheet here), the sheet still open, its error whole; the conversation stays.
     const peek = within(await screen.findByRole('region', { name: 'Run the accessibility linter' }));
     expect(peek.getByText('axe-core is not installed in this project.')).toBeTruthy();
-    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Agents and commands' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: /^Transcript of / })).toBeNull();
     await user.click(peek.getByRole('button', { name: 'Open as conversation' }));
     // The pane: its transcript in the Thread's place, the sheet gone, the bar red, the URL its own.
@@ -340,7 +340,7 @@ describe('subagents', () => {
     await user.keyboard('{ArrowUp}');
     expect(document.activeElement).toBe(rows[0]);
     await user.keyboard('{ArrowUp}');
-    expect(document.activeElement).toBe(index.getByRole('searchbox', { name: 'Search subagents' }));
+    expect(document.activeElement).toBe(index.getByRole('searchbox', { name: 'Search agents and commands' }));
     // Enter on a row: its reader beside the sheet, the row marked open, one dim (the sheet's).
     rows[1].focus();
     await user.keyboard('{Enter}');
@@ -351,12 +351,12 @@ describe('subagents', () => {
     expect(document.querySelectorAll(BACKDROP)).toHaveLength(1);
     // A press inside the reader is not a press away from the sheet.
     await user.click(within(peek).getByRole('heading', { name }));
-    expect(screen.getByRole('dialog', { name: 'Subagents', hidden: true })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Agents and commands', hidden: true })).toBeTruthy();
     expect(screen.getByRole('dialog', { name })).toBeTruthy();
     // Esc closes the reader alone and focus goes back to the row; Esc again closes the sheet.
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name })).toBeNull());
-    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Agents and commands' })).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(rows[1]));
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -372,7 +372,7 @@ describe('subagents', () => {
     const peek = await index.findByRole('region', { name });
     // In the sheet, focus on its heading; the list and its search are out of the way; no second dialog or dim.
     await waitFor(() => expect(document.activeElement).toBe(within(peek).getByRole('heading', { name })));
-    expect(index.queryByRole('searchbox', { name: 'Search subagents' })).toBeNull();
+    expect(index.queryByRole('searchbox', { name: 'Search agents and commands' })).toBeNull();
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(document.querySelectorAll(BACKDROP)).toHaveLength(1);
     await user.click(within(peek).getByRole('button', { name: 'Back to the list' }));
@@ -384,7 +384,7 @@ describe('subagents', () => {
     await user.keyboard('{Escape}');
     expect(index.queryByRole('region', { name })).toBeNull();
     expect(document.activeElement).toBe(rows[1]);
-    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Agents and commands' })).toBeTruthy();
   });
   test('a subagent waiting on the owner says what it needs', async () => {
     const state = mockData.seed();
@@ -414,7 +414,7 @@ describe('subagents', () => {
     // Without a label the row keeps the agent's own name alone.
     expect(index.getByRole('button', { name: /^Check contrast of the theme tokens, / })).toBeTruthy();
     expect(index.getByText('Names from each prompt, Utility model')).toBeTruthy();
-    const search = index.getByRole('searchbox', { name: 'Search subagents' });
+    const search = index.getByRole('searchbox', { name: 'Search agents and commands' });
     await user.type(search, 'accessibility lint');
     expect(index.getAllByRole('button', { name: /\), |, (running|completed|failed|stopped|idle)/ })).toEqual([row]);
     vi.restoreAllMocks();
@@ -426,16 +426,16 @@ describe('subagents', () => {
     vi.spyOn(mockData, 'seed').mockReturnValue(state);
     const { user } = await openTask('t8');
     const index = await openSubagentIndex(user);
-    expect(index.getByRole('searchbox', { name: 'Search subagents' }).getAttribute('placeholder')).toBe('Search 1 subagent');
+    expect(index.getByRole('searchbox', { name: 'Search agents and commands' }).getAttribute('placeholder')).toBe('Search 1 subagent');
     vi.restoreAllMocks();
   });
   test('a row opens the subagent in the pane; the strip and the reply\'s chip open the same sheet, on the list and on the reply\'s list', async () => {
     const { user } = await openTask('t8');
     const opened = async () => {
-      const dialog = await screen.findByRole('dialog', { name: 'Subagents' });
+      const dialog = await screen.findByRole('dialog', { name: 'Agents and commands' });
       // The strip's own sheet: its subagents button controls it.
       expect(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/, hidden: true }).getAttribute('aria-controls')).toBe(dialog.id);
-      expect(within(dialog).getByRole('heading', { name: 'Subagents' })).toBeTruthy();
+      expect(within(dialog).getByRole('heading', { name: 'Agents and commands' })).toBeTruthy();
       return dialog;
     };
     const closed = async () => {
@@ -455,7 +455,7 @@ describe('subagents', () => {
     // The strip: the sheet on the whole list.
     await user.click(screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ }));
     const fromStrip = await opened();
-    expect(within(fromStrip).getByRole('searchbox', { name: 'Search subagents' }).getAttribute('placeholder')).toBe('Search 5 subagents');
+    expect(within(fromStrip).getByRole('searchbox', { name: 'Search agents and commands' }).getAttribute('placeholder')).toBe('Search 5 subagents');
     expect(within(fromStrip).queryByRole('button', { name: /^From / })).toBeNull();
     await closed();
     // The chip: the same sheet on the list filtered to its reply, until "From … ×" lifts it.
@@ -491,10 +491,10 @@ describe('subagents', () => {
     expect(within(subagents).getByText('3/5')).toBeTruthy();
     // The subagents open the sheet: no tabs, the list under its head; ← and → do nothing there.
     await user.click(subagents);
-    const reader = await screen.findByRole('dialog', { name: 'Subagents' });
+    const reader = await screen.findByRole('dialog', { name: 'Agents and commands' });
     expect(within(reader).queryByRole('tab')).toBeNull();
     expect(within(reader).queryByText('Todo')).toBeNull();
-    const search = await within(reader).findByRole('searchbox', { name: 'Search subagents' });
+    const search = await within(reader).findByRole('searchbox', { name: 'Search agents and commands' });
     within(reader).getByRole('button', { name: 'Close' }).focus();
     await user.keyboard('{ArrowRight}');
     await user.keyboard('{ArrowLeft}');
@@ -521,7 +521,7 @@ describe('subagents', () => {
     const subagents = screen.getByRole('button', { name: /^Subagents: .*Show the subagents$/ });
     expect(line.contains(subagents)).toBe(false);
     await user.click(subagents);
-    await screen.findByRole('dialog', { name: 'Subagents' });
+    await screen.findByRole('dialog', { name: 'Agents and commands' });
     expect(subagents.getAttribute('aria-expanded')).toBe('true');
     expect(line.getAttribute('aria-expanded')).toBe('false');
   });
@@ -718,7 +718,7 @@ describe('subagents', () => {
     // The sheet stays: the original row flashes and takes the focus.
     expect(flashed()).toBe(original.closest('[data-subagent-row]'));
     expect(document.activeElement).toBe(original);
-    expect(screen.getByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Agents and commands' })).toBeTruthy();
   });
 
   test('a running subagent\'s row says what it is doing now, not what it was asked', async () => {
@@ -732,7 +732,7 @@ describe('subagents', () => {
     const { user } = await openTask('t22');
     await user.click(log().getByRole('button', { name: /^22 subagents · [\d.]+M tokens · 20 done · 2 failed/ }));
     const list = await sheet();
-    await user.type(list.getByRole('searchbox', { name: 'Search subagents' }), 'TOOL9');
+    await user.type(list.getByRole('searchbox', { name: 'Search agents and commands' }), 'TOOL9');
     const idle = await list.findByRole('button', { name: /^Audit package cmd\/tool9, idle/ });
     expect(list.getAllByRole('button', { name: /^Audit package / })).toHaveLength(1);
     await user.click(idle);
@@ -779,7 +779,7 @@ describe('subagents', () => {
     const index = await openSubagentIndex(user);
     // Done ones named cmd/tool…: none in the newest message, so the one before it leads, uncapped.
     await user.click(index.getByRole('button', { name: 'Done 33' }));
-    await user.type(index.getByRole('searchbox', { name: 'Search subagents' }), 'cmd/tool');
+    await user.type(index.getByRole('searchbox', { name: 'Search agents and commands' }), 'cmd/tool');
     expect(index.queryByRole('region', { name: /^“Retry the failed ones/ })).toBeNull();
     const first = within(index.getByRole('region', { name: /^“Yes, run the rest/ }));
     expect(first.getAllByRole('button', { name: /^Audit package cmd\/tool/ }).length).toBeGreaterThan(4);

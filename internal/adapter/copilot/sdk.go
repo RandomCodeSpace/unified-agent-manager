@@ -16,7 +16,8 @@ type sdkClient interface {
 	Stop() error
 	ForceStop()
 	Ping(ctx context.Context) error
-	ListModels(ctx context.Context) ([]rpc.Model, error)
+	// ListModels reads the catalog: the models and, beside them, Fusion's levels.
+	ListModels(ctx context.Context) (*rpc.ModelList, error)
 	// Quota reads the signed-in account's quota snapshots by type.
 	Quota(ctx context.Context) (map[string]rpc.AccountQuotaSnapshot, error)
 	CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error)
@@ -129,12 +130,8 @@ func (a sdkClientAdapter) Ping(ctx context.Context) error {
 // ListModels sends the same models.list request as Client.ListModels, which
 // caches its answer until the CLI stops; an entitlement change must show up
 // while the service runs.
-func (a sdkClientAdapter) ListModels(ctx context.Context) ([]rpc.Model, error) {
-	res, err := a.c.RPC.Models.List(ctx, &rpc.ModelsListRequest{})
-	if err != nil {
-		return nil, err
-	}
-	return res.Models, nil
+func (a sdkClientAdapter) ListModels(ctx context.Context) (*rpc.ModelList, error) {
+	return a.c.RPC.Models.List(ctx, &rpc.ModelsListRequest{})
 }
 
 // Quota sends the experimental account.getQuota request.

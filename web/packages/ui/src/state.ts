@@ -413,7 +413,7 @@ export function reducer(state: State, action: Action): State {
 function appendDelta(items: Item[], itemId: string, kind: ItemKind, text: string, agentId?: string): Item[] {
   const out = items.slice();
   const i = out.findIndex((x) => x.id === itemId);
-  if (i < 0) out.push({ id: itemId, kind, text, time: new Date().toISOString(), ...(agentId ? { agent_id: agentId } : {}) });
+  if (i < 0) out.push({ id: itemId, kind, text, partial: true, time: new Date().toISOString(), ...(agentId ? { agent_id: agentId } : {}) });
   else out[i] = { ...out[i], text: (out[i].text ?? '') + text };
   return out;
 }

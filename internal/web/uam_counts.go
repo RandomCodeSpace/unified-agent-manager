@@ -114,7 +114,7 @@ func (m *Manager) countTurn(t agentapi.Turn) {
 
 // autoFallbackTitle is the title of the Copilot adapter's question before a
 // rate-limited request switches to Auto.
-const autoFallbackTitle = "Auto model fallback"
+const autoFallbackTitle = "Fusion fallback"
 
 // countAsked counts a new interaction: the Auto fallback question, and an
 // assisted review's outcome.

@@ -313,7 +313,7 @@ func TestWebModelPrices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		`{"id":"auto","name":"Auto","efforts":[],"context_sizes":[],"discount_percent":10}`,
+		`{"id":"auto","name":"Fusion","efforts":[],"context_sizes":[],"discount_percent":10}`,
 		`{"id":"claude-sonnet-5","name":"Claude Sonnet 5","efforts":[],"context_sizes":[{"id":"default","tokens":200000},{"id":"long_context","tokens":936000}],` +
 			`"prices":{"batch_size":1000000,"input":200,"output":1000,"cache_read":20,"cache_write":250,"max_prompt_tokens":200000,` +
 			`"long_context":{"input":200,"output":1000,"cache_read":20,"cache_write":250,"max_prompt_tokens":936000}}}`,

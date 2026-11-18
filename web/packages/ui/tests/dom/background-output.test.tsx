@@ -89,3 +89,13 @@ test('Jump to latest skips the waiting output, says so, and shows the newest lin
   expect(panel.queryByRole('button', { name: 'Load more' })).toBeNull();
   expect(panel.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
 });
+
+test('a running background command is a row at the conversation\'s foot that opens its output', async () => {
+  const { user } = await openTask('t1');
+  const row = await screen.findByRole('button', { name: 'Background command Repeat the redraw tests, running: show its output' });
+  expect(row.textContent).toContain('go test ./internal/vterm/... -run Redraw -count=200');
+  expect(row.textContent).toContain('background');
+  await user.click(row);
+  await waitFor(() => expect(lines()).toHaveLength(40));
+  expect(screen.getByRole('region', { name: 'Output of go test ./internal/vterm/... -run Redraw -count=200' })).toBeTruthy();
+});

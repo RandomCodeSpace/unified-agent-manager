@@ -750,7 +750,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
-  unavailable for `auto` or a model without them. While a turn runs, changes
+  unavailable for a model without them. `auto` is Copilot Fusion and is
+  shown as Fusion: its levels (Standard, High and Max, as the account's plan
+  and policy allow) take the place of efforts and are stored as
+  `fusion-standard`, `fusion-high` and `fusion-max`, so another model's
+  effort is never carried into Fusion. Default is Copilot's default level.
+  High and Max can run several models on a turn and use more AI credits.
+  While a turn runs, changes
   are saved with your draft and apply when its queued turn starts.
   Switching models keeps a supported effort and otherwise resets it to
   Default.

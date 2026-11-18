@@ -46,6 +46,7 @@ type fakeClient struct {
 	pings      int
 	resumeErr  error
 	models     []rpc.Model
+	fusion     *rpc.AutoTierMetadata // Fusion's levels, listed beside the models
 	modelsErr  error
 	quota      map[string]rpc.AccountQuotaSnapshot
 	quotaErr   error
@@ -153,10 +154,13 @@ func (f *fakeClient) CheckInUse(_ context.Context, ids []string) ([]string, erro
 	return append([]string(nil), f.inUse...), f.inUseErr
 }
 
-func (f *fakeClient) ListModels(context.Context) ([]rpc.Model, error) {
+func (f *fakeClient) ListModels(context.Context) (*rpc.ModelList, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.models, f.modelsErr
+	if f.modelsErr != nil {
+		return nil, f.modelsErr
+	}
+	return &rpc.ModelList{Models: f.models, Auto: f.fusion}, nil
 }
 
 func (f *fakeClient) Quota(context.Context) (map[string]rpc.AccountQuotaSnapshot, error) {
@@ -2464,7 +2468,7 @@ func TestWebModelsKeepOnlySelectableEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5"}}
+	want := []agentapi.Model{{ID: "auto", Name: "Fusion"}, {ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5"}}
 	if fmt.Sprint(models) != fmt.Sprint(want) {
 		t.Fatalf("models = %+v, want %+v", models, want)
 	}

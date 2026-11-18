@@ -35,7 +35,7 @@ export function byModelName(a: Pick<Model, 'id' | 'name'>, b: Pick<Model, 'id' |
   return NAMES.compare(a.name || a.id, b.name || b.id) || NAMES.compare(a.id, b.id);
 }
 
-const EFFORTS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+const EFFORTS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', 'fusion-standard': 'Standard', 'fusion-high': 'High', 'fusion-max': 'Max' };
 
 /** A reasoning effort as a menu shows it; the stored value stays the provider's own ("xhigh" reads "Extra high"). */
 export function effortLabel(effort: string): string {

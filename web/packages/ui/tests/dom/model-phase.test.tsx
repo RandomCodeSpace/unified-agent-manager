@@ -48,6 +48,9 @@ describe('the live line at the strip', () => {
     // The permission card shows the command: the line names the state and the tool only.
     const agents = task({ kind: 'model', since: ago(5), calls: 3, subagents: 3 }, { subagents: [{ id: 'a', status: 'running' }, { id: 'b', status: 'running' }, { id: 'c', status: 'running' }, { id: 'd', status: 'completed' }] as SessionDetail['subagents'] });
     expect(liveLine(agents, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents' });
+    // A background command running beside them is said too; an ended one is not.
+    const shells: SessionDetail['background_tasks'] = { known: true, tasks: [{ id: 'x', command: 'sleep 60', status: 'running' }, { id: 'y', command: 'true', status: 'completed' }] };
+    expect(liveLine({ ...agents, background_tasks: shells }, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents · 1 command running' });
     expect(liveLine(task({ kind: 'model', by: 'compaction', since: ago(18), calls: 1 }), false)).toEqual({ mark: 'dot', phase: 'Compacting the conversation', since: ago(18) });
     // Nothing holds: no live line, so the slot's "Now:" or the intent comes back.
     expect(liveLine(task(undefined), false)).toBeNull();

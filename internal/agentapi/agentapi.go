@@ -417,6 +417,12 @@ type HistoryReader interface {
 	ReadHistory(ctx context.Context, req ReadRequest) (History, error)
 }
 
+// FusionReader reads the Copilot Fusion turns a conversation recorded, oldest
+// first. It sends nothing and resumes no conversation.
+type FusionReader interface {
+	ReadFusion(ctx context.Context, req ReadRequest) ([]Fusion, error)
+}
+
 // ItemDiffReader reads one immutable committed edit from the recorded native event.
 // It sends nothing, resumes no conversation, and never reads the current file.
 type ItemDiffReader interface {
@@ -1173,6 +1179,45 @@ type Activity struct {
 	// now; nil while no model call is in flight and no tool runs. Between
 	// turns it holds only subagents that outlived the turn and compaction.
 	Phase *Phase `json:"phase,omitempty"`
+	// Fusion is the route of the turn Copilot Fusion runs, until it
+	// completes; nil otherwise.
+	Fusion *Fusion `json:"fusion,omitempty"`
+}
+
+// Fusion is how Copilot Fusion runs a turn: its ID and when it routed the
+// turn, its level ("standard", "high", "max"), its pattern ("single",
+// "cascade", "critique") with the reason it gives, the models it picked, and
+// its phases in plan order.
+type Fusion struct {
+	ID        string        `json:"id,omitempty"`
+	StartedAt time.Time     `json:"started_at,omitzero"`
+	Level     string        `json:"level,omitempty"`
+	Pattern   string        `json:"pattern"`
+	Hint      string        `json:"hint,omitempty"`
+	Models    []string      `json:"models,omitempty"`
+	Phases    []FusionPhase `json:"phases"`
+}
+
+// FusionPhase is one phase of a Fusion turn. Status is "planned" until it
+// starts (Conditional when it runs only if needed), then "running", then
+// "succeeded", "failed" or "cancelled". Verdict is a reviewer's assessment
+// ("approve", "revise"), Note its feedback or the failure, Defect what it
+// found wrong. Tokens are input plus output; NanoAIU what it cost.
+type FusionPhase struct {
+	ID          string    `json:"id,omitempty"`
+	Kind        string    `json:"kind"`
+	Role        string    `json:"role,omitempty"`
+	Model       string    `json:"model,omitempty"`
+	Effort      string    `json:"effort,omitempty"`
+	Status      string    `json:"status"`
+	Conditional bool      `json:"conditional,omitempty"`
+	StartedAt   time.Time `json:"started_at,omitzero"`
+	EndedAt     time.Time `json:"ended_at,omitzero"`
+	Tokens      int64     `json:"tokens,omitempty"`
+	NanoAIU     int64     `json:"nano_aiu,omitempty"`
+	Verdict     string    `json:"verdict,omitempty"`
+	Note        string    `json:"note,omitempty"`
+	Defect      string    `json:"defect,omitempty"`
 }
 
 // Phase is the conversation's model calls in flight and its oldest running
@@ -1263,6 +1308,9 @@ type Item struct {
 	Kind ItemKind  `json:"kind"`
 	Text string    `json:"text,omitempty"`
 	Tool *ToolCall `json:"tool,omitempty"`
+	// Partial marks text still arriving in deltas; the provider's whole item
+	// replaces it.
+	Partial bool `json:"partial,omitempty"`
 	// Completion is a provider's bounded completion decision, preserved as
 	// a notice. It is separate from the foreground turn's lifecycle.
 	Completion *TaskCompletion `json:"completion,omitempty"`

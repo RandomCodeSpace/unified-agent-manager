@@ -1,6 +1,7 @@
 package web
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -95,13 +96,14 @@ func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	}
 	s.workPhase = a.Phase
 	next.Phase = m.phaseLocked(s)
+	next.Fusion = a.Fusion
 	m.setTurnActivityLocked(s, next)
 }
 
 func (m *Manager) setTurnActivityLocked(s *webSession, a TurnActivity) {
 	cur := s.turnActivity
 	sameRetry := a.Retry == cur.Retry || a.Retry != nil && cur.Retry != nil && *a.Retry == *cur.Retry
-	if a.Plan == cur.Plan && a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) && samePhase(a.Phase, cur.Phase) {
+	if a.Plan == cur.Plan && a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) && samePhase(a.Phase, cur.Phase) && reflect.DeepEqual(a.Fusion, cur.Fusion) {
 		return
 	}
 	if !samePhase(a.Phase, cur.Phase) {

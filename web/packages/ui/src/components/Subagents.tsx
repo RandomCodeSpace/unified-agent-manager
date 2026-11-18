@@ -3,15 +3,16 @@ import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
 import { awaitsUser, isSubagentCall, subagentSummary, duration, toolLabel, windowInteractions } from '../lib/transcript';
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Minus, Square, Workflow, X } from 'lucide-react';
-import { createContext, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { describeError, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Diamond, Minus, Square, Terminal, Workflow, X } from 'lucide-react';
+import { createContext, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { describeError, modelName, readOnly, type Fusion, type FusionPhase, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { fusionLevel, fusionRoute, fusionStep, phaseCaption, phaseStatus, reviews } from '../lib/fusion';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
 import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
-import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, countParts, countSubagents, families, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
+import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, commandNoun, commandRunning, countParts, countSubagents, families, liveCommands, type BackgroundCommand, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -26,6 +27,7 @@ import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
 import { Tip } from './ui/tooltip';
 import { Key } from './InlinePicker';
+import type { CommandOutput } from './CommandOutput';
 
 /** A stop request for one subagent; the provider's SSE still owns its terminal status. */
 interface StopState {
@@ -183,6 +185,12 @@ interface ScopeData {
   follow: ReadonlyMap<string, FollowUp[]>;
   /** The live set; empty while nothing is at work. */
   live: LiveSubagent[];
+  /** The background commands the live rows show beside it (lib/subagents `liveCommands`); empty while nothing is at work. */
+  commands: readonly BackgroundCommand[];
+  /** How Copilot Fusion runs the turn, while it does. */
+  fusion?: Fusion;
+  /** Every background command the provider reports, for the list. */
+  background: readonly BackgroundCommand[];
   liveIds: ReadonlySet<string>;
   stops: Record<string, StopState>;
   sheet: SheetRequest | null;
@@ -206,6 +214,8 @@ interface ScopeActions {
   show: (agentId: string) => void;
   /** Scrolls the open subagent's transcript to a run's first item. */
   seek: (run: Omit<Seek, 'n'>) => void;
+  /** Opens a background command's output in the command output panel. */
+  output: (output: CommandOutput) => void;
 }
 
 class ScopeStore {
@@ -247,6 +257,14 @@ function useKept<T>(next: readonly T[]): readonly T[] {
   return next;
 }
 
+/** The running turn's Fusion route for its head ("Fusion High · Critique · 2 models") and the reason Fusion gives; undefined without one. */
+export function useFusionRoute(): { text: string; hint?: string } | undefined {
+  const fusion = useScope((d) => d.fusion);
+  const provider = useScope((d) => d.task.provider) ?? '';
+  const { meta } = useApp();
+  return fusion ? { text: fusionRoute(fusion, (id) => modelName(meta, provider, id)), hint: fusion.hint } : undefined;
+}
+
 /** The replies of the Task and the subagents each spawned (lib/subagents `replyIndex`); undefined outside a Task. */
 export const useSubagentReplies = () => useScope((d) => d.replies);
 /** The subagents the live set shows, while it shows. */
@@ -256,12 +274,14 @@ export const useSheetRequest = () => useScope((d) => d.sheet);
 /** A stop confirmation is open over the sheet. */
 export const useStopConfirming = () => useScope((d) => d.confirming) ?? false;
 
+const NO_COMMANDS: readonly BackgroundCommand[] = [];
+
 /**
  * The Task's subagents for everything that draws them (the reply chips, the live rows, the strip's
  * sheet): the session, the transcripts held, the requests to open the sheet, stop requests and their
  * one confirmation, and `locate`.
  */
-export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLocate, onJumpToReply, onShow, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; onLocate: (toolCallId: string) => void; onJumpToReply: (key: string) => void; onShow: (agentId: string) => void; children: ReactNode }>) {
+export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLocate, onJumpToReply, onShow, onOutput, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; onLocate: (toolCallId: string) => void; onJumpToReply: (key: string) => void; onShow: (agentId: string) => void; onOutput?: (output: CommandOutput) => void; children: ReactNode }>) {
   const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
@@ -280,19 +300,26 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const { id, provider, workdir, interactions, stage, state } = session;
   const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);
   const follow = useMemo(() => followUps(replies), [replies]);
-  const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, undefined, follow), [replies, session.subagents, follow]);
+  const since = session.turn_timings?.at(-1)?.started_at;
+  const turnCommands = useMemo(() => liveCommands(session.background_tasks, since), [session.background_tasks, since]);
+  const commandsRun = turnCommands.some(commandRunning);
+  const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, undefined, follow, commandsRun), [replies, session.subagents, follow, commandsRun]);
+  // The commands show while anything of the rows is at work.
+  const commands = commandsRun || live.length ? turnCommands : NO_COMMANDS;
+  const fusion = session.turn_activity?.fusion;
+  const background = useMemo(() => (session.background_tasks?.known ? session.background_tasks.tasks : NO_COMMANDS), [session.background_tasks]);
   // A reference row is not the subagent's row: its reply's chip stays.
   const liveIds = useMemo(() => new Set(live.flatMap((x) => (x.ref ? [] : [x.subagent.id]))), [live]);
   const confirming = stopConfirm.target !== null;
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, liveIds, stops, sheet, confirming, seek }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, liveIds, stops, sheet, confirming, seek],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, commands, fusion, background, liveIds, stops, sheet, confirming, seek }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, replies, follow, live, commands, fusion, background, liveIds, stops, sheet, confirming, seek],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
-  const handlers = useRef({ onLocate, onJumpToReply, onShow, ask: stopConfirm.ask });
+  const handlers = useRef({ onLocate, onJumpToReply, onShow, onOutput, ask: stopConfirm.ask });
   useLayoutEffect(() => {
-    handlers.current = { onLocate, onJumpToReply, onShow, ask: stopConfirm.ask };
+    handlers.current = { onLocate, onJumpToReply, onShow, onOutput, ask: stopConfirm.ask };
   });
   const [value] = useState(() => {
     const request = (to: SheetTo | null) => setSheet((r) => ({ to, n: (r?.n ?? 0) + 1 }));
@@ -315,6 +342,10 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
           handlers.current.onShow(agentId);
         },
         seek: (run: Omit<Seek, 'n'>) => setSeek((x) => ({ ...run, n: (x?.n ?? 0) + 1 })),
+        output: (output: CommandOutput) => {
+          request(null);
+          handlers.current.onOutput?.(output);
+        },
       } satisfies ScopeActions,
     };
   });
@@ -438,12 +469,12 @@ export function Took({ subagent: s, className }: Readonly<{ subagent: Pick<Subag
  * the reply's calls have no subagent here yet. It opens the strip's sheet on their list, filtered
  * to the reply (`reply`; the whole list without one).
  */
-export function SubagentChip({ subagents, calls, tones, reply }: Readonly<{ subagents: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls: number; tones: ReadonlyMap<string, IdentityTone>; reply?: string }>) {
+export function SubagentChip({ subagents, commands = NO_COMMANDS, calls, tones, reply }: Readonly<{ subagents: Subagent[]; /** The live rows' background commands, counted beside them. */ commands?: readonly BackgroundCommand[]; /** The reply's `task` calls, loaded or not. */ calls: number; tones: ReadonlyMap<string, IdentityTone>; reply?: string }>) {
   const actions = useActions();
-  const c = countSubagents(subagents);
+  const c = countSubagents([...subagents, ...commands.map((x) => ({ status: commandRunning(x) ? 'running' as const : x.status as SubagentStatus }))]);
   const total = Math.max(calls, subagents.length);
   const tokens = totalTokens(subagents);
-  const lead = [subagentNoun(total), tokens ? `${formatCount(tokens)} tokens` : ''].filter(Boolean).join(' · ');
+  const lead = [subagentNoun(total), commands.length ? commandNoun(commands.length) : '', tokens ? `${formatCount(tokens)} tokens` : ''].filter(Boolean).join(' · ');
   const partial = subagents.length < total ? `${subagents.length} of ${total} loaded` : '';
   return (
     <button
@@ -493,6 +524,9 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const text = caption || (s.status === 'cancelled' ? 'Stopped' : '');
   const parentId = s.parent_tool_call_id;
   const runs = (s.runs?.length ?? 0) > 1 ? `${s.runs!.length}${s.runs!.length >= RUNS_KEPT ? '+' : ''} runs` : '';
+  // Its own name beside the Utility name, unless they say the same.
+  const own = s.label && s.name && s.name.trim().toLowerCase() !== s.label.trim().toLowerCase() ? s.name : '';
+  const tag = [own, s.background && 'background'].filter(Boolean).join(' · ');
   return (
     // `--depth` indents the row 18px a level; its notes start under its name, 24px further in.
     <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row={s.id} className="flex flex-col" style={{ '--depth': depth } as CSSProperties}>
@@ -500,7 +534,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         type="button"
         data-subagent-toggle=""
         data-index-row=""
-        aria-label={`${name}${s.label && s.name ? ` (${s.name})` : ''}, ${STATUS_WORD[s.status]}${runs ? `, ${runs}` : ''}${text ? `: ${text}` : ''}`}
+        aria-label={`${name}${own ? ` (${own})` : ''}${s.background ? ' in the background' : ''}, ${STATUS_WORD[s.status]}${runs ? `, ${runs}` : ''}${text ? `: ${text}` : ''}`}
         aria-haspopup={onOpen ? 'dialog' : undefined}
         aria-expanded={onOpen ? open : undefined}
         className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-tint-selected')}
@@ -513,7 +547,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
         <span className={cn('min-w-0 truncate', tone && BADGE_TEXT[tone], text ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>
           {name}
-          {s.label && s.name && <span translate="no" className="ml-1.5 font-mono text-code-sm text-muted">{s.name}</span>}
+          {tag && <span translate="no" className="ml-1.5 font-mono text-code-sm text-muted">{tag}</span>}
         </span>
         {text && (
           <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', s.status === 'failed' ? 'text-error' : needsYou(text) ? 'text-warning' : 'text-muted')} title={onOpen ? undefined : text}>
@@ -562,6 +596,143 @@ function FollowUpRow({ f, onShow }: Readonly<{ f: FollowUp; onShow: (f: FollowUp
   );
 }
 
+/**
+ * A background command in the live rows (DESIGN.md live subagents), read like a subagent row: its
+ * state glyph, the `Terminal` glyph in the identity dot's place, the command in mono and
+ * "background", its description, and how long it ran; no tokens. A press opens its output in the
+ * command output panel, unless the provider keeps none.
+ */
+function CommandRow({ command: c }: Readonly<{ command: BackgroundCommand }>) {
+  const actions = useActions();
+  const sessionId = useScope((d) => d.task.id);
+  if (!actions || !sessionId) return null;
+  const status: SubagentStatus = commandRunning(c) ? 'running' : (c.status as SubagentStatus);
+  const word = STATUS_WORD[status] ?? c.status;
+  const readable = !c.output_unreadable;
+  const body = (
+    <>
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <SubagentMark status={status} />
+      </span>
+      <Terminal aria-hidden="true" className="size-3 shrink-0 text-faint" />
+      <span className={cn('min-w-0 truncate', c.description ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>
+        <code translate="no" className="font-mono text-code-sm text-body">{c.command}</code>
+        <span className="ml-1.5 font-mono text-code-sm text-muted">background</span>
+      </span>
+      {c.description && <span className="min-w-0 flex-1 truncate text-muted max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta" title={c.description}>{c.description}</span>}
+      <Took subagent={{ status, started_at: c.started_at, ended_at: c.ended_at }} className="w-14 text-right" />
+      <span aria-hidden="true" className="w-10 shrink-0" />
+    </>
+  );
+  const row = 'flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 pl-2 text-left text-caption text-body max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11';
+  const label = `Background command ${c.description || c.command}, ${word}`;
+  if (!readable) return <div role="group" aria-label={label} className={row}>{body}</div>;
+  return (
+    <button
+      type="button"
+      data-index-row=""
+      aria-label={`${label}: show its output`}
+      className={cn(row, 'transition-colors duration-100 hover:bg-tint-well')}
+      onClick={() => actions.output({ id: `shell:${c.id}`, name: 'shell', title: c.command, text: '', markdown: false, shell: { sessionId, taskId: c.id } })}
+    >
+      {body}
+    </button>
+  );
+}
+
+/**
+ * A Copilot Fusion phase in the live rows (DESIGN.md live subagents), read like a subagent row: its
+ * state glyph, the `Diamond` glyph in the identity dot's place, the phase and its model and effort in
+ * mono, what it does or its verdict, how long it ran and its tokens. A planned phase is faint, with no
+ * glyph or time. In the live rows it opens nothing; in the sheet's list (`onOpen`) it opens its reader.
+ */
+function FusionPhaseRow({ phase: p, onOpen, open = false }: Readonly<{ phase: FusionPhase; onOpen?: (row: HTMLElement) => void; open?: boolean }>) {
+  const provider = useScope((d) => d.task.provider) ?? '';
+  const { meta } = useApp();
+  const mark = phaseStatus(p);
+  const caption = phaseCaption(p);
+  const model = [p.model ? modelName(meta, provider, p.model) : '', p.effort].filter(Boolean).join(' · ');
+  const label = `Fusion ${fusionStep(p.kind)}${model ? ` (${model})` : ''}, ${p.status}: ${caption}`;
+  const row = cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 pl-2 text-left text-caption text-body max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11', !mark && 'text-muted opacity-70');
+  const body = (
+    <>
+      <span className="flex size-4 shrink-0 items-center justify-center">{mark && <SubagentMark status={mark} />}</span>
+      <Diamond aria-hidden="true" className="size-3 shrink-0 fill-current text-faint" />
+      <span className="min-w-0 max-w-[45%] shrink-0 truncate max-sm:max-w-none max-sm:flex-1">
+        <span className="font-medium">{fusionStep(p.kind)}</span>
+        {model && <span translate="no" className="ml-1.5 font-mono text-code-sm text-muted">{model}</span>}
+      </span>
+      <span className={cn('min-w-0 flex-1 truncate max-sm:order-last max-sm:basis-full max-sm:pl-6 max-sm:text-meta', p.status === 'failed' ? 'text-error' : 'text-muted')} title={caption}>{caption}</span>
+      {mark ? <Took subagent={{ status: mark, started_at: p.started_at, ended_at: p.ended_at }} className="w-14 text-right" /> : <span className="w-14 shrink-0" />}
+      <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{p.tokens ? <Num value={p.tokens} /> : ''}</span>
+    </>
+  );
+  if (!onOpen) return <div role="group" aria-label={label} className={row}>{body}</div>;
+  return (
+    <button type="button" data-index-row="" aria-label={label} aria-haspopup="dialog" aria-expanded={open} className={cn(row, 'transition-colors duration-100 hover:bg-tint-well', open && 'bg-tint-selected')} onClick={(e) => onOpen(e.currentTarget)}>
+      {body}
+    </button>
+  );
+}
+
+/**
+ * A Fusion phase's reader (DESIGN.md subagent sheet), beside the list like a subagent's: its state, the
+ * phase and model, the route's level and how long, how many tokens and AI units it took; then a
+ * reviewer's verdict, feedback and the defect it found, or that a working phase's thinking, messages and
+ * steps are the conversation's; "Show in conversation" jumps to its turn (`turn`, the group's key).
+ */
+function FusionPhaseReader({ fusion, phase: p, turn, row, sheet, open, onClose, onClosed, onBack }: Readonly<{ fusion: Fusion; phase: FusionPhase; turn: string; row: HTMLElement; sheet: HTMLElement | null; open: boolean; onClose: () => void; onClosed: () => void; onBack: () => void }>) {
+  const actions = useActions();
+  const provider = useScope((d) => d.task.provider) ?? '';
+  const { meta } = useApp();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const leaving = useRef(false);
+  if (!actions) return null;
+  const status = phaseStatus(p);
+  const step = fusionStep(p.kind);
+  const name = p.model ? `${step} · ${modelName(meta, provider, p.model)}` : step;
+  const units = p.nano_aiu ? `${(p.nano_aiu / 1e9).toFixed(2)} AI units` : '';
+  const facts = [status ? STATUS_LABEL[status] : 'Planned', `${fusionLevel(fusion.level)} ${step.toLowerCase()}`, p.effort, p.tokens ? `${formatCount(p.tokens)} tokens` : '', units].filter(Boolean).join(' · ');
+  let outcome: ReactNode;
+  if (p.status === 'failed') outcome = <p className="text-ui text-error">{p.note || 'Failed.'}</p>;
+  else if (!status) outcome = <Note>{phaseCaption(p)}.</Note>;
+  else if (!reviews(p)) outcome = <Note>Its thinking, messages and steps are the conversation's.</Note>;
+  else if (p.status === 'running') outcome = <p className="text-ui text-body">Reviewing the draft…</p>;
+  else outcome = (
+    <div className="flex flex-col gap-2 text-ui text-body">
+      <p className="font-medium text-ink">{phaseCaption({ ...p, note: undefined })}</p>
+      {p.note && <Markdown text={p.note} />}
+      {p.defect && <p><span className="font-medium text-ink">Defect: </span>{p.defect}</p>}
+    </div>
+  );
+  const content = (close: ReactNode, lead?: ReactNode) => (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PanelHead className={cn('gap-1 pt-2 pr-3 pb-2', lead ? 'pl-2' : 'pl-4')}>
+        <div className="flex min-h-7 min-w-0 items-center gap-2">
+          {lead}
+          <span className="flex size-4 shrink-0 items-center justify-center">{status && <SubagentMark status={status} />}</span>
+          <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">{name}</h2>
+          {close}
+        </div>
+        <p className={cn('flex items-center gap-1 text-caption tabular-nums text-muted', lead ? 'pl-[3.75rem]' : 'pl-6')}>
+          {facts}
+          {status && p.started_at && <><span aria-hidden="true">·</span><Took subagent={{ status, started_at: p.started_at, ended_at: p.ended_at }} className="text-caption" /></>}
+        </p>
+      </PanelHead>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 [overflow-wrap:anywhere]">
+        {outcome}
+        {fusion.hint && <p className="pt-3 text-caption text-muted">{fusion.hint}</p>}
+      </div>
+      {turn && (
+        <div className="flex shrink-0 items-center gap-2 px-4 pb-3">
+          <Button size="sm" variant="secondary" onClick={() => { leaving.current = true; actions.jumpToReply(turn); }}>Show in conversation</Button>
+        </div>
+      )}
+    </div>
+  );
+  return <ListReader label={name} row={row} sheet={sheet} open={open} heading={heading} leaving={leaving} onClose={onClose} onClosed={onClosed} onBack={onBack}>{content}</ListReader>;
+}
+
 /** Whether two messages say the same once spacing is ignored. */
 function sameText(a: string, b: string): boolean {
   const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
@@ -573,11 +744,16 @@ const NO_LIVE: LiveSubagent[] = [];
 /**
  * The subagents at work (DESIGN.md subagent rows), at the conversation's foot while one of them
  * runs: the latest reply's subagents and any earlier one still or again running, under their chip,
- * as plain rows, running first. No card of their own: they read as the reply's list. A subagent
+ * as plain rows, running first, then the turn's background commands while any of them runs. No card
+ * of their own: they read as the reply's list. A subagent
  * failing is said once, politely.
  */
 export function LiveSubagents() {
   const set = useScope((d) => d.live) ?? NO_LIVE;
+  const commands = useScope((d) => d.commands) ?? NO_COMMANDS;
+  const fusion = useScope((d) => d.fusion);
+  // One model's route is the head's alone; with more, each phase is a row.
+  const phases = fusion && fusion.pattern !== 'single' ? fusion.phases : [];
   const replies = useScope((d) => d.replies);
   const actions = useActions();
   const [limit, setLimit] = useState(PAGE_ROWS);
@@ -598,7 +774,7 @@ export function LiveSubagents() {
       {announced}
     </p>
   );
-  if (!set.length || !replies) return status;
+  if ((!set.length && !commands.length && !phases.length) || !replies) return status;
   const subagents = set.flatMap((x) => (x.ref ? [] : [x.subagent]));
   const refs = set.flatMap((x) => (x.ref ? [x.ref] : []));
   // Only the latest reply's: the chip opens its list; with earlier ones running too, the whole list.
@@ -606,13 +782,18 @@ export function LiveSubagents() {
   return (
     <>
       {status}
-      <section aria-label="Subagents at work" className="flex flex-col gap-1">
+      <section aria-label={set.length ? 'Subagents at work' : phases.length ? 'Fusion at work' : 'Background commands at work'} className="flex flex-col gap-1">
         {subagents.length > 0 && (
           <div className="flex px-2">
-            <SubagentChip subagents={subagents} calls={latest?.calls.length ?? subagents.length} tones={replies.tones} reply={latest?.key} />
+            <SubagentChip subagents={subagents} commands={commands} calls={latest?.calls.length ?? subagents.length} tones={replies.tones} reply={latest?.key} />
           </div>
         )}
         <ul className="flex max-w-2xl flex-col">
+          {phases.map((p, i) => (
+            <li key={`phase-${p.id || i}`}>
+              <FusionPhaseRow phase={p} />
+            </li>
+          ))}
           {refs.map((f) => (
             <li key={`ref-${f.subagent.id}`}>
               <FollowUpRow f={f} onShow={(x) => x.subagent.parent_tool_call_id && actions?.locate(x.subagent.parent_tool_call_id)} />
@@ -621,6 +802,11 @@ export function LiveSubagents() {
           {rows.slice(0, limit).map(({ subagent, depth }) => (
             <li key={subagent.id}>
               <SubagentRow subagent={subagent} tone={replies.tones.get(subagent.id)} depth={depth} anchor />
+            </li>
+          ))}
+          {commands.map((c) => (
+            <li key={`command-${c.id}`}>
+              <CommandRow command={c} />
             </li>
           ))}
         </ul>
@@ -633,6 +819,20 @@ export function LiveSubagents() {
     </>
   );
 }
+
+/** The kinds of row the list holds; a chip shows only one kind, and pressed again all. */
+type RowKind = 'all' | 'fusion' | 'subagents' | 'commands';
+const KINDS: { key: Exclude<RowKind, 'all'>; label: string }[] = [
+  { key: 'fusion', label: 'Fusion' },
+  { key: 'subagents', label: 'Subagents' },
+  { key: 'commands', label: 'Commands' },
+];
+const NO_FUSIONS: readonly Fusion[] = [];
+/** A Fusion turn's key in the list: its route's ID, else when it routed. */
+const fusionKey = (f: Fusion) => f.id ?? f.started_at ?? '';
+/** A phase's and a command's state as the status filters and counts read a subagent's; a planned phase has none. */
+const phaseState = (p: FusionPhase) => { const status = phaseStatus(p); return status ? [{ status }] : []; };
+const commandState = (c: BackgroundCommand) => ({ status: commandRunning(c) ? 'running' as const : (c.status as SubagentStatus) });
 
 const FILTERS: { key: IndexFilter; label: string; tone: string }[] = [
   { key: 'all', label: 'All', tone: 'text-body' },
@@ -676,22 +876,42 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const follow = useScope((d) => d.follow);
   const interactions = useScope((d) => d.task.interactions);
   const confirming = useScope((d) => d.confirming);
+  const provider = useScope((d) => d.task.provider) ?? '';
+  const background = useScope((d) => d.background) ?? NO_COMMANDS;
+  const live = useScope((d) => d.fusion);
+  const api = useApi();
+  const { meta } = useApp();
+  // Fusion's recorded turns, read again when the live one ends: it is recorded then.
+  const [recorded, setRecorded] = useState<readonly Fusion[]>(NO_FUSIONS);
+  const liveId = live?.id;
+  useEffect(() => {
+    if (!taskId) return;
+    const stop = new AbortController();
+    api.fusionTurns(taskId, stop.signal).then((r) => setRecorded(r.turns), () => {});
+    return () => stop.abort();
+  }, [api, taskId, liveId]);
+  const fusions = useMemo(() => [...recorded.filter((f) => f.id !== liveId), ...(live ? [live] : [])], [recorded, live, liveId]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<IndexFilter>('all');
+  const [kind, setKind] = useState<RowKind>('all');
   const [reply, setReply] = useState(to?.reply ?? null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const list = useRef<HTMLDivElement>(null);
   // The row whose reader is open (`row` takes the focus back) and the sheet it opens beside, null when
   // the room left of the sheet is too narrow (or on a phone): then it reads in the list's place. Kept through its exit, then dropped.
-  const [peek, setPeek] = useState<{ id: string; row: HTMLElement; sheet: HTMLElement | null; open: boolean } | null>(null);
-  const openPeek = useCallback((s: Subagent, row: HTMLElement) => {
+  // A Fusion phase's reader names its turn by the route's ID (or start) and its place in the plan.
+  const [peek, setPeek] = useState<{ id: string; phase?: { fusion: string; at: number; turn: string }; row: HTMLElement; sheet: HTMLElement | null; open: boolean } | null>(null);
+  const beside = useCallback((row: HTMLElement) => {
     const sheet = phone ? null : row.closest<HTMLElement>('[data-popup]');
-    setPeek({ id: s.id, row, sheet: sheet && sheet.getBoundingClientRect().left >= READER_ROOM ? sheet : null, open: true });
+    return sheet && sheet.getBoundingClientRect().left >= READER_ROOM ? sheet : null;
   }, [phone]);
-  const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents, follow) : []), [outline, messages, subagents, follow]);
+  const openPeek = useCallback((s: Subagent, row: HTMLElement) => setPeek({ id: s.id, row, sheet: beside(row), open: true }), [beside]);
+  const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents, follow, { commands: background, fusions }) : []), [outline, messages, subagents, follow, background, fusions]);
   if (!taskId || !subagents || !summaries || !tones || !turns || !actions || !interactions) return null;
-  const peeked = peek && subagents.find((s) => s.id === peek.id);
-  const inline = !!(peek && peeked && !peek.sheet);
+  const peeked = peek && !peek.phase ? subagents.find((s) => s.id === peek.id) : undefined;
+  const peekedFusion = peek?.phase && fusions.find((f) => fusionKey(f) === peek.phase!.fusion);
+  const peekedPhase = peekedFusion?.phases[peek!.phase!.at];
+  const inline = !!(peek && (peeked || peekedPhase) && !peek.sheet);
   // Back from the reader in the list's place: the list returns and its row takes the focus.
   const back = () => {
     const row = peek?.row;
@@ -701,17 +921,28 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
   const pool = reply === null ? groups : groups.filter((g) => g.key === reply);
   const all = pool.flatMap((g) => g.subagents);
   const hit = (s: Subagent) => !query || matches(s, rowSummary(summaries, s, interactions), query);
+  const q = query.trim().toLowerCase();
+  const says = (...parts: (string | undefined)[]) => !q || parts.join(' ').toLowerCase().includes(q);
   // The chips and the groups count what the search finds.
   const found = new Set(all.filter(hit));
-  const c = countSubagents([...found]);
-  const counts: Record<IndexFilter, number> = { all: c.total, running: c.running, failed: c.failed, done: c.done, stopped: c.stopped };
+  const foundPhases = new Set(pool.flatMap((g) => g.fusions.flatMap((f) => f.phases)).filter((p) => says(fusionStep(p.kind), p.model && modelName(meta, provider, p.model), p.effort, phaseCaption(p))));
+  const foundCommands = new Set(pool.flatMap((g) => g.commands).filter((x) => says(x.command, x.description)));
+  const kinds: Record<RowKind, number> = { all: found.size + foundPhases.size + foundCommands.size, fusion: foundPhases.size, subagents: found.size, commands: foundCommands.size };
+  // Kind chips only where the list holds more than one kind.
+  const mixed = [kinds.fusion, kinds.subagents, kinds.commands].filter(Boolean).length > 1;
+  const showsKind = (k: RowKind) => kind === 'all' || kind === k;
+  const c = countSubagents([...(showsKind('subagents') ? found : []), ...(showsKind('fusion') ? [...foundPhases].flatMap(phaseState) : []), ...(showsKind('commands') ? [...foundCommands].map(commandState) : [])]);
+  const planned = showsKind('fusion') ? [...foundPhases].filter((p) => !phaseStatus(p)).length : 0;
+  const counts: Record<IndexFilter, number> = { all: c.total + planned, running: c.running, failed: c.failed, done: c.done, stopped: c.stopped };
   const shown = pool
     .flatMap((g) => {
-      const matched = g.subagents.filter((s) => inFilter(s, filter) && found.has(s));
+      const matched = showsKind('subagents') ? g.subagents.filter((s) => inFilter(s, filter) && found.has(s)) : [];
       // Each under the one that spawned it, running first, as in the conversation.
       const rows = families(matched).flatMap((f) => f.rows);
-      const refs = g.refs.filter((f) => inFilter(f.subagent, filter) && hit(f.subagent));
-      return rows.length || refs.length ? [{ ...g, matched, rows, refs }] : [];
+      const refs = showsKind('subagents') ? g.refs.filter((f) => inFilter(f.subagent, filter) && hit(f.subagent)) : [];
+      const phases = showsKind('fusion') ? g.fusions.flatMap((f) => f.phases.flatMap((p, at) => (foundPhases.has(p) && (filter === 'all' || phaseState(p).some((x) => inFilter(x, filter))) ? [{ fusion: f, phase: p, at }] : []))) : [];
+      const cmds = showsKind('commands') ? g.commands.filter((x) => foundCommands.has(x) && inFilter(commandState(x), filter)) : [];
+      return rows.length || refs.length || phases.length || cmds.length ? [{ ...g, matched, rows, refs, phases, cmds }] : [];
     })
     // Caps defer: the newest message shown (after the search and filters) shows all its rows, older ones three until "Show all".
     .map((g, at) => ({ ...g, cap: reply !== null || at === 0 || g.rows.length <= GROUP_ROWS + 1 || expanded.has(g.key) ? g.rows.length : GROUP_ROWS }));
@@ -755,13 +986,23 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
             {error}
           </Note>
         )}
-        <Input ref={input} size="md" type="search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onArrow} aria-label="Search subagents" placeholder={`Search ${subagentNoun(all.length)}`} />
-        <div role="group" aria-label="Show subagents by status" className="flex flex-wrap items-center gap-1">
+        <Input ref={input} size="md" type="search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onArrow} aria-label="Search agents and commands" placeholder={mixed || !all.length ? `Search ${kinds.all} ${kinds.all === 1 ? 'item' : 'items'}` : `Search ${subagentNoun(all.length)}`} />
+        <div role="group" aria-label="Show by status" className="flex flex-wrap items-center gap-1">
           {FILTERS.filter((f) => f.key === 'all' || f.key === filter || counts[f.key]).map((f) => (
             <button key={f.key} type="button" aria-pressed={filter === f.key} className={cn(CHIP, filter === f.key ? 'bg-tint-selected text-ink' : counts[f.key] ? f.tone : 'text-muted')} onClick={() => setFilter(f.key)}>
               {f.label} {counts[f.key]}
             </button>
           ))}
+          {mixed && (
+            <span role="group" aria-label="Show by kind" className="contents">
+              <span aria-hidden="true" className="mx-1 h-3.5 w-px bg-hairline" />
+              {KINDS.filter((k) => kinds[k.key]).map((k) => (
+                <button key={k.key} type="button" aria-pressed={kind === k.key} className={cn(CHIP, kind === k.key ? 'bg-tint-selected text-ink' : 'text-body')} onClick={() => setKind(kind === k.key ? 'all' : k.key)}>
+                  {k.label} {kinds[k.key]}
+                </button>
+              ))}
+            </span>
+          )}
           {reply !== null && (
             <>
               <span className="flex-1" />
@@ -785,9 +1026,9 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                   {g.time && <span className="shrink-0 text-meta tabular-nums text-muted">{clock(g.time)}</span>}
                   <span className="flex-1" />
                   {/* "48 · 2 failed · 15 running": what still needs a look, so the message keeps the room. */}
-                  {g.matched.length > 0 && (
+                  {g.matched.length + g.phases.length + g.cmds.length > 0 && (
                     <span className="shrink-0 text-meta whitespace-nowrap tabular-nums text-muted">
-                      <Counts c={{ ...countSubagents(g.matched), done: 0, stopped: 0 }} lead={`${g.matched.length}`} />
+                      <Counts c={{ ...countSubagents([...g.matched, ...g.phases.flatMap((x) => phaseState(x.phase)), ...g.cmds.map(commandState)]), done: 0, stopped: 0 }} lead={`${g.matched.length + g.phases.length + g.cmds.length}`} />
                     </span>
                   )}
                   {g.key && (
@@ -797,6 +1038,15 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                   )}
                 </div>
                 <ul className="flex flex-col">
+                  {g.phases.map(({ fusion: f, phase: p, at }) => {
+                    const key = fusionKey(f);
+                    const open = peek?.open === true && peek.phase?.fusion === key && peek.phase.at === at;
+                    return (
+                      <li key={`phase-${key}-${at}`}>
+                        <FusionPhaseRow phase={p} open={open} onOpen={(row) => setPeek({ id: '', phase: { fusion: key, at, turn: g.key }, row, sheet: beside(row), open: true })} />
+                      </li>
+                    );
+                  })}
                   {g.refs.map((f) => (
                     <li key={`ref-${f.subagent.id}`}>
                       <FollowUpRow f={f} onShow={showOriginal} />
@@ -805,6 +1055,11 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                   {g.rows.slice(0, g.cap).map(({ subagent: s, depth }) => (
                     <li key={s.id}>
                       <SubagentRow subagent={s} tone={tones.get(s.id)} depth={depth} onOpen={openPeek} open={peek?.open === true && peek.id === s.id} />
+                    </li>
+                  ))}
+                  {g.cmds.map((x) => (
+                    <li key={`command-${x.id}`}>
+                      <CommandRow command={x} />
                     </li>
                   ))}
                   {g.cap < g.rows.length && (
@@ -819,12 +1074,13 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
               </section>
             );
           })}
-          {!shown.length && <p className="px-2 py-2 text-caption text-muted">{query ? `No subagent matches “${query}”.` : 'No subagents in this state.'}</p>}
+          {!shown.length && <p className="px-2 py-2 text-caption text-muted">{query ? `Nothing matches “${query}”.` : 'Nothing in this state.'}</p>}
           {/* Older pages join no reply here, so a reply's list would drop them: only the whole list reads them. */}
           {before && reply === null && <OlderSubagents key={`${taskId}:${before}`} sessionId={taskId} before={before} />}
         </div>
       </div>
       {peek && peeked && <SubagentReader subagent={peeked} row={peek.row} sheet={peek.sheet} open={peek.open} onClose={() => !confirming && setPeek((p) => p && { ...p, open: false })} onClosed={() => setPeek(null)} onBack={back} />}
+      {peek && peekedFusion && peekedPhase && <FusionPhaseReader fusion={peekedFusion} phase={peekedPhase} turn={peek.phase!.turn} row={peek.row} sheet={peek.sheet} open={peek.open} onClose={() => setPeek((p) => p && { ...p, open: false })} onClosed={() => setPeek(null)} onBack={back} />}
       {!phone && !inline && (
         <PanelFoot>
           <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
@@ -856,16 +1112,12 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
   const call = useScope((d) => d.summaries.calls.get(s.parent_tool_call_id ?? ''));
   const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
   const heading = useRef<HTMLHeadingElement>(null);
-  const id = useId();
   // Opening the conversation hands the focus to its transcript, not back to the row.
   const leaving = useRef(false);
   const finished = s.status === 'completed' || s.status === 'idle';
   // A background launch's call only acknowledges the launch, so its body is not read.
   const reads = open && finished && !s.background && !!call;
   const { item, body, attach, retry } = useItemBody(call ?? NO_CALL, reads);
-  useLayoutEffect(() => {
-    if (!sheet) heading.current?.focus();
-  }, [sheet]);
   if (!actions || !task) return null;
   const name = subagentName(s);
   const result = (reads && item?.tool?.output) || s.result_summary || (finished ? caption : '');
@@ -901,6 +1153,31 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
           </div>
         </div>
   );
+  return <ListReader label={name} row={row} sheet={sheet} open={open} heading={heading} leaving={leaving} onClose={onClose} onClosed={onClosed} onBack={onBack}>{content}</ListReader>;
+}
+
+/**
+ * Where a row of the sheet's list reads (SubagentReader, FusionPhaseReader): beside the sheet, level with
+ * the row and flush with the sheet's left edge, never over the list; with no `sheet` (no room beside it, or
+ * a phone) in the list's place, with a way back to the list that Esc presses from anywhere inside.
+ */
+function ListReader({ label, row, sheet, open, heading, leaving, onClose, onClosed, onBack, children }: Readonly<{
+  label: string;
+  row: HTMLElement;
+  sheet: HTMLElement | null;
+  open: boolean;
+  heading: RefObject<HTMLHeadingElement | null>;
+  /** Set when a press leaves for the conversation: the focus goes there, not back to the row. */
+  leaving: RefObject<boolean>;
+  onClose: () => void;
+  onClosed: () => void;
+  onBack: () => void;
+  children: (close: ReactNode, lead?: ReactNode) => ReactNode;
+}>) {
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!sheet) heading.current?.focus();
+  }, [sheet, heading]);
   if (!sheet) {
     const backButton = (
       <Button size="icon-sm" aria-label="Back to the list" className="shrink-0 text-muted" onClick={onBack}>
@@ -910,17 +1187,16 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
     return (
       // In the sheet, Esc goes back to the list rather than closing the sheet.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc presses Back from anywhere inside.
-      <section aria-label={name} className="flex min-h-0 flex-1 animate-fade-in flex-col" onKeyDown={(e) => {
+      <section aria-label={label} className="flex min-h-0 flex-1 animate-fade-in flex-col" onKeyDown={(e) => {
         if (e.key !== 'Escape') return;
         e.stopPropagation();
         e.preventDefault();
         onBack();
       }}>
-        {content(null, backButton)}
+        {children(null, backButton)}
       </section>
     );
   }
-  // Level with the row, flush with the sheet's left edge: never over the list.
   const anchor = {
     getBoundingClientRect: () => {
       const edge = sheet.getBoundingClientRect();
@@ -929,8 +1205,8 @@ function SubagentReader({ subagent: s, row, sheet, open, onClose, onClosed, onBa
     },
   };
   return (
-    <AnchoredReader id={id} open={open} sheet={false} anchor={anchor} side="left" label={name} className="w-[440px]" backdrop={false} initialFocus={heading} finalFocus={() => (leaving.current || !row.isConnected ? false : row)} onClose={onClose} onClosed={onClosed}>
-      {(close) => content(close)}
+    <AnchoredReader id={id} open={open} sheet={false} anchor={anchor} side="left" label={label} className="w-[440px]" backdrop={false} initialFocus={heading} finalFocus={() => (leaving.current || !row.isConnected ? false : row)} onClose={onClose} onClosed={onClosed}>
+      {(close) => children(close)}
     </AnchoredReader>
   );
 }

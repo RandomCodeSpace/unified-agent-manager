@@ -41,7 +41,7 @@ import { RewindHold, RewindPanel } from './Rewind';
 import type { Editing } from './EditResend';
 import { CUT } from './Details';
 import { Schedules } from './Schedules';
-import { StatusLine, statusLine, stripHasTodos } from './StatusLine';
+import { StatusLine, statusLine, stripHasAgents, stripHasTodos } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { registerRealWorkdir } from '../lib/markdown';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -998,8 +998,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
   const line = statusLine(session, labelled, compacting, connected);
-  // The strip stays while the Thread has subagents, which it counts at its right end, or a todo list (live or kept) at its left.
-  const strip = !!line || session.subagents.length > 0 || stripHasTodos(session);
+  // The strip stays while the Thread has agents or commands, which it counts at its right end, or a todo list (live or kept) at its left.
+  const strip = !!line || stripHasAgents(session) || stripHasTodos(session);
   // A reply's plan ticks off from the live todo list, else (a closed Thread) from the kept list the strip shows.
   const [keptTodos, setKeptTodos] = useState<TodoView>();
   const todoView = session.turn_activity?.todos?.known ? session.turn_activity.todos : keptTodos;
@@ -1026,7 +1026,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent} onOutput={showOutput}>
     <GitLabItemsContext.Provider value={gitlabItems}>
     <ReplyContext.Provider value={replyTools}>
     <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>

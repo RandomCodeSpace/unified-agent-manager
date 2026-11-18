@@ -53,6 +53,9 @@ type transcript struct {
 	// receipt's summary became a reply.
 	longest  int
 	promoted map[string]bool
+	// live holds when each message and tool event of a Copilot Fusion turn
+	// arrived, until Fusion records that event again at its commit.
+	live map[string]time.Time
 }
 
 func (t *transcript) isHidden(id string) bool {
@@ -78,7 +81,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}, hidden: map[string]string{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}, hidden: map[string]string{}, live: map[string]time.Time{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -89,6 +92,12 @@ func newTranscript() *transcript {
 // already holds the text.
 func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 	t.completions.observe(ev)
+	_, start := ev.Data.(*rpc.ToolExecutionStartData)
+	if t.relive(&ev) && start {
+		// The call's state is rebuilt for its completion, which follows.
+		t.item(ev)
+		return nil
+	}
 	var out []agentapi.Item
 	if _, ok := ev.Data.(*rpc.AssistantTurnStartData); ok {
 		t.stepStart[agentOf(ev)] = ev.Timestamp
@@ -150,6 +159,38 @@ func (t *transcript) completionReply(ev copilot.SessionEvent, it *agentapi.Item)
 	notice.Summary = ""
 	it.Text = completionNotice(&notice)
 	return agentapi.Item{ID: "completion-reply:" + it.ID, Kind: agentapi.ItemAssistant, Text: text, Time: it.Time}, true
+}
+
+// relive gives an event that Copilot Fusion records again the time of the
+// copy it delivered live, and reports such a record. Fusion delivers a turn's
+// messages and tool events as they happen, unrecorded, then records them all
+// at its commit under the same IDs, stamped with the commit's time.
+func (t *transcript) relive(ev *copilot.SessionEvent) bool {
+	var id string
+	var fusion *rpc.FusionAttribution
+	switch d := ev.Data.(type) {
+	case *rpc.AssistantMessageData:
+		id, fusion = "message:"+d.MessageID, d.Fusion
+	case *rpc.ToolExecutionStartData:
+		id, fusion = "start:"+d.ToolCallID, d.Fusion
+	case *rpc.ToolExecutionCompleteData:
+		id, fusion = "complete:"+d.ToolCallID, d.Fusion
+	case *rpc.SessionFusionCompletedData:
+		clear(t.live) // what a discarded draft left
+	}
+	if fusion == nil {
+		return false
+	}
+	if ev.Ephemeral != nil && *ev.Ephemeral {
+		t.live[id] = ev.Timestamp
+		return false
+	}
+	at, ok := t.live[id]
+	if ok {
+		ev.Timestamp = at
+		delete(t.live, id)
+	}
+	return ok
 }
 
 // thoughtStart is when the agent's current model call began: the CLI

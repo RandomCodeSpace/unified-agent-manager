@@ -280,7 +280,7 @@ describe('pickers', () => {
 describe('settings in the toolbar', () => {
   test('the model picker, Attach and Send stay inside the composer form', async () => {
     await openTask('t3');
-    const model = await screen.findByRole('button', { name: /^Model: Auto/ });
+    const model = await screen.findByRole('button', { name: /^Model: Fusion/ });
     const form = document.getElementById('composer-text')!.closest('form')!;
     expect(model.closest('form')).toBe(form);
     expect(within(form).getByRole('button', { name: /^Attach files/ })).toBeTruthy();
@@ -289,14 +289,14 @@ describe('settings in the toolbar', () => {
 
   test('choosing a model on an idle task saves it on the task', async () => {
     const { user } = await openTask('t3');
-    await choose(user, 'Model: Auto', /GPT-5 mini/);
+    await choose(user, 'Model: Fusion', /GPT-5 mini/);
     expect(await screen.findByRole('button', { name: 'Model: GPT-5 mini' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Effort and context size: Default' })).toBeTruthy();
   });
 
   test('on a running task a new model is a draft setting for the next turn', async () => {
     const { user, mock } = await openTask('t1');
-    await choose(user, 'Model: Auto', /Claude Haiku 4\.5/);
+    await choose(user, 'Model: Fusion', /Claude Haiku 4\.5/);
     expect(await screen.findByText(/Draft settings apply when its next turn starts\./)).toBeTruthy();
     expect(screen.getByText(/Send now keeps the current turn’s settings\./)).toBeTruthy();
     // A steer is impossible: Send and Enter queue, and the menu says why Send now is not offered.
@@ -344,8 +344,8 @@ describe('settings in the toolbar', () => {
     renderApp('#task=t12');
     expect(await screen.findByText('This thread is read-only.')).toBeTruthy();
     // The values replace the skeleton once /api/meta answers, which can be after the snapshot.
-    const values = await screen.findByRole('button', { name: 'Model: Auto. Effort and context size: Default. Permissions and execution: Safe. This thread is read-only.' });
-    expect(values.textContent).toBe('Auto · Default · Safe');
+    const values = await screen.findByRole('button', { name: 'Model: Fusion. Effort and context size: Default. Permissions and execution: Safe. This thread is read-only.' });
+    expect(values.textContent).toBe('Fusion · Default · Safe');
     const row = values.closest('[data-fold]')!;
     expect(row.textContent).toMatch(/^ArchivedThis thread is read-only\./);
     expect(within(row as HTMLElement).queryByRole('button', { name: 'Reopen' })).toBeNull();
@@ -369,7 +369,7 @@ describe('settings in the toolbar', () => {
     // Out of the flow over a bar in the pickers' 28px height (css.test.mjs), so the row, and the composer, do not move when they land.
     expect(line.parentElement!.firstElementChild!.getAttribute('aria-hidden')).toBe('true');
     release();
-    expect(await screen.findByRole('button', { name: /^Model: Auto/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^Model: Fusion/ })).toBeTruthy();
     expect(screen.queryByText('Loading the model catalog…')).toBeNull();
   });
 
@@ -382,7 +382,7 @@ describe('settings in the toolbar', () => {
     Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.hasAttribute('data-fold') ? 400 : 0; } });
     try {
       await openTask('t1');
-      const model = await screen.findByRole('button', { name: /^Model: Auto/ });
+      const model = await screen.findByRole('button', { name: /^Model: Fusion/ });
       const row = model.parentElement!;
       await waitFor(() => expect(row.dataset.fold).toBe('execution tuning permissions more'));
       // Each control names the fold that shortens it (css.test.mjs holds which): the mode loses its execution word, then its label;
@@ -391,7 +391,7 @@ describe('settings in the toolbar', () => {
       expect(within(mode).getByText('· Interactive', { exact: false })).toBeTruthy();
       expect(within(document.getElementById('composer-effort-context')!).getByText('Default')).toBeTruthy();
       expect(document.getElementById('composer-more')).toBeTruthy();
-      expect(within(model).getByText('Auto').hasAttribute('data-squeeze')).toBe(true);
+      expect(within(model).getByText('Fusion').hasAttribute('data-squeeze')).toBe(true);
       expect(screen.getByRole('button', { name: 'Send now' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'More send options' })).toBeTruthy();
     } finally {
@@ -586,7 +586,7 @@ describe('composer menus and notices', () => {
 
   test('a model choice closes the menu and leaves focus on the same picker while it saves', async () => {
     const { user } = await openTask('t3');
-    const model = await screen.findByRole('button', { name: 'Model: Auto' });
+    const model = await screen.findByRole('button', { name: 'Model: Fusion' });
     await user.click(model);
     await user.click(within(await screen.findByRole('menu')).getByRole('menuitemradio', { name: /GPT-5 mini/ }));
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
@@ -599,7 +599,7 @@ describe('composer menus and notices', () => {
     onTestFinished(() => { window.innerWidth = width; });
     window.innerWidth = 390;
     const { user } = await openTask('t3');
-    const model = await screen.findByRole('button', { name: 'Model: Auto' });
+    const model = await screen.findByRole('button', { name: 'Model: Fusion' });
     expect(model.getAttribute('aria-haspopup')).toBe('dialog');
     await user.click(model);
     const sheet = within(await screen.findByRole('dialog', { name: 'Model' }));

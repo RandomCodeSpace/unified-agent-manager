@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
@@ -22,7 +23,7 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	models, err := client.ListModels(ctx)
+	list, err := client.ListModels(ctx)
 	if err != nil && p.signedOut(ctx) {
 		return customCatalog(p.customModels()), nil
 	}
@@ -30,8 +31,11 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		p.poke()
 		return nil, fmt.Errorf("list copilot models: %s", errText(err))
 	}
+	if list == nil {
+		list = &rpc.ModelList{}
+	}
 	out := []agentapi.Model{}
-	for _, m := range models {
+	for _, m := range list.Models {
 		if m.ID == "" || (m.Policy != nil && m.Policy.State != rpc.ModelPolicyStateEnabled) {
 			continue
 		}
@@ -42,10 +46,12 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 			}
 			mo.Prices = prices(m.Billing.TokenPrices)
 		}
-		if m.ID == "auto" {
-			mo.Efforts = []string{}
+		if m.ID == fusionModel {
+			// Copilot's Auto model is Copilot Fusion; its efforts are Fusion's
+			// levels, never the reasoning efforts the entry may list.
+			mo.Name, mo.Efforts = "Fusion", fusionLevels(list.Auto)
 		}
-		if m.ID != "auto" && m.Billing != nil && m.Billing.TokenPrices != nil {
+		if m.ID != fusionModel && m.Billing != nil && m.Billing.TokenPrices != nil {
 			prices := m.Billing.TokenPrices
 			if prices.MaxPromptTokens != nil && *prices.MaxPromptTokens > 0 {
 				mo.ContextSizes = append(mo.ContextSizes, agentapi.ContextSize{ID: "default", Tokens: *prices.MaxPromptTokens})
@@ -57,6 +63,47 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		out = append(out, mo)
 	}
 	return append(out, customCatalog(p.customModels())...), nil
+}
+
+// fusionModel is the catalog ID of Copilot Fusion; the CLI also accepts
+// "fusion" but lists and stores "auto".
+const fusionModel = "auto"
+
+// fusionEffort prefixes a Fusion level where uam keeps a reasoning effort:
+// "fusion-high" is Fusion's High level. Without it Fusion's "high" would be
+// the reasoning effort "high" of another model, and a model switch that keeps
+// the effort would start the costlier level unasked.
+const fusionEffort = "fusion-"
+
+// fusionLevel is the Fusion level effort selects for model: "" for none (the
+// provider's default level), and an error for a plain reasoning effort, which
+// Fusion rejects. ok is false for any other model.
+func fusionLevel(model, effort string) (level string, ok bool, err error) {
+	if model != fusionModel {
+		return "", false, nil
+	}
+	level, prefixed := strings.CutPrefix(effort, fusionEffort)
+	if effort != "" && (!prefixed || level == "") {
+		return "", true, fmt.Errorf("copilot: Fusion has no reasoning effort %q; its levels start with %q", effort, fusionEffort)
+	}
+	return level, true, nil
+}
+
+// fusionLevels lists the Fusion levels the account can select (standard,
+// high, max) as efforts, in the catalog's order. A level the plan or a policy
+// turns off is left out, as is one the catalog hides from pickers.
+func fusionLevels(auto *rpc.AutoTierMetadata) []string {
+	levels := []string{}
+	if auto == nil {
+		return levels
+	}
+	for _, tier := range auto.Tiers {
+		if tier.FusionTier == nil || *tier.FusionTier == "" || !tier.Status.Enabled || tier.Status.PickerVisible != nil && !*tier.Status.PickerVisible {
+			continue
+		}
+		levels = append(levels, fusionEffort+*tier.FusionTier)
+	}
+	return levels
 }
 
 // prices copies the catalog's token prices, preferring cacheReadPrice and
@@ -163,7 +210,21 @@ func (c *conversation) applyModel(ctx context.Context, model, effort, contextSiz
 	if isCustom {
 		req.ModelCapabilities = &rpc.ModelCapabilitiesOverride{Supports: &rpc.ModelCapabilitiesOverrideSupports{Vision: copilot.Bool(custom.Vision)}}
 	}
-	if effort != "" {
+	level, fusion, err := fusionLevel(model, effort)
+	if err != nil {
+		return err
+	}
+	switch {
+	case level != "":
+		// Fusion takes a level, and rejects a reasoning effort.
+		tier := rpc.FusionTier(level)
+		req.FusionTier = &tier
+	case fusion:
+		// A switch that names no level keeps the session's last one, so
+		// Default asks for the provider's default level explicitly.
+		var providerDefault *rpc.AutoTier
+		req.AutoTier = &providerDefault
+	case effort != "":
 		req.ReasoningEffort = &effort
 	}
 	res, err := c.sess.SwitchModel(ctx, req)
@@ -192,7 +253,11 @@ func (c *conversation) applyModel(ctx context.Context, model, effort, contextSiz
 		return c.selectionUncertain(ctx, errors.New("model switch returned a different model"))
 	}
 	if state := res.ModelState; state != nil {
-		if (state.ModelID != nil && *state.ModelID != model) || (state.ContextTier != nil && *state.ContextTier != tier) || (effort != "" && (state.ReasoningEffort == nil || *state.ReasoningEffort != effort)) {
+		// A Fusion level is reported as the routing preference it stands for,
+		// staged for the next turn, never as a reasoning effort.
+		staged := state.PendingAutoTier != nil || state.AutoTier != nil || state.ActivatingAutoTier != nil
+		wrongEffort := effort != "" && (fusion && !staged || !fusion && (state.ReasoningEffort == nil || *state.ReasoningEffort != effort))
+		if (state.ModelID != nil && *state.ModelID != model) || (state.ContextTier != nil && *state.ContextTier != tier) || wrongEffort {
 			return c.selectionUncertain(ctx, errors.New("model switch returned different settings"))
 		}
 		if contextSize == "long_context" && state.ContextTier == nil {

@@ -54,6 +54,7 @@ const modules = {
     LiveSubagents: () => React.createElement('section', null, 'LIVE'),
     useSubagentReplies: () => scopeReplies,
     useLiveSubagentIds: () => liveIds,
+    useFusionRoute: () => undefined,
     useScope: () => undefined,
     SubagentTag: ({ name }) => React.createElement('span', null, name),
   },
