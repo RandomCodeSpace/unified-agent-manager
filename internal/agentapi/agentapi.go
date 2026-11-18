@@ -1764,6 +1764,9 @@ type BackgroundTask struct {
 	// this shell (a Copilot attached shell). False also means not known, so a
 	// read can still be refused.
 	OutputUnreadable bool `json:"output_unreadable,omitempty"`
+	// Sync is true for a shell its agent waits on (a subagent's ordinary
+	// command): tracked by the provider, but not a background command.
+	Sync bool `json:"sync,omitempty"`
 }
 
 // TodoList is the todo list the agents keep in the conversation.

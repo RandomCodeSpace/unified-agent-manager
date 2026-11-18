@@ -261,9 +261,11 @@ export const commandRunning = (c: Pick<BackgroundCommand, 'status'>) => c.status
  * (from `since`) started. None while their status is unknown.
  */
 export function liveCommands(tasks: BackgroundTasks | undefined, since: string | undefined): BackgroundCommand[] {
-  if (!tasks?.known) return [];
-  return tasks.tasks.filter((c) => commandRunning(c) || (!!since && ms(c.started_at) >= ms(since)));
+  return backgroundCommands(tasks).filter((c) => commandRunning(c) || (!!since && ms(c.started_at) >= ms(since)));
 }
+
+/** The background commands among the provider's shells, leaving out the ones an agent waits on; none while unknown. */
+export const backgroundCommands = (tasks: BackgroundTasks | undefined): BackgroundCommand[] => (tasks?.known ? tasks.tasks.filter((c) => !c.sync) : []);
 
 /** An ISO time as milliseconds, whatever its zone or fraction; NaN when absent or unreadable. */
 export const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN);

@@ -21,7 +21,7 @@ import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type S
 import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
-import { commandRunning, countSubagents } from '../lib/subagents';
+import { backgroundCommands, commandRunning, countSubagents } from '../lib/subagents';
 import { fusionStep, reviews } from '../lib/fusion';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
@@ -114,7 +114,7 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   const review = session.turn_activity?.fusion?.phases.find((p) => p.status === 'running' && reviews(p));
   if (review) return { mark: 'dot', phase: `${fusionStep(review.kind)} reviewing`, since: review.started_at };
   const running = session.subagents.filter((s) => s.status === 'running').length;
-  const commands = session.background_tasks?.known ? session.background_tasks.tasks.filter(commandRunning).length : 0;
+  const commands = backgroundCommands(session.background_tasks).filter(commandRunning).length;
   const waiting = `Waiting on ${plural(running, 'subagent')}${commands ? ` · ${plural(commands, 'command')} running` : ''}`;
   if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: waiting };
   if (!phase) return null;
@@ -201,7 +201,7 @@ const todoTurns = (session: SessionDetail) => (session.turn_timings ?? []).filte
  * commands, or runs on Copilot Fusion (whose turns the list reads from the record) and has had a turn.
  */
 export function stripHasAgents(session: SessionDetail): boolean {
-  return session.subagents.length > 0 || !!session.background_tasks?.tasks.length || !!session.turn_activity?.fusion || (session.model === 'auto' && !!session.turn_timings?.length);
+  return session.subagents.length > 0 || backgroundCommands(session.background_tasks).length > 0 || !!session.turn_activity?.fusion || (session.model === 'auto' && !!session.turn_timings?.length);
 }
 
 /** The strip draws a todo button, working or idle: a known list with rows, or turns that changed one (the history). Task.tsx keeps the jump arrow on the row then. */

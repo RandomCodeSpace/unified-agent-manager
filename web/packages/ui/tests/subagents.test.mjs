@@ -80,6 +80,8 @@ test('the live rows hold every running background command and the ones the lates
   // Before any turn only the running ones; none while their status is unknown.
   assert.deepEqual(liveCommands(tasks, undefined).map((c) => c.id), ['old-server', 'idle']);
   assert.deepEqual(liveCommands({ ...tasks, known: false }, at(10)), []);
+  // A shell its agent waits on (a subagent's ordinary command) is no background command.
+  assert.deepEqual(liveCommands({ known: true, tasks: [{ ...shell('sub', 'running', 12), sync: true }] }, at(10)), []);
   assert.deepEqual(liveCommands(undefined, at(10)), []);
   const index = [user('u1', 0), call('c3', 1)];
   const settled = [agent('new', 'c3')];

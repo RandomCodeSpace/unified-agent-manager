@@ -12,7 +12,7 @@ import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
 import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
-import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, commandNoun, commandRunning, countParts, countSubagents, families, liveCommands, type BackgroundCommand, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
+import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, backgroundCommands, commandNoun, commandRunning, countParts, countSubagents, families, liveCommands, type BackgroundCommand, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -307,7 +307,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   // The commands show while anything of the rows is at work.
   const commands = commandsRun || live.length ? turnCommands : NO_COMMANDS;
   const fusion = session.turn_activity?.fusion;
-  const background = useMemo(() => (session.background_tasks?.known ? session.background_tasks.tasks : NO_COMMANDS), [session.background_tasks]);
+  const background = useMemo(() => backgroundCommands(session.background_tasks), [session.background_tasks]);
   // A reference row is not the subagent's row: its reply's chip stays.
   const liveIds = useMemo(() => new Set(live.flatMap((x) => (x.ref ? [] : [x.subagent.id]))), [live]);
   const confirming = stopConfirm.target !== null;

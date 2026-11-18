@@ -1306,7 +1306,7 @@ export interface ModelCalls { threads: number; subagents: number; background: nu
 export interface BackgroundTasks {
   known: boolean;
   /** `output_unreadable`: the provider keeps no output for that shell, so it has no Output; absent from older servers. */
-  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string; output_unreadable?: boolean }[];
+  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string; output_unreadable?: boolean; /** A shell its agent waits on (a subagent's ordinary command), not a background command. */ sync?: boolean }[];
 }
 
 /**
