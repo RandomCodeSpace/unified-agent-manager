@@ -755,6 +755,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and policy allow) take the place of efforts and are stored as
   `fusion-standard`, `fusion-high` and `fusion-max`, so another model's
   effort is never carried into Fusion. Default is Copilot's default level.
+  A level the plan or a policy turns off is listed but cannot be chosen,
+  with GitHub's reason under it.
   High and Max can run several models on a turn and use more AI credits.
   While a turn runs, changes
   are saved with your draft and apply when its queued turn starts.

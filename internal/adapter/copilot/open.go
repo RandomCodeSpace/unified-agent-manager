@@ -207,6 +207,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	if req.ConversationID != "" {
 		c.checkTodosLocked()
+		if fusion {
+			c.readStandardPickLocked()
+		}
 	}
 	c.checkPlanLocked()
 	c.mu.Unlock()

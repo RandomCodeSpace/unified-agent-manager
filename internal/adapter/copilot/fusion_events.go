@@ -14,6 +14,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // maxFusionNote caps a reviewer's feedback and defect on its phase.
@@ -29,11 +30,11 @@ var syntheticLevels = map[string]string{"balance": "standard", "hydrafusion": "h
 func (c *conversation) observeFusionLocked(ev copilot.SessionEvent) bool {
 	switch d := ev.Data.(type) {
 	case *rpc.SessionFusionRouteStartedData:
-		c.fusion, c.standardPick = nil, nil
+		c.fusion, c.standardPick, c.standardPickLive = nil, nil, true
 	case *rpc.SessionFusionResolvedData:
-		c.fusion, c.standardPick = newFusion(ev, d), nil
+		c.fusion, c.standardPick, c.standardPickLive = newFusion(ev, d), nil, true
 	case *rpc.SessionAutoModeResolvedData:
-		c.standardPick = autoRoute(ev, d)
+		c.standardPick, c.standardPickLive = autoRoute(ev, d), true
 		f := *c.standardPick
 		c.fusion = &f
 	case *rpc.AssistantFusionPhaseStartedData:
@@ -119,6 +120,36 @@ func newFusion(ev copilot.SessionEvent, d *rpc.SessionFusionResolvedData) *agent
 		f.Phases = append(f.Phases, agentapi.FusionPhase{Kind: string(step.Kind), Role: step.Role, Status: "planned", Conditional: step.Conditional})
 	}
 	return f
+}
+
+// readStandardPickLocked reads back, for a resumed conversation on Fusion,
+// the model Standard picked before uam opened it: Standard reports its pick
+// once, so without the journal a restart would lose it. The same events end a
+// pick as live: a Fusion route or a model change.
+func (c *conversation) readStandardPickLocked() {
+	p, client, id := c.p, c.client, c.id
+	go func() {
+		defer log.Recover("copilot standard pick read", &c.mu, &c.p.mu)
+		ctx, cancel := context.WithTimeout(context.Background(), webStartTimeout)
+		defer cancel()
+		var pick *agentapi.Fusion
+		err := p.readForward(ctx, client, id, func(ev copilot.SessionEvent) {
+			switch d := ev.Data.(type) {
+			case *rpc.SessionAutoModeResolvedData:
+				pick = autoRoute(ev, d)
+			case *rpc.SessionFusionResolvedData, *rpc.SessionModelChangeData:
+				pick = nil
+			}
+		})
+		if err != nil || pick == nil {
+			return
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if !c.closed && !c.standardPickLive {
+			c.standardPick = pick
+		}
+	}()
 }
 
 // autoRoute is the one model Fusion Standard picked and why; Standard reports

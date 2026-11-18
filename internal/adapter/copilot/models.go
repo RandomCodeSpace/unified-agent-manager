@@ -49,7 +49,8 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		if m.ID == fusionModel {
 			// Copilot's Auto model is Copilot Fusion; its efforts are Fusion's
 			// levels, never the reasoning efforts the entry may list.
-			mo.Name, mo.Efforts = "Fusion", fusionLevels(list.Auto)
+			mo.Name = "Fusion"
+			mo.Efforts, mo.UnavailableEfforts = fusionLevels(list.Auto)
 		}
 		if m.ID != fusionModel && m.Billing != nil && m.Billing.TokenPrices != nil {
 			prices := m.Billing.TokenPrices
@@ -89,21 +90,27 @@ func fusionLevel(model, effort string) (level string, ok bool, err error) {
 	return level, true, nil
 }
 
-// fusionLevels lists the Fusion levels the account can select (standard,
-// high, max) as efforts, in the catalog's order. A level the plan or a policy
-// turns off is left out, as is one the catalog hides from pickers.
-func fusionLevels(auto *rpc.AutoTierMetadata) []string {
-	levels := []string{}
+// fusionLevels lists the Fusion levels (standard, high, max) as efforts, in
+// the catalog's order: the ones the account can select, then the ones the
+// plan or a policy turns off, with the catalog's reason. A level the catalog
+// hides from pickers is left out.
+func fusionLevels(auto *rpc.AutoTierMetadata) ([]string, []agentapi.UnavailableEffort) {
+	levels, off := []string{}, []agentapi.UnavailableEffort(nil)
 	if auto == nil {
-		return levels
+		return levels, off
 	}
 	for _, tier := range auto.Tiers {
-		if tier.FusionTier == nil || *tier.FusionTier == "" || !tier.Status.Enabled || tier.Status.PickerVisible != nil && !*tier.Status.PickerVisible {
+		if tier.FusionTier == nil || *tier.FusionTier == "" || tier.Status.PickerVisible != nil && !*tier.Status.PickerVisible {
+			continue
+		}
+		if !tier.Status.Enabled {
+			reason := clip(displaytext.Sanitize(cmp.Or(orEmpty(tier.Status.Message), "Not available on this account.")), maxErrorText)
+			off = append(off, agentapi.UnavailableEffort{Effort: fusionEffort + *tier.FusionTier, Reason: reason})
 			continue
 		}
 		levels = append(levels, fusionEffort+*tier.FusionTier)
 	}
-	return levels
+	return levels, off
 }
 
 // prices copies the catalog's token prices, preferring cacheReadPrice and

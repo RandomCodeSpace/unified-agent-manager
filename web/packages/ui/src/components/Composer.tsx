@@ -1396,6 +1396,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {noEffort ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{noEffort}</p> : <Menu.RadioGroup value={effort} onValueChange={(v) => void settings({ effort: v as string })}>
           <Menu.RadioItem value="">Default</Menu.RadioItem>
           {(selectedModel?.efforts ?? []).map((e) => <Menu.RadioItem key={e} value={e}>{effortLabel(e)}</Menu.RadioItem>)}
+          {(selectedModel?.unavailable_efforts ?? []).map((u) => <Menu.RadioItem key={u.effort} value={u.effort} disabled description={u.reason}>{effortLabel(u.effort)}</Menu.RadioItem>)}
         </Menu.RadioGroup>}
       </Menu.Group>
       <Menu.Separator />

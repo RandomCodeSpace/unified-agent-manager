@@ -537,12 +537,22 @@ type PreviousConversation struct {
 	UpdatedAt time.Time
 }
 
+// UnavailableEffort is an effort a model lists but the account cannot select,
+// and why.
+type UnavailableEffort struct {
+	Effort string `json:"effort"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // Model is one selectable model.
 type Model struct {
-	ID           string        `json:"id"`
-	Name         string        `json:"name"`
-	Efforts      []string      `json:"efforts"`
-	ContextSizes []ContextSize `json:"context_sizes"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Efforts []string `json:"efforts"`
+	// UnavailableEfforts are efforts the account cannot select now, each with
+	// the provider's reason (a Fusion level the plan does not include).
+	UnavailableEfforts []UnavailableEffort `json:"unavailable_efforts,omitempty"`
+	ContextSizes       []ContextSize       `json:"context_sizes"`
 	// Media is what the model accepts besides text. Nil means the provider
 	// reports nothing (Copilot's auto), and uploads are not gated.
 	Media *Media `json:"media,omitempty"`

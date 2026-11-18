@@ -294,6 +294,15 @@ describe('settings in the toolbar', () => {
     expect(screen.getByRole('button', { name: 'Effort and context size: Default' })).toBeTruthy();
   });
 
+  test('a Fusion level the plan lacks shows in the effort menu, off, with GitHub\'s reason', async () => {
+    const { user } = await openTask('t3');
+    const menu = await openMenu(user, /^Effort and context size: Default/);
+    const max = await menu.findByRole('menuitemradio', { name: /^Max/ });
+    expect(max.getAttribute('aria-disabled')).toBe('true');
+    expect(max.textContent).toContain('Upgrade your Copilot plan to use this preference.');
+    expect(menu.getByRole('menuitemradio', { name: /^High/ }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
   test('on a running task a new model is a draft setting for the next turn', async () => {
     const { user, mock } = await openTask('t1');
     await choose(user, 'Model: Fusion', /Claude Haiku 4\.5/);
