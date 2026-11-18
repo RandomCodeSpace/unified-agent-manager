@@ -54,4 +54,14 @@ test('the toolbar folds its labels as the window narrows, never overflows, and m
   expect(box!.width).toBeGreaterThanOrEqual(390 - 16);
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toBeHidden();
+
+  // A narrower phone wraps the row: Send stays on the pickers' row and the time split takes the row under it (owner, 2026-11-18).
+  await page.setViewportSize({ width: 340, height: 844 });
+  await expect(form.locator('[data-fold~=wrap]')).toHaveCount(1);
+  await fits();
+  const mid = async (l: typeof attach) => { const b = (await l.boundingBox())!; return b.y + b.height / 2; };
+  const time = form.getByRole('button', { name: /^Time in this Thread/ });
+  await expect(time).toBeInViewport({ ratio: 1 });
+  expect(Math.abs((await mid(sendButton)) - (await mid(attach)))).toBeLessThan(4);
+  expect(await mid(time)).toBeGreaterThan((await mid(sendButton)) + 16);
 });
