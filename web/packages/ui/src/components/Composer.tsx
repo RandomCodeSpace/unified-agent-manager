@@ -1972,15 +1972,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
-        {/* The branch and the time split ride with them; once the row has wrapped, the branch's name gives way. */}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:min-w-0 in-data-[fold~=wrap]:shrink">
+        {/* The branch and the time split ride with them; once the row has wrapped, they take the last row of their own and the
+            actions keep the right of the first, so Send never leaves a gap above it (owner, 2026-11-18, on a phone). */}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:contents">
         {project && !newTask && (
-          <span data-composer-foot="" className="flex min-w-0 items-center gap-1 empty:hidden *:data-place:max-w-48">
+          <span data-composer-foot="" className="flex min-w-0 items-center gap-1 empty:hidden *:data-place:max-w-48 in-data-[fold~=wrap]:order-last in-data-[fold~=wrap]:basis-full">
             <PlaceFoot session={session} project={project} />
             <TimeSplitSummary session={session} />
           </span>
         )}
-        <span className="flex shrink-0 items-center gap-0.5">
+        <span className="flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:ml-auto">
         {/* Saving a setting is words: the Task's state glyph is the one ring. */}
         {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
         {/* The /btw mode cue, drawn with the text that names it: Send's icon alone does not say it asks aside. */}

@@ -8,7 +8,7 @@
  * - `permissions`: Permissions and execution becomes its glyph.
  * - `more`: both move into the More menu, as on a phone.
  * - `model`: the Model picker becomes its glyph.
- * - `wrap`: the actions take a row of their own.
+ * - `wrap`: the branch and the time split take a row of their own under the pickers and the actions.
  * Each fold is a word in the row's `data-fold`, which the controls style with `in-data-[fold~=…]`.
  */
 export const FOLDS = ['execution', 'tuning', 'permissions', 'more', 'model', 'wrap'] as const;
