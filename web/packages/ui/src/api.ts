@@ -102,6 +102,8 @@ export interface Model {
   id: string;
   name: string;
   efforts?: string[];
+  /** Efforts the account cannot select now, each with the provider's reason (a Fusion level the plan lacks). */
+  unavailable_efforts?: { effort: string; reason?: string }[];
   context_sizes?: { id: string; tokens: number }[];
   media?: Media;
   /** The provider's relative cost of the model; absent when it reports none. */

@@ -71,7 +71,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	switch d := ev.Data.(type) {
 	case *rpc.SessionModelChangeData:
 		if agentID == "" {
-			c.standardPick = nil
+			c.standardPick, c.standardPickLive = nil, true
 			c.autoModelSelectionLocked(d)
 		}
 		return

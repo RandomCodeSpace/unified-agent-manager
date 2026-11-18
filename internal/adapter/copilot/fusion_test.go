@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -23,11 +24,17 @@ func fusionCatalog() *rpc.AutoTierMetadata {
 		}
 		return d
 	}
-	return &rpc.AutoTierMetadata{DefaultTier: "balance", Tiers: []rpc.AutoTierDescriptor{
+	auto := &rpc.AutoTierMetadata{DefaultTier: "balance", Tiers: []rpc.AutoTierDescriptor{
 		tier("balance", "standard", true, true), tier("hydrafusion", "high", true, true),
 		tier("hydrafusion-max", "max", false, true), tier("fast", "", true, false),
 	}}
+	reason := fusionReason
+	auto.Tiers[2].Status.Message = &reason
+	return auto
 }
+
+// fusionReason is GitHub's message for a level the plan does not include.
+const fusionReason = "Upgrade your Copilot plan to use this preference."
 
 func TestFusionCatalogAndCreate(t *testing.T) {
 	fc := &fakeClient{fusion: fusionCatalog(), models: []rpc.Model{{ID: "auto", Name: "Auto", SupportedReasoningEfforts: []string{"high"}}}}
@@ -40,6 +47,9 @@ func TestFusionCatalogAndCreate(t *testing.T) {
 	}
 	if mo := models[0]; mo.Name != "Fusion" || strings.Join(mo.Efforts, ",") != "fusion-standard,fusion-high" {
 		t.Fatalf("Fusion = %+v, want the two levels the account can select", mo)
+	}
+	if off := models[0].UnavailableEfforts; len(off) != 1 || off[0].Effort != "fusion-max" || off[0].Reason != fusionReason {
+		t.Fatalf("unavailable = %+v, want Max with GitHub's reason", off)
 	}
 	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "new", Model: "auto", Effort: "fusion-high", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
@@ -206,6 +216,32 @@ func TestStandardRouteInActivity(t *testing.T) {
 			t.Fatal("the pick outlived a model change")
 		}
 	}
+}
+
+// A resumed conversation on Fusion reads back the model Standard picked
+// before uam opened it, and each turn shows it again.
+func TestStandardPickIsReadBackOnResume(t *testing.T) {
+	tier, why := rpc.AutoTier("balance"), "Copilot Fusion selected GPT-6 Luna since the task has medium complexity."
+	fc := &fakeClient{journal: []copilot.SessionEvent{
+		ev("u0", &rpc.UserMessageData{Content: "first"}),
+		ev("am", &rpc.SessionAutoModeResolvedData{AutoTier: &tier, ChosenModel: "gpt-6-luna", SelectionReason: &why}),
+	}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	sink := &recSink{}
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: "conv", Workdir: "/work", Model: "auto", Effort: "fusion-standard", Events: sink})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := webHarness{p: p, fc: fc, fs: fc.sessions[len(fc.sessions)-1], conv: conv, sink: sink}
+	turn := 0
+	waitFor(t, "the resumed turn's Standard route", func() bool {
+		turn++
+		n := len(h.sink.all())
+		h.fs.onEvent(ev(fmt.Sprint("t", turn), &rpc.AssistantTurnStartData{TurnID: fmt.Sprint(turn)}))
+		got := activities(h, n)
+		return len(got) > 0 && got[len(got)-1].Fusion != nil && got[len(got)-1].Fusion.Hint == why
+	})
 }
 
 // The journal keeps a Critique turn's route and how its phases ended, not

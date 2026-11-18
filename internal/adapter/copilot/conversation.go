@@ -132,10 +132,12 @@ type conversation struct {
 	// it comes before the turn starts, so the activity's reset keeps it.
 	fusion *agentapi.Fusion
 	// standardPick is the model Fusion Standard picked for the conversation:
-	// it picks once and reports no route per turn, so each turn shows it.
-	// shortcut: unknown after a uam restart until Fusion picks again; read the
-	// journal's last session.auto_mode_resolved on open if that matters.
+	// it picks once and reports no route per turn, so each turn shows it. A
+	// resumed conversation reads it back from the journal (fusion_events.go).
 	standardPick *agentapi.Fusion
+	// standardPickLive is set once a live event decided standardPick, so
+	// the journal's older answer no longer applies.
+	standardPickLive bool
 	// phase is the running turn's model calls and tools in flight (phase.go).
 	phase phaseState
 	// todos is the todo list and its reads (todos.go).

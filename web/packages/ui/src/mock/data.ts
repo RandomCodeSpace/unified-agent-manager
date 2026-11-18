@@ -351,7 +351,7 @@ export function seed(): MockState {
         cheapest_model: 'gpt-5-mini',
         models: [
           // `auto` reports no media and is not gated; kimi-k3 and the flash model take text only.
-          { id: 'auto', name: 'Fusion', efforts: ['fusion-standard', 'fusion-high', 'fusion-max'] },
+          { id: 'auto', name: 'Fusion', efforts: ['fusion-standard', 'fusion-high'], unavailable_efforts: [{ effort: 'fusion-max', reason: 'Upgrade your Copilot plan to use this preference.' }] },
           { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', efforts: ['low', 'medium', 'high'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 20, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'] } },
           { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', efforts: ['low', 'medium', 'high', 'xhigh'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 10 } },
           { id: 'gpt-5-mini', name: 'GPT-5 mini', efforts: ['low', 'medium', 'high'], media: { images: true, pdf: false, max_images: 4, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] } },

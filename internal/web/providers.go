@@ -73,6 +73,7 @@ func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, err
 		name := clipRunes(strings.TrimSpace(displaytext.Sanitize(mo.Name)), maxNameRunes)
 		mo.Name = cmp.Or(name, mo.ID)
 		mo.Efforts = append([]string{}, mo.Efforts...)
+		mo.UnavailableEfforts = slices.Clone(mo.UnavailableEfforts)
 		mo.ContextSizes = append([]agentapi.ContextSize{}, mo.ContextSizes...)
 		if !validCostTier(mo.CostTier) {
 			mo.CostTier = ""
