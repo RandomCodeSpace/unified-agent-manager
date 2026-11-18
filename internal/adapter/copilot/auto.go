@@ -18,7 +18,7 @@ import (
 // confirmAuto is deliberately a question, never a permission. The SDK owns
 // the model switch; this callback consents to this request only.
 func (c *conversation) confirmAuto(req copilot.AutoModeSwitchRequest, inv copilot.AutoModeSwitchInvocation) (copilot.AutoModeSwitchResponse, error) {
-	text := "Switch to Auto for this request? Copilot will choose a model; usage and cost may differ."
+	text := "Switch to Fusion for this request? Copilot will choose the models; usage and cost may differ."
 	if req.RetryAfterSeconds != nil {
 		n := *req.RetryAfterSeconds
 		if n >= 0 && !math.IsNaN(n) && !math.IsInf(n, 0) {
@@ -28,7 +28,7 @@ func (c *conversation) confirmAuto(req copilot.AutoModeSwitchRequest, inv copilo
 	in := &interaction{
 		Interaction: agentapi.Interaction{
 			ID: "auto-" + rand.Text(), Kind: agentapi.InteractionQuestion,
-			Title: "Auto model fallback", State: agentapi.InteractionPending, Time: time.Now(),
+			Title: "Fusion fallback", State: agentapi.InteractionPending, Time: time.Now(),
 			Questions: []agentapi.Question{{Text: text, Choices: []string{"No", "Yes"}}},
 		},
 		reply: make(chan userReply, 1), auto: true,

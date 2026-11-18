@@ -139,7 +139,7 @@ describe('app shell', () => {
     await openSubagentIndex(user);
     history.pushState(null, '', '/#routines');
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagents' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Agents and commands' })).toBeNull());
     await waitFor(() => expect(header().textContent).toBe('Routines'));
   });
 

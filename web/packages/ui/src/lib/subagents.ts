@@ -1,4 +1,4 @@
-import type { Item, OutlineItem, Subagent, SubagentStatus, TurnTiming } from '../api';
+import type { BackgroundTasks, Fusion, Item, OutlineItem, Subagent, SubagentStatus, TurnTiming } from '../api';
 import { duration, toolKind } from './transcript.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
@@ -13,7 +13,7 @@ export const IDENTITY_LIMIT = 5;
 /** Rows the live rows render at a time; "Show 50 more" adds the next. */
 export const PAGE_ROWS = 50;
 
-export const isDone = (s: Subagent) => s.status === 'completed' || s.status === 'idle';
+export const isDone = (s: Pick<Subagent, 'status'>) => s.status === 'completed' || s.status === 'idle';
 
 export interface SubagentCounts {
   total: number;
@@ -25,7 +25,7 @@ export interface SubagentCounts {
   stopped: number;
 }
 
-export function countSubagents(list: readonly Subagent[]): SubagentCounts {
+export function countSubagents(list: readonly Pick<Subagent, 'status'>[]): SubagentCounts {
   const c: SubagentCounts = { total: list.length, running: 0, done: 0, failed: 0, stopped: 0 };
   for (const s of list) {
     if (s.status === 'running') c.running++;
@@ -52,6 +52,7 @@ export function countParts(c: SubagentCounts): CountPart[] {
 }
 
 export const subagentNoun = (n: number) => `${n} ${n === 1 ? 'subagent' : 'subagents'}`;
+export const commandNoun = (n: number) => `${n} ${n === 1 ? 'command' : 'commands'}`;
 
 const parents = new WeakMap<readonly Subagent[], ReadonlyMap<string, Subagent>>();
 
@@ -236,9 +237,9 @@ export interface LiveSubagent {
  * The live rows' set: the subagents the latest reply spawned, its follow-ups (`follow`, lib `followUps`)
  * and every running one an earlier reply spawned, a resumed one as the reference of its newest run.
  * Empty once none of them runs and no row of the card is open (`keep`, which stays in the set while
- * it is open even after it has stopped).
+ * it is open even after it has stopped), unless `held`: a background command still runs beside them.
  */
-export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[], keep?: string, follow: ReadonlyMap<string, FollowUp[]> = new Map()): LiveSubagent[] {
+export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[], keep?: string, follow: ReadonlyMap<string, FollowUp[]> = new Map(), held = false): LiveSubagent[] {
   const mine = latest?.subagents ?? [];
   const own = new Set(mine.map((s) => s.id));
   const refs = new Map((latest ? follow.get(latest.key) ?? [] : []).map((f) => [f.subagent.id, f]));
@@ -247,8 +248,24 @@ export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[
     ...mine.map((subagent) => ({ subagent, earlier: false })),
     ...subagents.filter((s) => !own.has(s.id) && (refs.has(s.id) || s.status === 'running' || s.id === keep)).map((subagent) => ({ subagent, earlier: true, ref: refs.get(subagent.id) ?? newest.get(subagent.id) })),
   ];
-  return set.some((x) => x.subagent.status === 'running' || x.subagent.id === keep) ? set : [];
+  return held || set.some((x) => x.subagent.status === 'running' || x.subagent.id === keep) ? set : [];
 }
+
+export type BackgroundCommand = BackgroundTasks['tasks'][number];
+
+/** A background shell still runs until it ends: the service counts an idle one as running too. */
+export const commandRunning = (c: Pick<BackgroundCommand, 'status'>) => c.status !== 'completed' && c.status !== 'failed' && c.status !== 'cancelled';
+
+/**
+ * The live rows' background commands: every running one, and the rest of those the latest turn
+ * (from `since`) started. None while their status is unknown.
+ */
+export function liveCommands(tasks: BackgroundTasks | undefined, since: string | undefined): BackgroundCommand[] {
+  return backgroundCommands(tasks).filter((c) => commandRunning(c) || (!!since && ms(c.started_at) >= ms(since)));
+}
+
+/** The background commands among the provider's shells, leaving out the ones an agent waits on; none while unknown. */
+export const backgroundCommands = (tasks: BackgroundTasks | undefined): BackgroundCommand[] => (tasks?.known ? tasks.tasks.filter((c) => !c.sync) : []);
 
 /** An ISO time as milliseconds, whatever its zone or fraction; NaN when absent or unreadable. */
 export const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN);
@@ -340,7 +357,7 @@ export function matches(s: Subagent, summary: string, query: string): boolean {
 
 export type IndexFilter = 'all' | 'running' | 'failed' | 'done' | 'stopped';
 
-export function inFilter(s: Subagent, filter: IndexFilter): boolean {
+export function inFilter(s: Pick<Subagent, 'status'>, filter: IndexFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'done') return isDone(s);
   if (filter === 'stopped') return s.status === 'cancelled';
@@ -357,6 +374,9 @@ export interface IndexGroup {
   subagents: Subagent[];
   /** Subagents earlier messages spawned that ran again in this reply (lib `followUps`). */
   refs: FollowUp[];
+  /** The background commands and Copilot Fusion turns that started in this reply. */
+  commands: BackgroundCommand[];
+  fusions: Fusion[];
 }
 
 /**
@@ -365,9 +385,12 @@ export interface IndexGroup {
  * identity index, which outlives history pages); the message text comes from `items` when that
  * message is loaded. A subagent another one spawned goes with its top-level ancestor. Subagents
  * whose call is not placed (older ones paged in from the record) form the last group, keyed "".
- * A reply's follow-ups (`follow`) join its group, which they open when it spawned none.
+ * A reply's follow-ups (`follow`) join its group, which they open when it spawned none. Background
+ * commands (`timed`) join the reply whose span holds their start, as a follow-up's run does; Fusion
+ * turns the message they routed, the first sent at or after the route (Fusion routes a prompt before
+ * Copilot records it); one without a start, the last group.
  */
-export function indexGroups(index: readonly OutlineItem[], items: readonly Item[], subagents: readonly Subagent[], follow: ReadonlyMap<string, FollowUp[]> = new Map()): IndexGroup[] {
+export function indexGroups(index: readonly OutlineItem[], items: readonly Item[], subagents: readonly Subagent[], follow: ReadonlyMap<string, FollowUp[]> = new Map(), timed: { commands?: readonly BackgroundCommand[]; fusions?: readonly Fusion[] } = {}): IndexGroup[] {
   const replyOf = new Map<string, OutlineItem | null>();
   const position = new Map<string, number>();
   let user: OutlineItem | null = null;
@@ -383,7 +406,7 @@ export function indexGroups(index: readonly OutlineItem[], items: readonly Item[
     let g = groups.get(key);
     if (!g) {
       const text = message ? firstLineOf(texts.get(message.id) ?? '') : '';
-      g = { key, text, time: message?.time, subagents: [], refs: [], at: message ? position.get(message.id)! : known ? -1 : -Infinity };
+      g = { key, text, time: message?.time, subagents: [], refs: [], commands: [], fusions: [], at: message ? position.get(message.id)! : known ? -1 : -Infinity };
       groups.set(key, g);
     }
     return g;
@@ -401,6 +424,15 @@ export function indexGroups(index: readonly OutlineItem[], items: readonly Item[
     const message = replyOf.get(key);
     if (message?.id === key) group(key, message, true).refs.push(...refs);
   }
+  const messages = index.filter((item) => item.kind === 'user' && !item.delivery && !Number.isNaN(ms(item.time)));
+  const at = (time: string | undefined, routed = false) => {
+    const t = ms(time);
+    if (Number.isNaN(t)) return group('', null, false);
+    const message = (routed ? messages.find((m) => ms(m.time) >= t) : undefined) ?? messages.filter((m) => ms(m.time) <= t).at(-1) ?? null;
+    return group(message?.id ?? 'start', message, true);
+  };
+  for (const c of timed.commands ?? []) at(c.started_at).commands.push(c);
+  for (const f of timed.fusions ?? []) at(f.started_at ?? f.phases.find((p) => p.started_at)?.started_at, true).fusions.push(f);
   return [...groups.values()].sort((a, b) => b.at - a.at).map(({ at: _at, ...g }) => g);
 }
 

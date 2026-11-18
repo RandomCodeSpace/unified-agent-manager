@@ -231,6 +231,34 @@ func TestTurnActivityIsPublishedNeverWrittenAndPerTurn(t *testing.T) {
 	}
 }
 
+func TestTurnActivityCarriesFusionsRouteAsItChanges(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	route := func(status string) *agentapi.Activity {
+		return &agentapi.Activity{Fusion: &agentapi.Fusion{Level: "high", Pattern: "critique", Phases: []agentapi.FusionPhase{{Kind: "draft", Status: status}}}}
+	}
+	conv.Emit(agentapi.Event{Kind: agentapi.EventActivity, Activity: route("running")})
+	// The same route again publishes nothing; a phase that moves on does.
+	conv.Emit(agentapi.Event{Kind: agentapi.EventActivity, Activity: route("running")})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventActivity, Activity: route("succeeded")})
+	var first, second TurnActivity
+	decodeField(t, frameOf(t, sub, "turn_activity"), "turn_activity", &first)
+	decodeField(t, frameOf(t, sub, "turn_activity"), "turn_activity", &second)
+	if first.Fusion == nil || first.Fusion.Phases[0].Status != "running" || second.Fusion == nil || second.Fusion.Phases[0].Status != "succeeded" {
+		t.Fatalf("frames = %+v then %+v", first.Fusion, second.Fusion)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if got := detail(t, m, sum.ID).TurnActivity; got != nil && got.Fusion != nil {
+		t.Fatalf("route after the turn = %+v", got.Fusion)
+	}
+}
+
 func TestSubagentRetryIsCleanAndOnlyWhileRunning(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)

@@ -46,6 +46,12 @@ check waits for.
 in the same pull request. When a fix cannot be covered by a spec, the pull
 request says why. `web/e2e/COVERAGE.md` lists what is covered and what is planned.
 
+**Exception, Copilot Fusion:** Fusion routes a turn on GitHub's side, and
+aimock serves one model, so the pack cannot produce a Fusion route, phase or
+review. A fix to Fusion's display lands with a component test under
+`web/packages/ui/tests/dom` and, for what the adapter reads, a Go test in
+`internal/adapter/copilot`; its row in `COVERAGE.md` says "not feasible".
+
 ```sh
 npx --prefix web playwright install chromium   # once
 make test-ui                                    # builds bin/uam, runs the pack

@@ -21,7 +21,8 @@ import { ATTENTION, LIVE, describeError, readOnly, type Item, type Retry, type S
 import { useApi } from '../ApiContext';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
-import { countSubagents } from '../lib/subagents';
+import { backgroundCommands, commandRunning, countSubagents } from '../lib/subagents';
+import { fusionStep, reviews } from '../lib/fusion';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
 import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './common';
@@ -109,15 +110,20 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
     const permission = ask ? ask.kind === 'permission' : session.state === 'awaiting_permission';
     return { mark: 'you', phase: STATE_LABELS[permission ? 'awaiting_permission' : 'awaiting_answer'], detail: phase.detail, since: phase.since };
   }
+  // A Fusion phase reviewing the draft calls no tool and writes nothing in the conversation.
+  const review = session.turn_activity?.fusion?.phases.find((p) => p.status === 'running' && reviews(p));
+  if (review) return { mark: 'dot', phase: `${fusionStep(review.kind)} reviewing`, since: review.started_at };
   const running = session.subagents.filter((s) => s.status === 'running').length;
-  if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
+  const commands = backgroundCommands(session.background_tasks).filter(commandRunning).length;
+  const waiting = `Waiting on ${plural(running, 'subagent')}${commands ? ` · ${plural(commands, 'command')} running` : ''}`;
+  if (running && phase && (phase.by === 'subagent' || (!!phase.calls && phase.calls === phase.subagents))) return { mark: 'subagents', phase: waiting };
   if (!phase) return null;
   const items = (session.recent_items ?? session.items).filter((i) => !i.agent_id);
   if (phase.kind === 'local') {
     const tool = phase.tool ?? '';
     const calls = items.filter((i) => i.kind === 'tool' && (i.tool?.status === 'running' || i.tool?.status === 'pending') && !isSubagentCall(i));
     // A plain local phase may be a subagent's tool mid-turn: with no call of the main agent's running, it waits on them.
-    if (running && !calls.length) return { mark: 'subagents', phase: `Waiting on ${plural(running, 'subagent')}` };
+    if (running && !calls.length) return { mark: 'subagents', phase: waiting };
     const reads = calls.filter((i) => READS.has(i.tool?.name.toLowerCase() ?? '')).length;
     const kind = toolKind(tool);
     const arg = phase.detail || tool;
@@ -190,6 +196,14 @@ const Sep = () => <span className="shrink-0 text-faint">·</span>;
 /** The timings of the turns that changed the todo list, in order: the history button's count. */
 const todoTurns = (session: SessionDetail) => (session.turn_timings ?? []).filter((t) => t.todo?.total);
 
+/**
+ * The strip draws the button to its list of agents and commands: the Thread has subagents, background
+ * commands, or runs on Copilot Fusion (whose turns the list reads from the record) and has had a turn.
+ */
+export function stripHasAgents(session: SessionDetail): boolean {
+  return session.subagents.length > 0 || backgroundCommands(session.background_tasks).length > 0 || !!session.turn_activity?.fusion || (session.model === 'auto' && !!session.turn_timings?.length);
+}
+
 /** The strip draws a todo button, working or idle: a known list with rows, or turns that changed one (the history). Task.tsx keeps the jump arrow on the row then. */
 export function stripHasTodos(session: SessionDetail): boolean {
   const todos = session.turn_activity?.todos;
@@ -234,6 +248,9 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   const index = useSubagentIndex();
   const any = !!index?.subagents.length;
   const subagents = hidden || !any ? undefined : index!.subagents;
+  // Only inside a Thread, whose scope holds the list it opens.
+  const listable = !!index && (any || stripHasAgents(session));
+  const agents = !hidden && listable;
   const timing = session.turn_timings?.at(-1);
   // The live region still says a turn started when the strip draws nothing for it.
   const spoken = hidden ? null : line;
@@ -286,7 +303,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
   const [reader, setReader] = useState<{ open: boolean; phone: boolean; opener: HTMLElement | null; lift: HTMLElement | null; to: SheetTo | null; n: number; leaving: boolean } | null>(null);
   const confirming = useStopConfirming();
   // With nothing left to show (the turn ended, the conversation closed), a reader goes too.
-  if (reader && !any) setReader(null);
+  if (reader && !listable) setReader(null);
   if (todoReader && !view) setTodoReader(null);
   if (historyReader && !turns.length) setHistoryReader(null);
   const sheetMode = () => window.matchMedia(PHONE).matches || hidden;
@@ -304,7 +321,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
     if (!confirming) setReader((r) => r && { ...r, open: false });
   };
   const closed = () => setReader(null);
-  const rowShown = !!(shownLine || subagents || (!hidden && (view || turns.length)));
+  const rowShown = !!(shownLine || agents || (!hidden && (view || turns.length)));
   const arrow = (
     <Appear show={jump} className={cn('shrink-0', !rowShown && 'ml-auto')}>
       <Tip label="Jump to bottom">
@@ -416,7 +433,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
           )}
           <div className="flex min-w-0 flex-1 justify-center">{shownLine && <Progress line={shownLine} since={since} />}</div>
           {arrow}
-          {subagents && (
+          {agents && (
             <button
               id="subagents-link"
               type="button"
@@ -427,11 +444,17 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
               className={cn(STRIP, 'shrink-0 gap-2')}
             >
               <Workflow aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
-              {/* A phone keeps the glyph, a failed cell and "3/5" (running of all), so the live line keeps its room. */}
-              <Blocks aria-hidden="true" items={subagentBlocks(subagents)} className="max-sm:hidden" />
-              <Blocks aria-hidden="true" items={subagentBlocks(subagents).filter((b) => b.key === 'failed')} className="sm:hidden" />
-              <span aria-hidden="true" className="shrink-0 tabular-nums sm:hidden">{`${countSubagents(subagents).running}/${subagents.length}`}</span>
-              <span className="sr-only">{`${subagentSentence(subagents, index?.before)}. Show the subagents`}</span>
+              {subagents ? (
+                <>
+                  {/* A phone keeps the glyph, a failed cell and "3/5" (running of all), so the live line keeps its room. */}
+                  <Blocks aria-hidden="true" items={subagentBlocks(subagents)} className="max-sm:hidden" />
+                  <Blocks aria-hidden="true" items={subagentBlocks(subagents).filter((b) => b.key === 'failed')} className="sm:hidden" />
+                  <span aria-hidden="true" className="shrink-0 tabular-nums sm:hidden">{`${countSubagents(subagents).running}/${subagents.length}`}</span>
+                  <span className="sr-only">{`${subagentSentence(subagents, index?.before)}. Show the subagents`}</span>
+                </>
+              ) : (
+                <span className="sr-only">Show the agents and commands</span>
+              )}
             </button>
           )}
         </div>
@@ -494,7 +517,7 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
         <div className="flex min-h-7 min-w-0 items-center gap-1">
           <h2 ref={heading} tabIndex={-1} className="flex h-7 min-w-0 flex-1 items-center gap-1.5 px-2.5 text-ui font-medium text-ink outline-hidden">
             <Workflow aria-hidden="true" className="size-3.5 shrink-0" />
-            Subagents
+            Agents and commands
           </h2>
           {closeButton}
         </div>
@@ -512,7 +535,7 @@ function StripReader({ id, open, phone, row, lift, back, body, onClose, onClosed
       lift={lift}
       side="top"
       align="end"
-      label="Subagents"
+      label="Agents and commands"
       surface="flex h-[min(70vh,var(--available-height))] w-[560px] max-w-(--available-width) origin-bottom-right flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,translate] duration-160 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 starting:translate-y-2 starting:opacity-0"
       sheetClassName="h-[70dvh]"
       initialFocus={initialFocus}

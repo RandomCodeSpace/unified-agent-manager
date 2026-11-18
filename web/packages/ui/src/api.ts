@@ -1168,6 +1168,8 @@ export interface Item {
   /** A local steer receipt; absent after the provider records its user message. */
   steer_status?: 'accepted' | 'not_delivered';
   text?: string;
+  /** Text still arriving in deltas; the provider's whole item replaces it. */
+  partial?: boolean;
   tool?: ToolCall;
   completion?: TaskCompletion;
   /** When it began: a tool call's start, a thought's model call start. */
@@ -1257,7 +1259,18 @@ export interface TurnTodos { timing_id: string; ended_at: string; intent?: strin
 export interface TodoHistory { live: TodoView | null; turns: TurnTodos[] }
 
 /** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, the todo list and the phase; never persisted. */
-export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView; phase?: Phase }
+export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView; phase?: Phase; fusion?: Fusion }
+
+/**
+ * How Copilot Fusion runs a turn (live on the turn's activity until it completes; recorded ones from `fusionTurns`):
+ * its ID and when it routed, its level, its pattern (`single`, `cascade`, `critique`) and the reason it gives
+ * (`hint`), the models it picked, and its phases in plan order. A phase is `planned` until it starts (`conditional`
+ * when it runs only if needed); `verdict`, `note` and `defect` are a reviewer's assessment, feedback and what it
+ * found wrong, or `note` a failure's reason; `tokens` are input plus output. A recorded phase's start is its end
+ * less its duration.
+ */
+export interface Fusion { id?: string; started_at?: string; level?: string; pattern: string; hint?: string; models?: string[]; phases: FusionPhase[] }
+export interface FusionPhase { id?: string; kind: string; role?: string; model?: string; effort?: string; status: string; conditional?: boolean; started_at?: string; ended_at?: string; tokens?: number; nano_aiu?: number; verdict?: string; note?: string; defect?: string }
 
 /**
  * What the running turn, or between turns a subagent that outlived it or compaction, waits on now, from Copilot's
@@ -1293,7 +1306,7 @@ export interface ModelCalls { threads: number; subagents: number; background: nu
 export interface BackgroundTasks {
   known: boolean;
   /** `output_unreadable`: the provider keeps no output for that shell, so it has no Output; absent from older servers. */
-  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string; output_unreadable?: boolean }[];
+  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string; output_unreadable?: boolean; /** A shell its agent waits on (a subagent's ordinary command), not a background command. */ sync?: boolean }[];
 }
 
 /**
@@ -2721,6 +2734,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     search: (q: string, signal?: AbortSignal) => call<SearchResults>('GET', `/api/search?q=${enc(q)}`, undefined, false, signal),
     subagent: (id: string, agentId: string, signal?: AbortSignal) =>
       foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
+    /** The Copilot Fusion turns the Thread's conversation recorded, oldest first. */
+    fusionTurns: (id: string, signal?: AbortSignal) => foregroundRead(() => call<{ turns: Fusion[] }>('GET', `/api/sessions/${enc(id)}/fusion`, undefined, false, signal), signal),
     olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),
     subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
     itemDiff: (id: string, itemId: string, agentId: string, eventId: string, path: string, signal?: AbortSignal) => foregroundRead(() => call<ItemDiffData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}/diff?agent_id=${enc(agentId)}&event_id=${enc(eventId)}&path=${enc(path)}`, undefined, false, signal), signal),

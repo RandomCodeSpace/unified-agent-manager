@@ -121,7 +121,8 @@ func (m *Manager) validateSelectionLocked(provider, model, effort, contextSize s
 	if model != "" && mo.ID == "" {
 		return newError(http.StatusBadRequest, "model %q is not offered by this provider", model)
 	}
-	if effort != "" && (model == "" || model == "auto" || !slices.Contains(mo.Efforts, effort)) {
+	// Copilot Fusion ("auto") offers its levels as efforts.
+	if effort != "" && (model == "" || !slices.Contains(mo.Efforts, effort)) {
 		return newError(http.StatusBadRequest, "effort %q is not offered by model %q", effort, model)
 	}
 	if contextSize != "default" && (!m.infos[provider].Capabilities.ContextSize || model == "" || model == "auto" || !slices.ContainsFunc(mo.ContextSizes, func(size agentapi.ContextSize) bool { return size.ID == contextSize && size.Tokens > 0 })) {

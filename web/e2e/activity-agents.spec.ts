@@ -4,6 +4,7 @@ import path from 'node:path';
 import { conversation, expect, lastUserText, newThread, openHome, send, startThread, test, threadState } from './harness';
 import type { ChatCompletionRequest } from '@copilotkit/aimock';
 import { pickMode, script, subagentAsked } from './activity-helpers';
+import { systemText, useMockUtility } from './composer-helpers';
 
 /** What the CLI sends the model between autopilot turns. */
 const CONTINUE = 'You have not yet marked the task as complete';
@@ -49,6 +50,32 @@ test('a subagent shows inline while it works, opens its own transcript, and its 
 
   await page.goto(subUrl);
   await expect(page.getByRole('region', { name: /^Transcript of / }).getByText('There are 3 files.')).toBeVisible();
+});
+
+test('a subagent whose Utility name says what its own name says shows the name once', async ({ page, project, model, uam }) => {
+  const restore = await useMockUtility(uam);
+  try {
+    uam.scripts.push({ match: { predicate: (req) => systemText(req).includes("You name a coding agent's subagent") }, response: () => ({ content: JSON.stringify({ name: 'Counter' }) }) });
+    uam.apply();
+    script(model, { userMessage: 'delegate the tally' }, [
+      [{ id: 'call_task', name: 'task', arguments: { name: 'counter', description: 'Count files', prompt: 'Tally the files', agent_type: 'general-purpose' } }],
+      'Subagent said 3.',
+    ], {}, 'main');
+    script(model, subagentAsked('Tally the files'), [
+      [{ id: 'call_sub_tally', name: 'bash', arguments: { command: 'sleep 8; echo 3', description: 'Count' } }],
+      'There are 3 files.',
+    ], {}, 'subagent');
+    await openHome(page);
+    await newThread(page, project);
+    await pickMode(page, 'Yolo');
+    await send(page, 'delegate the tally');
+
+    const atWork = page.getByRole('region', { name: 'Subagents at work' });
+    await expect(atWork.getByRole('button', { name: /^Counter, running/ })).toBeVisible();
+    await expect(atWork.getByText('counter', { exact: true })).toHaveCount(0);
+  } finally {
+    await restore();
+  }
 });
 
 test('the todo list counts each stage live on the status line, and the turn keeps its end state', async ({ page, project, model }) => {

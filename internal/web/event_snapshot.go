@@ -118,6 +118,7 @@ func snapshotDetail(detail SessionDetail) SessionDetail {
 	detail.TurnActivity = snapshotValue(detail.TurnActivity)
 	if activity := detail.TurnActivity; activity != nil {
 		activity.Retry = snapshotValue(activity.Retry)
+		// Fusion stays shared: each activity brings a new route and none is changed.
 		activity.Todos.Todos = slices.Clone(activity.Todos.Todos)
 	}
 	return detail

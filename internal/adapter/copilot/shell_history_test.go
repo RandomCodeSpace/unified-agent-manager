@@ -124,12 +124,12 @@ printf '%s\n' "$HISTFILE:$HISTSIZE" > "${BASH_SOURCE[0]%/*}/$1.result"
 		t.Fatal(err)
 	}
 	const model = "gpt-6-luna"
-	models, err := client.ListModels(ctx)
+	list, err := client.ListModels(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
-	for _, m := range models {
+	for _, m := range list.Models {
 		found = found || m.ID == model
 	}
 	if !found {

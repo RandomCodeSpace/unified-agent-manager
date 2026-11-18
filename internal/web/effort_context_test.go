@@ -280,3 +280,31 @@ func TestTaskCompactingFollowsProviderAndConversation(t *testing.T) {
 		t.Fatal("reopened conversation inherited compacting")
 	}
 }
+
+// Copilot Fusion ("auto") offers its levels as efforts under their own IDs,
+// so a level is selectable and another model's effort never becomes one.
+func TestFusionLevelIsAnEffortOfItsOwn(t *testing.T) {
+	p := agenttest.NewProvider("fake", allCaps)
+	p.SetModels([]agentapi.Model{
+		{ID: "a", Efforts: []string{"low", "high"}},
+		{ID: "auto", Name: "Fusion", Efforts: []string{"fusion-standard", "fusion-high"}},
+	}, nil)
+	m := startManager(t, openTestStore(t), p)
+	project := addProject(t, m, t.TempDir())
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "auto", Effort: "high"}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("a reasoning effort on Fusion = %v, want it refused", err)
+	}
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "auto", Effort: "fusion-high"})
+	if err != nil || sum.Effort != "fusion-high" || p.Last().Request().Effort != "fusion-high" {
+		t.Fatalf("Fusion High = %+v, %v", sum, err)
+	}
+	if sum, err = m.SetModel(sum.ID, setting("a"), nil, nil); err != nil || sum.Effort != "" {
+		t.Fatalf("leaving Fusion kept effort %q, %v", sum.Effort, err)
+	}
+	if sum, err = m.SetModel(sum.ID, nil, setting("high"), nil); err != nil || sum.Effort != "high" {
+		t.Fatalf("effort = %+v, %v", sum, err)
+	}
+	if sum, err = m.SetModel(sum.ID, setting("auto"), nil, nil); err != nil || sum.Effort != "" {
+		t.Fatalf("entering Fusion with effort high started level %q, %v; want Default", sum.Effort, err)
+	}
+}

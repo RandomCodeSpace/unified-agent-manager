@@ -476,7 +476,7 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	key := itemKey(d.AgentID, d.ItemID)
 	i, ok := s.itemIdx[key]
 	if !ok {
-		m.upsertItemLocked(s, clampItem(agentapi.Item{ID: d.ItemID, Kind: d.Kind, Text: d.Text, AgentID: d.AgentID}, m.now()), true)
+		m.upsertItemLocked(s, clampItem(agentapi.Item{ID: d.ItemID, Kind: d.Kind, Text: d.Text, AgentID: d.AgentID, Partial: true}, m.now()), true)
 		return
 	}
 	it := s.items[i]

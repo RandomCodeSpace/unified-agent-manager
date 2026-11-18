@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import type { Answer, Interaction, SnapshotData } from '../../src/api';
 import { composer, renderApp } from './render';
 
-const warning = 'Switch to Auto for this request? Copilot will choose a model; usage and cost may differ.';
+const warning = 'Switch to Fusion for this request? Copilot will choose the models; usage and cost may differ.';
 
 async function fallback() {
   const rendered = renderApp('#task=t3');
@@ -34,7 +34,7 @@ async function fallback() {
   };
   let seq = 1_000_000;
   function request(id: string) {
-    current = { id, kind: 'question', title: 'Auto model fallback', state: 'pending', time: new Date().toISOString(), questions: [{ text: warning, choices: ['No', 'Yes'], custom: false }] };
+    current = { id, kind: 'question', title: 'Fusion fallback', state: 'pending', time: new Date().toISOString(), questions: [{ text: warning, choices: ['No', 'Yes'], custom: false }] };
     act(() => stream!.dispatchEvent(new MessageEvent('snapshot', { data: JSON.stringify({
       ...original, seq: ++seq,
       sessions: original.sessions.map((session) => session.id === 't3' ? { ...session, state: 'awaiting_answer', pending: 1, mode: 'yolo' } : session),

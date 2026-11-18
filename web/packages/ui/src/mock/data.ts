@@ -10,13 +10,15 @@ import surfaceRealRelease from './surfaces/real-release.json';
 import surfaceRealReview from './surfaces/real-review.json';
 import surfaceRelease from './surfaces/release.json';
 import surfaceReview from './surfaces/review.json';
-import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall, TurnTodos } from '../api';
+import type { Command, Fusion, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall, TurnTodos } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
   agentItems: Record<string, Item[]>;
   /** Older subagents only Copilot's record still has: listed on request (`subagents_before`), openable like the rest. */
   recordSubagents?: Subagent[];
+  /** The Copilot Fusion turns Copilot's record keeps, served by the fusion route. */
+  fusionTurns?: Fusion[];
 }
 
 export interface MockChange {
@@ -349,7 +351,7 @@ export function seed(): MockState {
         cheapest_model: 'gpt-5-mini',
         models: [
           // `auto` reports no media and is not gated; kimi-k3 and the flash model take text only.
-          { id: 'auto', name: 'Auto' },
+          { id: 'auto', name: 'Fusion', efforts: ['fusion-standard', 'fusion-high', 'fusion-max'] },
           { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', efforts: ['low', 'medium', 'high'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 20, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'] } },
           { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', efforts: ['low', 'medium', 'high', 'xhigh'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 10 } },
           { id: 'gpt-5-mini', name: 'GPT-5 mini', efforts: ['low', 'medium', 'high'], media: { images: true, pdf: false, max_images: 4, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] } },

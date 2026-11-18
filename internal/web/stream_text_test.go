@@ -53,6 +53,21 @@ func TestDeltaTextSnapshotsRemainImmutableAndAgentsSeparate(t *testing.T) {
 	}
 }
 
+// A reply built from deltas says it is still arriving until the provider's
+// whole reply replaces it, so the browser marks it up only then.
+func TestDeltaTextIsPartialUntilTheWholeItemArrives(t *testing.T) {
+	m, s := textSession()
+	appendText(m, s, "", "reply", agentapi.ItemAssistant, "> [!WARNING]")
+	appendText(m, s, "", "reply", agentapi.ItemAssistant, "\n> Careful.")
+	if it := s.agentItems("")[0]; !it.Partial {
+		t.Fatalf("delta-built item = %+v, want partial", it)
+	}
+	m.upsertItemLocked(s, agentapi.Item{ID: "reply", Kind: agentapi.ItemAssistant, Text: "> [!WARNING]\n> Careful.", Time: time.Now()}, false)
+	if it := s.agentItems("")[0]; it.Partial {
+		t.Fatal("the whole reply stayed partial")
+	}
+}
+
 func TestDeltaTextReplacementAndHistoryDiscardOldAccumulation(t *testing.T) {
 	m, s := textSession()
 	for _, agent := range []string{"", "helper"} {

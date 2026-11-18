@@ -56,7 +56,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	}
 	c.observePhaseLocked(ev, agentID)
-	if c.observeActivityLocked(ev, agentID) {
+	if c.observeFusionLocked(ev) || c.observeActivityLocked(ev, agentID) {
 		return
 	}
 	if c.observeTodosLocked(ev, agentID) {
@@ -71,6 +71,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	switch d := ev.Data.(type) {
 	case *rpc.SessionModelChangeData:
 		if agentID == "" {
+			c.standardPick = nil
 			c.autoModelSelectionLocked(d)
 		}
 		return
@@ -195,6 +196,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.refreshActiveSchedulesLocked()
 		}
 		c.tr.stepStart[agentID] = ev.Timestamp
+		if agentID == "" && c.fusion == nil && c.standardPick != nil {
+			f := *c.standardPick
+			c.fusion = &f
+			c.emitActivityLocked()
+		}
 		if agentID == "" {
 			if !newCompletionEvent {
 				return
@@ -312,6 +318,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.SessionIdleData:
 		if agentID == "" {
 			c.refreshActiveSchedulesLocked()
+			c.fusion = nil // a turn cut off before Fusion said it completed
 		}
 		// Copilot CLI 1.0.89 reports the autopilot mode on the idle that ends
 		// a run after task_complete too; only a task_complete tells them apart.

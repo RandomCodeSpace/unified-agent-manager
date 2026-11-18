@@ -107,9 +107,17 @@ func TestWebBackgroundShellChangeWithoutSubagent(t *testing.T) {
 	if got := h.sink.last().BackgroundTasks; got == nil || !got.Known || got.Tasks[0].Status != "completed" {
 		t.Fatalf("shell completion missing: %+v", got)
 	}
+	// A shell its agent waits on is tracked but says so: it is no background command.
+	sync := rpc.TaskExecutionModeSync
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "count", Command: "sleep 4", Status: rpc.TaskStatusRunning, ExecutionMode: &sync})
+	h.fs.onEvent(ev("sync", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 4)
+	if got := h.sink.last().BackgroundTasks; got == nil || len(got.Tasks) != 1 || !got.Tasks[0].Sync {
+		t.Fatalf("sync shell not marked: %+v", got)
+	}
 	h.fs.setTasks(agentTaskInfo("helper", rpc.TaskStatusRunning, rpc.TaskExecutionModeBackground))
 	h.fs.onEvent(ev("removed", &rpc.SessionBackgroundTasksChangedData{}))
-	settleTasks(t, h, 4)
+	settleTasks(t, h, 5)
 	if got := h.sink.last().BackgroundTasks; got == nil || !got.Known || len(got.Tasks) != 0 {
 		t.Fatalf("removed shell or agent mislabeled as shell: %+v", got)
 	}

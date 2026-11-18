@@ -211,9 +211,9 @@ func TestSDKClientAdapterRequests(t *testing.T) {
 		t.Fatal("Ping hid a failed ping")
 	}
 
-	rt.set("models.list", `{"models":[{"id":"gpt-5","name":"GPT-5","capabilities":{}}]}`)
-	if models, err := a.ListModels(ctx); err != nil || len(models) != 1 || models[0].ID != "gpt-5" {
-		t.Fatalf("ListModels = %+v, %v", models, err)
+	rt.set("models.list", `{"models":[{"id":"gpt-5","name":"GPT-5","capabilities":{}}],"auto":{"defaultTier":"balance","tiers":[{"id":"hydrafusion","fusionTier":"high","displayName":"High","description":"","type":"fusion","status":{"enabled":true}}]}}`)
+	if list, err := a.ListModels(ctx); err != nil || len(list.Models) != 1 || list.Models[0].ID != "gpt-5" || list.Auto == nil || len(list.Auto.Tiers) != 1 || *list.Auto.Tiers[0].FusionTier != "high" {
+		t.Fatalf("ListModels = %+v, %v", list, err)
 	}
 	rt.fail("models.list", "no models")
 	if _, err := a.ListModels(ctx); err == nil {

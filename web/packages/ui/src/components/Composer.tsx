@@ -492,7 +492,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const contextLabel = selectedSize?.tokens ? formatCount(selectedSize.tokens) : sizeLabel(contextSize);
   const noEffort = effortReason(selectedModel);
   const noContext = contextReason(selectedModel, !!session.capabilities.context_size);
-  // Neither can change (the Auto model): the picker shows one word and says why, instead of "Default · Default".
+  // Neither can change (a model with no efforts and one context size): the picker shows one word and says why, instead of "Default · Default".
   const fixedTuning = !!noEffort && !!noContext;
   const tuningLabel = fixedTuning ? 'Default' : [noEffort ? '' : effortLabel(effort), noContext ? '' : contextLabel].filter(Boolean).join(' · ');
   const settingsLocked = !!busy || locked;

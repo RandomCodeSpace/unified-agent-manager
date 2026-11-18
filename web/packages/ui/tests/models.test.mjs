@@ -27,6 +27,8 @@ test('models sort by display name with numbers compared as numbers, so versions 
 });
 test('efforts read as words in menus while the stored value stays the provider one', () => {
   assert.deepEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'turbo'].map(effortLabel), ['None', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Turbo']);
+  // Copilot Fusion's levels are efforts of their own, so "fusion-high" is never another model's "high".
+  assert.deepEqual(['fusion-standard', 'fusion-high', 'fusion-max'].map(effortLabel), ['Standard', 'High', 'Max']);
 });
 
 test('modelBrand reads the brand from the model ID, provider prefixes included', async () => {

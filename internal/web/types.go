@@ -459,6 +459,8 @@ type TurnActivity struct {
 	Retry  *agentapi.Retry `json:"retry,omitempty"`
 	Todos  TodoView        `json:"todos"`
 	Phase  *Phase          `json:"phase,omitempty"`
+	// Fusion is the route of the turn Copilot Fusion runs; live only.
+	Fusion *agentapi.Fusion `json:"fusion,omitempty"`
 }
 
 // Phase kinds: waiting on the owner, a model call in flight, or a tool

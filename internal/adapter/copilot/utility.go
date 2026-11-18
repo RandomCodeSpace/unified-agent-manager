@@ -253,11 +253,11 @@ func (u *utilityUsage) report(fn func(agentapi.UtilityUsage)) {
 // titleEffort is the lowest reasoning effort model supports, or "" for its
 // default when it lists none or the catalog cannot be read.
 func titleEffort(ctx context.Context, client sdkClient, model string) string {
-	models, err := client.ListModels(ctx)
-	if err != nil {
+	list, err := client.ListModels(ctx)
+	if err != nil || list == nil {
 		return ""
 	}
-	for _, m := range models {
+	for _, m := range list.Models {
 		if m.ID != model {
 			continue
 		}

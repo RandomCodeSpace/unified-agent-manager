@@ -1703,6 +1703,11 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       if (!t || !items) return fail(404, 'subagent not found');
       return historyPage(items, 0, url);
     }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/fusion$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      return json(200, { turns: t.fusionTurns ?? [] });
+    }
     // Older subagents from "Copilot's record", one page, only when asked for.
     if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

@@ -117,7 +117,7 @@ func TestAutoFallbackQuestionNeverUsesYoloPermissionConsent(t *testing.T) {
 	m.mu.Lock()
 	m.sessions[sum.ID].mode = store.ModeYolo
 	m.mu.Unlock()
-	conv.EmitInteraction(agentapi.Interaction{ID: "auto-first", Kind: agentapi.InteractionQuestion, Title: "Auto model fallback", Questions: []agentapi.Question{{Text: "Switch to Auto? Usage and cost may differ.", Choices: []string{"Yes", "No"}}}})
+	conv.EmitInteraction(agentapi.Interaction{ID: "auto-first", Kind: agentapi.InteractionQuestion, Title: "Fusion fallback", Questions: []agentapi.Question{{Text: "Switch to Auto? Usage and cost may differ.", Choices: []string{"Yes", "No"}}}})
 	if d := detail(t, m, sum.ID); d.State != StateAwaitingAnswer || len(conv.Responds()) != 0 {
 		t.Fatalf("Yolo automatically answered question: state=%s, responses=%+v", d.State, conv.Responds())
 	}

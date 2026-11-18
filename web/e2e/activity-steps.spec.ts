@@ -64,7 +64,7 @@ test('the sidebar and the status line tell the model phase from a local tool, an
   await expect(page.getByRole('button', { name: /^Running / })).toHaveCount(0);
 });
 
-test('a background shell is counted on the toolbar, streams into the output panel, and stopping it leaves the Thread working', async ({ page, project, model }) => {
+test('a background shell is counted on the toolbar and shown as a row at the conversation\'s foot, streams into the output panel, and stopping it leaves the Thread working', async ({ page, project, model }) => {
   const ticker = 'for i in $(seq 1 600); do echo tick$i; sleep 0.2; done';
   model.toolRound('start the ticker', [{ id: 'call_ticker', name: 'bash', arguments: { command: ticker, description: 'Ticker', mode: 'async', detach: true } }], 'Ticker started.');
   model.reply('still there', 'Still here.');
@@ -74,6 +74,13 @@ test('a background shell is counted on the toolbar, streams into the output pane
   await send(page, 'start the ticker');
   await expect(conversation(page).getByText('Ticker started.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
+
+  // The conversation's foot shows it while it runs, and opens its output.
+  const live = conversation(page).getByRole('button', { name: 'Background command Ticker, running: show its output' });
+  await expect(live).toContainText(ticker);
+  await live.click();
+  await expect(page.getByRole('complementary', { name: 'Command output' })).toContainText('tick1');
+  await page.getByRole('button', { name: 'Close command output' }).click();
 
   await page.getByRole('button', { name: 'Background tasks: 1 running' }).click();
   const tasks = page.getByRole('dialog', { name: 'Background tasks' });
@@ -94,6 +101,8 @@ test('a background shell is counted on the toolbar, streams into the output pane
   await tasks.getByRole('button', { name: 'Close' }).click();
   await expect(tasks).toBeHidden();
   await expect(page.getByRole('button', { name: /^Background tasks/ })).toHaveAccessibleName('Background tasks: 0 running');
+  // Stopped, it leaves the foot with nothing else at work.
+  await expect(conversation(page).getByRole('region', { name: 'Background commands at work' })).toHaveCount(0);
 
   await send(page, 'still there');
   await expect(conversation(page).getByText('Still here.')).toBeVisible();

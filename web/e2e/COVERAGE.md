@@ -143,6 +143,9 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-34 | Reasoning shows inline in grey, three lines at a time with `Show more`, and `Thought for Ns` once done | none | planned |
 | TRN-35 | Closing Settings (or Routines) brings the Thread back at the same scroll position with open rows | none | planned |
 | TRN-36 | iOS WebKit paging and anchoring workarounds: a page lands only after the touch ends and 150 ms without scroll, and… | none | not feasible: iOS WebKit only |
+| TRN-37 | A Copilot Fusion turn shows its route on the working head (a Standard turn, the model it picked and why), a row per phase at the conversation's foot, and "Critic reviewing" on the strip | fusion-route.test.tsx, fusion.test.mjs | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
+| TRN-38 | The strip's "Agents and commands" list holds Fusion's recorded phases and the background commands with the subagents, under their message, with kind chips; a phase opens its reader with the verdict and Show in conversation | fusion-list.test.tsx, subagents.test.mjs, fusion_test.go | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
+| TRN-39 | A whole reply at a working turn's foot shows its alerts and rich blocks at once; a reply still arriving keeps its last block as written | reply-callout.test.tsx, stream_text_test.go | not feasible (the reply that stays last while its turn works is Copilot Fusion's; aimock serves one model) |
 | ACT-01 | A tool call appears as a running step with its live output tail, then becomes a finished row with its output; the… | activity.test.mjs, state.test.mjs | spec: activity-steps.spec.ts |
 | ACT-02 | A failing command shows as failed on its row while the turn still ends Finished | activity.test.mjs | spec: activity-steps.spec.ts |
 | ACT-03 | Long command output opens in the command output side panel | none | planned |
@@ -169,7 +172,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-24 | Subagents: chip on the turn line, live rows at the foot, a row opens the subagent's own transcript at… | subagents.test.mjs, subagent-transcript.test.mjs, state.test.mjs | spec: activity-agents.spec.ts |
 | ACT-25 | A subagent waiting on permission reads "Needs permission: <tool>" and is answered like the Thread; yolo covers it | none | planned |
 | ACT-26 | A subagent's stalled model request is cancelled after 3 min; a stopped subagent's tool time ends | Go adapter tests | planned |
-| ACT-27 | Background shells: toolbar chip counts running shells; list with status/command; Output panel (8 KB, Load more, Jump… | none | spec: activity-steps.spec.ts |
+| ACT-27 | Background shells: toolbar chip counts running shells; list with status/command; Output panel (8 KB, Load more, Jump…; a running shell is a row at the conversation's foot that opens its output | background-output.test.tsx | spec: activity-steps.spec.ts |
 | ACT-28 | The status line says the agent's intent and elapsed time, "Retrying, attempt 2 · HTTP 429 · rate limited" during a… | none | spec: activity-steps.spec.ts (retry); intent planned (no report_intent tool in this CLI) |
 | ACT-29 | The strip's phase pill: "Model" + model name, "Local · no model" + tool, "Waiting on you" + what; sidebar foot… | model-phase (12), usage tests | spec: activity-steps.spec.ts (status line and Usage and AI phases) |
 | ACT-30 | "Needs you": sidebar row reads Needs answer/Needs permission without moving, Needs you count beside the wordmark,… | none | spec: activity-attention.spec.ts (row order: fixme, row moves until reload) |
@@ -188,6 +191,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-43 | Custom agent picker (Agent tab) lists the Project's agents and changes only between turns | none | planned |
 | ACT-44 | Settings → Background AI logs uam's Utility calls; subagent labels come from one Utility call | none | planned |
 | ACT-45 | A transcript row that throws renders as one muted line; the rest stays | none | planned |
+| ACT-46 | A subagent whose Utility name says what its own name says shows the name once | none | spec: activity-agents.spec.ts |
 | WSP-01 | The Thread header's Changes button and the sidebar row show the number of files the Thread changed | changes.test.mjs | spec: changes.spec.ts |
 | WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | planned |
 | WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | spec: workspace-changes.spec.ts |

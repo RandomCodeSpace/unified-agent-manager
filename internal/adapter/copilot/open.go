@@ -90,12 +90,25 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		system += "\n\n" + req.Instructions
 	}
 	var sess sdkSession
+	// Fusion takes its level apart from the reasoning effort, which it rejects.
+	effort, capi := req.Effort, (*copilot.CapiSessionOptions)(nil)
+	level, fusion, err := fusionLevel(req.Model, req.Effort)
+	if err != nil {
+		return nil, err
+	}
+	if fusion {
+		effort = ""
+	}
+	if level != "" {
+		capi = &copilot.CapiSessionOptions{FusionTier: copilot.FusionTier(level)}
+	}
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
 			SessionID:                req.SessionID,
 			WorkingDirectory:         req.Workdir,
 			Model:                    req.Model,
-			ReasoningEffort:          req.Effort,
+			ReasoningEffort:          effort,
+			Capi:                     capi,
 			ContextTier:              copilot.ContextTier(req.ContextSize),
 			Providers:                providers,
 			Models:                   models,
