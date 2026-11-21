@@ -12,8 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 func completeData(success *bool, outcome string, summary string) *rpc.SessionTaskCompleteData {

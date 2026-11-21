@@ -144,6 +144,9 @@ func (p *webProvider) startClient(ctx context.Context, probe bool) (sdkClient, e
 	defer cancel()
 	if err := c.Start(sctx); err != nil {
 		c.ForceStop()
+		if old := tooOldError(ctx, err); old != nil {
+			return nil, old
+		}
 		return nil, fmt.Errorf("start copilot CLI: %s", errText(err))
 	}
 	if probe {

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 type autoResult struct {
@@ -30,7 +30,7 @@ func autoAsync(handler copilot.AutoModeSwitchRequestHandler, req copilot.AutoMod
 
 func autoHandler(t *testing.T, h webHarness) copilot.AutoModeSwitchRequestHandler {
 	t.Helper()
-	handler := h.fc.create[0].OnAutoModeSwitchRequest
+	handler := h.fc.create[0].Interaction.OnAutoModeSwitchRequest
 	if handler == nil {
 		t.Fatal("create does not register Auto fallback handler")
 	}
@@ -45,10 +45,10 @@ func TestWebAutoCreatesAndResumesWithConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.fc.resume[0].OnAutoModeSwitchRequest == nil {
+	if h.fc.resume[0].Interaction.OnAutoModeSwitchRequest == nil {
 		t.Fatal("resume does not register Auto fallback handler")
 	}
-	done := autoAsync(h.fc.resume[0].OnAutoModeSwitchRequest, copilot.AutoModeSwitchRequest{}, "conv-2")
+	done := autoAsync(h.fc.resume[0].Interaction.OnAutoModeSwitchRequest, copilot.AutoModeSwitchRequest{}, "conv-2")
 	waitFor(t, "resumed Auto question", func() bool { return sink.question() != nil })
 	if err := conv.Respond(context.Background(), sink.question().ID, agentapi.Answer{Answers: [][]string{{"No"}}}); err != nil {
 		t.Fatal(err)

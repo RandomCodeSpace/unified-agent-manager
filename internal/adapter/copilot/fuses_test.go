@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 func TestFuseHookMappings(t *testing.T) {
@@ -17,7 +17,7 @@ func TestFuseHookMappings(t *testing.T) {
 	c.hooks.Pre = func(context.Context, agentapi.ToolUse) agentapi.ToolVerdict {
 		return agentapi.ToolVerdict{Context: "warning", Deny: "refused 403; reopens 20:02"}
 	}
-	out, err := h.fc.create[0].Hooks.OnPreToolUse(copilot.PreToolUseHookInput{ToolName: "web_fetch"}, copilot.HookInvocation{})
+	out, err := h.fc.create[0].Hooks.Handlers.OnPreToolUse(copilot.PreToolUseHookInput{ToolName: "web_fetch"}, copilot.HookInvocation{})
 	if err != nil || out.PermissionDecision != "deny" || out.PermissionDecisionReason != "refused 403; reopens 20:02" || out.AdditionalContext != "warning" {
 		t.Fatalf("pre=%+v error=%v", out, err)
 	}
@@ -27,7 +27,7 @@ func TestFuseHookMappings(t *testing.T) {
 		}
 		return "failed context"
 	}
-	failed, err := h.fc.create[0].Hooks.OnPostToolUseFailure(copilot.PostToolUseFailureHookInput{ToolName: "web_fetch", ToolArgs: map[string]any{"url": "https://example.com/a"}, WorkingDirectory: "/repo", Error: "status code 403"}, copilot.HookInvocation{})
+	failed, err := h.fc.create[0].Hooks.Handlers.OnPostToolUseFailure(copilot.PostToolUseFailureHookInput{ToolName: "web_fetch", ToolArgs: map[string]any{"url": "https://example.com/a"}, WorkingDirectory: "/repo", Error: "status code 403"}, copilot.HookInvocation{})
 	if err != nil || failed == nil || failed.AdditionalContext != "failed context" {
 		t.Fatalf("failed=%+v error=%v", failed, err)
 	}

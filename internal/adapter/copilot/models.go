@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -113,18 +113,17 @@ func fusionLevels(auto *rpc.AutoTierMetadata) ([]string, []agentapi.UnavailableE
 	return levels, off
 }
 
-// prices copies the catalog's token prices, preferring cacheReadPrice and
-// maxPromptTokens over their deprecated names cachePrice and contextMax.
+// prices copies the catalog's token prices.
 func prices(tp *rpc.ModelBillingTokenPrices) *agentapi.Prices {
 	if tp == nil {
 		return nil
 	}
-	p := &agentapi.Prices{TierPrices: tierPrices(tp.InputPrice, tp.OutputPrice, cmp.Or(tp.CacheReadPrice, tp.CachePrice), tp.CacheWritePrice, cmp.Or(tp.MaxPromptTokens, tp.ContextMax))}
+	p := &agentapi.Prices{TierPrices: tierPrices(tp.InputPrice, tp.OutputPrice, tp.CacheReadPrice, tp.CacheWritePrice, tp.MaxPromptTokens)}
 	if tp.BatchSize != nil {
 		p.BatchSize = *tp.BatchSize
 	}
 	if lc := tp.LongContext; lc != nil {
-		long := tierPrices(lc.InputPrice, lc.OutputPrice, cmp.Or(lc.CacheReadPrice, lc.CachePrice), lc.CacheWritePrice, cmp.Or(lc.MaxPromptTokens, lc.ContextMax))
+		long := tierPrices(lc.InputPrice, lc.OutputPrice, lc.CacheReadPrice, lc.CacheWritePrice, lc.MaxPromptTokens)
 		p.LongContext = &long
 	}
 	return p

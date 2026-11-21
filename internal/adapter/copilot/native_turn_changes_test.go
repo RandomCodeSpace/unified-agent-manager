@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	"github.com/github/copilot-sdk/go/rpc"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 func TestNativeTurnChangesExactOwnerAndAutopilotSuffix(t *testing.T) {

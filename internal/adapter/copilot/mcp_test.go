@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -166,7 +166,7 @@ func TestGitHubMCPServerOffUntilTurnedOn(t *testing.T) {
 	}
 	open("s-2", "s-1")
 	off := []string{githubMCPServer}
-	for name, got := range map[string][]string{"create": h.fc.create[0].DisabledMCPServers, "resume": h.fc.resume[0].DisabledMCPServers, "utility": h.fc.create[1].DisabledMCPServers} {
+	for name, got := range map[string][]string{"create": h.fc.create[0].MCP.DisabledServers, "resume": h.fc.resume[0].MCP.DisabledServers, "utility": h.fc.create[1].MCP.DisabledServers} {
 		if !slices.Equal(got, off) {
 			t.Fatalf("%s disabled servers = %q, want %q", name, got, off)
 		}
@@ -176,7 +176,7 @@ func TestGitHubMCPServerOffUntilTurnedOn(t *testing.T) {
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-4", Workdir: "/work", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	for name, got := range map[string][]string{"resume": h.fc.resume[1].DisabledMCPServers, "utility": h.fc.create[2].DisabledMCPServers, "create": h.fc.create[3].DisabledMCPServers} {
+	for name, got := range map[string][]string{"resume": h.fc.resume[1].MCP.DisabledServers, "utility": h.fc.create[2].MCP.DisabledServers, "create": h.fc.create[3].MCP.DisabledServers} {
 		if got != nil {
 			t.Fatalf("%s disabled servers = %q with the server on", name, got)
 		}
@@ -210,7 +210,7 @@ type switchingClient struct {
 	switched chan string
 }
 
-func (c *switchingClient) CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
+func (c *switchingClient) CreateSession(ctx context.Context, cfg *copilot.CreateSessionOptions) (sdkSession, error) {
 	s, err := c.fakeClient.CreateSession(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -233,7 +233,7 @@ func TestGitHubMCPSwitchReachesOpenSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc.during = nil
-	if got := fc.create[0].DisabledMCPServers; !slices.Equal(got, []string{githubMCPServer}) {
+	if got := fc.create[0].MCP.DisabledServers; !slices.Equal(got, []string{githubMCPServer}) {
 		t.Fatalf("opened with %q", got)
 	}
 	next := func(want string) {

@@ -441,6 +441,8 @@ export interface ProviderCLI {
   update_available: boolean;
   /** Why UAM cannot update the CLI here. */
   manual?: string;
+  /** Set when `installed` is older: the oldest release this UAM drives. The CLI cannot start until it is updated. */
+  minimum?: string;
   /** The newest release the SDK refused; never offered as an update. */
   incompatible?: string;
   /** RFC 3339 time of the last successful check. */

@@ -5,8 +5,8 @@ import (
 	"slices"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -317,6 +317,10 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	case *rpc.SessionIdleData:
 		if agentID == "" {
+			if c.unsettled != nil {
+				close(c.unsettled)
+				c.unsettled = nil
+			}
 			c.refreshActiveSchedulesLocked()
 			c.fusion = nil // a turn cut off before Fusion said it completed
 		}

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
 )
 
 // TestGlabLiveProbe checks the native bash argument contract without a remote.
@@ -38,12 +38,12 @@ func TestGlabLiveProbe(t *testing.T) {
 	var calls int
 	var rewritten bool
 	c := client.(sdkClientAdapter).c
-	s, err := c.CreateSession(ctx, &copilot.SessionConfig{
-		Model: "gpt-6-luna", WorkingDirectory: root, AvailableTools: []string{"bash"},
-		EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false),
-		EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false),
-		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
-		Hooks: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+	s, err := c.CreateSession(ctx, &copilot.CreateSessionOptions{
+		Model: "gpt-6-luna", WorkingDirectory: root, Tools: copilot.SessionToolOptions{AvailableTools: []string{"bash"}},
+		EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)},
+		State:       copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)},
+		Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll},
+		Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false), Handlers: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
 			if in.ToolName != "bash" {
 				return nil, nil
 			}
@@ -65,7 +65,7 @@ func TestGlabLiveProbe(t *testing.T) {
 				return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: "The harmless probe marker was rewritten."}, nil
 			}
 			return nil, nil
-		}},
+		}}},
 	})
 	if err != nil {
 		t.Fatal(err)

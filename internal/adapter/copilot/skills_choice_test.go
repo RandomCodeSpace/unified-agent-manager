@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/github/copilot-sdk/go/rpc"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -33,20 +33,20 @@ func TestSkillListDisablesTheRest(t *testing.T) {
 		}
 	}
 	open("", &[]string{"keep"})
-	if got := client.create[0].DisabledSkills; !slices.Equal(got, []string{"drop", "plugin:tool"}) {
+	if got := client.create[0].Skills.DisabledSkills; !slices.Equal(got, []string{"drop", "plugin:tool"}) {
 		t.Fatalf("create disabled %v", got)
 	}
 	open("conv", &[]string{})
-	if got := client.resume[0].DisabledSkills; !slices.Equal(got, []string{"keep", "drop", "plugin:tool"}) {
+	if got := client.resume[0].Skills.DisabledSkills; !slices.Equal(got, []string{"keep", "drop", "plugin:tool"}) {
 		t.Fatalf("resume with an empty list disabled %v", got)
 	}
 	open("", nil)
-	if got := client.create[1].DisabledSkills; got != nil {
+	if got := client.create[1].Skills.DisabledSkills; got != nil {
 		t.Fatalf("no list disabled %v", got)
 	}
 	client.err = errors.New("discovery down")
 	open("", &[]string{"keep"})
-	if got := client.create[2].DisabledSkills; got != nil {
+	if got := client.create[2].Skills.DisabledSkills; got != nil {
 		t.Fatalf("failed discovery disabled %v", got)
 	}
 }

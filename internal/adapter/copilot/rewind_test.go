@@ -6,9 +6,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -199,5 +200,32 @@ func TestSDKRewindSendsBoundaryAndMode(t *testing.T) {
 	}
 	if got := rt.last("session.history.rewind"); got["eventId"] != "native-owner" || got["mode"] != "conversation" || got["sessionId"] != "s-1" {
 		t.Fatalf("params = %v", got)
+	}
+}
+
+func TestNativeRewindWaitsForSessionIdleAfterTurnEnd(t *testing.T) {
+	c, sess, _ := rewindConversation(t)
+	sess.result = &rpc.HistoryRewindResult{Outcome: rpc.HistoryRewindOutcomeSuccess}
+	c.tr, c.subs, c.pending = newTranscript(), newSubagentLog(), map[string]*interaction{}
+	// The turn ended on assistant.idle; its session.idle is still to come.
+	c.assistantIdleSeen, c.unsettled = true, make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Rewind(context.Background(), "event-2", agentapi.RewindConversation)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("rewind ran before session.idle: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	c.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	select {
+	case err := <-done:
+		if err != nil || len(sess.rewinds) != 1 {
+			t.Fatalf("rewind = %v, %+v", err, sess.rewinds)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rewind still waiting after session.idle")
 	}
 }

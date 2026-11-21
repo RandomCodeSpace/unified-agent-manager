@@ -25,6 +25,9 @@ type CLIRelease struct {
 	// Manual says why the runtime cannot be updated from here, such as an
 	// install the adapter does not manage; empty when it can.
 	Manual string
+	// Minimum, set when Installed is older, is the oldest release this uam
+	// drives: the runtime cannot start until it is updated.
+	Minimum string
 }
 
 // CLIUpdater is implemented by a provider whose Capabilities.CLIUpdate is

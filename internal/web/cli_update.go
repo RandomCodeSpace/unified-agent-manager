@@ -45,6 +45,9 @@ type ProviderCLI struct {
 	// refuse it, and the CLI can be updated here.
 	UpdateAvailable bool   `json:"update_available"`
 	Manual          string `json:"manual,omitempty"`
+	// Minimum, set when Installed is older, is the oldest release this uam
+	// drives: the CLI cannot start until it is updated.
+	Minimum string `json:"minimum,omitempty"`
 	// Incompatible is the newest release the SDK refused; it is not offered
 	// again while this service runs.
 	Incompatible string `json:"incompatible,omitempty"`
@@ -245,11 +248,11 @@ func (m *Manager) checkCLI(ctx context.Context, name string, u agentapi.CLIUpdat
 	if err != nil {
 		st.CheckError = shortError(err)
 		if st.CheckedAt.IsZero() {
-			st.Installed = rel.Installed
+			st.Installed, st.Minimum = rel.Installed, rel.Minimum
 		}
 		return
 	}
-	st.Installed, st.Latest, st.newer, st.Manual = rel.Installed, rel.Latest, rel.Newer, rel.Manual
+	st.Installed, st.Latest, st.newer, st.Manual, st.Minimum = rel.Installed, rel.Latest, rel.Newer, rel.Manual, rel.Minimum
 	st.CheckedAt, st.CheckError = m.now(), ""
 }
 
@@ -328,7 +331,7 @@ func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, targe
 		// UpdateCLI checked the version in place; a failed read must not
 		// keep offering the release just installed.
 		if st.Installed != target {
-			st.Installed, st.newer = target, false
+			st.Installed, st.newer, st.Minimum = target, false, ""
 		}
 		// A second update while a restart is pending keeps the release
 		// still running.

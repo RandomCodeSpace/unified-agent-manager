@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -59,7 +59,7 @@ func TestSubagentStartHookOnCreateAndResume(t *testing.T) {
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: "conv-2", Workdir: "/work", Events: sink}); err != nil {
 		t.Fatal(err)
 	}
-	for name, hooks := range map[string]*copilot.SessionHooks{"create": h.fc.create[0].Hooks, "resume": h.fc.resume[0].Hooks} {
+	for name, hooks := range map[string]*copilot.SessionHooks{"create": h.fc.create[0].Hooks.Handlers, "resume": h.fc.resume[0].Hooks.Handlers} {
 		if hooks == nil || hooks.OnPreToolUse == nil || hooks.OnSubagentStart == nil {
 			t.Fatalf("%s hooks = %+v", name, hooks)
 		}
@@ -75,7 +75,7 @@ func TestSubagentStartHookOnCreateAndResume(t *testing.T) {
 	}
 	// The owner's git rules reach subagents started afterwards.
 	h.p.SetGitRules("Commit messages:\nBe brief.", false)
-	if out, err := h.fc.create[0].Hooks.OnSubagentStart(copilot.SubagentStartHookInput{}, copilot.HookInvocation{}); err != nil || !strings.HasSuffix(out.AdditionalContext, "\n\nCommit messages:\nBe brief.") {
+	if out, err := h.fc.create[0].Hooks.Handlers.OnSubagentStart(copilot.SubagentStartHookInput{}, copilot.HookInvocation{}); err != nil || !strings.HasSuffix(out.AdditionalContext, "\n\nCommit messages:\nBe brief.") {
 		t.Fatalf("subagent start after SetGitRules = %+v, %v", out, err)
 	}
 }

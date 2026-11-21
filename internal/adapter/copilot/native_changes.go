@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 type workspaceDiffSession interface {
@@ -133,6 +133,7 @@ func hunkCount(s string) int {
 }
 
 func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, error) {
+	c.awaitSettled(ctx)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()

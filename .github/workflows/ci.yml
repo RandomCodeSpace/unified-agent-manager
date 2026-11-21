@@ -22,7 +22,7 @@ on:
 env:
   GOTOOLCHAIN: local
   # The Copilot CLI that test-aimock and test-ui run against.
-  COPILOT_CLI_VERSION: 1.0.110
+  COPILOT_CLI_VERSION: 1.0.114
 
 permissions:
   contents: read
@@ -234,7 +234,7 @@ jobs:
           path: internal/web/dist
 
       - name: Build uam
-        run: CGO_ENABLED=0 go build -trimpath -o bin/uam ./cmd/uam
+        run: CGO_ENABLED=0 go build -tags copilot_no_inprocess -trimpath -o bin/uam ./cmd/uam
 
       - name: Install web dependencies
         run: npm --prefix web ci
@@ -387,8 +387,8 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          go build -trimpath -o dist/uam ./cmd/uam
-          go test -c -o dist/cli.test ./internal/cli/
+          go build -tags copilot_no_inprocess -trimpath -o dist/uam ./cmd/uam
+          go test -tags copilot_no_inprocess -c -o dist/cli.test ./internal/cli/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -566,7 +566,7 @@ jobs:
 
       - name: Build and run version command
         run: |
-          go build -o "${RUNNER_TEMP}/uam" ./cmd/uam
+          go build -tags copilot_no_inprocess -o "${RUNNER_TEMP}/uam" ./cmd/uam
           "${RUNNER_TEMP}/uam" version | grep -E '.+'
 
   govulncheck:

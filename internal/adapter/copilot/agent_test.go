@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -101,7 +101,7 @@ func TestSelectedAgentKeepsHostToolsAfterAStaleCatalog(t *testing.T) {
 	}
 	firstProof(conv)
 	fs := fc.sessions[0]
-	tools := fc.create[0].Tools
+	tools := fc.create[0].Tools.Definitions
 	fs.staleTools = true
 	ctx := context.Background()
 	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
@@ -293,7 +293,7 @@ func TestAgentModelDoesNotReplaceTheTaskModelLater(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []string{"clear", "catalog", "select pinned", "model " + taskModel, "catalog", "restore", "catalog"}
-		if !slices.Equal(fs.toolCalls[calls:], want) || !toolsAnswer(t, fc.create[0].Tools, "next") {
+		if !slices.Equal(fs.toolCalls[calls:], want) || !toolsAnswer(t, fc.create[0].Tools.Definitions, "next") {
 			t.Fatalf("RPCs %v, want %v", fs.toolCalls[calls:], want)
 		}
 		keptTaskModel(t, fs, "rebuild")

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
 )
 
 func TestGlabModifiedArgsMapping(t *testing.T) {
@@ -13,7 +13,7 @@ func TestGlabModifiedArgsMapping(t *testing.T) {
 	c := h.conv.(*conversation)
 	args := map[string]any{"command": "glab issue list -P 10", "description": "List issues"}
 	c.hooks.Pre = func(context.Context, agentapi.ToolUse) agentapi.ToolVerdict { return agentapi.ToolVerdict{Args: args} }
-	out, err := h.fc.create[0].Hooks.OnPreToolUse(copilot.PreToolUseHookInput{ToolName: "bash", ToolArgs: map[string]any{"command": "glab issue list"}}, copilot.HookInvocation{})
+	out, err := h.fc.create[0].Hooks.Handlers.OnPreToolUse(copilot.PreToolUseHookInput{ToolName: "bash", ToolArgs: map[string]any{"command": "glab issue list"}}, copilot.HookInvocation{})
 	if err != nil || out == nil {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}

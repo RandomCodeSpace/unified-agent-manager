@@ -52,7 +52,7 @@ make web
 # Do not conceal a changed lockfile or any other source change.
 git diff --exit-code -- . ':!internal/web/dist'
 UAM_EXPECT_WEB_ASSETS=built go test ./internal/web -run '^TestEmbeddedFrontendPackaging$' -count=1
-CGO_ENABLED=0 go build -trimpath -o "$scratch/uam" ./cmd/uam
+CGO_ENABLED=0 go build -tags copilot_no_inprocess -trimpath -o "$scratch/uam" ./cmd/uam
 git add -f internal/web/dist
 git commit -m "build(release): embed web assets for $version"
 release_commit=$(git rev-parse HEAD)

@@ -4,7 +4,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/github/copilot-sdk/go/rpc"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -21,6 +21,9 @@ func (c *conversation) startTurnLocked() {
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
+	if c.unsettled == nil {
+		c.unsettled = make(chan struct{})
+	}
 	c.idleUnresolved, c.taskCompleted, c.autopilotStopped = false, false, false
 	c.completion = nil
 	c.completionReady = false

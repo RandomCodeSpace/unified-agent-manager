@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -45,8 +45,20 @@ type accountClient interface {
 	Logout(ctx context.Context, req *rpc.AccountLogoutRequest) error
 }
 
+// AuthStatus fails when the CLI is gone, as Ping does. Client.GetAuthStatus
+// starts a new CLI when the connection is gone, and the SDK has no raw
+// auth.getStatus, so a CLI started during the call is stopped again.
 func (a sdkClientAdapter) AuthStatus(ctx context.Context) (*copilot.GetAuthStatusResponse, error) {
-	return a.c.GetAuthStatus(ctx)
+	server := a.c.RPC
+	if err := a.Ping(ctx); err != nil {
+		return nil, err
+	}
+	status, err := a.c.GetAuthStatus(ctx)
+	if a.c.RPC != server {
+		a.ForceStop()
+		return nil, errors.New("client is not connected")
+	}
+	return status, err
 }
 
 func (a sdkClientAdapter) CurrentAuth(ctx context.Context) (*rpc.AccountGetCurrentAuthResult, error) {

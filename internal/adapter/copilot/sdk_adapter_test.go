@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -177,7 +177,9 @@ func writeFrame(w io.Writer, msg any) error {
 // startFakeSDK connects the SDK client adapter to rt.
 func startFakeSDK(t *testing.T, rt *fakeRuntime) sdkClientAdapter {
 	t.Helper()
-	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Connection: copilot.URIConnection{URL: rt.addr}})}
+	host, port, _ := net.SplitHostPort(rt.addr)
+	portNum, _ := strconv.Atoi(port)
+	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.TCPConnection{Host: host, Port: portNum}})}
 	if err := a.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -190,11 +192,35 @@ func openFakeSDKSession(t *testing.T, rt *fakeRuntime) sdkSessionAdapter {
 	t.Helper()
 	a := startFakeSDK(t, rt)
 	rt.set("session.create", `{"sessionId":"s-1","workspacePath":"/ws"}`)
-	s, err := a.CreateSession(context.Background(), &copilot.SessionConfig{SessionID: "s-1", OnPermissionRequest: copilot.PermissionHandler.ApproveAll})
+	s, err := a.CreateSession(context.Background(), &copilot.CreateSessionOptions{SessionID: "s-1", Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	return s.(sdkSessionAdapter)
+}
+
+// TestSDKClientAdapterPingAfterExit: a runtime that exited keeps failing
+// Ping and AuthStatus; the SDK's own calls would connect again and hide the
+// exit from the watchdog.
+func TestSDKClientAdapterPingAfterExit(t *testing.T) {
+	rt := startFakeRuntime(t)
+	a := startFakeSDK(t, rt)
+	rt.hangUp()
+	for i := range 20 {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		err := a.Ping(ctx)
+		_, authErr := a.AuthStatus(ctx)
+		cancel()
+		if err == nil || authErr == nil {
+			t.Fatalf("call %d after exit: Ping %v, AuthStatus %v", i, err, authErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if connects := len(rt.requests["connect"]); connects != 1 {
+		t.Fatalf("connects = %d", connects)
+	}
 }
 
 func TestSDKClientAdapterRequests(t *testing.T) {
@@ -265,19 +291,19 @@ func TestSDKClientAdapterRequests(t *testing.T) {
 	}
 
 	rt.set("session.create", `{"sessionId":"s-1"}`)
-	if s, err := a.CreateSession(ctx, &copilot.SessionConfig{SessionID: "s-1", OnPermissionRequest: copilot.PermissionHandler.ApproveAll}); err != nil || s.ID() != "s-1" {
+	if s, err := a.CreateSession(ctx, &copilot.CreateSessionOptions{SessionID: "s-1", Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err != nil || s.ID() != "s-1" {
 		t.Fatalf("CreateSession = %v, %v", s, err)
 	}
 	rt.fail("session.create", "refused")
-	if s, err := a.CreateSession(ctx, &copilot.SessionConfig{SessionID: "s-2", OnPermissionRequest: copilot.PermissionHandler.ApproveAll}); err == nil || s != nil {
+	if s, err := a.CreateSession(ctx, &copilot.CreateSessionOptions{SessionID: "s-2", Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err == nil || s != nil {
 		t.Fatalf("failed CreateSession = %v, %v", s, err)
 	}
 	rt.set("session.resume", `{"sessionId":"s-3"}`)
-	if s, err := a.ResumeSession(ctx, "s-3", &copilot.ResumeSessionConfig{OnPermissionRequest: copilot.PermissionHandler.ApproveAll}); err != nil || s.ID() != "s-3" {
+	if s, err := a.ResumeSession(ctx, "s-3", &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err != nil || s.ID() != "s-3" {
 		t.Fatalf("ResumeSession = %v, %v", s, err)
 	}
 	rt.fail("session.resume", "not found")
-	if s, err := a.ResumeSession(ctx, "s-4", &copilot.ResumeSessionConfig{OnPermissionRequest: copilot.PermissionHandler.ApproveAll}); err == nil || s != nil {
+	if s, err := a.ResumeSession(ctx, "s-4", &copilot.ResumeSessionOptions{Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}}); err == nil || s != nil {
 		t.Fatalf("failed ResumeSession = %v, %v", s, err)
 	}
 	rt.set("session.delete", `{"success":true}`)

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 // TestAutopilotStoppedLiveProbe logs the order of the events that end an
@@ -46,8 +46,8 @@ func TestAutopilotStoppedLiveProbe(t *testing.T) {
 			stopped, toolStarted := make(chan struct{}), make(chan struct{})
 			var stopOnce, toolOnce sync.Once
 			last := time.Now()
-			config := &copilot.SessionConfig{Model: "gpt-6-luna", WorkingDirectory: t.TempDir(), EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false), EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false), OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
-				OnEvent: func(e copilot.SessionEvent) {
+			config := &copilot.CreateSessionOptions{Model: "gpt-6-luna", WorkingDirectory: t.TempDir(), EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)}, State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)}, Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false)}, Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll},
+				Events: copilot.SessionEventOptions{OnEvent: func(e copilot.SessionEvent) {
 					var line string
 					switch d := e.Data.(type) {
 					case *rpc.SessionTaskCompleteData:
@@ -79,7 +79,7 @@ func TestAutopilotStoppedLiveProbe(t *testing.T) {
 					if line != "" && agentOf(e) == "" {
 						order = append(order, line)
 					}
-				},
+				}},
 			}
 			s, err := c.CreateSession(ctx, config)
 			if err != nil {

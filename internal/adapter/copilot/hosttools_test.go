@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -118,9 +118,9 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 			firstProof(conv)
 			var registered []copilot.Tool
 			if resume {
-				registered = fc.resume[0].Tools
+				registered = fc.resume[0].Tools.Definitions
 			} else {
-				registered = fc.create[0].Tools
+				registered = fc.create[0].Tools.Definitions
 			}
 			if got := toolNames(registered); !slices.Equal(got, []string{declarationToolName, "notes_get", "notes_list"}) {
 				t.Fatalf("registered tools = %v", got)
@@ -223,7 +223,7 @@ func TestHostToolCatalogRefusals(t *testing.T) {
 				t.Fatal(err)
 			}
 			firstProof(conv)
-			if _, err := callTool(fc.create[0].Tools[1], "session", "call", map[string]any{}); err == nil || len(calls.recorded()) != 0 || fc.sessions[0].disconnected {
+			if _, err := callTool(fc.create[0].Tools.Definitions[1], "session", "call", map[string]any{}); err == nil || len(calls.recorded()) != 0 || fc.sessions[0].disconnected {
 				t.Fatalf("an unverified host tool answered: %v; calls %v", err, fc.sessions[0].toolCalls)
 			}
 		})
@@ -418,10 +418,10 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 	fc.reply = func(ctx context.Context, msg copilot.MessageOptions) (string, error) {
 		_, deadline = ctx.Deadline()
 		cfg := fc.create[len(fc.create)-1]
-		if len(cfg.Tools) == 0 {
+		if len(cfg.Tools.Definitions) == 0 {
 			return "A title", nil
 		}
-		result, err := cfg.Tools[0].Handler(copilot.ToolInvocation{SessionID: "created-1", ToolCallID: "call-1", Arguments: map[string]any{"ref": "#3"}, TraceContext: ctx})
+		result, err := cfg.Tools.Definitions[0].Handler(copilot.ToolInvocation{SessionID: "created-1", ToolCallID: "call-1", Arguments: map[string]any{"ref": "#3"}, TraceContext: ctx})
 		if err != nil {
 			return "", err
 		}
@@ -443,17 +443,17 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 	}
 	cfg := fc.create[0]
 	off := func(b *bool) bool { return b != nil && !*b }
-	if cfg.ClientName != "uam-summary" || cfg.Model != "gpt-6-luna" || cfg.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" || cfg.OnEvent == nil {
+	if cfg.ClientName != "uam-summary" || cfg.Model != "gpt-6-luna" || cfg.Inference.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" || cfg.Events.OnEvent == nil {
 		t.Fatalf("utility session = %+v", cfg)
 	}
-	if !slices.Equal(cfg.AvailableTools, []string{"notes_get", "notes_list"}) || !slices.Equal(toolNames(cfg.Tools), cfg.AvailableTools) {
-		t.Fatalf("available %v, tools %v", cfg.AvailableTools, toolNames(cfg.Tools))
+	if !slices.Equal(cfg.Tools.AvailableTools, []string{"notes_get", "notes_list"}) || !slices.Equal(toolNames(cfg.Tools.Definitions), cfg.Tools.AvailableTools) {
+		t.Fatalf("available %v, tools %v", cfg.Tools.AvailableTools, toolNames(cfg.Tools.Definitions))
 	}
-	if !off(cfg.EnableConfigDiscovery) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.EnableFileHooks) || !off(cfg.EnableOnDemandInstructionDiscovery) ||
+	if !off(cfg.EnableConfigDiscovery) || !off(cfg.State.EnableCrossSessionStore) || !off(cfg.Skills.Enabled) || !off(cfg.Hooks.EnableRepositoryHooks) || !off(cfg.Instructions.OnDemandDiscovery) ||
 		cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != "Summarize the notes." {
 		t.Fatalf("utility configuration = %+v", cfg)
 	}
-	if d, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{}); err != nil {
+	if d, err := cfg.Permissions.OnRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{}); err != nil {
 		t.Fatal(err)
 	} else if _, ok := d.(*rpc.PermissionDecisionReject); !ok {
 		t.Fatalf("permission decision = %T", d)
@@ -462,15 +462,15 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 	if !slices.Equal(fs.toolCalls, []string{"clear", "catalog", "restore", "catalog", "disconnect"}) || !slices.Equal(fc.deleted, []string{"created-1"}) {
 		t.Fatalf("tool calls %v, deleted %v", fs.toolCalls, fc.deleted)
 	}
-	if _, err := callTool(cfg.Tools[1], "created-1", "late", map[string]any{}); err == nil || len(calls.recorded()) != 1 {
+	if _, err := callTool(cfg.Tools.Definitions[1], "created-1", "late", map[string]any{}); err == nil || len(calls.recorded()) != 1 {
 		t.Fatalf("a tool answered after its run: %v", err)
 	}
 
 	if title, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "x"}); err != nil || title != "A title" {
 		t.Fatalf("title = %q, %v", title, err)
 	}
-	if cfg := fc.create[1]; cfg.Tools != nil || cfg.AvailableTools == nil || len(cfg.AvailableTools) != 0 || cfg.OnEvent != nil || len(fc.sessions[1].toolCalls) != 1 {
-		t.Fatalf("title session tools %v / %v, calls %v", cfg.Tools, cfg.AvailableTools, fc.sessions[1].toolCalls)
+	if cfg := fc.create[1]; cfg.Tools.Definitions != nil || cfg.Tools.AvailableTools == nil || len(cfg.Tools.AvailableTools) != 0 || cfg.Events.OnEvent != nil || len(fc.sessions[1].toolCalls) != 1 {
+		t.Fatalf("title session tools %v / %v, calls %v", cfg.Tools, cfg.Tools.AvailableTools, fc.sessions[1].toolCalls)
 	}
 }
 

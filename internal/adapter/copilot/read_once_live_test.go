@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 )
 
 // TestReadOnceLiveProbe checks, on the installed CLI with a private
@@ -45,9 +45,9 @@ func TestReadOnceLiveProbe(t *testing.T) {
 		var mu sync.Mutex
 		var calls []call
 		views := 0
-		config := &copilot.SessionConfig{Model: "gpt-6-luna", WorkingDirectory: dir, EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false), EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false), OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
-			AvailableTools: tools, CustomAgents: agents,
-			Hooks: &copilot.SessionHooks{OnPostToolUse: func(in copilot.PostToolUseHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
+		config := &copilot.CreateSessionOptions{Model: "gpt-6-luna", WorkingDirectory: dir, EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)}, State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)}, Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll},
+			Tools: copilot.SessionToolOptions{AvailableTools: tools}, Agents: copilot.SessionAgentOptions{Definitions: agents},
+			Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false), Handlers: &copilot.SessionHooks{OnPostToolUse: func(in copilot.PostToolUseHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
 				args, _ := json.Marshal(in.ToolArgs)
 				result, _ := json.Marshal(in.ToolResult)
 				mu.Lock()
@@ -61,7 +61,7 @@ func TestReadOnceLiveProbe(t *testing.T) {
 					return &copilot.PostToolUseHookOutput{ModifiedResult: r}, nil
 				}
 				return nil, nil
-			}},
+			}}},
 		}
 		s, err := c.CreateSession(ctx, config)
 		if err != nil {

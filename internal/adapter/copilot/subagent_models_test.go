@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	copilot "github.com/github/copilot-sdk/go"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -176,7 +176,7 @@ func TestWebPreToolUseHookOnCreateAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.p.SetSubagentModels([]string{"gpt-6-luna"})
-	for name, cfg := range map[string]*copilot.SessionHooks{"create": h.fc.create[0].Hooks, "resume": h.fc.resume[0].Hooks} {
+	for name, cfg := range map[string]*copilot.SessionHooks{"create": h.fc.create[0].Hooks.Handlers, "resume": h.fc.resume[0].Hooks.Handlers} {
 		if cfg == nil || cfg.OnPreToolUse == nil {
 			t.Fatalf("%s hooks = %+v", name, cfg)
 		}
@@ -202,7 +202,7 @@ func TestWebSucceededToolUseHookOnCreateAndResume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for name, cfg := range map[string]*copilot.SessionHooks{"create": h.fc.create[1].Hooks, "resume": h.fc.resume[0].Hooks} {
+	for name, cfg := range map[string]*copilot.SessionHooks{"create": h.fc.create[1].Hooks.Handlers, "resume": h.fc.resume[0].Hooks.Handlers} {
 		if cfg == nil || cfg.OnPostToolUse == nil {
 			t.Fatalf("%s success hook missing", name)
 		}

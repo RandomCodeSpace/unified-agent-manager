@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	sdk "github.com/github/copilot-sdk/go"
+	sdk "github.com/microsoft/copilot-sdk/go/v2"
 )
 
 func TestUsageTelemetryPreservesExplicitConfiguration(t *testing.T) {
@@ -379,7 +379,7 @@ func TestStoppedClientRemovesItsEmptyExport(t *testing.T) {
 		}
 	}
 	for _, path := range []string{empty, written} {
-		sdkClientAdapter{c: sdk.NewClient(&sdk.ClientOptions{Connection: sdk.URIConnection{URL: "localhost:1"}}), export: path}.ForceStop()
+		sdkClientAdapter{c: sdk.NewClient(&sdk.ClientOptions{Mode: sdk.ModeCodingAgent, Runtime: sdk.TCPConnection{Host: "localhost", Port: 1}}), export: path}.ForceStop()
 	}
 	if _, err := os.Stat(empty); !os.IsNotExist(err) {
 		t.Fatalf("empty export kept: %v", err)

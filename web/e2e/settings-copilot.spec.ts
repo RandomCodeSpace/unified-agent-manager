@@ -67,3 +67,25 @@ test('Restart Copilot runtime names the waiting Thread, stops it, and both Threa
   await expect(threadState(page, 'Finished')).toBeVisible();
   await openHome(page);
 });
+
+test('a Copilot CLI too old for this uam says so in plain words and offers the update', async ({ page }) => {
+  const tooOld = { installed: '1.0.112', latest: '1.0.120', update_available: true, minimum: '1.0.113', state: 'idle' };
+  let cli: Record<string, unknown> = tooOld;
+  await page.route(/\/api\/providers\/copilot\/cli(\?|$)/, (route) => route.fulfill({ json: cli }));
+  let updates = 0;
+  await page.route('**/api/providers/copilot/cli/update', (route) => {
+    updates++;
+    cli = { installed: '1.0.120', latest: '1.0.120', update_available: false, state: 'updated', target: '1.0.120' };
+    return route.fulfill({ json: { ...tooOld, state: 'updating', target: '1.0.120' } });
+  });
+
+  await openHome(page);
+  await openSettings(page, 'GitHub Copilot');
+  const card = page.getByRole('group', { name: 'Copilot CLI' });
+  await expect(card.getByText('Copilot CLI 1.0.112 is too old for this UAM. Update to 1.0.113 or newer.', { exact: true })).toBeVisible();
+  await expect(card).not.toContainText('protocol');
+  await card.getByRole('button', { name: 'Update to 1.0.120' }).click();
+  await expect(card.getByRole('status').filter({ hasText: 'Copilot CLI updated to 1.0.120.' })).toBeVisible();
+  await expect(card.getByText(/is too old for this UAM/)).toHaveCount(0);
+  expect(updates).toBe(1);
+});

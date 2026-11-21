@@ -26,8 +26,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -51,8 +51,8 @@ type fakeClient struct {
 	quota      map[string]rpc.AccountQuotaSnapshot
 	quotaErr   error
 	sessions   []*fakeSession
-	create     []*copilot.SessionConfig
-	resume     []*copilot.ResumeSessionConfig
+	create     []*copilot.CreateSessionOptions
+	resume     []*copilot.ResumeSessionOptions
 	// reply answers SendAndWait on the sessions created afterwards.
 	reply     func(context.Context, copilot.MessageOptions) (string, error)
 	deleted   []string
@@ -190,7 +190,7 @@ func (f *fakeClient) Ping(context.Context) error {
 	return f.pingErr
 }
 
-func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
+func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.CreateSessionOptions) (sdkSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErr != nil {
@@ -200,7 +200,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
+	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -209,13 +209,13 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	return s, nil
 }
 
-func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error) {
+func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.ResumeSessionOptions) (sdkSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
+	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -741,13 +741,13 @@ func openWeb(t *testing.T) webHarness {
 func TestWebOpenCreatesStreamingSessionWithoutApproveAll(t *testing.T) {
 	h := openWeb(t)
 	cfg := h.fc.create[0]
-	if h.conv.ID() != "s-1" || cfg.SessionID != "s-1" || cfg.WorkingDirectory != "/work" || cfg.Streaming == nil || !*cfg.Streaming {
+	if h.conv.ID() != "s-1" || cfg.SessionID != "s-1" || cfg.WorkingDirectory != "/work" || cfg.Events.Streaming == nil || !*cfg.Events.Streaming {
 		t.Fatalf("create config = %+v, id %q", cfg, h.conv.ID())
 	}
-	if cfg.Model != "" || cfg.OnUserInputRequest == nil {
-		t.Fatalf("model %q / question handler %v", cfg.Model, cfg.OnUserInputRequest != nil)
+	if cfg.Model != "" || cfg.Interaction.OnUserInputRequest == nil {
+		t.Fatalf("model %q / question handler %v", cfg.Model, cfg.Interaction.OnUserInputRequest != nil)
 	}
-	d, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "rm -rf /"}, copilot.PermissionInvocation{})
+	d, err := cfg.Permissions.OnRequest(&rpc.PermissionRequestShell{FullCommandText: "rm -rf /"}, copilot.PermissionInvocation{})
 	if _, ok := d.(*rpc.PermissionDecisionNoResult); !ok || err != nil {
 		t.Fatalf("SDK permission callback decided %T %v, want no result", d, err)
 	}
@@ -2036,14 +2036,14 @@ func TestWebReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := fc.resume[0]
-	if conv.ID() != "c-7" || cfg.WorkingDirectory != "/w" || cfg.Streaming == nil || !*cfg.Streaming || cfg.Model != "" {
+	if conv.ID() != "c-7" || cfg.WorkingDirectory != "/w" || cfg.Events.Streaming == nil || !*cfg.Events.Streaming || cfg.Model != "" {
 		t.Fatalf("resume config = %+v", cfg)
 	}
 	// Guard: true swallowed the next prompt after a restart (probe 2026-11-04).
 	if cfg.ContinuePendingWork == nil || *cfg.ContinuePendingWork {
 		t.Fatalf("ContinuePendingWork = %v, want explicit false", cfg.ContinuePendingWork)
 	}
-	if cfg.OnPermissionRequest == nil || cfg.OnUserInputRequest == nil || cfg.OnEvent == nil {
+	if cfg.Permissions.OnRequest == nil || cfg.Interaction.OnUserInputRequest == nil || cfg.Events.OnEvent == nil {
 		t.Fatal("resume lost its handlers")
 	}
 }

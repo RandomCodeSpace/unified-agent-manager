@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
+	"github.com/microsoft/copilot-sdk/go/v2/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -249,8 +249,8 @@ func TestUamSkillSurvivesTheDefinitionCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := client.create[0]
-	if !slices.Equal(cfg.SkillDirectories, builtins) {
-		t.Fatalf("skill directories over the cap = %v", cfg.SkillDirectories)
+	if !slices.Equal(cfg.Skills.Directories, builtins) {
+		t.Fatalf("skill directories over the cap = %v", cfg.Skills.Directories)
 	}
 	if cfg.SystemMessage == nil || !strings.Contains(cfg.SystemMessage.Content, "Load the uam skill before you show the owner") {
 		t.Fatalf("system message over the cap = %+v", cfg.SystemMessage)
