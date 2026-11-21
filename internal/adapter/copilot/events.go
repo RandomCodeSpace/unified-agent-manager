@@ -317,6 +317,10 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	case *rpc.SessionIdleData:
 		if agentID == "" {
+			if c.unsettled != nil {
+				close(c.unsettled)
+				c.unsettled = nil
+			}
 			c.refreshActiveSchedulesLocked()
 			c.fusion = nil // a turn cut off before Fusion said it completed
 		}

@@ -65,6 +65,10 @@ type conversation struct {
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
+	// unsettled is open from a turn's start until the main agent's
+	// session.idle. A turn ends on assistant.idle, but until session.idle the
+	// CLI answers rewind and workspace-diff calls with session-busy.
+	unsettled chan struct{}
 	// compaction is the main conversation's compaction in progress.
 	compaction compactionState
 	// views holds the hash of each view result an agent has in its context

@@ -21,6 +21,9 @@ func (c *conversation) startTurnLocked() {
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
+	if c.unsettled == nil {
+		c.unsettled = make(chan struct{})
+	}
 	c.idleUnresolved, c.taskCompleted, c.autopilotStopped = false, false, false
 	c.completion = nil
 	c.completionReady = false

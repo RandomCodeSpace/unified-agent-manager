@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
@@ -38,9 +39,33 @@ func (c *conversation) rewindable() (rewindSession, error) {
 	return sess, nil
 }
 
+// settleWait bounds how long a call waits for session.idle after a turn
+// ended; a background shell withholds it, and then the CLI's own busy answer
+// stands.
+const settleWait = 3 * time.Second
+
+// awaitSettled waits, bounded, for the session.idle that follows the last
+// turn's end, so a call made right after a turn is not refused as busy.
+func (c *conversation) awaitSettled(ctx context.Context) {
+	c.mu.Lock()
+	ch, running := c.unsettled, c.turnRunning
+	c.mu.Unlock()
+	if ch == nil || running {
+		return
+	}
+	t := time.NewTimer(settleWait)
+	defer t.Stop()
+	select {
+	case <-ch:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
 // PreviewRewind reads the exact persisted owner boundary, its native rewind
 // point and file preview. It sends nothing and never resumes a conversation.
 func (c *conversation) PreviewRewind(ctx context.Context, user string) (agentapi.RewindPreview, error) {
+	c.awaitSettled(ctx)
 	sess, err := c.rewindable()
 	if err != nil {
 		return agentapi.RewindPreview{}, err
@@ -109,6 +134,7 @@ func (c *conversation) Rewind(ctx context.Context, event, mode string) (agentapi
 	if event == "" || len(event) > 256 || mode != agentapi.RewindConversation && mode != agentapi.RewindConversationAndFiles {
 		return agentapi.RewindResult{}, errors.New("invalid rewind boundary or mode")
 	}
+	c.awaitSettled(ctx)
 	sess, err := c.rewindable()
 	if err != nil {
 		return agentapi.RewindResult{}, err

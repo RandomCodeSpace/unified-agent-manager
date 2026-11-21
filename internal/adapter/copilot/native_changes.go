@@ -133,6 +133,7 @@ func hunkCount(s string) int {
 }
 
 func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, error) {
+	c.awaitSettled(ctx)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
