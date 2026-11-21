@@ -42,7 +42,7 @@ include terminal features that have since been retired.
 
 ## Start the web workspace
 
-1. Install GitHub Copilot CLI and Node.js, and sign in to Copilot.
+1. Install GitHub Copilot CLI 1.0.113 or newer and Node.js, and sign in to Copilot.
 2. Start the service:
 
    ```sh
