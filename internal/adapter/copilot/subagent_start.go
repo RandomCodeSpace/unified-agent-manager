@@ -1,6 +1,6 @@
 package copilot
 
-import copilot "github.com/github/copilot-sdk/go"
+import copilot "github.com/microsoft/copilot-sdk/go/v2"
 
 // subagentSystem is what every subagent is told before its first turn: the
 // rules of taskSystem a subagent needs too, which it does not otherwise

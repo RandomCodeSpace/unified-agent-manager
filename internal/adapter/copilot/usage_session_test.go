@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	sdk "github.com/github/copilot-sdk/go"
+	sdk "github.com/microsoft/copilot-sdk/go/v2"
 )
 
 func TestUsageTelemetryPreservesExplicitConfiguration(t *testing.T) {

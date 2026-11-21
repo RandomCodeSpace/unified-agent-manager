@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"maps"
 
-	copilot "github.com/github/copilot-sdk/go"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
 )
 
 // viewTool is the CLI's file read tool.

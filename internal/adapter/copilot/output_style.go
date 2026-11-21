@@ -1,6 +1,6 @@
 package copilot
 
-import copilot "github.com/github/copilot-sdk/go"
+import copilot "github.com/microsoft/copilot-sdk/go/v2"
 
 // systemMessage appends system to the CLI's prompt. An output style replaces
 // the CLI's tone section rather than adding to it, so it costs only its own

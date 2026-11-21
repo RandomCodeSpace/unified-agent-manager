@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	copilot "github.com/github/copilot-sdk/go"
+	copilot "github.com/microsoft/copilot-sdk/go/v2"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
