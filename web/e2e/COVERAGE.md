@@ -294,3 +294,4 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-44 | Notify me when a Thread needs me or finishes (push notifications) | settings.test.tsx | not feasible: needs OS push |
 | SET-45 | Log out in UAM and access ends the session and returns to sign-in | settings.test.tsx | planned |
 | SET-46 | Help tips beside labels open on hover, focus and tap; disabled reasons stay inline | settings-help.test.tsx | planned |
+| SET-47 | A Copilot CLI older than the oldest release uam drives: the card says "Copilot CLI X is too old for this UAM. Update to Y or newer." and Update installs the newest | none | spec: settings-copilot.spec.ts |

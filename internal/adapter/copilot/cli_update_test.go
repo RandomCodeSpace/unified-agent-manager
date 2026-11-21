@@ -135,21 +135,21 @@ func (f *fakeClient) lifecycle() (started, stopped, forced int) {
 
 func TestCLIReleaseReadsInstalledLatestAndManual(t *testing.T) {
 	ctx := context.Background()
-	f := fakeNPMInstall(t, "1.0.93-1", "1.0.92")
+	f := fakeNPMInstall(t, "1.1.93-1", "1.1.92")
 	p, _ := cliProvider(t)
 	rel, err := p.CLIRelease(ctx)
-	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.0.93-1", Latest: "1.0.92"}) {
+	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.1.93-1", Latest: "1.1.92"}) {
 		t.Fatalf("CLIRelease with a newer prerelease = %+v, %v", rel, err)
 	}
-	writeFile(t, filepath.Join(f.dir, "latest"), "1.0.94\n", 0o644)
-	if rel, err = p.CLIRelease(ctx); err != nil || rel != (agentapi.CLIRelease{Installed: "1.0.93-1", Latest: "1.0.94", Newer: true}) {
+	writeFile(t, filepath.Join(f.dir, "latest"), "1.1.94\n", 0o644)
+	if rel, err = p.CLIRelease(ctx); err != nil || rel != (agentapi.CLIRelease{Installed: "1.1.93-1", Latest: "1.1.94", Newer: true}) {
 		t.Fatalf("CLIRelease = %+v, %v", rel, err)
 	}
-	writeFile(t, filepath.Join(f.dir, "latest"), "1.0.95-beta.1\n", 0o644)
+	writeFile(t, filepath.Join(f.dir, "latest"), "1.1.95-beta.1\n", 0o644)
 	if _, err = p.CLIRelease(ctx); err == nil || !strings.Contains(err.Error(), "no stable release") {
 		t.Fatalf("CLIRelease with a prerelease latest = %v", err)
 	}
-	writeFile(t, filepath.Join(f.dir, "latest"), "1.0.94\n", 0o644)
+	writeFile(t, filepath.Join(f.dir, "latest"), "1.1.94\n", 0o644)
 
 	// A package in another node_modules, as another package manager places
 	// it, is not npm's to update.
@@ -165,10 +165,10 @@ func TestCLIReleaseReadsInstalledLatestAndManual(t *testing.T) {
 		}
 		t.Setenv("PATH", other+string(os.PathListSeparator)+f.bin)
 		rel, err := p.CLIRelease(ctx)
-		if err != nil || rel.Latest != "1.0.94" || !strings.Contains(rel.Manual, "Copilot CLI at "+filepath.Join(other, "copilot")+" is a Node.js package npm did not install") {
+		if err != nil || rel.Latest != "1.1.94" || !strings.Contains(rel.Manual, "Copilot CLI at "+filepath.Join(other, "copilot")+" is a Node.js package npm did not install") {
 			t.Fatalf("CLIRelease = %+v, %v", rel, err)
 		}
-		if err := p.UpdateCLI(ctx, "1.0.94"); err == nil || !strings.Contains(err.Error(), "npm did not install") {
+		if err := p.UpdateCLI(ctx, "1.1.94"); err == nil || !strings.Contains(err.Error(), "npm did not install") {
 			t.Fatalf("UpdateCLI = %v", err)
 		}
 		for _, c := range f.calls(t) {
@@ -198,14 +198,14 @@ func TestNewerRelease(t *testing.T) {
 		release, version string
 		want             bool
 	}{
-		{"1.0.92", "1.0.80", true},
-		{"1.0.92", "1.0.92", false},
-		{"1.0.92", "1.0.93-1", false},
-		{"1.0.93", "1.0.93-1", true},
-		{"1.0.100", "1.0.99", true},
-		{"1.0.9", "1.0.10", false},
+		{"1.1.92", "1.1.80", true},
+		{"1.1.92", "1.1.92", false},
+		{"1.1.92", "1.1.93-1", false},
+		{"1.1.93", "1.1.93-1", true},
+		{"1.1.100", "1.1.99", true},
+		{"1.1.9", "1.1.10", false},
 		{"2.0.0", "1.9.9", true},
-		{"1.0.93", "1.0.94-01", false},
+		{"1.1.93", "1.1.94-01", false},
 	} {
 		if got := newerRelease(tc.release, tc.version); got != tc.want {
 			t.Errorf("newerRelease(%s, %s) = %v", tc.release, tc.version, got)
@@ -234,7 +234,7 @@ func (f npmFake) waitFile(t *testing.T, name string) {
 // and the next start runs the new CLI.
 func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) {
 	ctx := context.Background()
-	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
+	f := fakeNPMInstall(t, "1.1.80", "1.1.92")
 	probe := &fakeClient{}
 	probed := fakeProbe(t, probe)
 	p, fc := cliProvider(t)
@@ -244,7 +244,7 @@ func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) 
 	}
 	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
 	done := make(chan error, 1)
-	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	go func() { done <- p.UpdateCLI(ctx, "1.1.92") }()
 	f.waitFile(t, "installing")
 	short, cancel := context.WithTimeout(ctx, time.Second)
 	c, err := p.ensureStarted(short)
@@ -296,14 +296,14 @@ func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) 
 	}
 	calls := strings.Join(f.calls(t), "\n")
 	for _, want := range []string{
-		"install --prefix " + staging + " --no-save --no-audit --no-fund @github/copilot@1.0.92",
-		"install -g --no-audit --no-fund @github/copilot@1.0.92",
+		"install --prefix " + staging + " --no-save --no-audit --no-fund @github/copilot@1.1.92",
+		"install -g --no-audit --no-fund @github/copilot@1.1.92",
 	} {
 		if !strings.Contains(calls, want) {
 			t.Fatalf("npm calls %q lack %q", calls, want)
 		}
 	}
-	if rel, err := p.CLIRelease(ctx); err != nil || rel.Installed != "1.0.92" || rel.Newer {
+	if rel, err := p.CLIRelease(ctx); err != nil || rel.Installed != "1.1.92" || rel.Newer {
 		t.Fatalf("CLIRelease after the update = %+v, %v", rel, err)
 	}
 }
@@ -314,7 +314,7 @@ func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) 
 // running CLI is outdated, so the restart onto the release still comes.
 func TestUpdateCLIKeepsAnInstallWhoseVersionCannotBeRead(t *testing.T) {
 	ctx := context.Background()
-	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
+	f := fakeNPMInstall(t, "1.1.80", "1.1.92")
 	fakeProbe(t, &fakeClient{})
 	p, fc := cliProvider(t)
 	if _, err := p.ensureStarted(ctx); err != nil {
@@ -322,7 +322,7 @@ func TestUpdateCLIKeepsAnInstallWhoseVersionCannotBeRead(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
 	done := make(chan error, 1)
-	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	go func() { done <- p.UpdateCLI(ctx, "1.1.92") }()
 	f.waitFile(t, "installing")
 	writeFile(t, filepath.Join(f.root, "@github", "copilot", "npm-loader.js"), "#!/bin/sh\nexit 1\n", 0o755)
 	if err := os.Remove(filepath.Join(f.dir, "hold")); err != nil {
@@ -341,12 +341,12 @@ func TestUpdateCLIKeepsAnInstallWhoseVersionCannotBeRead(t *testing.T) {
 
 func TestUpdateCLIHoldsStartsDuringTheInstall(t *testing.T) {
 	ctx := context.Background()
-	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
+	f := fakeNPMInstall(t, "1.1.80", "1.1.92")
 	fakeProbe(t, &fakeClient{})
 	p, fc := cliProvider(t)
 	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
 	done := make(chan error, 1)
-	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	go func() { done <- p.UpdateCLI(ctx, "1.1.92") }()
 	f.waitFile(t, "installing")
 	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	_, err := p.ensureStarted(short)
@@ -382,14 +382,14 @@ func TestUpdateCLIHoldsStartsDuringTheInstall(t *testing.T) {
 // globally, and the running CLI is left alone.
 func TestUpdateCLIRefusesAReleaseTheSDKCannotDrive(t *testing.T) {
 	ctx := context.Background()
-	f := fakeNPMInstall(t, "1.0.80", "1.0.95")
+	f := fakeNPMInstall(t, "1.1.80", "1.1.95")
 	probe := &fakeClient{startErr: errors.New("SDK protocol version mismatch: SDK supports versions 3-3, but server reports version 4. Please update your SDK or server to ensure compatibility")}
 	fakeProbe(t, probe)
 	p, fc := cliProvider(t)
 	if _, err := p.ensureStarted(ctx); err != nil {
 		t.Fatal(err)
 	}
-	err := p.UpdateCLI(ctx, "1.0.95")
+	err := p.UpdateCLI(ctx, "1.1.95")
 	if !errors.Is(err, agentapi.ErrCLIIncompatible) || !strings.Contains(err.Error(), "server reports version 4") {
 		t.Fatalf("UpdateCLI = %v", err)
 	}
@@ -407,16 +407,67 @@ func TestUpdateCLIRefusesAReleaseTheSDKCannotDrive(t *testing.T) {
 	}
 }
 
+func TestCLIReleaseFlagsAnInstallOlderThanTheMinimum(t *testing.T) {
+	ctx := context.Background()
+	f := fakeNPMInstall(t, "1.0.112", "1.1.95")
+	p, _ := cliProvider(t)
+	rel, err := p.CLIRelease(ctx)
+	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.0.112", Latest: "1.1.95", Newer: true, Minimum: minCLIVersion}) {
+		t.Fatalf("CLIRelease = %+v, %v", rel, err)
+	}
+	// A newer release still older than the minimum is not offered.
+	writeFile(t, filepath.Join(f.dir, "installed"), "1.0.100\n", 0o644)
+	writeFile(t, filepath.Join(f.dir, "latest"), "1.0.112\n", 0o644)
+	if rel, err = p.CLIRelease(ctx); err != nil || rel.Newer || rel.Minimum != minCLIVersion {
+		t.Fatalf("CLIRelease with a latest below the minimum = %+v, %v", rel, err)
+	}
+	// A suffixed build of the minimum is not too old.
+	writeFile(t, filepath.Join(f.dir, "installed"), "1.0.113-1\n", 0o644)
+	if rel, err = p.CLIRelease(ctx); err != nil || rel.Minimum != "" {
+		t.Fatalf("CLIRelease for 1.0.113-1 = %+v, %v", rel, err)
+	}
+}
+
+func TestUpdateCLIRefusesAReleaseOlderThanTheMinimum(t *testing.T) {
+	f := fakeNPMInstall(t, "1.0.100", "1.0.112")
+	fakeProbe(t, &fakeClient{})
+	p, _ := cliProvider(t)
+	if err := p.UpdateCLI(context.Background(), "1.0.112"); err == nil || !strings.Contains(err.Error(), "older than "+minCLIVersion) {
+		t.Fatalf("UpdateCLI = %v", err)
+	}
+	if calls := f.calls(t); len(calls) != 1 || calls[0] != "" {
+		t.Fatalf("npm ran for a release below the minimum: %q", calls)
+	}
+}
+
+// A start the SDK refuses on protocol reads as too old when the installed CLI
+// is older than the minimum, and keeps the SDK's words otherwise.
+func TestStartReportsACLIOlderThanTheMinimum(t *testing.T) {
+	ctx := context.Background()
+	f := fakeNPMInstall(t, "1.0.112", "1.1.95")
+	mismatch := errors.New("SDK protocol version mismatch: SDK supports versions 4-4, but server reports version 3. Please update your SDK or server to ensure compatibility")
+	p := newWebProvider(func() (sdkClient, error) { return &fakeClient{startErr: mismatch}, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	_, err := p.ensureStarted(ctx)
+	if err == nil || err.Error() != "the installed Copilot CLI 1.0.112 is too old for this uam. Update to 1.0.113 or newer in Settings" {
+		t.Fatalf("ensureStarted on 1.0.112 = %v", err)
+	}
+	writeFile(t, filepath.Join(f.dir, "installed"), "1.1.95\n", 0o644)
+	if _, err = p.ensureStarted(ctx); err == nil || !strings.Contains(err.Error(), "start copilot CLI: SDK protocol version mismatch") {
+		t.Fatalf("ensureStarted on 1.1.95 = %v", err)
+	}
+}
+
 // outdatedProvider is a provider whose running CLI an update replaced.
 func outdatedProvider(t *testing.T) (*webProvider, *fakeClient) {
 	t.Helper()
-	fakeNPMInstall(t, "1.0.80", "1.0.92")
+	fakeNPMInstall(t, "1.1.80", "1.1.92")
 	fakeProbe(t, &fakeClient{})
 	p, fc := cliProvider(t)
 	if _, err := p.ensureStarted(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.UpdateCLI(context.Background(), "1.0.92"); err != nil {
+	if err := p.UpdateCLI(context.Background(), "1.1.92"); err != nil {
 		t.Fatal(err)
 	}
 	return p, fc
@@ -566,11 +617,11 @@ func tarGz(t *testing.T, name, body string) []byte {
 // A standalone binary reads the newest release from the published releases,
 // since npm need not exist, and can be updated while its folder is writable.
 func TestCLIReleaseForAStandaloneBinary(t *testing.T) {
-	path := fakeBinaryInstall(t, "1.0.89")
-	fakeReleases(t, "1.0.92", false)
+	path := fakeBinaryInstall(t, "1.1.89")
+	fakeReleases(t, "1.1.92", false)
 	p, _ := cliProvider(t)
 	rel, err := p.CLIRelease(context.Background())
-	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.0.89", Latest: "1.0.92", Newer: true}) {
+	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.1.89", Latest: "1.1.92", Newer: true}) {
 		t.Fatalf("CLIRelease = %+v, %v", rel, err)
 	}
 	if os.Geteuid() == 0 {
@@ -584,7 +635,7 @@ func TestCLIReleaseForAStandaloneBinary(t *testing.T) {
 	if err != nil || !strings.Contains(rel.Manual, "cannot write") {
 		t.Fatalf("CLIRelease in a read-only folder = %+v, %v", rel, err)
 	}
-	if err := p.UpdateCLI(context.Background(), "1.0.92"); err == nil || !strings.Contains(err.Error(), "cannot write") {
+	if err := p.UpdateCLI(context.Background(), "1.1.92"); err == nil || !strings.Contains(err.Error(), "cannot write") {
 		t.Fatalf("UpdateCLI in a read-only folder = %v", err)
 	}
 }
@@ -594,14 +645,14 @@ func TestCLIReleaseForAStandaloneBinary(t *testing.T) {
 // CLI keeps running until a restart stops it, and the next start runs the
 // new one. Nothing is left beside it.
 func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
-	path := fakeBinaryInstall(t, "1.0.89")
-	fakeReleases(t, "1.0.92", false)
+	path := fakeBinaryInstall(t, "1.1.89")
+	fakeReleases(t, "1.1.92", false)
 	p, fc := cliProvider(t)
 	probed := fakeProbe(t, &fakeClient{})
 	if _, err := p.ensureStarted(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.UpdateCLI(context.Background(), "1.0.92"); err != nil {
+	if err := p.UpdateCLI(context.Background(), "1.1.92"); err != nil {
 		t.Fatalf("UpdateCLI: %v", err)
 	}
 	staged, _ := probed.Load().(string)
@@ -611,7 +662,7 @@ func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
 	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging folder kept: %v", err)
 	}
-	if v, err := cliVersion(context.Background(), path); err != nil || v != "1.0.92" {
+	if v, err := cliVersion(context.Background(), path); err != nil || v != "1.1.92" {
 		t.Fatalf("installed copilot reports %q, %v", v, err)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o111 == 0 {
@@ -637,18 +688,18 @@ func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
 // An archive that does not match the release's checksum list is never
 // unpacked, probed or installed.
 func TestUpdateCLIRefusesAnArchiveWithAWrongChecksum(t *testing.T) {
-	path := fakeBinaryInstall(t, "1.0.89")
-	fakeReleases(t, "1.0.92", true)
+	path := fakeBinaryInstall(t, "1.1.89")
+	fakeReleases(t, "1.1.92", true)
 	p, _ := cliProvider(t)
 	probed := fakeProbe(t, &fakeClient{})
-	err := p.UpdateCLI(context.Background(), "1.0.92")
+	err := p.UpdateCLI(context.Background(), "1.1.92")
 	if err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("UpdateCLI = %v", err)
 	}
 	if probed.Load() != nil {
 		t.Fatal("probed a rejected archive")
 	}
-	if v, _ := cliVersion(context.Background(), path); v != "1.0.89" {
+	if v, _ := cliVersion(context.Background(), path); v != "1.1.89" {
 		t.Fatalf("installed copilot changed to %q", v)
 	}
 }
@@ -659,7 +710,7 @@ func TestUpdateCLIRefusesAnArchiveWithAWrongChecksum(t *testing.T) {
 func TestCLIOutdatedFollowsTheBinaryOnDisk(t *testing.T) {
 	ctx := context.Background()
 	bin := filepath.Join(t.TempDir(), "copilot")
-	writeFile(t, bin, "1.0.95", 0o755)
+	writeFile(t, bin, "1.1.95", 0o755)
 	var readErr error
 	p := newWebProvider(func() (sdkClient, error) { return &fakeClient{}, nil }, time.Hour)
 	p.installedCLI = func() (string, os.FileInfo, error) {
@@ -678,7 +729,7 @@ func TestCLIOutdatedFollowsTheBinaryOnDisk(t *testing.T) {
 	if p.CLIOutdated() {
 		t.Fatal("outdated with the binary unchanged")
 	}
-	writeFile(t, bin+".new", "1.0.96", 0o755)
+	writeFile(t, bin+".new", "1.1.96", 0o755)
 	if err := os.Rename(bin+".new", bin); err != nil {
 		t.Fatal(err)
 	}

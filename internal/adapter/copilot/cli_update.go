@@ -38,6 +38,9 @@ const (
 	// checksum list.
 	maxReleaseBytes = 512 << 20
 	maxSumsBytes    = 64 << 10
+	// minCLIVersion is the oldest release this uam drives: the SDK speaks
+	// protocol 4 only, which 1.0.112 and older do not.
+	minCLIVersion = "1.0.113"
 )
 
 var (
@@ -105,12 +108,42 @@ func (p *webProvider) CLIRelease(ctx context.Context) (agentapi.CLIRelease, erro
 	if rel.Installed, err = cliVersion(ctx, inst.path); err != nil {
 		return rel, err
 	}
+	if belowMinimum(rel.Installed) {
+		rel.Minimum = minCLIVersion
+	}
 	latest, err := latestRelease(ctx, inst.npm)
 	if err != nil {
 		return rel, err
 	}
-	rel.Latest, rel.Newer, rel.Manual = latest, newerRelease(latest, rel.Installed), inst.manual
+	rel.Latest, rel.Manual = latest, inst.manual
+	rel.Newer = newerRelease(latest, rel.Installed) && !belowMinimum(latest)
 	return rel, nil
+}
+
+// belowMinimum reports whether version is older than minCLIVersion. A
+// suffixed build of it (1.0.113-1) is not; a version that is not valid
+// semver is never taken for too old.
+func belowMinimum(version string) bool {
+	v := "v" + version
+	return semver.IsValid(v) && semver.Compare(v, "v"+minCLIVersion+"-0") < 0
+}
+
+// tooOldError is a CLI start the SDK refused, in words the owner can act on
+// when the installed CLI is older than minCLIVersion; else nil.
+func tooOldError(ctx context.Context, startErr error) error {
+	if !strings.Contains(startErr.Error(), "protocol version mismatch") {
+		return nil
+	}
+	path, err := resolveCopilot()
+	if err != nil {
+		return nil
+	}
+	installed, err := cliVersion(ctx, path)
+	if err != nil || !belowMinimum(installed) {
+		return nil
+	}
+	log.Warn("the installed copilot CLI is too old for this uam", "version", installed, "error", startErr)
+	return fmt.Errorf("the installed Copilot CLI %s is too old for this uam. Update to %s or newer in Settings", installed, minCLIVersion)
 }
 
 func latestRelease(ctx context.Context, npm string) (string, error) {
@@ -158,6 +191,9 @@ func latestPublished(ctx context.Context) (string, error) {
 func (p *webProvider) UpdateCLI(ctx context.Context, version string) error {
 	if !releaseExpr.MatchString(version) {
 		return fmt.Errorf("%q is not a Copilot CLI release", version)
+	}
+	if belowMinimum(version) {
+		return fmt.Errorf("the Copilot CLI %s release is older than %s, the oldest this uam drives", version, minCLIVersion)
 	}
 	ctx, cancel := context.WithTimeout(ctx, cliUpdateTimeout)
 	defer cancel()

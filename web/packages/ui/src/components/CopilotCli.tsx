@@ -179,6 +179,11 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
           </div>
           <div role="status" className="flex flex-col gap-1">
             {status && <Note>{status}</Note>}
+            {cli.minimum && !updating && (
+              <Note tone="warn">
+                Copilot CLI {cli.installed} is too old for this UAM. Update to {cli.minimum} or newer.
+              </Note>
+            )}
             {updating && <Note>Copilot threads keep running; new ones use the current version until it restarts.</Note>}
             {restarting && <Note>Still running {cli.running}; restarts when no Copilot thread is working or waiting.</Note>}
             {!updating && cli.check_error && <Note className="[overflow-wrap:anywhere]">Could not check for a newer release: {cli.check_error}</Note>}
