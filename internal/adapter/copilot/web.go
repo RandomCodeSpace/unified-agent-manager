@@ -158,6 +158,12 @@ func (p *webProvider) Check(ctx context.Context) error {
 	if _, err := cliVersion(vctx, path); err != nil {
 		return err
 	}
+	// signedOut leaves start failures to the calls that need them, but a CLI
+	// too old to start is the provider's state, not a passing failure.
+	var old cliTooOld
+	if _, err := p.ensureStarted(ctx); errors.As(err, &old) {
+		return err
+	}
 	if p.signedOut(ctx) {
 		return fmt.Errorf("copilot is not signed in: %w", agentapi.ErrSignedOut)
 	}
