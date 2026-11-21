@@ -452,6 +452,10 @@ func TestStartReportsACLIOlderThanTheMinimum(t *testing.T) {
 	if err == nil || err.Error() != "the installed Copilot CLI 1.0.112 is too old for this uam. Update to 1.0.113 or newer in Settings" {
 		t.Fatalf("ensureStarted on 1.0.112 = %v", err)
 	}
+	// Check reports it too, not a healthy or signed-out CLI.
+	if err := p.Check(ctx); err == nil || errors.Is(err, agentapi.ErrSignedOut) || !strings.Contains(err.Error(), "is too old for this uam. Update to 1.0.113 or newer") {
+		t.Fatalf("Check on 1.0.112 = %v", err)
+	}
 	writeFile(t, filepath.Join(f.dir, "installed"), "1.1.95\n", 0o644)
 	if _, err = p.ensureStarted(ctx); err == nil || !strings.Contains(err.Error(), "start copilot CLI: SDK protocol version mismatch") {
 		t.Fatalf("ensureStarted on 1.1.95 = %v", err)

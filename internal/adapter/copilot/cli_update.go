@@ -128,6 +128,14 @@ func belowMinimum(version string) bool {
 	return semver.IsValid(v) && semver.Compare(v, "v"+minCLIVersion+"-0") < 0
 }
 
+// cliTooOld is a CLI start the SDK refused because the installed CLI is
+// older than minCLIVersion.
+type cliTooOld struct{ installed string }
+
+func (e cliTooOld) Error() string {
+	return fmt.Sprintf("the installed Copilot CLI %s is too old for this uam. Update to %s or newer in Settings", e.installed, minCLIVersion)
+}
+
 // tooOldError is a CLI start the SDK refused, in words the owner can act on
 // when the installed CLI is older than minCLIVersion; else nil.
 func tooOldError(ctx context.Context, startErr error) error {
@@ -143,7 +151,7 @@ func tooOldError(ctx context.Context, startErr error) error {
 		return nil
 	}
 	log.Warn("the installed copilot CLI is too old for this uam", "version", installed, "error", startErr)
-	return fmt.Errorf("the installed Copilot CLI %s is too old for this uam. Update to %s or newer in Settings", installed, minCLIVersion)
+	return cliTooOld{installed}
 }
 
 func latestRelease(ctx context.Context, npm string) (string, error) {
