@@ -11,7 +11,7 @@ require (
 	github.com/dustin/go-humanize v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/microsoft/copilot-sdk/go/v2 v2.0.1
-	github.com/sourcegraph/go-diff v0.9.0
+	github.com/sourcegraph/go-diff v0.10.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.1
