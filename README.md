@@ -32,6 +32,11 @@ go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@latest
 uam version
 ```
 
+Release archives are static: they are built with `-tags copilot_no_inprocess`,
+which leaves out the Copilot SDK's unused in-process runtime. Add
+`-tags copilot_no_inprocess` to `go install` for the same static binary;
+without it, the binary links the system C library dynamically.
+
 This README describes the current source. Older published versions may still
 include terminal features that have since been retired.
 

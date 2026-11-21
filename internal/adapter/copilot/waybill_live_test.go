@@ -35,14 +35,14 @@ func TestWaybillLiveNanoAIUSumsToSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := client.(sdkClientAdapter).c
-	session, err := c.CreateSession(ctx, &copilot.SessionConfig{
+	session, err := c.CreateSession(ctx, &copilot.CreateSessionOptions{
 		Model: "gpt-6-luna", WorkingDirectory: t.TempDir(),
-		EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false),
-		EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false),
-		AvailableTools: []string{},
-		OnPermissionRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+		EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)},
+		State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)}, Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false)},
+		Tools: copilot.SessionToolOptions{AvailableTools: []string{}},
+		Permissions: copilot.SessionPermissionOptions{OnRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 			return &rpc.PermissionDecisionReject{}, nil
-		},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)

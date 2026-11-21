@@ -598,7 +598,7 @@ func TestWebCommandRefusalsAndUncertainOutcomes(t *testing.T) {
 	}
 
 	// A runtime offering no supported plan action is refused, never granted.
-	if res, err := plain.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{}, copilot.ExitPlanModeInvocation{}); err != nil || res.Approved || res.Feedback == "" {
+	if res, err := plain.fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{}, copilot.ExitPlanModeInvocation{}); err != nil || res.Approved || res.Feedback == "" {
 		t.Fatalf("plan exit = %+v, %v", res, err)
 	}
 }

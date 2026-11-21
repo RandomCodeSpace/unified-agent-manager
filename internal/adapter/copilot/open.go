@@ -103,73 +103,72 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		capi = &copilot.CapiSessionOptions{FusionTier: copilot.FusionTier(level)}
 	}
 	if req.ConversationID == "" {
-		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
-			SessionID:                req.SessionID,
-			WorkingDirectory:         req.Workdir,
-			Model:                    req.Model,
-			ReasoningEffort:          effort,
-			Capi:                     capi,
-			ContextTier:              copilot.ContextTier(req.ContextSize),
-			Providers:                providers,
-			Models:                   models,
-			Tools:                    uamTools,
-			SystemMessage:            systemMessage(system, req.OutputStyle),
-			CoauthorEnabled:          copilot.Bool(coauthor),
-			Streaming:                copilot.Bool(true),
-			EnableFileChangeTracking: copilot.Bool(true),
-			OnPermissionRequest:      deferPermission,
-			OnUserInputRequest:       c.askUser,
-			OnAutoModeSwitchRequest:  c.confirmAuto,
-			AskUserVariant:           copilot.AskUserVariantLegacy, // forms and links come from elicitations only
-			OnElicitationRequest:     c.elicit,
-			OnExitPlanModeRequest:    c.reviewPlan,
-			OnEvent:                  c.onEvent,
-			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart},
+		sess, err = client.CreateSession(ctx, &copilot.CreateSessionOptions{
+			SessionID:        req.SessionID,
+			WorkingDirectory: req.Workdir,
+			Model:            req.Model,
+			Inference: copilot.SessionInferenceOptions{
+				ReasoningEffort: effort,
+				ContextTier:     copilot.ContextTier(req.ContextSize),
+				Providers:       providers,
+				Models:          models,
+			},
+			GitHub:        copilot.SessionGitHubOptions{Capi: capi},
+			Tools:         copilot.SessionToolOptions{Definitions: uamTools, LargeOutput: largeOutput()},
+			SystemMessage: systemMessage(system, req.OutputStyle),
+			Git:           copilot.SessionGitOptions{CoauthorEnabled: copilot.Bool(coauthor)},
+			Events:        copilot.SessionEventOptions{Streaming: copilot.Bool(true), OnEvent: c.onEvent},
+			Filesystem:    copilot.CreateSessionFilesystemOptions{TrackFileChanges: copilot.Bool(true)},
+			Permissions:   copilot.SessionPermissionOptions{OnRequest: deferPermission},
+			Interaction: copilot.SessionInteractionOptions{
+				OnUserInputRequest:      c.askUser,
+				OnAutoModeSwitchRequest: c.confirmAuto,
+				AskUserVariant:          copilot.AskUserVariantLegacy, // forms and links come from elicitations only
+				OnElicitationRequest:    c.elicit,
+				OnExitPlanModeRequest:   c.reviewPlan,
+			},
+			Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart}},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
 			EnableConfigDiscovery: copilot.Bool(true),
-			SkillDirectories:      req.SkillDirectories,
-			DisabledSkills:        skillsOff,
-			DisabledMCPServers:    disabled,
-			InfiniteSessions:      compaction,
-			LargeOutput:           largeOutput(),
+			Skills:                copilot.SessionSkillOptions{Directories: req.SkillDirectories, DisabledSkills: skillsOff},
+			MCP:                   copilot.SessionMCPOptions{DisabledServers: disabled},
+			State:                 copilot.SessionStateOptions{InfiniteSessions: compaction},
 		})
 	} else {
 		p.awaitDetach(ctx, req.ConversationID)
-		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
+		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionOptions{
 			WorkingDirectory: req.Workdir,
-			Providers:        providers,
-			Models:           models,
-			Tools:            uamTools,
+			Inference:        copilot.SessionInferenceOptions{Providers: providers, Models: models},
+			Tools:            copilot.SessionToolOptions{Definitions: uamTools, LargeOutput: largeOutput()},
 			SystemMessage:    systemMessage(system, req.OutputStyle),
-			CoauthorEnabled:  copilot.Bool(coauthor),
-			Streaming:        copilot.Bool(true),
+			Git:              copilot.SessionGitOptions{CoauthorEnabled: copilot.Bool(coauthor)},
+			Events:           copilot.SessionEventOptions{Streaming: copilot.Bool(true), OnEvent: c.onEvent},
 			// Native capture survives only when the resumed session has a valid
 			// baseline; this option cannot reconstruct earlier untracked edits.
-			EnableFileChangeTracking: copilot.Bool(true),
+			Filesystem: copilot.SessionFilesystemOptions{TrackFileChanges: copilot.Bool(true)},
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
 			// Keep false in every mode, Yolo included: a 2026-11-04 probe
 			// (CLI 1.0.105) with true after a kill -9 did not bring back the
 			// pending permission, left the session busy and swallowed the
 			// next prompt until Cancel. With false, a new prompt works.
-			ContinuePendingWork:     copilot.Bool(false),
-			OnPermissionRequest:     deferPermission,
-			OnUserInputRequest:      c.askUser,
-			AskUserVariant:          copilot.AskUserVariantLegacy,
-			OnElicitationRequest:    c.elicit,
-			OnAutoModeSwitchRequest: c.confirmAuto,
-			OnExitPlanModeRequest:   c.reviewPlan,
-			OnEvent:                 c.onEvent,
-			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart},
+			ContinuePendingWork: copilot.Bool(false),
+			Permissions:         copilot.SessionPermissionOptions{OnRequest: deferPermission},
+			Interaction: copilot.SessionInteractionOptions{
+				OnUserInputRequest:      c.askUser,
+				AskUserVariant:          copilot.AskUserVariantLegacy,
+				OnElicitationRequest:    c.elicit,
+				OnAutoModeSwitchRequest: c.confirmAuto,
+				OnExitPlanModeRequest:   c.reviewPlan,
+			},
+			Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart}},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
-			SkillDirectories:      req.SkillDirectories,
-			DisabledSkills:        skillsOff,
-			DisabledMCPServers:    disabled,
-			InfiniteSessions:      compaction,
-			LargeOutput:           largeOutput(),
+			Skills:                copilot.SessionSkillOptions{Directories: req.SkillDirectories, DisabledSkills: skillsOff},
+			MCP:                   copilot.SessionMCPOptions{DisabledServers: disabled},
+			State:                 copilot.SessionStateOptions{InfiniteSessions: compaction},
 		})
 	}
 	if err != nil {

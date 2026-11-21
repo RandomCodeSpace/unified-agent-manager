@@ -54,14 +54,14 @@ func TestFusionCatalogAndCreate(t *testing.T) {
 	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "new", Model: "auto", Effort: "fusion-high", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := fc.create[0]; cfg.ReasoningEffort != "" || cfg.Capi == nil || cfg.Capi.FusionTier != rpc.FusionTierHigh {
-		t.Fatalf("create = effort %q, capi %+v; want the level apart from the effort", cfg.ReasoningEffort, cfg.Capi)
+	if cfg := fc.create[0]; cfg.Inference.ReasoningEffort != "" || cfg.GitHub.Capi == nil || cfg.GitHub.Capi.FusionTier != rpc.FusionTierHigh {
+		t.Fatalf("create = effort %q, capi %+v; want the level apart from the effort", cfg.Inference.ReasoningEffort, cfg.GitHub.Capi)
 	}
 	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "default", Model: "auto", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := fc.create[1]; cfg.ReasoningEffort != "" || cfg.Capi != nil {
-		t.Fatalf("create with no level = effort %q, capi %+v", cfg.ReasoningEffort, cfg.Capi)
+	if cfg := fc.create[1]; cfg.Inference.ReasoningEffort != "" || cfg.GitHub.Capi != nil {
+		t.Fatalf("create with no level = effort %q, capi %+v", cfg.Inference.ReasoningEffort, cfg.GitHub.Capi)
 	}
 	// "high" is another model's reasoning effort, which Fusion rejects.
 	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "plain", Model: "auto", Effort: "high", Events: &recSink{}}); err == nil || len(fc.create) != 2 {

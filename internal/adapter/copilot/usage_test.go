@@ -292,13 +292,11 @@ func TestWebHistoryUsageFromRecordedTotal(t *testing.T) {
 	}
 }
 
-// recordedPrices is part of a models.list result with its token prices;
-// "legacy" only has the deprecated cachePrice and contextMax.
+// recordedPrices is part of a models.list result with its token prices.
 const recordedPrices = `[
  {"id":"auto","name":"Auto","capabilities":{},"billing":{"discountPercent":10}},
  {"id":"claude-sonnet-5","name":"Claude Sonnet 5","capabilities":{},"billing":{"tokenPrices":{"batchSize":1000000,"cachePrice":20,"cacheReadPrice":20,"cacheWrite1hPrice":400,"cacheWritePrice":250,"contextMax":200000,"inputPrice":200,"longContext":{"cachePrice":20,"cacheReadPrice":20,"cacheWrite1hPrice":400,"cacheWritePrice":250,"contextMax":936000,"inputPrice":200,"maxPromptTokens":936000,"outputPrice":1000},"maxPromptTokens":200000,"outputPrice":1000}}},
- {"id":"gpt-5-mini","name":"GPT-5 mini","capabilities":{},"billing":{"tokenPrices":{"batchSize":1000000,"cachePrice":2.5,"cacheReadPrice":2.5,"cacheWritePrice":0,"inputPrice":25,"outputPrice":200}}},
- {"id":"legacy","name":"Legacy","capabilities":{},"billing":{"tokenPrices":{"cachePrice":3,"contextMax":64000,"inputPrice":30}}}]`
+ {"id":"gpt-5-mini","name":"GPT-5 mini","capabilities":{},"billing":{"tokenPrices":{"batchSize":1000000,"cachePrice":2.5,"cacheReadPrice":2.5,"cacheWritePrice":0,"inputPrice":25,"outputPrice":200}}}]`
 
 func TestWebModelPrices(t *testing.T) {
 	var models []rpc.Model
@@ -318,7 +316,6 @@ func TestWebModelPrices(t *testing.T) {
 			`"prices":{"batch_size":1000000,"input":200,"output":1000,"cache_read":20,"cache_write":250,"max_prompt_tokens":200000,` +
 			`"long_context":{"input":200,"output":1000,"cache_read":20,"cache_write":250,"max_prompt_tokens":936000}}}`,
 		`{"id":"gpt-5-mini","name":"GPT-5 mini","efforts":[],"context_sizes":[],"prices":{"batch_size":1000000,"input":25,"output":200,"cache_read":2.5,"cache_write":0}}`,
-		`{"id":"legacy","name":"Legacy","efforts":[],"context_sizes":[],"prices":{"input":30,"cache_read":3,"max_prompt_tokens":64000}}`,
 	}
 	for i, mo := range got {
 		data, err := json.Marshal(mo)

@@ -18,7 +18,7 @@ func view(t *testing.T, h webHarness, agent, path string, rng []any, text string
 		args["view_range"] = rng
 	}
 	result := map[string]any{"resultType": "success", "textResultForLlm": text, "sessionLog": "log"}
-	out, err := h.fc.create[0].Hooks.OnPostToolUse(copilot.PostToolUseHookInput{AgentID: agent, ToolName: "view", ToolArgs: args, ToolResult: result}, copilot.HookInvocation{})
+	out, err := h.fc.create[0].Hooks.Handlers.OnPostToolUse(copilot.PostToolUseHookInput{AgentID: agent, ToolName: "view", ToolArgs: args, ToolResult: result}, copilot.HookInvocation{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestReadOncePerAgentAndRange(t *testing.T) {
 		t.Errorf("subagent repeat = %q", got)
 	}
 	// Another tool is never replaced.
-	out, err := h.fc.create[0].Hooks.OnPostToolUse(copilot.PostToolUseHookInput{ToolName: "bash", ToolArgs: map[string]any{"path": "/work/a.go"}, ToolResult: map[string]any{"textResultForLlm": "package a"}}, copilot.HookInvocation{})
+	out, err := h.fc.create[0].Hooks.Handlers.OnPostToolUse(copilot.PostToolUseHookInput{ToolName: "bash", ToolArgs: map[string]any{"path": "/work/a.go"}, ToolResult: map[string]any{"textResultForLlm": "package a"}}, copilot.HookInvocation{})
 	if err != nil || out != nil {
 		t.Errorf("bash hook = %+v, %v", out, err)
 	}

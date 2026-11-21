@@ -41,13 +41,13 @@ func TestWebEffortContextCatalogAndCreate(t *testing.T) {
 	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "new", Model: "tiered", Effort: "high", ContextSize: "long_context", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := fc.create[0]; cfg.ReasoningEffort != "high" || cfg.ContextTier != "long_context" {
+	if cfg := fc.create[0]; cfg.Inference.ReasoningEffort != "high" || cfg.Inference.ContextTier != "long_context" {
 		t.Fatalf("create = %+v", cfg)
 	}
 	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "old", Model: "ignored", Effort: "ignored", ContextSize: "ignored", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := fc.resume[0]; cfg.Model != "" || cfg.ReasoningEffort != "" || cfg.ContextTier != "" {
+	if cfg := fc.resume[0]; cfg.Model != "" || cfg.Inference.ReasoningEffort != "" || cfg.Inference.ContextTier != "" {
 		t.Fatalf("resume overrides selection: %+v", cfg)
 	}
 }

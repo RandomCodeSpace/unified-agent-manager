@@ -12,11 +12,11 @@ LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 all: build
 
 build: web
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o bin/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -tags copilot_no_inprocess -trimpath -ldflags "-s -w $(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
 install: web
 	mkdir -p $(GOBIN)
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -tags copilot_no_inprocess -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
 
 # The web interface is a Vite build embedded into the binary from
 # internal/web/dist. Source builds need Node.js; release tags include the bundle.

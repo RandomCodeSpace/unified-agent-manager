@@ -57,7 +57,7 @@ func sdkClientAt(path string, export bool) sdkClient {
 			log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
 		}
 	}
-	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+	a := sdkClientAdapter{c: copilot.NewClient(&copilot.ClientOptions{Mode: copilot.ModeCodingAgent, Runtime: copilot.SpawnedStdioConnection{Path: path, Env: env}, Observability: copilot.ClientObservabilityOptions{Telemetry: telemetry}})}
 	if telemetry != nil && telemetry.FilePath != "" {
 		a.export = telemetry.FilePath
 	}

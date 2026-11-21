@@ -213,7 +213,7 @@ func openProved(t *testing.T, fc *fakeClient) (agentapi.Conversation, *fakeSessi
 	if fs := fc.sessions[0]; !slices.Equal(fs.toolCalls, catalogProof) {
 		t.Fatalf("open tool RPCs = %v", fs.toolCalls)
 	}
-	return conv, fc.sessions[0], fc.create[0].Tools
+	return conv, fc.sessions[0], fc.create[0].Tools.Definitions
 }
 
 // firstProof waits for the proof Open started to end.
@@ -267,7 +267,7 @@ func TestOpenDoesNotWaitForTheFirstProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-reading
-	tools := fc.create[0].Tools
+	tools := fc.create[0].Tools.Definitions
 	if toolsAnswer(t, tools, "unproved") {
 		t.Fatal("uam's tools answered before the first proof passed")
 	}
@@ -611,9 +611,9 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 			fs := fc.sessions[0]
 			var tools []copilot.Tool
 			if resume {
-				tools = fc.resume[0].Tools
+				tools = fc.resume[0].Tools.Definitions
 			} else {
-				tools = fc.create[0].Tools
+				tools = fc.create[0].Tools.Definitions
 			}
 			if len(tools) != 1 || tools[0].Name != declarationToolName || len(fs.toolCalls) != 4 || fs.disconnected {
 				t.Fatalf("registration tools=%+v calls=%v disconnected=%v", tools, fs.toolCalls, fs.disconnected)
@@ -637,7 +637,7 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstProof(conv)
-	fs, tool := fc.sessions[0], fc.create[0].Tools[0]
+	fs, tool := fc.sessions[0], fc.create[0].Tools.Definitions[0]
 	if _, err := invokeFile(tool, "clash", map[string]any{"path": "report.txt"}); err == nil || fs.disconnected ||
 		!slices.Equal(fs.toolCalls, []string{"clear", "catalog", "deselect", "catalog", "restore"}) {
 		t.Fatalf("collision = %v; calls=%v", err, fs.toolCalls)

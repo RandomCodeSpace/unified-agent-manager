@@ -64,9 +64,9 @@ func TestWebCustomModelsReachEverySession(t *testing.T) {
 	if fc.create[0].Model != "acme/coder" {
 		t.Fatalf("created with model %q", fc.create[0].Model)
 	}
-	wantRegistry(t, fc.create[0].Providers, fc.create[0].Models)
-	wantRegistry(t, fc.resume[0].Providers, fc.resume[0].Models)
-	wantRegistry(t, fc.create[1].Providers, fc.create[1].Models)
+	wantRegistry(t, fc.create[0].Inference.Providers, fc.create[0].Inference.Models)
+	wantRegistry(t, fc.resume[0].Inference.Providers, fc.resume[0].Inference.Models)
+	wantRegistry(t, fc.create[1].Inference.Providers, fc.create[1].Inference.Models)
 }
 
 // Models lists the account's models, then the custom ones by selection ID
@@ -308,7 +308,7 @@ func TestBYOMDirectKey(t *testing.T) {
 	if len(fc.create) != 2 || len(fc.resume) != 1 {
 		t.Fatal("expected new, resumed and utility conversations")
 	}
-	for _, providers := range [][]copilot.NamedProviderConfig{fc.create[0].Providers, fc.resume[0].Providers, fc.create[1].Providers} {
+	for _, providers := range [][]copilot.NamedProviderConfig{fc.create[0].Inference.Providers, fc.resume[0].Inference.Providers, fc.create[1].Inference.Providers} {
 		if len(providers) != 1 || providers[0].APIKey != "fixture-key" {
 			t.Fatal("direct key did not reach SDK conversation")
 		}

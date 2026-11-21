@@ -136,22 +136,22 @@ printf '%s\n' "$HISTFILE:$HISTSIZE" > "${BASH_SOURCE[0]%/*}/$1.result"
 		t.Fatalf("required live-test model %s is unavailable", model)
 	}
 	c := client.(sdkClientAdapter).c
-	session, err := c.CreateSession(ctx, &copilot.SessionConfig{
+	session, err := c.CreateSession(ctx, &copilot.CreateSessionOptions{
 		Model: model, WorkingDirectory: dir,
-		EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false),
-		EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false),
-		AvailableTools: []string{"bash", "task", "read_agent"},
-		OnPermissionRequest: func(req copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+		EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)},
+		State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)}, Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false)},
+		Tools: copilot.SessionToolOptions{AvailableTools: []string{"bash", "task", "read_agent"}},
+		Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, invocation copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 			if shell, ok := req.(*copilot.PermissionRequestShell); ok && (shell.FullCommandText == commands["main"] || shell.FullCommandText == commands["child"]) {
 				return copilot.PermissionHandler.ApproveAll(req, invocation)
 			}
 			return &rpc.PermissionDecisionReject{}, nil
-		},
-		CustomAgents: []copilot.CustomAgentConfig{{
+		}},
+		Agents: copilot.SessionAgentOptions{Definitions: []copilot.CustomAgentConfig{{
 			Name: "history-probe", Description: "Run the supplied shell history probe once",
 			Model: model, Tools: []string{"bash"},
 			Prompt: "Run the exact supplied command once using bash. Do not change environment variables or files yourself. Report the exit status.",
-		}},
+		}}},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -20,8 +20,8 @@ type sdkClient interface {
 	ListModels(ctx context.Context) (*rpc.ModelList, error)
 	// Quota reads the signed-in account's quota snapshots by type.
 	Quota(ctx context.Context) (map[string]rpc.AccountQuotaSnapshot, error)
-	CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error)
-	ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error)
+	CreateSession(ctx context.Context, cfg *copilot.CreateSessionOptions) (sdkSession, error)
+	ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionOptions) (sdkSession, error)
 	// DeleteSession deletes a session and its stored data for good.
 	DeleteSession(ctx context.Context, id string) error
 	// ReadEvents reads one page of a session's persisted journal without
@@ -122,8 +122,14 @@ func (a sdkClientAdapter) Stop() error {
 }
 func (a sdkClientAdapter) ForceStop() { a.c.ForceStop(); removeEmptyExport(a.export) }
 
+// Ping sends a raw ping on the current connection. Client.Ping starts a new
+// CLI when the connection is gone, which would hide a CLI that died.
 func (a sdkClientAdapter) Ping(ctx context.Context) error {
-	_, err := a.c.Ping(ctx, "")
+	server := a.c.RPC
+	if server == nil {
+		return errors.New("client is not connected")
+	}
+	_, err := server.Ping(ctx, nil)
 	return err
 }
 
@@ -143,7 +149,7 @@ func (a sdkClientAdapter) Quota(ctx context.Context) (map[string]rpc.AccountQuot
 	return res.QuotaSnapshots, nil
 }
 
-func (a sdkClientAdapter) CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
+func (a sdkClientAdapter) CreateSession(ctx context.Context, cfg *copilot.CreateSessionOptions) (sdkSession, error) {
 	s, err := a.c.CreateSession(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -155,7 +161,7 @@ func (a sdkClientAdapter) DeleteSession(ctx context.Context, id string) error {
 	return a.c.DeleteSession(ctx, id)
 }
 
-func (a sdkClientAdapter) ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error) {
+func (a sdkClientAdapter) ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionOptions) (sdkSession, error) {
 	s, err := a.c.ResumeSession(ctx, id, cfg)
 	if err != nil {
 		return nil, err

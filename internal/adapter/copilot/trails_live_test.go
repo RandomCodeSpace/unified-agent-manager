@@ -41,11 +41,11 @@ func TestTrailsLiveProbe(t *testing.T) {
 			marker := "trail-context-indigo-742"
 			var session *copilot.Session
 			note := "uam trail: live persistence probe " + marker
-			created, err := c.CreateSession(ctx, &copilot.SessionConfig{
+			created, err := c.CreateSession(ctx, &copilot.CreateSessionOptions{
 				Model: "gpt-6-luna", WorkingDirectory: dir,
-				EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false), EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false),
-				AvailableTools: []string{tool}, OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
-				Hooks: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+				EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)}, State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)},
+				Tools: copilot.SessionToolOptions{AvailableTools: []string{tool}}, Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll},
+				Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false), Handlers: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
 					if in.ToolName != tool {
 						return nil, nil
 					}
@@ -61,7 +61,7 @@ func TestTrailsLiveProbe(t *testing.T) {
 						return nil, fmt.Errorf("nested durable Log: %w", err)
 					}
 					return &copilot.PreToolUseHookOutput{AdditionalContext: "After this edit, include this exact probe marker in your final reply: " + marker}, nil
-				}},
+				}}},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -100,7 +100,7 @@ func TestTrailsLiveProbe(t *testing.T) {
 			if err := session.Disconnect(); err != nil {
 				t.Fatal(err)
 			}
-			resumed, err := c.ResumeSession(ctx, session.SessionID, &copilot.ResumeSessionConfig{WorkingDirectory: dir, OnPermissionRequest: copilot.PermissionHandler.ApproveAll})
+			resumed, err := c.ResumeSession(ctx, session.SessionID, &copilot.ResumeSessionOptions{WorkingDirectory: dir, Permissions: copilot.SessionPermissionOptions{OnRequest: copilot.PermissionHandler.ApproveAll}})
 			if err != nil {
 				t.Fatal(err)
 			}

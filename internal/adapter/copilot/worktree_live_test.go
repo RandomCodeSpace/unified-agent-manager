@@ -88,21 +88,21 @@ func TestWorktreeLiveProbe(t *testing.T) {
 			mu  sync.Mutex
 			out result
 		)
-		s, err := c.CreateSession(ctx, &copilot.SessionConfig{
-			Model: "gpt-6-luna", WorkingDirectory: dir, AvailableTools: []string{"bash"},
+		s, err := c.CreateSession(ctx, &copilot.CreateSessionOptions{
+			Model: "gpt-6-luna", WorkingDirectory: dir, Tools: copilot.SessionToolOptions{AvailableTools: []string{"bash"}},
 			EnableConfigDiscovery: copilot.Bool(true),
-			OnPermissionRequest: func(req copilot.PermissionRequest, _ copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			Permissions: copilot.SessionPermissionOptions{OnRequest: func(req copilot.PermissionRequest, _ copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 				mu.Lock()
 				out.permissions = append(out.permissions, string(req.Kind()))
 				mu.Unlock()
 				return &rpc.PermissionDecisionApproveOnce{}, nil
-			},
-			Hooks: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+			}},
+			Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{OnPreToolUse: func(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
 				mu.Lock()
 				out.cwd = in.WorkingDirectory
 				mu.Unlock()
 				return nil, nil
-			}},
+			}}},
 		})
 		if err != nil {
 			t.Fatalf("create session in %s: %v", dir, err)

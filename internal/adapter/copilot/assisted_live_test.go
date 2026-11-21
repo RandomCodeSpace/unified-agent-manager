@@ -49,12 +49,12 @@ func TestAssistedRulesLiveProbe(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var reviews, results []string
-			config := &copilot.SessionConfig{Model: "gpt-6-luna", WorkingDirectory: t.TempDir(), EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false), EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false), AvailableTools: []string{"bash"},
+			config := &copilot.CreateSessionOptions{Model: "gpt-6-luna", WorkingDirectory: t.TempDir(), EnableConfigDiscovery: copilot.Bool(false), Skills: copilot.SessionSkillOptions{Enabled: copilot.Bool(false)}, State: copilot.SessionStateOptions{EnableCrossSessionStore: copilot.Bool(false)}, Hooks: copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false)}, Tools: copilot.SessionToolOptions{AvailableTools: []string{"bash"}},
 				// The probe never approves: it only reads the reviewer's verdict.
-				OnPermissionRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+				Permissions: copilot.SessionPermissionOptions{OnRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 					return &rpc.PermissionDecisionUserNotAvailable{}, nil
-				},
-				OnEvent: func(e copilot.SessionEvent) {
+				}},
+				Events: copilot.SessionEventOptions{OnEvent: func(e copilot.SessionEvent) {
 					mu.Lock()
 					defer mu.Unlock()
 					switch d := e.Data.(type) {
@@ -66,7 +66,7 @@ func TestAssistedRulesLiveProbe(t *testing.T) {
 							results = append(results, string(d.Result.Kind()))
 						}
 					}
-				},
+				}},
 			}
 			s, err := c.CreateSession(ctx, config)
 			if err != nil {

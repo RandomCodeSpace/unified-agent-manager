@@ -47,10 +47,10 @@ func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := fc.create[0].SkillDirectories; !reflect.DeepEqual(got, skills) {
+	if got := fc.create[0].Skills.Directories; !reflect.DeepEqual(got, skills) {
 		t.Fatalf("create skill directories = %v", got)
 	}
-	if got := fc.resume[0].SkillDirectories; !reflect.DeepEqual(got, skills) {
+	if got := fc.resume[0].Skills.Directories; !reflect.DeepEqual(got, skills) {
 		t.Fatalf("resume skill directories = %v", got)
 	}
 }
@@ -71,10 +71,10 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	if got := h.fc.resume[0].SystemMessage; got == nil || !reflect.DeepEqual(*got, want) {
 		t.Fatalf("resume system message = %+v", got)
 	}
-	if got := h.fc.create[0].CoauthorEnabled; got == nil || *got {
+	if got := h.fc.create[0].Git.CoauthorEnabled; got == nil || *got {
 		t.Fatalf("create CoauthorEnabled = %v, want false", got)
 	}
-	if got := h.fc.resume[0].CoauthorEnabled; got == nil || *got {
+	if got := h.fc.resume[0].Git.CoauthorEnabled; got == nil || *got {
 		t.Fatalf("resume CoauthorEnabled = %v, want false", got)
 	}
 	h.fc.mu.Lock()
@@ -94,7 +94,7 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	if got := last.SystemMessage; got == nil || got.Content != taskSystem+"\n\nCommit messages:\nBe brief." {
 		t.Fatalf("system message with git rules = %+v", got)
 	}
-	if got := last.CoauthorEnabled; got == nil || !*got {
+	if got := last.Git.CoauthorEnabled; got == nil || !*got {
 		t.Fatalf("CoauthorEnabled = %v, want true", got)
 	}
 	// An output style replaces the CLI's tone section; the appended text stays.
@@ -451,8 +451,8 @@ func TestCompactionThresholdStaysBelowTheBlockingPoint(t *testing.T) {
 // one the CLI keeps its defaults.
 func TestWebCompactionThresholdOnCreateAndResume(t *testing.T) {
 	h := openWeb(t)
-	if h.fc.create[0].InfiniteSessions != nil {
-		t.Fatalf("default create = %+v", h.fc.create[0].InfiniteSessions)
+	if h.fc.create[0].State.InfiniteSessions != nil {
+		t.Fatalf("default create = %+v", h.fc.create[0].State.InfiniteSessions)
 	}
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", Workdir: "/work", Events: &recSink{}, CompactionThreshold: 0.6}); err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestWebCompactionThresholdOnCreateAndResume(t *testing.T) {
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-3", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}, CompactionThreshold: 0.6}); err != nil {
 		t.Fatal(err)
 	}
-	for name, got := range map[string]*copilot.InfiniteSessionConfig{"create": h.fc.create[1].InfiniteSessions, "resume": h.fc.resume[0].InfiniteSessions} {
+	for name, got := range map[string]*copilot.InfiniteSessionConfig{"create": h.fc.create[1].State.InfiniteSessions, "resume": h.fc.resume[0].State.InfiniteSessions} {
 		if got == nil || got.Enabled != nil || got.BackgroundCompactionThreshold == nil || *got.BackgroundCompactionThreshold != 0.6 || got.BufferExhaustionThreshold != nil {
 			t.Fatalf("%s infinite sessions = %+v", name, got)
 		}

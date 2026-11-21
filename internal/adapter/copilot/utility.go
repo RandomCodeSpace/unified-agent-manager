@@ -101,33 +101,34 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		defer usage.report(req.OnUsage)
 	}
 	providers, models := byom(p.customModels())
-	sess, err := client.CreateSession(ctx, &copilot.SessionConfig{
-		ClientName:                         "uam-" + purpose,
-		Providers:                          providers,
-		Models:                             models,
-		Model:                              model,
-		ReasoningEffort:                    titleEffort(ctx, client, model),
-		ReasoningSummary:                   copilot.ReasoningSummaryNone,
-		WorkingDirectory:                   req.Workdir,
-		AvailableTools:                     available,
-		Tools:                              tools,
-		OnEvent:                            observe,
-		EnableConfigDiscovery:              copilot.Bool(false),
-		SkipCustomInstructions:             copilot.Bool(true),
-		EnableOnDemandInstructionDiscovery: copilot.Bool(false),
-		EnableFileHooks:                    copilot.Bool(false),
-		EnableHostGitOperations:            copilot.Bool(false),
-		EnableSessionStore:                 copilot.Bool(false),
-		EnableSkills:                       copilot.Bool(false),
-		SkipEmbeddingRetrieval:             copilot.Bool(true),
-		DisabledMCPServers:                 p.disabledMCPServers(),
-		InfiniteSessions:                   &copilot.InfiniteSessionConfig{Enabled: copilot.Bool(false)},
-		Memory:                             &copilot.MemoryConfiguration{Enabled: false},
-		SystemMessage:                      &copilot.SystemMessageConfig{Mode: "replace", Content: req.System},
-		Streaming:                          copilot.Bool(false),
-		OnPermissionRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
-			return &rpc.PermissionDecisionReject{}, nil
+	sess, err := client.CreateSession(ctx, &copilot.CreateSessionOptions{
+		ClientName: "uam-" + purpose,
+		Inference: copilot.SessionInferenceOptions{
+			Providers:        providers,
+			Models:           models,
+			ReasoningEffort:  titleEffort(ctx, client, model),
+			ReasoningSummary: copilot.ReasoningSummaryNone,
 		},
+		Model:                 model,
+		WorkingDirectory:      req.Workdir,
+		Tools:                 copilot.SessionToolOptions{AvailableTools: available, Definitions: tools},
+		Events:                copilot.SessionEventOptions{OnEvent: observe, Streaming: copilot.Bool(false)},
+		EnableConfigDiscovery: copilot.Bool(false),
+		Instructions:          copilot.CreateSessionInstructionOptions{SkipCustomInstructions: copilot.Bool(true), OnDemandDiscovery: copilot.Bool(false)},
+		Hooks:                 copilot.SessionHookOptions{EnableRepositoryHooks: copilot.Bool(false)},
+		Git:                   copilot.SessionGitOptions{EnableHostGitOperations: copilot.Bool(false)},
+		State: copilot.SessionStateOptions{
+			EnableCrossSessionStore: copilot.Bool(false),
+			SkipEmbeddingRetrieval:  copilot.Bool(true),
+			InfiniteSessions:        &copilot.InfiniteSessionConfig{Enabled: copilot.Bool(false)},
+			Memory:                  &copilot.MemoryConfiguration{Enabled: false},
+		},
+		Skills:        copilot.SessionSkillOptions{Enabled: copilot.Bool(false)},
+		MCP:           copilot.SessionMCPOptions{DisabledServers: p.disabledMCPServers()},
+		SystemMessage: &copilot.SystemMessageConfig{Mode: "replace", Content: req.System},
+		Permissions: copilot.SessionPermissionOptions{OnRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionReject{}, nil
+		}},
 	})
 	if err != nil {
 		if ctx.Err() != nil {

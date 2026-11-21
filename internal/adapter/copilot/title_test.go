@@ -44,26 +44,26 @@ func TestTitleRunsInAToollessThrowawaySessionItDeletes(t *testing.T) {
 	}
 	cfg := fc.create[0]
 	off := func(b *bool) bool { return b != nil && !*b }
-	if cfg.ClientName != "uam-title" || cfg.Model != "gpt-5-mini" || cfg.ReasoningEffort != "low" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" {
+	if cfg.ClientName != "uam-title" || cfg.Model != "gpt-5-mini" || cfg.Inference.ReasoningEffort != "low" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" {
 		t.Fatalf("session = %+v", cfg)
 	}
-	if cfg.AvailableTools == nil || len(cfg.AvailableTools) != 0 {
-		t.Fatalf("available tools = %#v, want an empty list", cfg.AvailableTools)
+	if cfg.Tools.AvailableTools == nil || len(cfg.Tools.AvailableTools) != 0 {
+		t.Fatalf("available tools = %#v, want an empty list", cfg.Tools.AvailableTools)
 	}
-	if !off(cfg.EnableConfigDiscovery) || cfg.SkipCustomInstructions == nil || !*cfg.SkipCustomInstructions || !off(cfg.EnableOnDemandInstructionDiscovery) ||
-		!off(cfg.EnableFileHooks) || !off(cfg.EnableHostGitOperations) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.Streaming) {
+	if !off(cfg.EnableConfigDiscovery) || cfg.Instructions.SkipCustomInstructions == nil || !*cfg.Instructions.SkipCustomInstructions || !off(cfg.Instructions.OnDemandDiscovery) ||
+		!off(cfg.Hooks.EnableRepositoryHooks) || !off(cfg.Git.EnableHostGitOperations) || !off(cfg.State.EnableCrossSessionStore) || !off(cfg.Skills.Enabled) || !off(cfg.Events.Streaming) {
 		t.Fatalf("discovery, store or streaming not off: %+v", cfg)
 	}
-	if cfg.ReasoningSummary != copilot.ReasoningSummaryNone || cfg.SkipEmbeddingRetrieval == nil || !*cfg.SkipEmbeddingRetrieval {
-		t.Fatalf("reasoning summary %q, skip embedding retrieval %v", cfg.ReasoningSummary, cfg.SkipEmbeddingRetrieval)
+	if cfg.Inference.ReasoningSummary != copilot.ReasoningSummaryNone || cfg.State.SkipEmbeddingRetrieval == nil || !*cfg.State.SkipEmbeddingRetrieval {
+		t.Fatalf("reasoning summary %q, skip embedding retrieval %v", cfg.Inference.ReasoningSummary, cfg.State.SkipEmbeddingRetrieval)
 	}
-	if cfg.InfiniteSessions == nil || !off(cfg.InfiniteSessions.Enabled) || cfg.Memory == nil || cfg.Memory.Enabled {
-		t.Fatalf("infinite sessions %+v, memory %+v", cfg.InfiniteSessions, cfg.Memory)
+	if cfg.State.InfiniteSessions == nil || !off(cfg.State.InfiniteSessions.Enabled) || cfg.State.Memory == nil || cfg.State.Memory.Enabled {
+		t.Fatalf("infinite sessions %+v, memory %+v", cfg.State.InfiniteSessions, cfg.State.Memory)
 	}
 	if cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != titleSystem {
 		t.Fatalf("system message = %+v", cfg.SystemMessage)
 	}
-	if d, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{}); err != nil {
+	if d, err := cfg.Permissions.OnRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{}); err != nil {
 		t.Fatal(err)
 	} else if _, ok := d.(*rpc.PermissionDecisionReject); !ok {
 		t.Fatalf("permission decision = %T, want reject", d)
@@ -117,7 +117,7 @@ func TestTitleEffortIsTheLowestTheModelOffers(t *testing.T) {
 		if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: model, Text: "x"}); err != nil {
 			t.Fatal(err)
 		}
-		if got := fc.create[len(fc.create)-1].ReasoningEffort; got != want {
+		if got := fc.create[len(fc.create)-1].Inference.ReasoningEffort; got != want {
 			t.Fatalf("%s effort = %q, want %q", model, got, want)
 		}
 	}
@@ -125,7 +125,7 @@ func TestTitleEffortIsTheLowestTheModelOffers(t *testing.T) {
 	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "x"}); err != nil {
 		t.Fatalf("an unreadable catalog failed the title: %v", err)
 	}
-	if got := fc.create[len(fc.create)-1].ReasoningEffort; got != "" {
+	if got := fc.create[len(fc.create)-1].Inference.ReasoningEffort; got != "" {
 		t.Fatalf("effort without a catalog = %q", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestUtilityUsesLowestSupportedEffort(t *testing.T) {
 			if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "utility-model", Purpose: "configuration-draft", Prompt: "Create a draft"}); err != nil {
 				t.Fatal(err)
 			}
-			if got := fc.create[0].ReasoningEffort; got != tc.want {
+			if got := fc.create[0].Inference.ReasoningEffort; got != tc.want {
 				t.Fatalf("Utility effort = %q, want %q", got, tc.want)
 			}
 		})
@@ -316,22 +316,22 @@ func TestUtilitySharesToollessSessionAndCleanup(t *testing.T) {
 			}
 			cfg := fc.create[0]
 			off := func(b *bool) bool { return b != nil && !*b }
-			if cfg.ClientName != "uam-outcome" || cfg.Model != "gpt-6-luna" || cfg.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" {
+			if cfg.ClientName != "uam-outcome" || cfg.Model != "gpt-6-luna" || cfg.Inference.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" {
 				t.Fatalf("utility session = %+v", cfg)
 			}
-			if cfg.AvailableTools == nil || len(cfg.AvailableTools) != 0 || len(cfg.Tools) != 0 {
+			if cfg.Tools.AvailableTools == nil || len(cfg.Tools.AvailableTools) != 0 || len(cfg.Tools.Definitions) != 0 {
 				t.Fatal("utility session enabled tools")
 			}
-			if !off(cfg.EnableConfigDiscovery) || cfg.SkipCustomInstructions == nil || !*cfg.SkipCustomInstructions || !off(cfg.EnableOnDemandInstructionDiscovery) || !off(cfg.EnableFileHooks) || !off(cfg.EnableHostGitOperations) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.Streaming) {
+			if !off(cfg.EnableConfigDiscovery) || cfg.Instructions.SkipCustomInstructions == nil || !*cfg.Instructions.SkipCustomInstructions || !off(cfg.Instructions.OnDemandDiscovery) || !off(cfg.Hooks.EnableRepositoryHooks) || !off(cfg.Git.EnableHostGitOperations) || !off(cfg.State.EnableCrossSessionStore) || !off(cfg.Skills.Enabled) || !off(cfg.Events.Streaming) {
 				t.Fatal("utility session enabled discovered configuration or persistence")
 			}
-			if cfg.InfiniteSessions == nil || !off(cfg.InfiniteSessions.Enabled) || cfg.Memory == nil || cfg.Memory.Enabled {
+			if cfg.State.InfiniteSessions == nil || !off(cfg.State.InfiniteSessions.Enabled) || cfg.State.Memory == nil || cfg.State.Memory.Enabled {
 				t.Fatal("utility session retained memory")
 			}
 			if cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != system {
 				t.Fatal("utility session did not replace the system prompt")
 			}
-			decision, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{})
+			decision, err := cfg.Permissions.OnRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -359,7 +359,7 @@ func TestUtilityReportsItsUsage(t *testing.T) {
 	var fc *fakeClient
 	events := 2
 	p, fc := titleProvider(func(context.Context, copilot.MessageOptions) (string, error) {
-		emit := fc.create[len(fc.create)-1].OnEvent
+		emit := fc.create[len(fc.create)-1].Events.OnEvent
 		for range events {
 			emit(copilot.SessionEvent{Data: &rpc.AssistantUsageData{Model: "gpt-6-luna", InputTokens: new(int64(120)), OutputTokens: new(int64(8)),
 				CopilotUsage: &rpc.AssistantUsageCopilotUsage{TotalNanoAiu: 1e6}}})

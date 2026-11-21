@@ -249,8 +249,8 @@ func TestUamSkillSurvivesTheDefinitionCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := client.create[0]
-	if !slices.Equal(cfg.SkillDirectories, builtins) {
-		t.Fatalf("skill directories over the cap = %v", cfg.SkillDirectories)
+	if !slices.Equal(cfg.Skills.Directories, builtins) {
+		t.Fatalf("skill directories over the cap = %v", cfg.Skills.Directories)
 	}
 	if cfg.SystemMessage == nil || !strings.Contains(cfg.SystemMessage.Content, "Load the uam skill before you show the owner") {
 		t.Fatalf("system message over the cap = %+v", cfg.SystemMessage)

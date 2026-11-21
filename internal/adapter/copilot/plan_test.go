@@ -34,16 +34,16 @@ func (f *earlyPlanClient) review(handler copilot.ExitPlanModeRequestHandler) {
 	waitFor(f.t, "early callback before Open returns", func() bool { return pendingPlan(f.sink) != nil })
 }
 
-func (f *earlyPlanClient) CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
-	f.review(cfg.OnExitPlanModeRequest)
+func (f *earlyPlanClient) CreateSession(ctx context.Context, cfg *copilot.CreateSessionOptions) (sdkSession, error) {
+	f.review(cfg.Interaction.OnExitPlanModeRequest)
 	if f.fail {
 		return nil, errors.New("create failed after callback registration")
 	}
 	return f.fakeClient.CreateSession(ctx, cfg)
 }
 
-func (f *earlyPlanClient) ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error) {
-	f.review(cfg.OnExitPlanModeRequest)
+func (f *earlyPlanClient) ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionOptions) (sdkSession, error) {
+	f.review(cfg.Interaction.OnExitPlanModeRequest)
 	if f.fail {
 		return nil, errors.New("resume failed after callback registration")
 	}
@@ -163,7 +163,7 @@ func TestWebPlanSettledBodiesReloadFromTheNativeJournal(t *testing.T) {
 	}
 	done := make(chan copilot.ExitPlanModeResult, 1)
 	go func() {
-		result, _ := h.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Second", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
+		result, _ := h.fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Second", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
 		done <- result
 	}()
 	waitFor(t, "rehydrated review", func() bool { return pendingPlan(h.sink) != nil })
@@ -288,7 +288,7 @@ func TestWebPlanBlockedRehydrationCannotSurviveExpiryOrANewTurn(t *testing.T) {
 				}
 				done := make(chan callbackResult, 1)
 				go func() {
-					result, err := fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Next", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
+					result, err := fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Next", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
 					done <- callbackResult{result, err}
 				}()
 				select {
@@ -428,7 +428,7 @@ func TestWebPlanReviewWaitsForAnExplicitAnswer(t *testing.T) {
 	} {
 		t.Run(string(answer.Action)+answer.Feedback, func(t *testing.T) {
 			h := openWeb(t)
-			callback := h.fc.create[0].OnExitPlanModeRequest
+			callback := h.fc.create[0].Interaction.OnExitPlanModeRequest
 			results := make(chan copilot.ExitPlanModeResult, 1)
 			go func() {
 				result, err := callback(copilot.ExitPlanModeRequest{Summary: "A safe migration", PlanContent: "# Plan\n1. Preserve data.", Actions: []string{"autopilot", "autopilot_fleet", "interactive", "exit_only"}, RecommendedAction: "interactive"}, copilot.ExitPlanModeInvocation{})
@@ -479,7 +479,7 @@ func TestWebPlanReviewStopAndCloseRefuseImplementation(t *testing.T) {
 			h := openWeb(t)
 			results := make(chan copilot.ExitPlanModeResult, 1)
 			go func() {
-				result, _ := h.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Plan", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
+				result, _ := h.fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "# Plan", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
 				results <- result
 			}()
 			waitFor(t, "pending review", func() bool { return pendingPlan(h.sink) != nil })
@@ -507,7 +507,7 @@ func TestWebPlanReviewStopAndCloseRefuseImplementation(t *testing.T) {
 			if err := h.conv.Respond(context.Background(), id, agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}}); err == nil {
 				t.Fatal("late approval succeeded")
 			}
-			if result, err := h.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "Late callback", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{}); err == nil || result.Approved {
+			if result, err := h.fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: "Late callback", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{}); err == nil || result.Approved {
 				t.Fatalf("late review after withdrawal = %+v, %v", result, err)
 			}
 		})
@@ -519,7 +519,7 @@ func TestWebPlanReviewRevisionsAndOfferedActions(t *testing.T) {
 	for i, content := range []string{"# First", "# Second", "# Second"} {
 		results := make(chan copilot.ExitPlanModeResult, 1)
 		go func() {
-			result, _ := h.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: content, Actions: []string{"interactive", "unknown", "interactive"}, RecommendedAction: "autopilot"}, copilot.ExitPlanModeInvocation{})
+			result, _ := h.fc.create[0].Interaction.OnExitPlanModeRequest(copilot.ExitPlanModeRequest{PlanContent: content, Actions: []string{"interactive", "unknown", "interactive"}, RecommendedAction: "autopilot"}, copilot.ExitPlanModeInvocation{})
 			results <- result
 		}()
 		waitFor(t, "new review", func() bool { return pendingPlan(h.sink) != nil })
@@ -578,7 +578,7 @@ func TestSDKNativePlanModeRequiresReadbackAndNoModelHandoff(t *testing.T) {
 // snapshot UAM kept for it. Another decision is not attributed to it.
 func TestLivePlanReceiptNamesTheReviewItDecided(t *testing.T) {
 	h := openWeb(t)
-	callback := h.fc.create[0].OnExitPlanModeRequest
+	callback := h.fc.create[0].Interaction.OnExitPlanModeRequest
 	done := make(chan struct{})
 	go func() {
 		_, _ = callback(copilot.ExitPlanModeRequest{Summary: "Migrate", PlanContent: "# Plan", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})

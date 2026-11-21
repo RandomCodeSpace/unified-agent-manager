@@ -19,7 +19,7 @@ func TestWebLargeOutputCapOnCreateAndResume(t *testing.T) {
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
-	for name, got := range map[string]*copilot.LargeToolOutputConfig{"create": h.fc.create[0].LargeOutput, "resume": h.fc.resume[0].LargeOutput} {
+	for name, got := range map[string]*copilot.LargeToolOutputConfig{"create": h.fc.create[0].Tools.LargeOutput, "resume": h.fc.resume[0].Tools.LargeOutput} {
 		if got == nil || got.MaxSizeBytes == nil || *got.MaxSizeBytes != 8192 || got.Enabled != nil {
 			t.Errorf("%s LargeOutput = %+v", name, got)
 		}

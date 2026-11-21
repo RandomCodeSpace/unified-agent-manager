@@ -17,7 +17,7 @@ import (
 func TestNativeChangesCaptureBeforeCreateAndPreserveOnResume(t *testing.T) {
 	h := openWeb(t)
 	cfg := h.fc.create[0]
-	if cfg.EnableFileChangeTracking == nil || !*cfg.EnableFileChangeTracking {
+	if cfg.Filesystem.TrackFileChanges == nil || !*cfg.Filesystem.TrackFileChanges {
 		t.Fatal("new Task did not request capture before its first prompt")
 	}
 	if !h.p.Capabilities().SessionDiff {
@@ -28,7 +28,7 @@ func TestNativeChangesCaptureBeforeCreateAndPreserveOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	resume := h.fc.resume[0]
-	if resume.EnableFileChangeTracking == nil || !*resume.EnableFileChangeTracking {
+	if resume.Filesystem.TrackFileChanges == nil || !*resume.Filesystem.TrackFileChanges {
 		t.Fatal("resume did not preserve a valid native capture baseline")
 	}
 }
