@@ -22,7 +22,7 @@ on:
 env:
   GOTOOLCHAIN: local
   # The Copilot CLI that test-aimock and test-ui run against.
-  COPILOT_CLI_VERSION: 1.0.110
+  COPILOT_CLI_VERSION: 1.0.114
 
 permissions:
   contents: read
