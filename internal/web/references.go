@@ -483,6 +483,10 @@ var (
 	bareRE      = regexp.MustCompile(`(?:^|[^\w#!&/])([#!])(\d{1,6})\b`)
 	stateWordRE = regexp.MustCompile(`(?i)\b(still\s+open|open|closed|done|fixed|merged|blocked)\b`)
 	sentenceEnd = regexp.MustCompile(`[.!?;](\s|$)`)
+	// contRE is a later number list in the same sentence ("…; 5 and 6 are
+	// closed"); it takes the noun of the list before it.
+	contRE = regexp.MustCompile(`(?i)(?:[;,]|\band\b|\bbut\b|\bwhile\b|\bwhereas\b)\s*(\d{1,6}\b(?:(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+|\s*[&/]\s*)[#!]?\d{1,6}\b)*)`)
+	stopRE = regexp.MustCompile(`[.!?](\s|$)`)
 )
 
 // claimedState is the first state word in the rest of a sentence, skipping
@@ -507,6 +511,12 @@ func claimedState(rest string) string {
 	}
 	return ""
 }
+
+// stateClauseRE is a verb that ties a number list to its state word: "are
+// closed", "is still open", "as closed".
+var stateClauseRE = regexp.MustCompile(`(?i)^\s*(?:is|are|was|were|as|remain|remains|stay|stays|got|have\s+been|has\s+been)\b`)
+
+func startsWithStateClause(s string) bool { return stateClauseRE.MatchString(s) }
 
 // citations are the numbers a reply cites, in order, outside code and the
 // reply's own definition lines.
@@ -534,6 +544,22 @@ func citations(text string, skip map[int]bool) []citation {
 			h := hit{start: m[0]}
 			for _, n := range citeNumRE.FindAllString(line[m[4]:m[5]], -1) {
 				h.cs = append(h.cs, citation{noun: noun, number: n, claimed: claimed, line: i})
+			}
+			// Only a later list with a state word of its own counts, so "and 3
+			// tests failed" is not read as issue 3.
+			rest := line[m[1]:]
+			if loc := stopRE.FindStringIndex(rest); loc != nil {
+				rest = rest[:loc[0]]
+			}
+			for _, c := range contRE.FindAllStringSubmatchIndex(rest, -1) {
+				st := claimedState(rest[c[3]:])
+				if st == "" || !startsWithStateClause(rest[c[3]:]) {
+					continue
+				}
+				spans = append(spans, []int{m[1] + c[2], m[1] + c[3]})
+				for _, n := range citeNumRE.FindAllString(rest[c[2]:c[3]], -1) {
+					h.cs = append(h.cs, citation{noun: noun, number: n, claimed: st, line: i})
+				}
 			}
 			hits = append(hits, h)
 		}

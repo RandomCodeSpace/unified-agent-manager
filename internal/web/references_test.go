@@ -53,6 +53,14 @@ func TestResolveReferences(t *testing.T) {
 			want: []string{"issue 3|resolved|Slow search||open@i0", "issue 1|resolved|Login times out after the SSO redirect||open@i0", "issue 2|resolved|Crash on save||open@i0"},
 		},
 		{
+			name: "a later list in the sentence takes the noun when it has its own state",
+			items: []agentapi.Item{
+				refMsg(reply, "## Issues\n\n| # | Title | Status |\n|---|---|---|\n| 4 | Login | Open |\n| 5 | Crash | Open |\n| 6 | Copy | Closed |"),
+				refMsg(reply, "issue 4,8 is still open and 5,6 as closed; 9 tests failed. Issue 4 is open and 3 tests failed."),
+			},
+			want: []string{"issue 4|resolved|Login|open|open@i0", "issue 8|unresolved|||open", "issue 5|resolved|Crash|open|closed@i0", "issue 6|resolved|Copy|closed|closed@i0"},
+		},
+		{
 			name: "restarted numbering: the most recent list wins",
 			items: []agentapi.Item{
 				refMsg(reply, "Open findings:\n1. Old one\n2. Old two"),
