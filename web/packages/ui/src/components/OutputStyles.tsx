@@ -3,10 +3,12 @@ import { RadioGroup } from '@base-ui/react/radio-group';
 import { Check, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { PROVIDER_STYLE, type OutputStyle, type Settings } from '../api';
+import { cn } from '../lib/cn';
 import { Note, Summary } from './common';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Input } from './ui/input';
 import { Select, type SelectOption } from './ui/select';
+import { Textarea } from './ui/textarea';
 
 /** Mirrors the service's limits (output_style.go). */
 const MAX_TEXT = 2000;
@@ -47,7 +49,7 @@ export function StyleChoices({ settings, builtin = [], chosen, reason, onChange 
     <div className="flex flex-col gap-1.5">
       <RadioGroup aria-label="Output style" value={chosen} disabled={!!reason} onValueChange={(v) => v !== chosen && onChange(v as string)} className="-mx-2 flex flex-col">
         {rows.map((r) => (
-          <Radio.Root key={r.id} value={r.id} disabled={r.disabled} className="group/style flex min-h-8 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover focus-visible:-outline-offset-2 data-disabled:opacity-45 pointer-coarse:min-h-11">
+          <Radio.Root key={r.id} value={r.id} disabled={r.disabled} className={cn(rowClass, 'group/style min-h-8 cursor-default items-start py-1.5 focus-visible:bg-fill-hover focus-visible:-outline-offset-2 data-disabled:pointer-events-none pointer-coarse:min-h-11')}>
             <Check aria-hidden="true" strokeWidth={2.5} className="invisible mt-0.5 size-3.5 shrink-0 text-accent group-data-checked/style:visible" />
             <span className="flex min-w-0 flex-col">
               <span className="text-ui text-ink">{r.name}</span>
@@ -105,7 +107,7 @@ export function OutputStyleSettings({ settings, builtin = [], saving, onSave }: 
               <Input aria-label="Style name" className="min-w-0 flex-1" maxLength={MAX_NAME} placeholder="Name" value={r.name} readOnly={saving} onChange={(e) => set(i, { name: e.target.value })} />
               <Button size="icon-md" variant="subtle" aria-label={`Remove ${r.name || 'style'}`} disabled={saving} onClick={() => setDraft(rows.filter((_, j) => j !== i))}><Trash2 aria-hidden="true" className="text-muted" /></Button>
             </div>
-            <textarea aria-label="Style text" rows={4} maxLength={MAX_TEXT} spellCheck={false} placeholder="Terse. Lead with the answer, then the evidence. No filler." value={r.text} readOnly={saving} onChange={(e) => set(i, { text: e.target.value })} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+            <Textarea aria-label="Style text" rows={4} maxLength={MAX_TEXT} spellCheck={false} placeholder="Terse. Lead with the answer, then the evidence. No filler." value={r.text} readOnly={saving} onChange={(e) => set(i, { text: e.target.value })} />
           </fieldset>
         ))}
         <div className="flex flex-wrap gap-2">

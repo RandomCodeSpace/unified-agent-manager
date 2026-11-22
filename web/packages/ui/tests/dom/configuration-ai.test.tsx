@@ -186,8 +186,8 @@ describe('AI configuration creator', () => {
     await user.click(screen.getByRole('button', { name: 'Generate draft' }));
     const form = within(await screen.findByRole('form', { name: `Add ${label}` }));
     await user.click(form.getByText('Advanced settings'));
-    expect((form.getByRole('checkbox', { name: automatic }) as HTMLInputElement).checked).toBe(false);
-    expect((form.getByRole('checkbox', { name: manual }) as HTMLInputElement).checked).toBe(true);
+    expect(form.getByRole('checkbox', { name: automatic }).getAttribute('aria-checked')).toBe('false');
+    expect(form.getByRole('checkbox', { name: manual }).getAttribute('aria-checked')).toBe('true');
     await user.click(form.getByRole('checkbox', { name: manual }));
     await user.click(form.getByRole('button', { name: `Add ${label}` }));
     await screen.findByText(/saved\. New and reopened threads use the updated file/);

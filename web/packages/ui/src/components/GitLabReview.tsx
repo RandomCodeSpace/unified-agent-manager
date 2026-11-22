@@ -8,8 +8,9 @@ import { cn } from '../lib/cn';
 import { gitLabMarkdown } from '../lib/gitlabRefs';
 import { dateTime, FileRef, Markdown, Note, Skeleton, Summary } from './common';
 import { GitLabItemsContext } from './GitLabStrip';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Chip } from './ui/chip';
+import { Textarea } from './ui/textarea';
 
 const actionLabel = { investigate: 'Investigation', fix: 'Fix', draft_reply: 'Reply draft' };
 const unresolved = (discussion: GitLabDiscussion) => discussion.notes.some((note) => note.resolvable && !note.resolved);
@@ -262,7 +263,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
           const first = entry.notes.find((note) => !note.system)!;
           const replies = entry.notes.filter((note) => !note.system).length - 1;
           return <div key={entry.id} className="flex min-w-0 flex-col gap-2 border-t border-hairline pt-3">
-            <button type="button" aria-pressed={entry.id === currentId} className="flex flex-wrap items-center gap-2 rounded-sm px-2 py-2 text-left text-ui hover:bg-tint-hover aria-pressed:bg-sunken" onClick={() => setSelected(entry.id)}>
+            <button type="button" aria-pressed={entry.id === currentId} className={cn(rowClass, 'flex-wrap py-2')} onClick={() => setSelected(entry.id)}>
               <span className="font-medium text-ink">{first.author.name || first.author.username}</span><span className="text-caption text-muted">{entry.individual_note ? 'Comment' : `${replies} ${replies === 1 ? 'reply' : 'replies'}`}</span>{canResolve(entry) && <Chip tone={unresolved(entry) ? 'warning' : 'success'}>{unresolved(entry) ? 'Unresolved' : 'Resolved'}</Chip>}
             </button>
             {entry.notes.filter((note) => !note.system).map((note) => <article key={note.id} className="flex min-w-0 flex-col gap-2 px-2">
@@ -293,7 +294,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
         <label htmlFor={`gitlab-reply-${iid}`} className="text-caption text-muted">{discussion && !discussion.individual_note ? `Reply on MR !${iid}` : `Comment on MR !${iid}`}</label>
         {discussion && <Button size="sm" variant="subtle" loading={busy === 'draft_reply'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('draft_reply')}><Cpu />Draft reply</Button>}
       </div>
-      <textarea id={`gitlab-reply-${iid}`} rows={4} value={reply} maxLength={16000} onChange={(event) => updateReply(event.target.value)} placeholder={discussion && !discussion.individual_note ? 'Write a reply…' : 'Write a comment…'} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      <Textarea id={`gitlab-reply-${iid}`} rows={4} value={reply} maxLength={16000} onChange={(event) => updateReply(event.target.value)} placeholder={discussion && !discussion.individual_note ? 'Write a reply…' : 'Write a comment…'} />
       {candidate?.key === key && <details className="text-ui text-body"><Summary>Agent draft</Summary><GitLabMarkdown text={candidate.text} className="my-2" /><Button size="sm" onClick={() => { updateReply(candidate.text); setCandidate(undefined); }}>Use draft</Button></details>}
       <div className="flex flex-wrap items-center justify-between gap-2">
         {discussion && canResolve(discussion) ? <Button size="sm" variant="subtle" loading={busy === 'resolve'} disabled={stale || !!busy || uncertain || locked} onClick={() => void write('resolve')}><Check />{unresolved(discussion) ? 'Resolve discussion' : 'Reopen discussion'}</Button> : <span />}

@@ -297,7 +297,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1" role="status">
           <span className="flex items-center gap-2 text-ui font-medium text-ink">
-            <Dot tone={account.signed_in ? 'success' : 'warning'} className="transition-colors duration-160 ease-app" />
+            <Dot tone={account.signed_in ? 'success' : 'warning'} />
             {account.signed_in ? <span className="min-w-0 [overflow-wrap:anywhere]">Signed in{account.login ? ` as ${account.login}` : ''}{host}{viaGh && ' · via gh'}</span> : 'Signed out'}
             {viaGh && <HelpTip label="gh sign-in">To sign this account out, run <code className="font-mono">gh auth logout</code> on the server.</HelpTip>}
           </span>

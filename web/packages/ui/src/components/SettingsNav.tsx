@@ -2,6 +2,7 @@ import { ChevronRight, Search } from 'lucide-react';
 import { Fragment, useId, type KeyboardEvent } from 'react';
 import { cn } from '../lib/cn';
 import { Dot, Note } from './common';
+import { rowClass } from './ui/button';
 import { Input } from './ui/input';
 
 /** Where a group's settings are kept: the server's after its rail heading, the others' under each of its pages. */
@@ -124,7 +125,7 @@ export function SettingsRail({ pages, current, query, onQuery, onOpen, attention
             const describedBy = [list && `${id}-${page.id}-values`, mark && `${id}-${page.id}-mark`].filter(Boolean).join(' ') || undefined;
             return (
               <Fragment key={page.id}>
-                <button type="button" data-settings-page={page.id} aria-current={on ? 'page' : undefined} aria-describedby={describedBy} onClick={() => onOpen(page.id)} className={cn('flex min-h-8 items-center gap-2 rounded-md px-2 text-left text-ui transition-colors pointer-coarse:min-h-11', on ? 'bg-tint-selected font-medium text-ink' : 'text-body hover:bg-tint-hover')}>
+                <button type="button" data-settings-page={page.id} aria-current={on ? 'page' : undefined} aria-describedby={describedBy} onClick={() => onOpen(page.id)} className={cn(rowClass, 'min-h-8 py-0 pointer-coarse:min-h-11', on && 'bg-fill font-medium text-ink shadow-highlight-tonal')}>
                   <span className="flex min-w-0 flex-1 flex-col py-1">
                     <span className="truncate">{page.label}</span>
                     {list && <span id={`${id}-${page.id}-values`} aria-hidden="true" className="truncate text-caption text-muted">{summary[page.id] ?? page.blurb}</span>}

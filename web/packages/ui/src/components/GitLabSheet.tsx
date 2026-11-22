@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef } from 'react';
 import { popupOpen, threadCovered } from '../App';
 import type { SessionDetail } from '../api';
 import type { GitLabRef } from '../lib/gitlabRefs';
+import { cn } from '../lib/cn';
 import { InstanceName } from './common';
 import { GitLabItemView } from './GitLabItems';
 import { useGitLabItemHead } from './GitLabStrip';
 import { PanelHeader, SidePanel } from './Subagents';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Tip } from './ui/tooltip';
 
 /** An item opened from the conversation and the turn's other items, which the panel steps between. */
@@ -47,7 +48,7 @@ export default function GitLabSheet({ session, item, onItem, inline, open, onClo
       <span className="min-w-0 truncate text-title text-ink">{item && label ? label : 'GitLab'}</span>
       <InstanceName />
       <span className="flex-1" />
-      {item && url && <Tip label="Open in GitLab"><a href={url} target="_blank" rel="noreferrer" aria-label="Open in GitLab" className="inline-flex size-7 items-center justify-center rounded-sm text-muted hover:bg-tint-hover hover:text-ink"><ExternalLink className="size-4" /></a></Tip>}
+      {item && url && <Tip label="Open in GitLab"><a href={url} target="_blank" rel="noreferrer" aria-label="Open in GitLab" className={cn(buttonVariants({ size: 'icon' }), 'text-muted')}><ExternalLink className="size-4" /></a></Tip>}
       <Button ref={closeRef} size="icon-md" aria-label="Close GitLab" className="text-muted" onClick={close}><X /></Button>
     </PanelHeader>
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">

@@ -7,7 +7,7 @@ import { formatCredits } from '../lib/cost';
 import { byActivity, needsYouNow, taskStatus, type Unread } from '../lib/tasks';
 import { Num, ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, timeAgo, useMinuteTick, type Tone } from './common';
 import { Brand } from './Sidebar';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { InstanceBadge } from './InstanceBadge';
 
 /** What Home reads of a machine: without connected instances, this one alone. */
@@ -101,7 +101,7 @@ function Rows({ label, where, rows, named, onOpen, status }: Readonly<{ label: s
             <li key={named ? `${machine.id}\n${session.id}` : session.id}>
               <button
                 type="button"
-                className="grid w-full grid-cols-[24px_minmax(0,1fr)_58px] items-center gap-x-2.5 gap-y-1 rounded-sm px-1 py-4 text-left transition-colors hover:bg-sunken focus-visible:-outline-offset-2 min-[960px]:grid-cols-[24px_minmax(0,1fr)_minmax(0,200px)_58px] min-[960px]:px-2.5"
+                className={cn(rowClass, 'grid grid-cols-[24px_minmax(0,1fr)_58px] gap-x-2.5 gap-y-1 px-1 py-4 focus-visible:-outline-offset-2 min-[960px]:grid-cols-[24px_minmax(0,1fr)_minmax(0,200px)_58px] min-[960px]:px-2.5')}
                 onClick={() => onOpen(machine, session.id)}
               >
                 <ProjectBadge badge={project.badge} className="size-6 text-[9px]" />

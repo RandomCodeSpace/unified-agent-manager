@@ -4,6 +4,7 @@ import { Note } from './common';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
+import { Textarea } from './ui/textarea';
 
 type GitPatch = Pick<Settings, 'commit_prompt' | 'gitlab_mr_prompt' | 'coauthor'>;
 
@@ -36,7 +37,7 @@ function Instructions({ id, label, help, placeholder, saved, saving, onSave }: R
       <h3 className="text-ui font-medium text-ink"><label htmlFor={id}>{label}</label></h3>
       <Note id={`${id}-help`}>{help}</Note>
     </div>
-    <textarea id={id} rows={6} maxLength={4000} spellCheck={false} aria-describedby={`${id}-help`} placeholder={placeholder} value={value} readOnly={saving} onChange={(e) => setDraft(e.target.value)} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+    <Textarea id={id} rows={6} maxLength={4000} spellCheck={false} aria-describedby={`${id}-help`} placeholder={placeholder} value={value} readOnly={saving} onChange={(e) => setDraft(e.target.value)} />
     <div className="flex flex-wrap gap-2">
       <Button type="submit" variant="secondary" disabled={saving || value.trim() === saved}>Save</Button>
       <Button type="button" disabled={saving || (!saved && !value)} onClick={() => { setDraft(''); if (saved) onSave(''); }}>Reset to default</Button>

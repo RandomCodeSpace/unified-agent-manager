@@ -457,7 +457,7 @@ describe('settings', () => {
     await user.click(form.getByRole('button', { name: 'Select all' }));
     expect(form.getByText('2 selected')).toBeTruthy();
     await user.clear(form.getByRole('searchbox', { name: 'Search models' }));
-    expect((list.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }) as HTMLInputElement).disabled).toBe(true);
+    expect(list.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }).getAttribute('aria-disabled')).toBe('true');
     await user.click(list.getByRole('checkbox', { name: 'gemma3:27b' }));
     await user.click(list.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }));
     await user.type(form.getByRole('textbox', { name: 'Add a model ID the endpoint does not list' }), 'llama4:scout');
@@ -474,11 +474,11 @@ describe('settings', () => {
 
     await user.click(saved.getByRole('button', { name: 'Edit', exact: true }));
     const edit = within(models.getByRole('form', { name: 'Edit provider ollama' }));
-    expect((edit.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }) as HTMLInputElement).checked).toBe(true);
-    expect((edit.getByRole('checkbox', { name: 'Enable vision for gpt-oss:120b' }) as HTMLInputElement).checked).toBe(false);
+    expect(edit.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }).getAttribute('aria-checked')).toBe('true');
+    expect(edit.getByRole('checkbox', { name: 'Enable vision for gpt-oss:120b' }).getAttribute('aria-checked')).toBe('false');
     await user.click(edit.getByRole('button', { name: 'Load models' }));
     await waitFor(() => expect(edit.getByRole('button', { name: 'Load models' }).hasAttribute('disabled')).toBe(false));
-    expect((edit.getByRole('checkbox', { name: 'Enable vision for llama4:scout' }) as HTMLInputElement).checked).toBe(true);
+    expect(edit.getByRole('checkbox', { name: 'Enable vision for llama4:scout' }).getAttribute('aria-checked')).toBe('true');
     await user.click(edit.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }));
     await user.click(edit.getByRole('button', { name: 'Save provider' }));
     await waitFor(() => expect(models.queryByRole('form')).toBeNull());

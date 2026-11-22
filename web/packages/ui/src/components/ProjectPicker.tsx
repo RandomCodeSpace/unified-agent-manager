@@ -185,7 +185,7 @@ function FilterList({ projects, filter, input, onPick, onEdit, onRoutines, group
     const p = row.project;
     return (
       // The row holds the option (the Project, named by it alone) and, beside it, its buttons. The option is reached through the search box (`aria-activedescendant`), never focused itself.
-      <div key={row.key} role="none" className={cn(itemClass, 'pr-1 has-data-highlighted:bg-tint-hover has-data-highlighted:text-ink has-data-highlighted:[&_svg]:text-ink', row.current && 'text-ink')}>
+      <div key={row.key} role="none" className={cn(itemClass, 'pr-1 has-data-highlighted:bg-fill has-data-highlighted:text-ink has-data-highlighted:[&_svg]:text-ink', row.current && 'text-ink')}>
         <Autocomplete.Item
           value={row.key}
           aria-current={row.current || undefined}

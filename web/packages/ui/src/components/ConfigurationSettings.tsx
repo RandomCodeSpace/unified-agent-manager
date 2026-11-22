@@ -8,11 +8,13 @@ import { UTILITY_NONE, visibleModels } from '../lib/models';
 import { Field, SectionAction, useInlineForm } from './TaskDefaults';
 import { AlertDialog, Dialog, useConfirm } from './ui/dialog';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { PanelSection } from './ui/panel';
 import { Select } from './ui/select';
 import { Segmented } from './ui/segmented';
+import { Textarea } from './ui/textarea';
 import { HelpTip } from './ui/tooltip';
 
 const REFERENCES: Record<ConfigurationKind, string> = { agents: 'https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-agent-frontmatter-fields', skills: 'https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#skill-frontmatter-fields', hooks: 'https://docs.github.com/en/copilot/reference/hooks-reference', instructions: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions' };
@@ -20,8 +22,8 @@ const LABELS: Record<ConfigurationKind, string> = { agents: 'agent', skills: 'sk
 const HOOK_EVENTS = ['sessionStart', 'sessionEnd', 'userPromptSubmitted', 'userPromptTransformed', 'preToolUse', 'postToolUse', 'postToolUseFailure', 'agentStop', 'subagentStart', 'subagentStop', 'permissionRequest', 'preCompact', 'errorOccurred', 'notification'];
 const HOOK_MATCHERS: Record<string, string> = { notification: 'notification_type', permissionRequest: 'toolName', preToolUse: 'toolName', postToolUse: 'toolName', preCompact: 'trigger', subagentStart: 'agentName' };
 
-function TextArea(props: ComponentProps<'textarea'>) {
-  return <textarea rows={6} spellCheck={false} {...props} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:outline-none disabled:opacity-45" />;
+function TextArea({ className, ...props }: ComponentProps<typeof Textarea>) {
+  return <Textarea rows={6} spellCheck={false} {...props} className={cn('font-mono text-code-sm', className)} />;
 }
 
 interface Draft {
@@ -307,7 +309,7 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
           <Note>Only the selected hook type and command mode are saved. Switching modes keeps your other inputs for switching back.</Note>
           <Field id={`${prefix}-timeout`} label="Timeout (seconds)" hint="Leave empty for Copilot's 30-second default."><Input id={`${prefix}-timeout`} type="number" min="1" placeholder="30" value={draft.timeout} disabled={busy || locked} onChange={(e) => change({ timeout: e.target.value })} /></Field>
           {HOOK_MATCHERS[draft.event] && <Field id={`${prefix}-matcher`} label="Event matcher (optional regex)" hint={`Matches the complete ${HOOK_MATCHERS[draft.event]} value. Leave empty for all events.`}><Input id={`${prefix}-matcher`} value={draft.matcher} disabled={busy || locked} onChange={(e) => change({ matcher: e.target.value })} /></Field>}
-          <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.disableHooks} disabled={busy || locked} onChange={(e) => change({ disableHooks: e.target.checked })} />Disable hooks in this file</label>
+          <label htmlFor={`${prefix}-disable-hooks`} className="flex items-center gap-2 text-ui"><Checkbox id={`${prefix}-disable-hooks`} checked={draft.disableHooks} disabled={busy || locked} onCheckedChange={(disableHooks) => change({ disableHooks })} />Disable hooks in this file</label>
           <Note>Prompt hooks require a new interactive Copilot CLI session. They can be kept in the full document, but are not guaranteed to run in UAM.</Note>
         </> : <>
           <Field id={`${prefix}-tools`} label={kind === 'agents' ? 'Tools (optional, one per line)' : 'Allowed tools (optional, one per line)'} hint={kind === 'agents' ? 'Leave empty for the provider defaults. Use native tool names.' : 'Tools preapproved while this skill is active. Saved as a YAML array.'}><TextArea id={`${prefix}-tools`} rows={3} value={draft.tools} disabled={busy || locked || (kind === 'agents' && draft.noTools)} onChange={(e) => change({ tools: e.target.value })} /></Field>
@@ -320,17 +322,17 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
             </div>)}
             <Field id={`${prefix}-model-policy`} label="Model policy" hintVisible={!hasModel} hint={hasModel ? 'Required refuses dispatch when the configured models cannot be used.' : 'Choose a model to set a policy. No policy override is saved while inheriting.'}><Select id={`${prefix}-model-policy`} value={hasModel ? draft.modelPolicy : ''} disabled={busy || locked || !hasModel} items={[{ value: '', label: 'Preferred (default)' }, { value: 'required', label: 'Required' }]} onValueChange={(modelPolicy) => change({ modelPolicy })} /></Field>
             <Field id={`${prefix}-effort`} label="Reasoning effort" hintVisible={!hasModel} hint={hasModel ? 'Only effort levels supported by every selected model are offered.' : 'Choose a model to override effort. Otherwise the thread effort is inherited.'}><Select id={`${prefix}-effort`} value={hasModel ? draft.reasoningEffort : ''} disabled={busy || locked || !hasModel} items={[{ value: '', label: 'Inherit thread effort' }, ...effortOptions.map((effort) => ({ value: effort, label: supportedEfforts.includes(effort) ? effort : `${effort} (unavailable)`, hidden: !supportedEfforts.includes(effort) }))]} onValueChange={(reasoningEffort) => change({ reasoningEffort })} /></Field>
-            <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.includeInstructions} disabled={busy || locked} onChange={(e) => change({ includeInstructions: e.target.checked })} />Include repository instructions when used as a subagent</label>
+            <label htmlFor={`${prefix}-include-instructions`} className="flex items-center gap-2 text-ui"><Checkbox id={`${prefix}-include-instructions`} checked={draft.includeInstructions} disabled={busy || locked} onCheckedChange={(includeInstructions) => change({ includeInstructions })} />Include repository instructions when used as a subagent</label>
             <Field id={`${prefix}-target`} label="Target (other environments)" hint="Used by other Copilot environments; the current CLI ignores this field."><Select id={`${prefix}-target`} value={draft.target} disabled={busy || locked} items={[{ value: '', label: 'All environments' }, { value: 'github-copilot', label: 'GitHub Copilot' }, { value: 'vscode', label: 'VS Code' }]} onValueChange={(target) => change({ target })} /></Field>
-            <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.noTools} disabled={busy || locked} onChange={(e) => change({ noTools: e.target.checked })} />Disable all tools</label>
+            <label htmlFor={`${prefix}-no-tools`} className="flex items-center gap-2 text-ui"><Checkbox id={`${prefix}-no-tools`} checked={draft.noTools} disabled={busy || locked} onCheckedChange={(noTools) => change({ noTools })} />Disable all tools</label>
             <Field id={`${prefix}-mcp`} label="Agent MCP servers (optional JSON)" hint="Native mcp-servers object. Shared servers can be configured in MCP servers settings."><TextArea id={`${prefix}-mcp`} rows={4} value={draft.mcp} disabled={busy || locked} onChange={(e) => change({ mcp: e.target.value })} /></Field>
           </> : <>
             <Field id={`${prefix}-argument-hint`} label="Argument hint (optional)" hint="Shown in the skill picker, for example [target] [mode]."><Input id={`${prefix}-argument-hint`} value={draft.argumentHint} disabled={busy || locked} onChange={(e) => change({ argumentHint: e.target.value })} /></Field>
             <Field id={`${prefix}-license`} label="License (optional)"><Input id={`${prefix}-license`} value={draft.license} disabled={busy || locked} onChange={(e) => change({ license: e.target.value })} /></Field>
             <Field id={`${prefix}-compatibility`} label="Compatibility (optional)" hint="Required tools, runtimes or environment."><Input id={`${prefix}-compatibility`} maxLength={500} value={draft.compatibility} disabled={busy || locked} onChange={(e) => change({ compatibility: e.target.value })} /></Field>
           </>}
-          <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.automatic} disabled={busy || locked} onChange={(e) => change({ automatic: e.target.checked })} />{kind === 'agents' ? 'Allow automatic agent selection' : 'Allow automatic skill invocation'}</label>
-          <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.invocable} disabled={busy || locked} onChange={(e) => change({ invocable: e.target.checked })} />{kind === 'agents' ? 'Allow manual agent selection' : 'Allow manual skill invocation'}</label>
+          <label htmlFor={`${prefix}-automatic`} className="flex items-center gap-2 text-ui"><Checkbox id={`${prefix}-automatic`} checked={draft.automatic} disabled={busy || locked} onCheckedChange={(automatic) => change({ automatic })} />{kind === 'agents' ? 'Allow automatic agent selection' : 'Allow automatic skill invocation'}</label>
+          <label htmlFor={`${prefix}-invocable`} className="flex items-center gap-2 text-ui"><Checkbox id={`${prefix}-invocable`} checked={draft.invocable} disabled={busy || locked} onCheckedChange={(invocable) => change({ invocable })} />{kind === 'agents' ? 'Allow manual agent selection' : 'Allow manual skill invocation'}</label>
           {!draft.automatic && !draft.invocable && <Note tone="warn">Both automatic and manual invocation are disabled.{kind === 'agents' ? ' The agent can still be invoked programmatically.' : ' This skill will not be available through either method.'}</Note>}
           <Field id={`${prefix}-metadata`} label="Metadata (optional JSON)" hint={kind === 'agents' ? 'Optional metadata for other environments; the current Copilot CLI ignores it.' : 'An object of string keys and values.'}><TextArea id={`${prefix}-metadata`} rows={3} value={draft.metadata} disabled={busy || locked} onChange={(e) => change({ metadata: e.target.value })} /></Field>
         </>}

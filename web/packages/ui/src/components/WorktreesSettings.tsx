@@ -135,7 +135,7 @@ function WorktreeList({ list, total, measuring, onChanged }: Readonly<{ list: Wo
             const project = projects.find((p) => p.id === w.project_id);
             const loses = w.uncommitted > 0;
             return (
-              <li key={w.path} className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm px-2 py-2 hover:bg-tint-hover">
+              <li key={w.path} className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm px-2 py-2 hover:bg-fill-hover">
                 <div className="flex w-32 shrink-0 flex-col items-end gap-1 max-sm:w-20">
                   <span className="text-ui text-ink tabular-nums">{w.size_bytes === undefined ? <span className="text-muted">Measuring…</span> : `${w.size_partial ? '≥ ' : ''}${sizeText(w.size_bytes)}`}</span>
                   <span aria-hidden="true" className="h-1 w-full overflow-hidden rounded-full bg-sunken">

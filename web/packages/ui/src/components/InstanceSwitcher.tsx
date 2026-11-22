@@ -8,7 +8,7 @@ import { groupTasks, needsYouCount, type Unread } from '../lib/tasks';
 import { shortVersion } from '../lib/update';
 import { Dot, useApp, type Tone } from './common';
 import { Key } from './InlinePicker';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { PHONE, readerPopupClass } from './ui/dialog';
 import { BottomSheet } from './ui/reader';
 import { Tip } from './ui/tooltip';
@@ -101,7 +101,7 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
         aria-current={on ? 'true' : undefined}
         aria-label={`${[label, sub].filter(Boolean).join(', ')}${needs ? `, ${needs} need you` : ''}`}
         onClick={() => onPick(id)}
-        className={cn('flex min-h-12 w-full items-center gap-3 rounded-md px-2 text-left transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-14', on ? 'bg-tint-selected' : 'hover:bg-tint-hover')}
+        className={cn(rowClass, 'min-h-12 gap-3 py-0 focus-visible:-outline-offset-2 pointer-coarse:min-h-14')}
       >
         {mark}
         <span className="flex min-w-0 flex-1 flex-col">
@@ -145,7 +145,7 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
           </div>
         )),
       )}
-      <button type="button" data-instance="" onClick={onConnect} className="flex h-9 items-center gap-3 rounded-md px-2 text-left text-ui text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11">
+      <button type="button" data-instance="" onClick={onConnect} className={cn(rowClass, 'h-9 gap-3 py-0 text-muted hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11')}>
         <span className="flex size-9 shrink-0 items-center justify-center"><Plus aria-hidden="true" className="size-4" /></span>
         Connect another instance
       </button>

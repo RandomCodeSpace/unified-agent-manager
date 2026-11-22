@@ -65,7 +65,7 @@ export function TerminalDock({ project, thread, open, hidden, panel, onClose, on
   return (
     <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
       <div {...handleProps} className="group/handle absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
-        <div className="fade-rule w-full transition-[background-color,scale] duration-100 group-hover/handle:scale-y-200 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:scale-y-200 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
+        <div className="fade-rule w-full transition-[scale] duration-100 group-hover/handle:scale-y-200 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:scale-y-200 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
       </div>
       {/* Clips the slide to the band, so the page never gains a scrollable overflow below it. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-clip">

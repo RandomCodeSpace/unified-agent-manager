@@ -12,6 +12,7 @@ import { Input } from './ui/input';
 import { PanelSection } from './ui/panel';
 import { Segmented } from './ui/segmented';
 import { Switch } from './ui/switch';
+import { Textarea } from './ui/textarea';
 import { Tip } from './ui/tooltip';
 
 /** An env variable or header row of the form: `stored` marks one whose value the service keeps, left as is while `value` is empty. */
@@ -142,11 +143,11 @@ function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCanc
             </Field>
           </div>
           <Field id="mcp-args" label="Arguments, one per line (no shell: quotes and spaces are kept as typed)">
-            <textarea
+            <Textarea
               id="mcp-args"
               rows={3}
               spellCheck={false}
-              className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:outline-none disabled:opacity-45"
+              className="font-mono text-code-sm"
               placeholder={'-y\n@scope/server'}
               disabled={busy || locked}
               value={draft.args}

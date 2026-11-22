@@ -1,10 +1,11 @@
 import { Ellipsis } from 'lucide-react';
 import { useContext, useState } from 'react';
 import { taskName, type SessionSummary } from '../api';
+import { cn } from '../lib/cn';
 import { matchesTask } from '../lib/tasks';
 import { Note, ProjectBadge, TaskTitle, dateTime, timeAgo, useMinuteTick } from './common';
 import { TaskList, taskMenuItems, useTaskActions } from './taskActions';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Input } from './ui/input';
 import { Menu } from './ui/menu';
 
@@ -40,7 +41,7 @@ export function ArchivedTasks() {
             const at = archivedAt(s);
             return (
               <li key={s.id} className="flex min-w-0 items-center gap-1">
-                <button type="button" className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-sm px-2 text-left text-ui text-body transition-colors duration-100 hover:bg-tint-hover focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => a.select(s.id)}>
+                <button type="button" className={cn(rowClass, 'min-h-9 w-auto flex-1 py-0 focus-visible:-outline-offset-2 pointer-coarse:min-h-11')} onClick={() => a.select(s.id)}>
                   <ProjectBadge badge={project.badge} />
                   <span className="sr-only">{project.name}, </span>
                   <TaskTitle session={s} className="min-w-0 flex-1 truncate" />
