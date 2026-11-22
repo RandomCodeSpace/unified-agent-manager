@@ -4,6 +4,8 @@ import { useApi } from '../ApiContext';
 import { describeError, type SkillOption } from '../api';
 import { byCodeUnit } from '../lib/order';
 import { Note } from './common';
+import { rowClass } from './ui/button';
+import { cn } from '../lib/cn';
 import { Spinner } from './ui/spinner';
 import { Switch } from './ui/switch';
 
@@ -70,7 +72,7 @@ export function SkillChoices({ projectId, value, thread, reason, onChange }: Rea
             const on = effective.includes(s.name);
             return (
               <li key={s.name}>
-                <button type="button" role="checkbox" aria-checked={on} disabled={!!reason} onClick={() => toggle(s.name)} className="flex min-h-8 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-disabled:hover:bg-tint-hover focus-visible:outline-2 focus-visible:-outline-offset-2 disabled:opacity-45 pointer-coarse:min-h-11">
+                <button type="button" role="checkbox" aria-checked={on} disabled={!!reason} onClick={() => toggle(s.name)} className={cn(rowClass, 'min-h-8 cursor-default items-start py-1.5 text-[length:inherit] text-[color:inherit] outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 pointer-coarse:min-h-11')}>
                   <Check aria-hidden="true" strokeWidth={2.5} className={on ? 'mt-0.5 size-3.5 shrink-0 text-accent' : 'invisible mt-0.5 size-3.5 shrink-0'} />
                   <span className="flex min-w-0 flex-col">
                     <span className="text-ui text-ink">{s.name}</span>

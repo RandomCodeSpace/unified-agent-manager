@@ -9,6 +9,7 @@ import { held, put, useHeld } from './ReferenceCite';
 import { stateBlocks, useSummaries, useTurnGitLabRefs } from './GitLabStrip';
 import { useLocateItem } from './Subagents';
 import { Blocks, type Block, type BlockTone } from './ui/blocks';
+import { rowClass } from './ui/button';
 import { Collapse, EXIT_MS } from './ui/collapse';
 
 // References ledger (DESIGN.md turn outcome): the numbered items the reply that ends a turn cites
@@ -150,7 +151,7 @@ function ReferenceRow({ id, r, gitlab }: Readonly<{ id: string; r: Reference; gi
   return (
     <li id={id} className={cn('min-w-0 rounded-sm', bad && 'text-error')}>
       {target && locate && r.status !== 'ambiguous' ? (
-        <button type="button" title="Show where this Thread defined it" className={cn(ROW, 'transition-colors duration-100 hover:bg-tint-well')} onClick={() => locate(target)}>{body}</button>
+        <button type="button" title="Show where this Thread defined it" className={cn(rowClass, ROW, 'text-[length:inherit] text-[color:inherit]')} onClick={() => locate(target)}>{body}</button>
       ) : (
         <div className={ROW}>{body}</div>
       )}
@@ -161,7 +162,7 @@ function ReferenceRow({ id, r, gitlab }: Readonly<{ id: string; r: Reference; gi
             return (
               <li key={`${c.item_id ?? ''}:${k}`} className="min-w-0">
                 {c.item_id && locate ? (
-                  <button type="button" title="Show where this Thread defined it" className={cn(ROW, 'text-body transition-colors duration-100 hover:bg-tint-well')} onClick={() => locate(c.item_id!)}>{words}</button>
+                  <button type="button" title="Show where this Thread defined it" className={cn(rowClass, ROW, 'text-[length:inherit] text-body')} onClick={() => locate(c.item_id!)}>{words}</button>
                 ) : (
                   <div className={cn(ROW, 'text-body')}>{words}</div>
                 )}
