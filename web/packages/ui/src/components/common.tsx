@@ -125,11 +125,12 @@ export function useMedia(query: string): boolean {
 
 /**
  * A native disclosure's summary with the app's chevron: the browser's own marker is hidden everywhere (index.css).
- * The chevron turns with its own `<details>`, so one disclosure inside another keeps its own.
+ * The chevron turns with its own `<details>`, so one disclosure inside another keeps its own. Tactile: a tonal fill on
+ * hover and press (no transition), drawn 4px past the text on each side so nothing moves.
  */
 export function Summary({ className, children }: Readonly<{ className?: string; children: ReactNode }>) {
   return (
-    <summary className={cn('flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden', className)}>
+    <summary className={cn('-mx-1 flex cursor-pointer list-none items-center gap-1.5 rounded-sm px-1 hover:bg-fill-hover active:bg-fill-strong [&::-webkit-details-marker]:hidden', className)}>
       <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted transition-transform duration-160 [[open]>summary>&]:rotate-z-90" />
       {children}
     </summary>
@@ -141,7 +142,7 @@ export function Summary({ className, children }: Readonly<{ className?: string; 
  * Its one transform animation stops under the app's reduced-motion setting.
  */
 export function WorkingMark({ className }: Readonly<{ className?: string }>) {
-  return <Spinner className={cn('size-3.5 border-current border-r-transparent text-accent', className)} />;
+  return <Spinner className={cn('size-3.5 border-2 border-current/22 border-t-current text-accent', className)} />;
 }
 
 /** Model work on the strip's live line: a 7px ink dot that breathes (opacity and scale only); still under reduced motion. */
@@ -188,7 +189,7 @@ export function StateLabel({ status, unread = false, bare = false, text = status
       className={cn(
         'flex shrink-0 items-center gap-1 text-caption font-normal whitespace-nowrap',
         // The one filled tag is the attention Chip's own classes. -my-0.5: the 20px tag takes a text line's room, so a row with one keeps its two lines where every row has them.
-        rung === 'now' && !bare && [chipVariants({ tone: 'attention' }), '-my-0.5 gap-1 font-medium'],
+        rung === 'now' && !bare && [chipVariants({ tone: 'attention' }), '-my-0.5 gap-1 rounded-full font-medium'],
         (rung === 'live' || rung === 'bad') && tone,
         (rung === 'done' || rung === 'off') && (fresh ? 'font-medium text-ink' : 'text-muted'),
         className,
@@ -231,7 +232,7 @@ export const BADGE_TEXT: Record<BadgeColor, string> = {
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
 export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; className?: string }>) {
   return (
-    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs text-badge font-bold text-on-primary select-none', BADGE_BG[badge.color], className)}>
+    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs text-badge font-bold text-on-primary shadow-highlight select-none', BADGE_BG[badge.color], className)}>
       {badge.text}
     </span>
   );
@@ -351,7 +352,7 @@ export function Skeleton({ label, rows = 3, className, rowClassName, children, .
     <div aria-hidden={hidden || undefined} className={cn('flex flex-col gap-3', className)}>
       {!hidden && <Loading label={label} />}
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', SKELETON_WIDTHS[i % 3], rowClassName)} />
+        <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-fill', SKELETON_WIDTHS[i % 3], rowClassName)} />
       ))}
       {children}
     </div>
@@ -363,7 +364,7 @@ export function TranscriptSkeleton({ label = 'Loading the conversation…' }: Re
   return (
     <div className="flex flex-col gap-6 px-3 pt-6 sm:px-4 md:px-6">
       <Skeleton label={label} rows={0} className="items-end">
-        <div aria-hidden="true" className="h-11 w-[min(60%,480px)] rounded-lg bg-sunken" />
+        <div aria-hidden="true" className="h-11 w-[min(60%,480px)] rounded-lg bg-fill" />
       </Skeleton>
       <Skeleton label="" rows={4} aria-hidden="true" />
     </div>
@@ -617,7 +618,7 @@ function TempFileAction({ file, children }: Readonly<{ file: { path: string; has
   return (
     <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 gap-y-1">
       {children}
-      <button type="button" className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 rounded-xs text-left text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current" onClick={event => {
+      <button type="button" className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 rounded-xs text-left text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current transition-[scale] duration-100 active:scale-[0.97]" onClick={event => {
         event.preventDefault();
         event.stopPropagation();
         preview?.({ tempPath: file.path, hash: file.hash, name: file.path.split('/').pop() || file.path, description: file.path }, event.currentTarget);
@@ -771,7 +772,7 @@ function RemoteImage({ src, alt }: Readonly<{ src: string; alt: string }>) {
         <ImageIcon className="size-3.5 shrink-0" aria-hidden="true" />
         <span>{alt || 'Image'}</span>
         <a href={src} rel="noopener noreferrer" target="_blank" title={src} className="truncate text-muted hover:underline">{url.host}</a>
-        <button type="button" aria-label={`Load image from ${url.host}`} title="Images from other sites load only when you ask" className="shrink-0 rounded-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current" onClick={() => {
+        <button type="button" aria-label={`Load image from ${url.host}`} title="Images from other sites load only when you ask" className="shrink-0 rounded-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current transition-[scale] duration-100 active:scale-[0.97]" onClick={() => {
           loadedImages.add(src);
           setLoaded(true);
         }}>Load image</button>
@@ -1195,7 +1196,7 @@ function OutlineIndex({ sections }: Readonly<{ sections: string[] }>) {
     <ol aria-label="Sections">
       {sections.map((section, i) => (
         <li key={i}>
-          <button type="button" onClick={(e) => show(e.currentTarget, i)}>
+          <button type="button" className="-mx-1.5 w-[calc(100%+0.75rem)] rounded-sm px-1.5 hover:bg-fill-hover hover:no-underline active:bg-fill-strong" onClick={(e) => show(e.currentTarget, i)}>
             <span aria-hidden="true" className="md-outline-n">{String(i + 1).padStart(2, '0')}</span>
             {section}
           </button>
@@ -1436,7 +1437,7 @@ export function Loading({ label = 'Loading…', delay = 300, className }: Readon
     <output aria-busy="true" className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
       {late && (
         <span className="flex items-center gap-2 animate-fade-in">
-          <Spinner className="border-muted" />
+          <Spinner className="border-2 border-current/22 border-t-current text-muted" />
           {label}
         </span>
       )}
