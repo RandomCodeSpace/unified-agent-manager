@@ -118,8 +118,16 @@ func TestWebAutopilotLifecycleAndStop(t *testing.T) {
 		}
 	}
 	h.fs.onEvent(ev("terminal", &rpc.SessionIdleData{}))
-	if last := h.sink.last(); last.Turn == nil || last.Turn.State != agentapi.TurnCompleted {
-		t.Fatalf("terminal idle=%+v", last)
+	// The idle's execution refresh runs in a goroutine and may emit after the
+	// turn event, so the turn's last state is checked, not the last event.
+	var last *agentapi.Turn
+	for _, event := range h.sink.all() {
+		if event.Turn != nil {
+			last = event.Turn
+		}
+	}
+	if last == nil || last.State != agentapi.TurnCompleted {
+		t.Fatalf("terminal idle turn=%+v", last)
 	}
 	if runtime.state.Mode != "autopilot" {
 		t.Fatal("final idle invented mode exit")
