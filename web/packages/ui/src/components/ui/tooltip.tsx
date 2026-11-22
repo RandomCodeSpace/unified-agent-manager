@@ -1,7 +1,8 @@
 import { Tooltip as BaseTooltip } from '@base-ui/react/tooltip';
 import { Info } from 'lucide-react';
 import { cloneElement, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import { Button } from './button';
+import { cn } from '../../lib/cn';
+import { Button, corner } from './button';
 
 export const TooltipProvider = BaseTooltip.Provider;
 
@@ -9,7 +10,10 @@ export const TooltipProvider = BaseTooltip.Provider;
  * A hint on hover and keyboard focus; the trigger must carry its own accessible name, and while the tip is open
  * it describes the trigger (`aria-describedby`), so text the name lacks reaches a screen reader too. `label` may
  * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up. It never takes the
- * pointer: a tip shown on focus may cover a field, and a press there reaches the field.
+ * pointer: a tip shown on focus may cover a field, and a press there reaches the field. An `ink` tile in Light and
+ * the `float` surface in Dark (never a white tile on black), on the float shadow; it scales in from 0.96 over
+ * `base` and fades out over `fast`. In Dark `on-primary` is `ink` inside it, so a caller's muted second line
+ * (`text-on-primary/70`) follows the tile.
  */
 export function Tip({ label, children, side = 'top', disabled = false, openOnClick = false }: Readonly<{ label: ReactNode; children: ReactElement; side?: 'top' | 'bottom' | 'left' | 'right'; disabled?: boolean; openOnClick?: boolean }>) {
   const shown = useRef(false);
@@ -48,7 +52,7 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
             id={popupId}
             role="tooltip"
             data-popup="tooltip"
-            className="max-w-64 origin-(--transform-origin) rounded-sm bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none"
+            className={cn('max-w-64 origin-(--transform-origin) bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,scale] duration-160 data-ending-style:duration-100 data-starting-style:scale-[0.96] data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none in-data-[theme=dark]:bg-float in-data-[theme=dark]:[--color-on-primary:var(--color-ink)]', corner.sm)}
           >
             {label}
           </BaseTooltip.Popup>

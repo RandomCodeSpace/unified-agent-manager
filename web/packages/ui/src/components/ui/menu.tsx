@@ -4,19 +4,25 @@ import { Check } from 'lucide-react';
 import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { cn } from '../../lib/cn';
+import { corner } from './button';
 
 /**
- * Dropdown and context menus on Base UI. Level 2 "floating" surface from DESIGN.md:
- * raised fill on the float shadow (its 1px ring is the edge), 10px radius; 30px rows.
+ * What floats (DESIGN.md, Tactile): the `float` fill. Inside it `raised` is the same colour, so a part that paints
+ * the surface it sits on (a panel head, a sticky row, a clamp's fade) still matches, in Dark too.
  */
-export const popupClass =
-  'z-50 min-w-44 origin-(--transform-origin) rounded-md bg-raised p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0';
+export const floatClass = 'bg-float [--color-raised:var(--color-float)]';
 
-/** One row of any popup list (menus, selects, the composer's inline picker): the keyboard or pointer highlight is the `tint-hover` step. */
-export const itemClass =
-  'relative flex min-h-[30px] w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-ui text-body outline-hidden data-highlighted:bg-tint-hover data-highlighted:text-ink data-disabled:opacity-45 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted data-highlighted:[&_svg]:text-ink';
+/**
+ * Dropdown and context menus on Base UI. Level 2 "floating" surface from DESIGN.md: the `float` fill on the float
+ * shadow (its 1px ring is the edge), 12px continuous corners, 4px padding; 30px rows. It scales in from 0.96 at
+ * its anchor and fades over `base`, and leaves over `fast`.
+ */
+export const popupClass = `z-50 min-w-44 origin-(--transform-origin) ${corner.md} ${floatClass} p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-160 data-ending-style:duration-100 data-starting-style:scale-[0.96] data-starting-style:opacity-0 data-ending-style:scale-[0.96] data-ending-style:opacity-0 starting:scale-[0.96] starting:opacity-0`;
 
-export const dangerItemClass = 'text-error data-highlighted:bg-error-wash data-highlighted:text-error [&_svg]:text-error data-highlighted:[&_svg]:text-error';
+/** One row of any popup list (menus, selects, the composer's inline picker): 8px corners, concentric with the popup's; the keyboard or pointer highlight is the tonal `fill`, a press the `fill-strong` step. */
+export const itemClass = `relative flex min-h-[30px] w-full cursor-default select-none items-center gap-2 ${corner.sm} px-2 py-1 text-ui text-body outline-hidden data-highlighted:bg-fill data-highlighted:text-ink data-highlighted:active:bg-fill-strong data-disabled:opacity-45 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted data-highlighted:[&_svg]:text-ink`;
+
+export const dangerItemClass = 'text-error data-highlighted:bg-error-tint data-highlighted:text-error data-highlighted:active:bg-error-tint-press [&_svg]:text-error data-highlighted:[&_svg]:text-error';
 
 export const separatorClass = 'my-1 fade-rule';
 

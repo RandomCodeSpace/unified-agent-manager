@@ -125,7 +125,7 @@ const LOOKS = [
   ['components/common.tsx', /rung === 'now' && !bare && \[chipVariants\(\{ tone: 'attention' \}\)/, 'the one filled tag is the attention chip itself, and the phone\'s glyph-only label has none'],
   ['components/ui/dialog.tsx', /export const readerPopupClass =\s*'(?![^']*border)/, 'an anchored reader has no border: its shadow lifts it'],
   ['components/TurnChanges.tsx', /label="This turn's changes" className="(?![^"]*border)/, 'the turn\'s changes reader has no border'],
-  ['components/ui/button.tsx', /ghost:\s*'(?![^']*(?:^|\s)(?:bg-raised|shadow-))[^']*\bnot-aria-disabled:hover:bg-tint-hover\b/, 'a ghost button has no surface or shadow at rest and tints on hover'],
+  ['components/ui/button.tsx', /ghost:\s*'(?![^']*(?:^|\s)(?:bg-raised|shadow-))[^']*\bnot-aria-disabled:hover:bg-fill-hover\b/, 'a ghost button has no surface or shadow at rest and takes the tonal fill on hover'],
   ['components/ui/button.tsx', /sm: 'h-7 [^']*\bpointer-coarse:after:-inset-y-2\b/, 'a small button is 28px tall and 44px to a touch'],
   ['components/UsageButton.tsx', /<Button \{\.\.\.opener\} size="sm" className=\{cn\('(?![^']*(bg-raised|shadow-))[^']*\baria-expanded:bg-tint-selected\b/, 'the Usage and AI chip is flat, tinted while open'],
   ['components/UsageButton.tsx', /<Button \{\.\.\.opener\} className=\{cn\('[^']*\bflex-col\b/, 'the rail\'s Usage and AI button stacks the share over the calls'],

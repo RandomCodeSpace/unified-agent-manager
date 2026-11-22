@@ -2,6 +2,7 @@ import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import type { CSSProperties, ReactNode } from 'react';
 import { cn } from '../../lib/cn';
+import { corner } from './button';
 
 export interface Segment {
   value: string;
@@ -11,10 +12,10 @@ export interface Segment {
 }
 
 /**
- * A segmented control on Base UI's radio group: one compact inset `sunken` track (24px, the
- * `well` ring, 1px padding) with equal-width segments, their `caption` labels centred, and one
- * floating `raised` thumb that slides to the chosen one on its transform (the spring; it snaps
- * under Motion: Match system). The segment count and the chosen index reach the thumb as
+ * A segmented control on Base UI's radio group (Tactile): one tonal track (28px, the grey `fill` under the
+ * `well` shadow, 2px padding) with equal-width segments, their `caption` labels centred, and one `raised`
+ * thumb (corners concentric with the track's) that slides to the chosen one on its transform (the spring; it
+ * snaps under Motion: Match system) and presses to 0.95 with the control. The segment count and the chosen index reach the thumb as
  * custom properties through the CSSOM (React's `style` prop), never as inline markup. Arrow
  * keys move the choice; the group carries the label. `size` is accepted for its callers; both
  * sizes are this one track.
@@ -54,19 +55,19 @@ export function Segmented({
       aria-describedby={describedBy}
       aria-invalid={invalid || undefined}
       style={vars}
-      className={cn('relative isolate grid h-6 shrink-0 auto-cols-fr grid-flow-col rounded-sm bg-sunken p-px shadow-well pointer-coarse:h-9', className)}
+      className={cn('group/seg relative isolate grid h-7 shrink-0 auto-cols-fr grid-flow-col bg-fill p-0.5 shadow-well pointer-coarse:h-9', corner.sm, className)}
       data-size={size}
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-xs bg-raised shadow-raised transition-transform duration-(--spring-base) ease-spring"
+        className={cn('pointer-events-none absolute inset-y-0.5 left-0.5 -z-10 w-[calc((100%-4px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] bg-raised shadow-thumb transition-[translate,scale] duration-(--spring-base) ease-spring group-[:active:not([data-disabled])]/seg:scale-95 in-data-[theme=dark]:bg-fill-press', corner.xs)}
       />
       {items.map((it) => (
         <Radio.Root
           key={it.value}
           value={it.value}
           disabled={it.disabled}
-          className="flex h-full cursor-pointer items-center justify-center rounded-xs px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45"
+          className={cn('flex h-full cursor-pointer items-center justify-center px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45', corner.xs)}
         >
           {it.label}
         </Radio.Root>

@@ -4,13 +4,13 @@ import { Popover as BasePopover } from '@base-ui/react/popover';
 import { X } from 'lucide-react';
 import { useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { cn } from '../../lib/cn';
-import { Button } from './button';
-import { popupClass as floatingClass } from './menu';
+import { Button, corner } from './button';
+import { floatClass, popupClass as floatingClass } from './menu';
 import { PanelHead } from './panel';
 
 /**
- * Modal surfaces on Base UI (Level 3 in DESIGN.md: raised, `lg` corners, modal shadow with its
- * 1px ring, on the backdrop; they scale in from 0.97).
+ * Modal surfaces on Base UI (Level 3 in DESIGN.md, Tactile: the `float` fill, 20px continuous corners, modal
+ * shadow with its 1px ring, on the plain backdrop; they scale in from 0.97 over `slow`).
  * Focus is trapped, Esc closes, focus returns to the opener. `data-popup` marks every
  * popup so app-level Esc handlers stand back while one is open.
  */
@@ -23,14 +23,14 @@ export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity 
 
 /** An anchored reader's popup (DESIGN.md Floating panels): the modal surface scaling from 0.98 and fading (`base`); the caller gives its size. */
 export const readerPopupClass =
-  'origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0';
+  'origin-(--transform-origin) flex-col overflow-hidden text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0 ' + `${corner.lg} ${floatClass}`;
 
 // On a phone the bottom sheet rests on the on-screen keyboard (`--app-bottom`, lib/viewport), not behind it.
 const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 max-sm:items-end max-sm:p-0 max-sm:pb-[var(--app-bottom,0px)]';
 
 // Capped at the visible viewport (the keyboard's room left out) less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
-const popupClass =
-  'relative flex max-h-[calc(var(--app-height,100dvh)-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+const popupClass = `${corner.xl} ${floatClass} ` +
+  'relative flex max-h-[calc(var(--app-height,100dvh)-32px)] w-full max-w-sheet flex-col p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 starting:scale-[0.97] starting:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;
@@ -91,7 +91,7 @@ export function ViewerDialog({ open, onOpenChange, onClosed, title, description,
         <BaseDialog.Viewport className="fixed inset-0 z-50 grid place-items-center p-4">
           <BaseDialog.Popup
             data-popup=""
-            className="flex max-h-[calc(100dvh-32px)] max-w-[min(94vw,1400px)] min-w-0 flex-col gap-3 rounded-lg bg-raised p-3 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0"
+            className={cn('flex max-h-[calc(100dvh-32px)] max-w-[min(94vw,1400px)] min-w-0 flex-col gap-3 p-3 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0 starting:scale-[0.98] starting:opacity-0', corner.lg, floatClass)}
           >
             <div className="flex min-w-0 items-start gap-3">
               <div className="min-w-0 flex-1">
@@ -242,7 +242,7 @@ function AnchoredAlert({ open, onOpenChange, onClosed, title, description, child
               <BasePopover.Close render={<Button size="sm" variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BasePopover.Close>
-              <Button size="sm" variant={danger ? 'danger' : 'primary'} className={danger ? 'bg-sunken' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+              <Button size="sm" variant={danger ? 'danger' : 'primary'} loading={busy} disabled={disabled} onClick={onConfirm}>
                 {confirmLabel}
               </Button>
             </div>
@@ -266,10 +266,10 @@ function CentredAlert({ open, onOpenChange, onClosed, title, description, childr
             {children}
             <div className="mt-5 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
               {aside}
-              <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
+              <BaseAlertDialog.Close render={<Button size="lg" variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
-              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'bg-sunken' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+              <Button size="lg" variant={danger ? 'danger' : 'primary'} loading={busy} disabled={disabled} onClick={onConfirm}>
                 {confirmLabel}
               </Button>
             </div>
