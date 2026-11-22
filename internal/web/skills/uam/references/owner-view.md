@@ -34,3 +34,6 @@
   changed it keeps the list as the turn left it. The owner changes it by
   asking you in the chat. Keep plans and step lists there,
   not in Markdown files in the project, unless the owner asks for a file.
+- **Numbered references**: when you will cite items by number, define them
+  first in a numbered list or table under a heading that names them
+  (`## Issues`); uam shows the owner each later number's title.
