@@ -117,6 +117,7 @@ func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 		"uam turns these Markdown shapes into rich blocks",
 		"Write Markdown only, never HTML.",
 		"as its own entry in choices",
+		"ask it with ask_user, not as a question at the end of your reply, and first say in your reply what you found",
 		` (Recommended)"`,
 		"\n\nFor work with more than two steps, keep a todo list in the session's `todos` table with the sql tool",
 		"not in Markdown files in the project, unless the owner asks for a file.",
@@ -125,6 +126,11 @@ func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 		if !strings.Contains(taskSystem, rule) {
 			t.Errorf("taskSystem lacks %q", rule)
 		}
+	}
+	// A decision goes through ask_user, which has an answer field; a
+	// [!QUESTION] callout is display-only.
+	if strings.Contains(taskSystem, "[!QUESTION]") {
+		t.Error("taskSystem teaches the display-only [!QUESTION] callout for decisions")
 	}
 	// The multiple-choice marker taskSystem teaches is the one questionText reads.
 	_, marker, ok := strings.Cut(taskSystem, `end the question itself with "`)

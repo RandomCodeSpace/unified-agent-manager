@@ -48,7 +48,35 @@ test('a question is answered from the composer and the turn continues', async ({
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
 });
 
-test('Stop ends a slow turn and the next prompt completes', async ({ page, project, model }) => {
+test('the turn line under a question keeps its words and its gap', async ({ page, project, model, workdir }) => {
+  // The answer's reply holds back 3s: the working line stays under the settled question meanwhile.
+  model.on({ toolCallId: 'call_ask_gap' }, { content: 'Spaces then.' }, { latency: 3000 });
+  model.on({ userMessage: 'read then ask' }, { toolCalls: [
+    { id: 'call_view', name: 'view', arguments: JSON.stringify({ path: workdir }) },
+    { id: 'call_ask_gap', name: 'ask_user', arguments: JSON.stringify({ question: 'Tabs or spaces?', choices: ['Spaces (Recommended)', 'Tabs'] }) },
+  ] });
+  await startThread(page, project, 'read then ask');
+  await conversation(page).getByRole('button', { name: 'Allow once' }).click();
+  await expect(threadState(page, 'Needs answer')).toBeVisible();
+  // Alone on the line while the question waits, the counts once lost 8px to their own margins and ended in an ellipsis.
+  const counts = conversation(page).locator('button[data-turn-steps] > span');
+  await expect(counts).toBeVisible();
+  expect(await counts.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+  await page.getByRole('button', { name: 'Answer', exact: true }).click();
+  const question = conversation(page).getByRole('region', { name: 'Question' });
+  await expect(question).toContainText('You chose');
+  const working = conversation(page).getByText(/^Working/);
+  await expect(working).toBeVisible();
+  await expect(conversation(page).getByText('Spaces then.')).toBeHidden();
+  // The working line keeps the turn's 12px gap under the card, not the 4px it takes under prose.
+  const card = (await question.boundingBox())!;
+  const line = (await working.boundingBox())!;
+  expect(line.y - (card.y + card.height)).toBeGreaterThanOrEqual(10);
+  await expect(conversation(page).getByText('Spaces then.')).toBeVisible();
+});
+
+test('Stop ends a slow turn and the next prompt completes',async ({ page, project, model }) => {
   // Streamed in full, the reply would take about a minute.
   model.reply('slow answer', Array.from({ length: 60 }, (_, i) => `slow line ${i + 1}`).join('\n\n'), { latency: 250, chunkSize: 4 });
   model.reply('quick answer', 'Quick reply after the stop.');
