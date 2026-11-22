@@ -4,25 +4,25 @@ name: uam-web-workbench
 description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One neutral near-white canvas with a pure-black dark scheme on the same tokens, one ink ladder for every piece of chrome, elevation instead of drawn borders (surfaces float on soft ink shadows, seams fade out at their ends), a single blue accent for motion, colour only for state and identity labels (Project and subagent names in their tone), and one warm "needs you" colour (orange) that is the only thing allowed to shout. Figtree everywhere in the app; JetBrains Mono only for code in the conversation (code blocks, inline code, tool rows, commands in requests) and diffs. No serif, no gradients but the fades at seams and scroll edges; the only pills are the activity and tool rows. Everything is a row or a column of text; surfaces step by one shade and one shadow level, never by borders inside borders. Built with Tailwind v4 (this file's tokens are the `@theme`) and Base UI primitives (menus, context menus, dialogs, tooltips, selects) under a strict CSP.
 
 colors:
-  rail: "#f5f5f5"
-  canvas: "#fafafa"
-  surface: "#f2f2f2"
+  rail: "#f2f2f5"
+  canvas: "#ffffff"
+  surface: "#f2f2f5"
   raised: "#ffffff"
-  sunken: "#ededed"
-  bubble-user: "#efefef"
-  ink: "#111111"
-  body: "#3b3b3b"
-  muted: "#626262"
-  faint: "#838383"
-  hairline: "#e5e5e5"
-  hairline-strong: "#c7c7c7"
-  primary: "#111111"
+  sunken: "#efeff0"
+  bubble-user: "#efeff0"
+  ink: "#1d1d1f"
+  body: "#3a3a3c"
+  muted: "#636366"
+  faint: "#6e6e73"
+  hairline: "#e8e8ea"
+  hairline-strong: "#c6c6c8"
+  primary: "#1d1d1f"
   on-primary: "#ffffff"
   accent: "#0265c0"
   on-accent: "#ffffff"
   accent-wash: "#e2eefe"
-  focus: "#111111"
-  selection: "#d9d9d9"
+  focus: "#0265c0"
+  selection: "#d6d6db"
   attention: "#ad3a0b"
   attention-wash: "#fbe5d6"
   success: "#137739"
@@ -31,18 +31,35 @@ colors:
   warning-wash: "#fbefc6"
   error: "#c4262d"
   error-wash: "#fde0e0"
-  info: "#111111"
-  info-wash: "#ececec"
-  code-bg: "#f2f2f2"
+  info: "#1d1d1f"
+  info-wash: "#ececef"
+  code-bg: "#f2f2f5"
   diff-add-bg: "#dcfce7"
   diff-add-text: "#14532d"
   diff-del-bg: "#fde0e0"
   diff-del-text: "#7f1d1d"
   backdrop: "rgba(17, 17, 17, 0.35)"
   scrim: "rgba(10, 10, 10, 0.8)"
-  tint-hover: "#ececec"
-  tint-selected: "#e6e6e6"
-  tint-well: "#f3f3f3"
+  tint-hover: "#e9e9ec"
+  tint-selected: "#e6e6e9"
+  tint-well: "#f5f5f7"
+  float: "#ffffff"
+  fill-hover: "rgba(118, 118, 128, 0.08)"
+  fill: "rgba(118, 118, 128, 0.12)"
+  fill-strong: "rgba(118, 118, 128, 0.18)"
+  fill-press: "rgba(118, 118, 128, 0.26)"
+  accent-fill: "#0265c0"
+  accent-fill-hover: "#0a70d0"
+  accent-fill-press: "#01549f"
+  on-accent-fill: "#ffffff"
+  accent-tint: "rgba(2, 101, 192, 0.1)"
+  accent-tint-hover: "rgba(2, 101, 192, 0.16)"
+  accent-tint-press: "rgba(2, 101, 192, 0.22)"
+  error-tint: "rgba(196, 38, 45, 0.1)"
+  error-tint-hover: "rgba(196, 38, 45, 0.16)"
+  error-tint-press: "rgba(196, 38, 45, 0.22)"
+  warning-tint: "rgba(214, 158, 0, 0.14)"
+  track: "#8a8a8f"
   badge-red: "#b42d2d"
   badge-orange: "#a74c0e"
   badge-amber: "#866100"
@@ -143,10 +160,11 @@ typography:
 
 rounded:
   none: 0px
-  xs: 4px
-  sm: 6px
-  md: 10px
-  lg: 14px
+  xs: 6px
+  sm: 8px
+  md: 12px
+  lg: 16px
+  xl: 20px
   full: 9999px
 
 spacing:
@@ -493,12 +511,15 @@ components:
     shadow: "{shadows.raised}"
 
 shadows:
-  raised: "0 0 0 1px rgba(17, 17, 17, 0.05), 0 2px 6px rgba(17, 17, 17, 0.07)"
-  float: "0 0 0 1px rgba(17, 17, 17, 0.06), 0 6px 20px rgba(17, 17, 17, 0.10)"
-  modal: "0 0 0 1px rgba(17, 17, 17, 0.06), 0 20px 48px rgba(17, 17, 17, 0.18)"
-  well: "inset 0 0 0 1px rgba(17, 17, 17, 0.05)"
-  focus: "0 0 0 1px rgba(17, 17, 17, 0.08), 0 2px 8px rgba(17, 17, 17, 0.10)"
-  focus-float: "0 0 0 1px rgba(17, 17, 17, 0.10), 0 10px 28px rgba(17, 17, 17, 0.14)"
+  raised: "0 0 0 1px rgba(60, 60, 67, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)"
+  float: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 8px 24px -4px rgba(0, 0, 0, 0.16)"
+  modal: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 24px 56px -8px rgba(0, 0, 0, 0.24)"
+  well: "inset 0 1px 1px rgba(0, 0, 0, 0.06)"
+  focus: "0 0 0 1px rgba(60, 60, 67, 0.14), 0 2px 8px rgba(0, 0, 0, 0.1)"
+  focus-float: "0 0 0 1px rgba(60, 60, 67, 0.16), 0 10px 28px rgba(0, 0, 0, 0.14)"
+  highlight: "inset 0 1px 0 rgba(255, 255, 255, 0.26), inset 0 -1px 0 rgba(0, 0, 0, 0.1)"
+  highlight-tonal: "inset 0 1px 0 rgba(255, 255, 255, 0.7)"
+  thumb: "0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.16)"
 ---
 
 ## Overview
@@ -563,7 +584,7 @@ The ViewTransition was removed later; Thread switches render at once.
 ### Theme
 Two schemes on one token set.
 **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, a blue accent, colour on labels only (state and identity).
-**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls, the monochrome ink ladder inverted, a light blue accent (#50a0ff), no coloured primary button and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
+**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls (`raised` #161618, `float` #232326), the monochrome ink ladder inverted, a light blue accent (#50a0ff), a deeper blue `accent-fill` under the primary button's white text and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
 Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them).
 Semantic status colors retain their meaning in both.
 The blue is azure (owner, 2026-11-09, revamp mock 5 B: OKLCH hue 254), one value for `accent`, `link` and `badge-blue`.
@@ -578,31 +599,37 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 ### Surfaces
 | Role | Value | Use |
 |---|---|---|
-| `rail` | #f5f5f5 | Sidebar and drawer floor |
-| `canvas` | #fafafa | Main pane: header, transcript, panels, login, empty states; the loading veil at 70% |
-| `surface` | #f2f2f2 | Hover step on raised controls; a subagent's read-only composer |
+| `rail` | #f2f2f5 | Sidebar and drawer floor |
+| `canvas` | #ffffff | Main pane: header, transcript, panels, login, empty states; the loading veil at 70% |
+| `surface` | #f2f2f5 | Hover step on raised controls; a subagent's read-only composer |
 | `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs |
-| `sunken` | #ededed | Wells: code blocks, thinking body, inline code, meter track |
-| `bubble-user` | #efefef | User message bubble |
-| `tint-well` | #f3f3f3 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 3.42:1) |
-| `code-bg` | #f2f2f2 | Neutral background for code |
-| `selection` | #d9d9d9 | `::selection` |
+| `sunken` | #efeff0 | Wells: code blocks, thinking body, inline code, meter track |
+| `bubble-user` | #efeff0 | User message bubble |
+| `tint-well` | #f5f5f7 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 4.66:1) |
+| `code-bg` | #f2f2f5 | Neutral background for code |
+| `selection` | #d6d6db | `::selection` |
 | `backdrop` | rgba(17,17,17,.35) | Behind dialogs, the drawer and overlay panels |
 | `scrim` | rgba(10,10,10,.8) | Behind the image lightbox |
+| `float` | #ffffff (dark #232326) | What floats: menus, popovers, selects' lists, dialogs |
+| `fill-hover` / `fill` / `fill-strong` / `fill-press` | rgba(118,118,128, .08 / .12 / .18 / .26) (dark .18 / .24 / .32 / .42) | The tonal ramp of a control (Tactile, owner 2026-11-22): hover, at rest, selected, pressed. Translucent, so one value reads on `rail`, `canvas` and `raised`; never under a sticky head, where the opaque tints stay |
+| `accent-tint` (`-hover`, `-press`) | rgba(2,101,192, .10 / .16 / .22) (dark rgba(80,160,255, .16 / .22 / .30)) | A tinted button and a question block's fill |
+| `error-tint` (`-hover`, `-press`) | rgba(196,38,45, .10 / .16 / .22) (dark rgba(255,132,125, .15 / .22 / .30)) | A destructive button at rest, hover and pressed |
+| `warning-tint` | rgba(214,158,0,.14) (dark rgba(240,187,59,.14)) | A warning block's fill |
+| `track` | #8a8a8f (dark #737378) | A switch's off track, 3:1 on every surface |
 
 ### Text
 | Role | Value | Use |
 |---|---|---|
-| `ink` | #111111 | Titles, selected and needs-you rows, user bubble text, code |
-| `body` | #3b3b3b | Assistant prose, default UI text, rows at rest |
-| `muted` | #626262 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
-| `faint` | #838383 | Glyphs only: chevrons, idle and closed marks, separators, version (≥3:1) |
+| `ink` | #1d1d1f | Titles, selected and needs-you rows, user bubble text, code |
+| `body` | #3a3a3c | Assistant prose, default UI text, rows at rest |
+| `muted` | #636366 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
+| `faint` | #6e6e73 | Glyphs only: chevrons, idle and closed marks, separators, version (≥3:1) |
 
 ### Lines
 | Role | Value | Use |
 |---|---|---|
-| `hairline` | #e5e5e5 | The sidebar's seam (`rail-edge`), markdown table rules and `hr` inside provider prose |
-| `hairline-strong` | #c7c7c7 | The centre of every fading rule (`fade-rule`, `fade-rule-y`), the scrollbar thumb |
+| `hairline` | #e8e8ea | The sidebar's seam (`rail-edge`), markdown table rules and `hr` inside provider prose |
+| `hairline-strong` | #c6c6c8 | The centre of every fading rule (`fade-rule`, `fade-rule-y`), the scrollbar thumb |
 
 No chrome draws a full-width or full-height line, with one exception: the sidebar's seam (`rail-edge`) is a full-height 1px `hairline` (owner, 2026-11-09, revamp mock 3).
 Where a seam still needs a rule (menu groups, the shelf headers, the answer under a question block, the tool rows' indent, the thinking text's left edge, the Changes list's foot, a dialog's secondary actions, the panel handle) it is a 1px gradient that fades out over its first and last 18% (`.fade-rule` horizontal, `.fade-rule-y` vertical, in `index.css`).
@@ -611,7 +638,8 @@ Everywhere else separation is spacing, a surface step or an elevation level.
 ### Action and signal
 | Role | Value | Use |
 |---|---|---|
-| `primary` / `on-primary` | #111111 / #ffffff | Primary button and tooltip fill. There is no coloured primary button. |
+| `primary` / `on-primary` | #1d1d1f / #ffffff (dark #f5f5f7 / #000000) | The ink fill: the `ink` button (the composer's Stop), tooltips, step marks. |
+| `accent-fill` / `on-accent-fill` | #0265c0 / #ffffff (dark #1269c8 / #ffffff) | The primary button (Tactile, owner 2026-11-22). Hover #0a70d0 (dark #1672d6), pressed #01549f (dark #0f5cb0); white text keeps AA on all three in both schemes. |
 | `accent` / `on-accent` | #0265c0 / #ffffff (dark #50a0ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
 | `link` | #0265c0 (dark #50a0ff) | Web links in prose, the same blue as `accent` and `badge-blue` (owner, 2026-11-09: one blue; owner, 2026-10-18: links and file references must read apart from the text and from each other) |
 | `file-link` | #0f6c62 (dark #4fd1bf) | A resolved file reference in prose: the file chip's name and glyph, on its `tint-well` chip |
@@ -634,23 +662,23 @@ They appear in sidebar Thread metadata (where the Project name beside the badge 
 
 | Token | Value | On `on-primary` text | Against `rail` | Against `canvas` |
 |---|---|---|---|---|
-| `badge-red` | #b42d2d | 6.26 | 5.74 | 6.00 |
-| `badge-orange` | #a74c0e | 5.70 | 5.23 | 5.46 |
-| `badge-amber` | #866100 | 5.64 | 5.17 | 5.40 |
-| `badge-lime` | #4c7111 | 5.71 | 5.24 | 5.47 |
-| `badge-green` | #21763e | 5.64 | 5.17 | 5.40 |
-| `badge-teal` | #107469 | 5.64 | 5.17 | 5.40 |
-| `badge-cyan` | #0d6f88 | 5.76 | 5.28 | 5.52 |
-| `badge-blue` | #0265c0 | 5.79 | 5.31 | 5.55 |
-| `badge-violet` | #6b4fc2 | 5.96 | 5.47 | 5.71 |
-| `badge-pink` | #ad3479 | 5.93 | 5.43 | 5.68 |
+| `badge-red` | #b42d2d | 6.26 | 5.60 | 6.26 |
+| `badge-orange` | #a74c0e | 5.70 | 5.10 | 5.70 |
+| `badge-amber` | #866100 | 5.64 | 5.05 | 5.64 |
+| `badge-lime` | #4c7111 | 5.71 | 5.11 | 5.71 |
+| `badge-green` | #21763e | 5.64 | 5.04 | 5.64 |
+| `badge-teal` | #107469 | 5.64 | 5.05 | 5.64 |
+| `badge-cyan` | #0d6f88 | 5.76 | 5.15 | 5.76 |
+| `badge-blue` | #0265c0 | 5.79 | 5.18 | 5.79 |
+| `badge-violet` | #6b4fc2 | 5.96 | 5.34 | 5.96 |
+| `badge-pink` | #ad3479 | 5.93 | 5.30 | 5.93 |
 
 Every tone clears AA for the text on it (≥4.5:1; the tightest is `orange` at 5.38) and the 3:1 non-text minimum against the sidebar and the canvas.
 A new tone must keep both.
 
 ### Contrast (WCAG 2.x, computed)
 Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is glyph-only and held at ≥3:1.
-The Mono values (2026-10-18, `success` and `faint` darkened a step to hold this) are checked in both schemes by `tests/theme.test.mjs`; the tightest pairs are `warning`, `success` and `error` on `tint-selected` (4.51, 4.52, 4.59) and `faint` on `tint-selected` (3.04).
+The Mono values (2026-10-18, `success` and `faint` darkened a step to hold this) are checked in both schemes by `tests/theme.test.mjs`; the tightest pairs are `warning`, `success` and `error` on `tint-selected` (4.52, 4.53, 4.60) and `faint` on `tint-selected` (4.07; in Dark 3.85).
 Do not lighten them and do not darken the grounds.
 The badge tones have their own table above.
 
@@ -741,19 +769,19 @@ Thread rows 46px on a 48px pitch, Settled rows 32px (44 on coarse pointers), she
 
 ## Elevation & Depth
 
-Every level is ink (`rgba(17, 17, 17, α)`) in two layers: a 1px ring at 5–6% that makes the edge read crisp without a drawn border, and one soft shadow.
-The tokens are `--shadow-*` in `index.css` (`shadow-raised`, `shadow-float`, `shadow-modal`, `shadow-well`, `shadow-focus`, `shadow-focus-float`), each pointing at an `--elevation-*` property with one value per scheme.
+Every level is two layers: a 1px ring at 6–10% that makes the edge read crisp without a drawn border, and one soft shadow. Only what floats (menus, popovers, tooltips, dialogs) has a deep shadow; a raised surface keeps a ring and a 2px shadow.
+The tokens are `--shadow-*` in `index.css` (`shadow-raised`, `shadow-float`, `shadow-modal`, `shadow-well`, `shadow-focus`, `shadow-focus-float`, and the Tactile insets `shadow-highlight`, `shadow-highlight-tonal` and `shadow-thumb`), each pointing at an `--elevation-*` property with one value per scheme.
 Shadows do not show on black, so in Dark each level's ring is white (7–16%) over a black shadow.
-In Dark the Floating and Modal levels also carry a still 1px top highlight inside the ring (`inset 0 1px 0` white at 6%; owner, 2026-11-09, revamp mock 4), so a float reads as lit from above instead of only outlined; Light is unchanged and nothing animates it.
+In Dark the Raised, Floating and Modal levels also carry a still 1px top highlight inside the ring (`inset 0 1px 0` white at 7–8%; owner, 2026-11-09, revamp mock 4), so a float reads as lit from above instead of only outlined; Light is unchanged and nothing animates it.
 
 | Level | Treatment | Shadow | Use |
 |---|---|---|---|
 | 0 Flat | Surface step only | none | Sidebar on `rail`, assistant prose and everything else on `canvas`; activity and tool rows are `tint-well` pills at this level |
-| −1 Well | `sunken` or `code-bg` fill | `well`: `inset 0 0 0 1px .05` | Inputs, selects, the segmented track, code blocks, the models checklist |
-| 1 Raised | `raised` fill | `raised`: `0 0 0 1px .05, 0 2px 6px .07` | The user bubble (on `bubble-user`), question blocks and the finish card (both on `tint-well` once settled), Settings cards, the segmented thumb, a selected file or folder row |
-| 2 Floating | `raised` | `float`: `0 0 0 1px .06, 0 6px 20px .10` | The composer, the pending interaction card, menus, context menus, popovers, selects' lists, the inline picker, tooltips (ink fill), a lifted card or thumbnail on hover |
-| 3 Modal | `raised` + `backdrop` | `modal`: `0 0 0 1px .06, 0 20px 48px .18` | Dialogs, the command palette, the drawer, overlay panels, the lightbox image |
-| Focus | any of the above | `focus`: `0 0 0 1px .08, 0 2px 8px .10` (`focus-float`: `0 0 0 1px .10, 0 10px 28px .14`) | No current user; never a focus mark (under 3:1). Keyboard focus is the 2px `focus` outline (see Accessibility), drawn on a stretched card's `::after` and inset inside rows and tabs |
+| −1 Well | `sunken` or `code-bg` fill | `well`: `inset 0 1px 1px .06` | Inputs, selects, the segmented track, code blocks, the models checklist |
+| 1 Raised | `raised` fill | `raised`: `0 0 0 1px .10, 0 1px 2px .06` | The user bubble (on `bubble-user`), question blocks and the finish card (both on `tint-well` once settled), Settings cards, the segmented thumb, a selected file or folder row |
+| 2 Floating | `raised` | `float`: `0 0 0 1px .06, 0 8px 24px -4px .16` | The composer, the pending interaction card, menus, context menus, popovers, selects' lists, the inline picker, tooltips (ink fill), a lifted card or thumbnail on hover |
+| 3 Modal | `raised` + `backdrop` | `modal`: `0 0 0 1px .06, 0 24px 56px -8px .24` | Dialogs, the command palette, the drawer, overlay panels, the lightbox image |
+| Focus | any of the above | `focus`: `0 0 0 1px .14, 0 2px 8px .10` (`focus-float`: `0 0 0 1px .16, 0 10px 28px .14`) | No current user; never a focus mark (under 3:1). Keyboard focus is the 2px `focus` outline (see Accessibility), drawn on a stretched card's `::after` and inset inside rows and tabs |
 
 A shadow is never transitioned.
 Every hover lift (`lift`) draws the deeper shadow on a pseudo-element at opacity 0 and fade it in; the element itself moves only on `transform`.
@@ -765,7 +793,7 @@ Both are small absolutely positioned pseudo-elements over the scroll area, not m
 
 ## Shapes
 
-One scale of three: `sm` 6px for controls (buttons, inputs, selects, menu items, chips, state tags and blocks, the segmented track, switches), `md` 10px for cards and popups (Thread rows, subagent cards, question blocks, code blocks, menus, popovers, the inline picker), `lg` 14px for the surfaces that float over the pane (the composer, the pending interaction card, dialogs, Settings cards, the user bubble). `xs` 4px stays for what is under 24px tall (inline code, the Project badge, a segment and the thumb inside a segmented control, the switch thumb). `full` is dots, spinners, the Send and Stop circles and the activity and tool-row pills.
+One scale of three (Tactile, owner 2026-11-22: each a step softer): `sm` 8px for controls (buttons, inputs, selects, menu items, chips, state tags and blocks, the segmented track, switches), `md` 12px for cards and popups (Thread rows, subagent cards, question blocks, code blocks, menus, popovers, the inline picker), `lg` 16px for the surfaces that float over the pane (the composer, the pending interaction card, dialogs, Settings cards, the user bubble). `xl` 20px is for dialogs. `xs` 6px stays for what is under 24px tall (inline code, the Project badge, a segment and the thumb inside a segmented control, the switch thumb). `full` is dots, spinners, the Send and Stop circles and the activity and tool-row pills.
 
 ## Components
 
@@ -1671,7 +1699,7 @@ The shared dialog keeps its header and footer visible while the body scrolls on 
   In Settings, an invalid starting field falls back to the instance's default location, or home when unset.
 
 ### Buttons and inputs
-Primary is ink; secondary is a filled `sunken` surface with no edge (`tint-hover` on hover, `hairline` pressed); ghost has no fill; danger is `error` text with `error-wash` hover; link is an action in words ("Show all 12 lines", "Open current changes"): `caption` `accent`, no fill, underlined on hover, 24px tall at every size with an invisible hit area (32px, 44px on a coarse pointer); icon buttons are 28px (32 in headers) `muted` glyphs.
+Primary is the `accent-fill` with white text and the `highlight` inset (owner, 2026-11-22, Tactile); `ink` is the neutral strong fill, used by the composer's Stop; secondary is a filled `sunken` surface with no edge (`tint-hover` on hover, `hairline` pressed); ghost has no fill; danger is `error` text with `error-wash` hover; link is an action in words ("Show all 12 lines", "Open current changes"): `caption` `accent`, no fill, underlined on hover, 24px tall at every size with an invisible hit area (32px, 44px on a coarse pointer); icon buttons are 28px (32 in headers) `muted` glyphs.
 Disabled is 45% opacity.
 Inputs and select triggers are 36px filled `sunken` surfaces with the inset `well` ring and no edge; text fields keep their normal fill and shadow on focus, with no outline, highlight or glow, and the caret shows where typing goes; select triggers keep the 2px keyboard ring. `aria-invalid` draws a 1px `error` ring.
 Labels sit above in `caption` `muted`.
@@ -1929,7 +1957,7 @@ Consequences:
 ### Don't
 - Don't draw a border at all: a surface has a ring in its shadow, a field is filled, a seam fades.
   A card's children use indents and sunken wells.
-- Don't add a coloured primary button; the primary is ink.
+- Don't add a second coloured button: the primary is the one `accent-fill`; Stop and other neutral strong actions are `ink`.
 - Don't use pills for controls.
   The composer Send/Stop circles and the transcript's activity and tool rows are the explicit exceptions; other controls keep the shared rectangular shapes.
   Don't fill a control at rest with `error`: Stop is ink.
