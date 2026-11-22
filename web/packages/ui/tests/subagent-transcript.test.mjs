@@ -47,6 +47,8 @@ const modules = {
   '../lib/receipts': receiptsLib,
   '../lib/gitlabRefs': gitlabRefsLib,
   './GitLabStrip': { GitLabItemsContext: React.createContext(null), TurnStrip: () => null },
+  './ReferenceCite': { ReferenceProse: ({ children }) => children },
+  './References': { useReferenceLedger: () => ({ open: false, opened: false, toggle() {}, listId: '', list: null }) },
   './Receipts': { NoRecordSlot: React.createContext(null), Receipts: ({ stamps }) => React.createElement('ul', { 'aria-label': 'Receipts' }, stamps.map((st) => React.createElement('li', { key: `${st.kind}:${st.claim}` }, `${st.verdict} ${st.claim}`))) },
   // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.
   './Subagents': {

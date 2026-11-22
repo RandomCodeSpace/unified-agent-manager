@@ -314,6 +314,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/plan", s.handlePlanDraft)
 	mux.HandleFunc("GET /api/sessions/{id}/changes", s.handleChanges)
 	mux.HandleFunc("GET /api/sessions/{id}/evidence", s.handleTurnEvidence)
+	mux.HandleFunc("GET /api/sessions/{id}/references", s.handleReferences)
 	mux.HandleFunc("GET /api/sessions/{id}/usage-metrics", s.handleTaskUsageMetrics)
 	mux.HandleFunc("GET /api/sessions/{id}/time-split", s.handleTaskTimeSplit)
 	mux.HandleFunc("POST /api/sessions/{id}/aside", s.handleAside)

@@ -247,8 +247,8 @@ function rememberBody(key: string, item: Item) {
   changed();
 }
 
-/** Every GitLab item a turn touched, at its reply's end; `items` are its candidates (`gitLabCandidates`). */
-export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
+/** Every GitLab item a turn's calls touched (`calls` are its candidates, `gitLabCandidates`), each call's whole body read once. */
+export function useTurnGitLabRefs(calls: Item[]): GitLabRef[] {
   const gl = useContext(GitLabItemsContext);
   const read = useBodyRead();
   const seen = useSyncExternalStore(subscribe, () => version);
@@ -264,11 +264,19 @@ export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
   }, [calls, read, sessionId]);
   const origin = gl?.origin;
   const own = gl?.own;
-  const refs = useMemo(() => {
+  return useMemo(() => {
     if (!origin) return [];
     void seen; // A body read since the last render changes what the calls show.
     return turnGitLabRefs(calls.map((call) => callBodies.get(`${sessionId}\n${call.id}\n${call.tool?.status}`) ?? call), origin, own);
   }, [calls, origin, own, sessionId, seen]);
+}
+
+/** Every GitLab item a turn touched, at its reply's end, but those in `hide` (the reply's references list them, by `refKey`); `items` are its candidates (`gitLabCandidates`). */
+export function TurnStrip({ items: calls, hide }: Readonly<{ items: Item[]; hide?: ReadonlySet<string> }>) {
+  const gl = useContext(GitLabItemsContext);
+  const sessionId = gl?.sessionId ?? '';
+  const all = useTurnGitLabRefs(calls);
+  const refs = useMemo(() => (hide?.size ? all.filter((r) => !hide.has(refKey(r))) : all), [all, hide]);
   const box = useRef<HTMLSpanElement>(null);
   const items = useSummaries(sessionId, gl ? refs : [], box);
   if (!gl || !refs.length) return null;

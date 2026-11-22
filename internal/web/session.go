@@ -249,6 +249,9 @@ type webSession struct {
 	historyGen                 uint64
 	historyBytes               int
 	historyUsed, historyFailed time.Time
+	// references caches resolved replies' references (references.go); not
+	// persisted.
+	references map[string]referencesCache
 	// terminalID preserves links imported before terminal support was retired.
 	// It still requires the provider's external-holder check before sending.
 	terminalID string
