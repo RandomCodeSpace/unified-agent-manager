@@ -849,32 +849,39 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
-  /** Scroll the transcript to the row of the subagent a `task` call spawned (else the chip or turn line holding it), flash it and focus it. */
+  /**
+   * Scroll the transcript to the row of the subagent a `task` call spawned (else the chip or turn line holding it), flash it and focus it.
+   * Any other item lands the same way: its own row or message (a reply the references ledger names), else the turn's activity holding it, opened.
+   */
   async function locate(toolCallId: string) {
     setLocateError('');
     // One another subagent spawned is listed in its top-level ancestor's reply: bring that call in.
     const subagents = latestSession.current.subagents;
     const spawned = parentMap(subagents).get(toolCallId);
     const call = (spawned && mainCall(spawned, subagents)) ?? toolCallId;
-    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the Subagents list on the status strip.'); return; }
+    if (!(await bring(call))) { setLocateError(spawned ? 'Where this subagent was spawned is not in the retained history. Open it from the Subagents list on the status strip.' : 'That item is not in the retained history.'); return; }
     atBottom.current = false;
+    const own = () => document.getElementById(`item-${toolCallId}`) ?? log.current?.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(toolCallId)}"]`) ?? null;
     // Its row (the live rows at the foot), else what folds the call: the reply's subagent chip, else the turn's activity, opened.
     let fold: HTMLElement | undefined;
-    if (!document.getElementById(`item-${toolCallId}`)) {
+    if (!own()) {
       const root = log.current;
       const folds = root ? [...root.querySelectorAll<HTMLElement>('[data-subagent-items]'), ...root.querySelectorAll<HTMLElement>('[data-history-items]')] : [];
       fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
       const toggle = fold?.matches('button') ? fold : (fold?.querySelector<HTMLElement>('[data-turn-steps]') ?? fold?.querySelector('button'));
       if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
     }
-    if (!document.getElementById(`item-${toolCallId}`) && !fold) return;
+    if (!own() && !fold) return;
     // The folds open over EXIT_MS; the row lands where it ends up.
     await settle(EXIT_MS);
-    const el = document.getElementById(`item-${toolCallId}`) ?? (fold?.isConnected ? fold : null);
+    const el = own() ?? (fold?.isConnected ? fold : null);
     if (!el) return;
     // A quarter of the view down, so the rows above it (the one that spawned it) stay in sight.
     land(el, Math.max(LAND_MARGIN, Math.round((scroller.current?.clientHeight ?? 0) / 4)));
-    (el.querySelector<HTMLElement>('[data-subagent-toggle]') ?? (el.matches('button') ? el : null))?.focus({ preventScroll: true });
+    // A message takes focus itself, out of the tab order, so a keyboard reads on from where it landed.
+    const message = el.dataset.historyAnchor === toolCallId && !el.matches('button') ? el : null;
+    if (message) message.tabIndex = -1;
+    (el.querySelector<HTMLElement>('[data-subagent-toggle]') ?? (el.matches('button') ? el : message))?.focus({ preventScroll: true });
   }
 
   /** Scroll to the reply a user message started ("start": the one before any) and flash its first entry. */

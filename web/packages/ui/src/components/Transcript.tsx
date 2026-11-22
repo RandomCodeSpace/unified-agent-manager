@@ -22,6 +22,8 @@ import { receipts, type Stamp } from '../lib/receipts';
 import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
 import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { NoRecordSlot, Receipts } from './Receipts';
+import { ReferenceProse } from './ReferenceCite';
+import { useReferenceLedger } from './References';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, Summary, WorkdirContext, clockTime, dateTime } from './common';
@@ -448,7 +450,8 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   const [open, setOpen] = useDisclosure(`${scope}:${scopedId}`);
   const [opened, setOpened] = useState(open);
   const card = useRef<HTMLSpanElement>(null);
-  const outcome = useTurnOutcome({ reply, end, edits, gitlab, replyActions: ctx.replyActions, anchor: card });
+  const ledger = useReferenceLedger({ id: `${scope}-${scopedId}`, sessionId: agentId ? undefined : ctx.sessionId, reply, end: end?.at, calls: gitlab, anchor: card });
+  const outcome = useTurnOutcome({ reply, end, edits, gitlab, hide: ledger.hide, replyActions: ctx.replyActions, anchor: card });
   const noRecord = useContext(NoRecordSlotRef);
   const slot = useContext(SignOffSlot);
   const failures = summary.parts.filter((p) => p.tone === 'error');
@@ -503,6 +506,21 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
         </button>
       )}
+      {ledger.summary && (
+        <button
+          data-turn-references=""
+          type="button"
+          aria-expanded={ledger.open}
+          aria-controls={ledger.opened ? ledger.listId : undefined}
+          title={ledger.summary}
+          aria-label={`${ledger.summary.replaceAll(' · ', ', ')}. Show the references this reply cites`}
+          className={cn(SIGN_BUTTON, 'text-muted')}
+          onClick={ledger.toggle}
+        >
+          <span className="min-w-0 truncate">{ledger.summary}</span>
+          <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', ledger.open && 'rotate-z-90')} />
+        </button>
+      )}
       {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
       {/* What the turn left follows the counts; the reply's "no record" line (Receipts) lands in its slot once the turn ended. */}
       <span data-outcome="" className="contents">{outcome.chips}</span>
@@ -524,6 +542,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
           </button>
         </Collapse>
       )}
+      {ledger.list}
     </>
   );
 }, (a, b) => {
@@ -938,7 +957,7 @@ function ReplyCopy({ reply }: Readonly<{ reply: Item }>) {
  * items it touched, its asides) in a row under it. Nothing the turn did not produce shows: no
  * change, no chip. A turn still running or without a reply has only its change chip.
  */
-function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Readonly<{ reply?: Item; end?: ReplyEnd; edits?: TurnChange; gitlab?: Item[]; replyActions?: ReplyActions; anchor: RefObject<HTMLElement | null> }>) {
+function useTurnOutcome({ reply, end, edits, gitlab, hide, replyActions, anchor }: Readonly<{ reply?: Item; end?: ReplyEnd; edits?: TurnChange; gitlab?: Item[]; /** GitLab items the reply's references list instead, by `refKey`. */ hide?: ReadonlySet<string>; replyActions?: ReplyActions; anchor: RefObject<HTMLElement | null> }>) {
   const task = useContext(SessionContext) ?? '';
   const asides = useTurnHasAsides(task, end?.turn);
   const visible = useDetailVisibility();
@@ -979,7 +998,7 @@ function useTurnOutcome({ reply, end, edits, gitlab, replyActions, anchor }: Rea
     <>
       {changeChip}
       {timing?.todo?.total ? <TurnTodo timing={timing} blocks={turnTodoBlocks(timing.todo, timing.state !== 'working')} /> : null}
-      {end && gitlab && <TurnStrip items={gitlab} />}
+      {end && gitlab && <TurnStrip items={gitlab} hide={hide} />}
       {asides && <AsideChip task={task} turn={end!.turn} sep={false} />}
     </>
   );
@@ -1240,7 +1259,7 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn, peer }
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, stamps, note, signOff }: MessageParts) {
+function assistantMessage({ item, text, sessionId, streaming = false, className, whole, stamps, note, signOff }: MessageParts) {
   // A reply has no foot: the turn's sign-off copies the reply that ends the turn, and any reply copies from its right-click menu.
   // The sign-off follows the last paragraph's last words, else takes its own line under the last block; after plain text, under it.
   const sign = signOff && <span ref={signOff} className="md-sign" />;
@@ -1249,7 +1268,10 @@ function assistantMessage({ item, text, streaming = false, className, whole, sta
   return (
     <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" foot={false} className={className}>
       <div data-history-anchor={item.id} data-note={note ? '' : undefined} className={note ? 'text-ui text-muted [&_:not(a)>code]:text-body [&_p:not(:last-child)]:mb-1' : 'text-chat text-body'}>
-        {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} after={after} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} after={after} />}
+        {/* A reply that ends its turn: each number it cites opens the turn's references (`sessionId` is given only then). */}
+        <ReferenceProse sessionId={sessionId} reply={item}>
+          {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} after={after} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} after={after} />}
+        </ReferenceProse>
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
         {!inline && sign}
@@ -1817,7 +1839,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
       if (item.kind === 'notice' && UAM_NOTES.test(item.text ?? '')) return <UamNotes text={item.text ?? ''} className={className} />;
       if (item.kind === 'notice' && RESUME_WARNING.test(item.text ?? '')) return <ResumeWarning text={item.text ?? ''} className={className} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className, stamps, note, signOff: ends ? signOff : undefined }) : noticeRow({ item, text: item.text ?? '', className });
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', sessionId: ends ? sessionId : undefined, streaming, className, stamps, note, signOff: ends ? signOff : undefined }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':

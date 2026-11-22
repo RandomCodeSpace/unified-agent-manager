@@ -19,6 +19,8 @@ import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
 import { gitLabWords, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
 import { GitLabItemsContext, plainClick } from './GitLabStrip';
+import { remarkReferences } from '../lib/references';
+import { MdCite, useCites } from './ReferenceCite';
 import { useFederation, type Machine } from '../FederationContext';
 import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
@@ -1279,6 +1281,8 @@ const mdComponents: Components = {
   p: MdParagraph,
   h1: MdTitle,
   strong: MdStrong,
+  // Markdown carries no raw HTML: the only buttons are the cited numbers `remarkReferences` marks.
+  button: MdCite,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);
@@ -1404,12 +1408,15 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, first, brea
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   // With the Thread's GitLab project known, "MR !72" and "pipeline #123" in the text link to it.
   const origin = useContext(GitLabItemsContext)?.origin;
+  // A reply that ends its turn with its references in: each number it cites opens them.
+  const cited = useCites()?.cited;
   const plugins = useMemo(() => {
     const base = breaks ? remarkBreakPlugins : remarkPlugins;
     // Rich blocks wait for the block to finish, so a half-written list never flips shape mid-stream.
     const rich: NonNullable<Options['remarkPlugins']> = streaming ? base : [...base, [remarkRich, { first, tally }]];
-    return origin ? [...rich, remarkGitLabRefs(origin)] : rich;
-  }, [breaks, origin, streaming, first, tally]);
+    const linked = origin ? [...rich, remarkGitLabRefs(origin)] : rich;
+    return cited && !streaming ? [...linked, remarkReferences(cited)] : linked;
+  }, [breaks, origin, streaming, first, tally, cited]);
   return (
     <MdContext.Provider value={source}>
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>

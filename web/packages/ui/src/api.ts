@@ -2260,6 +2260,21 @@ export interface GitLabItemSummary {
   failure_kind?: string;
   failure_detail?: string;
 }
+/** A numbered item a reply cites ("issue 4", "#4"), resolved to where the Thread itself defined it. */
+export interface Reference {
+  label: string;
+  noun: string;
+  number: string;
+  status: 'resolved' | 'ambiguous' | 'unresolved';
+  title?: string;
+  /** The state the Thread recorded for it; empty when none was recorded. */
+  state?: string;
+  /** The state word the reply itself attached to it; empty when none. */
+  claimed?: string;
+  source?: { item_id: string; time?: string };
+  /** An ambiguous number's matches. */
+  candidates?: { title: string; noun?: string; item_id?: string }[];
+}
 export interface GitLabWorkItemLink { ref?: string; iid: number; kind: string; title: string; state: string; web_url?: string }
 export interface GitLabWorkItem {
   ref: string;
@@ -2563,6 +2578,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Without a commit: any merge request of the Thread's project, read-only (`gitlab-items-v1`). */
     gitlabReview: (id: string, iid: number, commitSHA: string | undefined, signal?: AbortSignal) => call<GitLabReview>('GET', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}${commitSHA ? `?commit_sha=${enc(commitSHA)}` : ''}`, undefined, false, signal),
     gitlabItems: (id: string, refs: string[], signal?: AbortSignal) => call<{ items: GitLabItemSummary[] }>('GET', `/api/sessions/${enc(id)}/gitlab/items?${refs.map((ref) => `ref=${encodeURIComponent(ref)}`).join('&')}`, undefined, false, signal),
+    /** The numbered items a reply that ends a turn cites, in the reply's order, each resolved from the Thread's own record. */
+    references: (id: string, reply: string, signal?: AbortSignal) => call<{ references?: Reference[] }>('GET', `/api/sessions/${enc(id)}/references?reply=${encodeURIComponent(reply)}`, undefined, false, signal),
     gitlabWorkItem: (id: string, ref: string, signal?: AbortSignal) => call<GitLabWorkItem>('GET', `/api/sessions/${enc(id)}/gitlab/work-items?ref=${encodeURIComponent(ref)}`, undefined, false, signal),
     gitlabPipelineDetail: (id: string, pipelineId: number, signal?: AbortSignal) => call<GitLabPipelineDetail>('GET', `/api/sessions/${enc(id)}/gitlab/pipelines/${pipelineId}`, undefined, false, signal),
     postGitlabComment: (id: string, iid: number, body: { commit_sha: string; discussion_id?: string; body: string }) => call<{ discussion_id?: string; note_id?: number }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/comments`, body),
