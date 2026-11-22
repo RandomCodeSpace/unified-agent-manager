@@ -277,7 +277,7 @@ function FileChip({ sessionId, attachment: a }: Readonly<{ sessionId: string; at
     );
   }
   return (
-    <a href={api.attachmentUrl(sessionId, a.id)} target="_blank" rel="noopener noreferrer" className={cn(cls, 'transition-colors duration-100 hover:bg-sunken')} title={`Open ${a.name}`} onClick={event => {
+    <a href={api.attachmentUrl(sessionId, a.id)} target="_blank" rel="noopener noreferrer" className={cn(cls, 'hover:bg-sunken')} title={`Open ${a.name}`} onClick={event => {
       if (preview && a.id && previewClick(event)) {
         event.preventDefault();
         preview({ url: api.attachmentUrl(sessionId, a.id), name: a.name }, event.currentTarget);

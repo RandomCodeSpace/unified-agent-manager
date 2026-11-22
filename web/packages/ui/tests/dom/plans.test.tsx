@@ -81,7 +81,7 @@ describe('native plan review', () => {
     expect(reader.getByText('Validate it.')).toBeTruthy();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Plan' })).toBeNull());
-    expect(box().getByRole('radio', { name: 'Implement interactively' })).toHaveProperty('checked', true);
+    expect(box().getByRole('radio', { name: 'Implement interactively' }).getAttribute('aria-checked')).toBe('true');
   });
 
   test('shortened previous revision is labelled without disabling the complete current review', async () => {
@@ -113,7 +113,7 @@ describe('native plan review', () => {
     const { user, mock } = await openTask('t16');
     expect(box().getByText('Plan ready')).toBeTruthy();
     expect(box().getAllByRole('radio')).toHaveLength(4);
-    expect(box().getByRole('radio', { name: 'Implement interactively' })).toHaveProperty('checked', true);
+    expect(box().getByRole('radio', { name: 'Implement interactively' }).getAttribute('aria-checked')).toBe('true');
     expect(mock.received).toEqual([]);
     const fleet = box().getByRole('radio', { name: 'Implement with subagents' });
     await user.click(fleet);
@@ -129,7 +129,7 @@ describe('native plan review', () => {
     localStorage.setItem('uam.draft.t16', JSON.stringify({ text: 'next thread message', files: [], attachments: [] }));
     const { user, mock } = await openTask('t16');
     await user.type(composer(), 'Add a rollback check');
-    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('radio').some((r) => r.getAttribute('aria-checked') === 'true')).toBe(false);
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Plan ready')).toBeNull());
     expect(mock.received[0].body).toEqual({ plan: { feedback: 'Add a rollback check' } });
@@ -139,7 +139,7 @@ describe('native plan review', () => {
   test('an unoffered recommendation selects nothing; choosing an action clears feedback', async () => {
     fixture({ actions: ['interactive', 'exit_only'], recommended: 'autopilot' });
     const { user, mock } = await openTask('t16');
-    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('radio').some((r) => r.getAttribute('aria-checked') === 'true')).toBe(false);
     expect(box().getByRole('button', { name: 'Approve plan' }).getAttribute('aria-disabled')).toBe('true');
     await user.type(composer(), 'Maybe revise');
     await user.click(box().getByRole('radio', { name: 'Leave planning' }));

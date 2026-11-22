@@ -168,15 +168,17 @@ function SubagentTab({ subagent: s, tab, onRun }: Readonly<{ subagent: Subagent;
           {runs.map((r, i) => (
             <span key={i} className="contents">
               {r.gapBefore && <span className="text-meta text-muted">Earlier runs not kept · latest runs</span>}
-              <button
-                type="button"
+              <Button
+                size="xs"
+                variant="secondary"
                 disabled={!r.started_at}
                 title={r.started_at ? `${r.trigger} · ${clockTime(r.started_at)}` : 'When this run started was not recorded, so it cannot be found in the transcript.'}
-                className="h-6 rounded-full bg-tint-well px-2 text-meta tabular-nums text-body transition-colors duration-100 hover:bg-tint-hover disabled:hover:bg-tint-well pointer-coarse:min-h-11"
+                className="rounded-full px-2 text-meta font-normal tabular-nums pointer-coarse:min-h-11"
                 onClick={() => { actions?.seek({ agent: s.id, time: r.started_at!, first: i === 0, running: r.running }); onRun(); }}
               >
-                {r.n === null ? 'Run' : `Run ${r.n}`} · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
-              </button>
+                {/* One flex item, so the words keep their own spaces. */}
+                <span>{r.n === null ? 'Run' : `Run ${r.n}`} · <span className={PART_TONE[r.tone]}>{r.outcome}</span></span>
+              </Button>
             </span>
           ))}
         </div>

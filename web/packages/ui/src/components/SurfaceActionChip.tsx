@@ -1,6 +1,7 @@
 import { MousePointerClick } from 'lucide-react';
 import { Fragment } from 'react';
 import { actionLabel, useKnownSurface, type SurfaceActionLine } from '../lib/surface';
+import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 
 const shown = (v: unknown): string => (Array.isArray(v) ? v.map(shown).join(', ') : v && typeof v === 'object' ? JSON.stringify(v) : v === null || v === undefined || v === '' ? '—' : String(v));
@@ -15,7 +16,7 @@ export function SurfaceActionChip({ action, sessionId }: Readonly<{ action: Surf
   const values = Object.entries(action.context);
   return (
     <Popover.Root>
-      <Popover.Trigger render={<button type="button" className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-lg bg-bubble px-3.5 text-left text-ui text-ink transition-colors duration-160 hover:bg-tint-hover pointer-coarse:min-h-11" />}>
+      <Popover.Trigger render={<Button size="lg" className="max-w-full justify-start gap-2 rounded-lg bg-bubble font-normal text-ink [&_svg]:size-3.5" />}>
         <MousePointerClick aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
         <span className="min-w-0 truncate">
           <span className="sr-only">You: </span>Pressed <span className="font-medium">{button}</span>

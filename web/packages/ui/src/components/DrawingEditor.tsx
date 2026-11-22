@@ -167,10 +167,10 @@ export default function DrawingEditor({ target, onClose, onClosed }: Readonly<{ 
 
   const head = (close: ReactNode, sheet: boolean) => (
     <PanelHead className={cn('gap-1 pt-2 pb-2 pl-4', sheet ? 'pr-2' : 'pr-3')}>
-      <button type="button" className="flex h-5 items-center gap-1 self-start rounded-xs text-caption text-muted hover:text-ink" onClick={onClose}>
-        <ArrowUp aria-hidden="true" className="size-3" />
+      <Button variant="link" className="h-5 shrink self-start whitespace-normal text-muted hover:text-ink" onClick={onClose}>
+        <ArrowUp aria-hidden="true" />
         {d.title}
-      </button>
+      </Button>
       <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-2">
         <h2 ref={heading} tabIndex={-1} className="min-w-0 truncate text-title text-ink outline-hidden">{name}</h2>
         <Chip tone={count ? 'warning' : 'muted'} fill="well">{pillText}</Chip>

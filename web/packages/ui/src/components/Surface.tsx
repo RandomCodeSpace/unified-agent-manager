@@ -19,12 +19,14 @@ import { ApiError, describeError, isStatus, newRequestId, type Surface, type Sub
 import { cn } from '../lib/cn';
 import { actionContext, boundPath, cardTitle, children, drawnCount, failedChecks, get, isHeading, leadTitle, MAX_DEPTH, rememberSurface, resolve, rowName, set, SurfaceVersions, text } from '../lib/surface';
 import { Note, Skeleton } from './common';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
+import { Checkbox, Radio, RadioGroup } from './ui/checkbox';
 import { Chip } from './ui/chip';
 import { Dialog } from './ui/dialog';
-import { inputVariants, Input } from './ui/input';
+import { Input } from './ui/input';
 import { Meter } from './ui/meter';
 import { Segmented } from './ui/segmented';
+import { Textarea } from './ui/textarea';
 
 type Model = Record<string, unknown>;
 
@@ -633,7 +635,7 @@ function SurfaceField({ ctx, c, base, weight, place, name }: Part) {
   return (
     <Labelled id={id} label={label} weight={weight} place={place} note={note}>
       {c.variant === 'longText'
-        ? <textarea {...common} rows={3} className={cn(inputVariants(), 'h-auto min-h-20 resize-y py-2')} onChange={(e) => path && ctx.write(path, e.target.value)} />
+        ? <Textarea {...common} className="min-h-20" onChange={(e) => path && ctx.write(path, e.target.value)} />
         : <Input {...common} type={c.variant === 'number' ? 'number' : c.variant === 'obscured' ? 'password' : 'text'} onChange={(e) => path && ctx.write(path, c.variant === 'number' ? e.target.valueAsNumber : e.target.value)} />}
     </Labelled>
   );
@@ -666,8 +668,8 @@ function SurfaceCheck({ ctx, c, base, weight, name }: Part) {
   const { aria, note } = fieldNote(ctx, path, id, !!label);
   return (
     <div style={weight} className="flex min-w-0 flex-col gap-0.5">
-      <label className="flex min-h-8 cursor-pointer items-center gap-2.5 text-ui text-ink pointer-coarse:min-h-11">
-        <input type="checkbox" className="size-3.5 accent-accent" checked={!!resolve(c.value, ctx.model, base)} disabled={!path} aria-label={label ? undefined : name || undefined} {...aria} onChange={(e) => path && ctx.write(path, e.target.checked)} />
+      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-ui text-ink pointer-coarse:min-h-11">
+        <Checkbox checked={!!resolve(c.value, ctx.model, base)} disabled={!path} aria-label={label ? undefined : name || undefined} {...aria} onCheckedChange={(on) => path && ctx.write(path, on)} />
         <span className="min-w-0">{label}</span>
       </label>
       {note}
@@ -697,21 +699,27 @@ function SurfaceChoice({ ctx, c, base, weight, place, name }: Part) {
       </div>
     );
   }
-  return (
-    <fieldset style={weight} className="flex min-w-0 flex-col gap-0.5" disabled={!path} aria-label={named} aria-describedby={aria['aria-describedby']}>
+  const group = { style: weight, className: 'flex min-w-0 flex-col gap-0.5', 'aria-label': named, 'aria-describedby': aria['aria-describedby'] };
+  const rows = (
+    <>
       {label && <legend className={labelHidden(place) ? 'sr-only' : 'mb-1 text-caption text-muted'}>{label}</legend>}
       {options.map((o) => {
         const on = chosen.includes(o.value);
         return (
-          <label key={o.value} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-            <input type={multiple ? 'checkbox' : 'radio'} name={id} checked={on} aria-invalid={aria['aria-invalid']} className="size-3.5 accent-accent" onChange={() => choose(multiple ? (on ? chosen.filter((x) => x !== o.value) : [...chosen, o.value]) : [o.value])} />
+          <label key={o.value} data-selected={on || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11')}>
+            {multiple
+              ? <Checkbox name={id} checked={on} disabled={!path} onCheckedChange={() => choose(on ? chosen.filter((x) => x !== o.value) : [...chosen, o.value])} aria-invalid={aria['aria-invalid']} />
+              : <Radio value={o.value} aria-invalid={aria['aria-invalid']} />}
             <span className="min-w-0 flex-1">{o.label}</span>
           </label>
         );
       })}
       {note}
-    </fieldset>
+    </>
   );
+  // Base UI controls ignore a fieldset's `disabled`, so the checkboxes and the radio group take it too. The group keeps a fieldset's role.
+  if (multiple) return <fieldset {...group} disabled={!path}>{rows}</fieldset>;
+  return <RadioGroup render={<fieldset disabled={!path} />} role="group" name={id} value={chosen[0] ?? ''} disabled={!path} onValueChange={(v) => choose([v as string])} {...group}>{rows}</RadioGroup>;
 }
 
 function SurfaceTabs({ ctx, c, base, depth }: Readonly<{ ctx: Ctx; c: SurfaceComponent; base: string; depth: number }>) {
