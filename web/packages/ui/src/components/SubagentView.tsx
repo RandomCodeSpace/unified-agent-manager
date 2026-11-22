@@ -28,7 +28,8 @@ const threadName = (session: SessionDetail) => taskName(session) || 'this thread
 /** One glyph for every subagent level, in the trail's 16px identity box. */
 const AgentGlyph = () => <Workflow aria-hidden="true" className="size-4 shrink-0 text-muted" />;
 const SEP = <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-faint" />;
-const CRUMB = 'flex h-7 min-w-0 items-center gap-1.5 rounded-sm px-1.5 text-ui text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11';
+/** A crumb: a ghost `sm` Button, kept to its 6px inset and the `ui` regular weight. */
+const CRUMB = 'flex min-w-0 justify-start px-1.5 font-normal pointer-coarse:min-h-11';
 
 /** Back to the Thread at the spawn point: the outermost spawner's call is in the Thread's conversation (Task `locate`). */
 function useBack(s: Subagent, onBack: () => void): () => void {
@@ -86,18 +87,18 @@ export function SubagentBar({ session, subagent: s, badge, leading, onBack }: Re
           ) : (
             <>
               <Tip label={`Back to ${name}, where it was spawned`}>
-                <button type="button" className={CRUMB} onClick={back}>
+                <Button variant="ghost" size="sm" className={CRUMB} onClick={back}>
                   {badge && <ProjectBadge badge={badge} />}
                   <span className="max-w-64 truncate">{name}</span>
-                </button>
+                </Button>
               </Tip>
               {chain.map((a) => (
                 <span key={a.id} className="flex min-w-0 items-center gap-1">
                   {SEP}
-                  <button type="button" className={CRUMB} title={`Open ${agentName(a)}`} onClick={() => actions.show(a.id)}>
+                  <Button variant="ghost" size="sm" className={CRUMB} title={`Open ${agentName(a)}`} onClick={() => actions.show(a.id)}>
                     <AgentGlyph />
                     <span className="max-w-48 truncate">{agentName(a)}</span>
-                  </button>
+                  </Button>
                 </span>
               ))}
             </>

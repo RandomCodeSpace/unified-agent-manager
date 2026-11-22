@@ -20,7 +20,7 @@ import { BADGE_TEXT, Markdown, Note, Num, Skeleton, Spinner, StepDots, SubagentI
 import { AgentItems } from './Transcript';
 import { SubagentRetry } from './StatusLine';
 import { Blocks } from './ui/blocks';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
@@ -386,7 +386,7 @@ export function SubagentTag({ id, name, still = false, className, children }: Re
   );
   if (still || !show) return <span className={cn('inline-flex min-w-0 items-center gap-1', className)}>{body}</span>;
   return (
-    <button type="button" aria-label={`Open subagent ${name}`} onClick={() => show(id)} className={cn("relative -mx-0.5 inline-flex min-w-0 items-center gap-1 rounded-sm px-0.5 transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover pointer-coarse:after:-inset-y-3", className)}>
+    <button type="button" aria-label={`Open subagent ${name}`} onClick={() => show(id)} className={cn("relative -mx-0.5 inline-flex min-w-0 items-center gap-1 rounded-sm px-0.5 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-fill-hover active:bg-fill-strong pointer-coarse:after:-inset-y-3", className)}>
       {body}
     </button>
   );
@@ -477,12 +477,13 @@ export function SubagentChip({ subagents, commands = NO_COMMANDS, calls, tones, 
   const lead = [subagentNoun(total), commands.length ? commandNoun(commands.length) : '', tokens ? `${formatCount(tokens)} tokens` : ''].filter(Boolean).join(' · ');
   const partial = subagents.length < total ? `${subagents.length} of ${total} loaded` : '';
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="xs"
       data-subagent-items={JSON.stringify(subagents.flatMap((s) => (s.parent_tool_call_id ? [s.parent_tool_call_id] : [])))}
       aria-haspopup="dialog"
       title={[lead, partial, ...countParts(c).map((p) => p.text)].filter(Boolean).join(' · ')}
-      className="-mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11"
+      className="-mx-1.5 flex min-w-0 max-w-full justify-start text-left font-normal text-muted pointer-coarse:min-h-11"
       onClick={() => actions?.open({ reply })}
     >
       {total <= IDENTITY_LIMIT ? (
@@ -498,8 +499,8 @@ export function SubagentChip({ subagents, commands = NO_COMMANDS, calls, tones, 
       <span className="min-w-0 truncate tabular-nums">
         <Counts c={c} lead={partial ? <>{lead} · <span className="text-muted">{partial}</span></> : lead} />
       </span>
-      <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint" />
-    </button>
+      <ChevronRight aria-hidden="true" className="size-3! shrink-0 text-faint" />
+    </Button>
   );
 }
 
@@ -537,7 +538,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         aria-label={`${name}${own ? ` (${own})` : ''}${s.background ? ' in the background' : ''}, ${STATUS_WORD[s.status]}${runs ? `, ${runs}` : ''}${text ? `: ${text}` : ''}`}
         aria-haspopup={onOpen ? 'dialog' : undefined}
         aria-expanded={onOpen ? open : undefined}
-        className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-tint-selected')}
+        className={cn(rowClass, 'min-h-7 py-0.5 pr-1.5 text-caption max-sm:min-h-11 max-sm:flex-wrap max-sm:gap-y-0 pointer-coarse:min-h-11 pl-[calc(var(--spacing)*(2+var(--depth)*4.5))]', open && 'bg-fill text-ink shadow-highlight-tonal')}
         onClick={(e) => (onOpen ? onOpen(s, e.currentTarget) : actions.show(s.id))}
       >
         {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
@@ -581,7 +582,7 @@ function FollowUpRow({ f, onShow }: Readonly<{ f: FollowUp; onShow: (f: FollowUp
       type="button"
       data-index-row=""
       aria-label={`Follow-up to ${name}${from ? `, ${from}` : ''}, ${STATUS_WORD[f.run.status]}: show where it started`}
-      className="ml-1 flex min-h-7 w-[calc(100%-var(--spacing))] items-center gap-1.5 rounded-r-sm border-l-2 border-hairline-strong py-0.5 pr-1.5 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well max-sm:min-h-11 pointer-coarse:min-h-11"
+      className={cn(rowClass, 'ml-1 min-h-7 w-[calc(100%-var(--spacing))] gap-1.5 rounded-none rounded-r-sm border-l-2 border-hairline-strong py-0.5 pr-1.5 pl-2 text-caption text-muted max-sm:min-h-11 pointer-coarse:min-h-11')}
       onClick={() => onShow(f)}
     >
       <span aria-hidden="true" className="shrink-0">↪</span>
@@ -632,7 +633,7 @@ function CommandRow({ command: c }: Readonly<{ command: BackgroundCommand }>) {
       type="button"
       data-index-row=""
       aria-label={`${label}: show its output`}
-      className={cn(row, 'transition-colors duration-100 hover:bg-tint-well')}
+      className={cn(rowClass, row)}
       onClick={() => actions.output({ id: `shell:${c.id}`, name: 'shell', title: c.command, text: '', markdown: false, shell: { sessionId, taskId: c.id } })}
     >
       {body}
@@ -669,7 +670,7 @@ function FusionPhaseRow({ phase: p, onOpen, open = false }: Readonly<{ phase: Fu
   );
   if (!onOpen) return <div role="group" aria-label={label} className={row}>{body}</div>;
   return (
-    <button type="button" data-index-row="" aria-label={label} aria-haspopup="dialog" aria-expanded={open} className={cn(row, 'transition-colors duration-100 hover:bg-tint-well', open && 'bg-tint-selected')} onClick={(e) => onOpen(e.currentTarget)}>
+    <button type="button" data-index-row="" aria-label={label} aria-haspopup="dialog" aria-expanded={open} className={cn(rowClass, row, open && 'bg-fill text-ink shadow-highlight-tonal')} onClick={(e) => onOpen(e.currentTarget)}>
       {body}
     </button>
   );
@@ -843,7 +844,8 @@ const FILTERS: { key: IndexFilter; label: string; tone: string }[] = [
 ];
 /** An older message's group shows this many rows before "N more · Show all"; one with a row more shows them all. */
 const GROUP_ROWS = 3;
-const CHIP = 'h-6 rounded-full px-2 text-caption tabular-nums transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11';
+/** A filter chip: a ghost `xs` Button in a capsule; pressed is the ghost's own `aria-pressed` fill. */
+const CHIP = 'rounded-full px-2 font-normal tabular-nums pointer-coarse:min-h-11';
 
 /** The Thread's subagents for the status strip: the list, whether older ones wait in the record; undefined outside a Thread. */
 export function useSubagentIndex() {
@@ -989,28 +991,28 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
         <Input ref={input} size="md" type="search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onArrow} aria-label="Search agents and commands" placeholder={mixed || !all.length ? `Search ${kinds.all} ${kinds.all === 1 ? 'item' : 'items'}` : `Search ${subagentNoun(all.length)}`} />
         <div role="group" aria-label="Show by status" className="flex flex-wrap items-center gap-1">
           {FILTERS.filter((f) => f.key === 'all' || f.key === filter || counts[f.key]).map((f) => (
-            <button key={f.key} type="button" aria-pressed={filter === f.key} className={cn(CHIP, filter === f.key ? 'bg-tint-selected text-ink' : counts[f.key] ? f.tone : 'text-muted')} onClick={() => setFilter(f.key)}>
+            <Button key={f.key} variant="ghost" size="xs" aria-pressed={filter === f.key} className={cn(CHIP, filter !== f.key && (counts[f.key] ? f.tone : 'text-muted'))} onClick={() => setFilter(f.key)}>
               {f.label} {counts[f.key]}
-            </button>
+            </Button>
           ))}
           {mixed && (
             <span role="group" aria-label="Show by kind" className="contents">
               <span aria-hidden="true" className="mx-1 h-3.5 w-px bg-hairline" />
               {KINDS.filter((k) => kinds[k.key]).map((k) => (
-                <button key={k.key} type="button" aria-pressed={kind === k.key} className={cn(CHIP, kind === k.key ? 'bg-tint-selected text-ink' : 'text-body')} onClick={() => setKind(kind === k.key ? 'all' : k.key)}>
+                <Button key={k.key} variant="ghost" size="xs" aria-pressed={kind === k.key} className={CHIP} onClick={() => setKind(kind === k.key ? 'all' : k.key)}>
                   {k.label} {kinds[k.key]}
-                </button>
+                </Button>
               ))}
             </span>
           )}
           {reply !== null && (
             <>
               <span className="flex-1" />
-              <button type="button" title="Show every message's subagents" className={cn(CHIP, 'flex items-center gap-1 bg-tint-well text-body')} onClick={() => setReply(null)}>
+              <Button variant="secondary" size="xs" title="Show every message's subagents" className={cn(CHIP, 'gap-1 text-body [&_svg]:size-3')} onClick={() => setReply(null)}>
                 From {from?.time ? clock(from.time) : 'this reply'}
-                <X aria-hidden="true" className="size-3 text-muted" />
+                <X aria-hidden="true" className="text-muted" />
                 <span className="sr-only">, show every message's subagents</span>
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -1064,7 +1066,7 @@ export function SubagentSheetBody({ to, error, phone }: Readonly<{ to: SheetTo |
                   ))}
                   {g.cap < g.rows.length && (
                     <li>
-                      <button type="button" className="flex h-7 w-full items-center gap-1.5 rounded-sm pl-8 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11" onClick={() => setExpanded((e) => new Set([...e, g.key]))}>
+                      <button type="button" className={cn(rowClass, 'h-7 gap-1.5 py-0 pr-0 pl-8 text-caption text-muted pointer-coarse:min-h-11')} onClick={() => setExpanded((e) => new Set([...e, g.key]))}>
                         <ChevronDown aria-hidden="true" className="size-3.5 shrink-0" />
                         {g.rows.length - g.cap} more · <span className="text-accent">Show all {g.rows.length}</span>
                       </button>

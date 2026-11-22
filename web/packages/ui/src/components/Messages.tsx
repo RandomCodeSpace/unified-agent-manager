@@ -169,9 +169,9 @@ function PairLine({ pair, self }: Readonly<{ pair: MessagePair; self: string }>)
         {!denied && last?.detail && <span className="text-muted"> ({last.detail})</span>}
       </span>
       {denied ? (
-        <Button size="sm" variant="secondary" className="h-6" loading={busy === 'reset'} disabled={!!busy} onClick={() => void act('reset')}>Reset</Button>
+        <Button size="xs" variant="secondary" className="px-2 text-ui" loading={busy === 'reset'} disabled={!!busy} onClick={() => void act('reset')}>Reset</Button>
       ) : (
-        <Button size="sm" variant="secondary" className="h-6" loading={busy === 'deny'} disabled={!!busy} onClick={() => void act('deny')}>Deny</Button>
+        <Button size="xs" variant="secondary" className="px-2 text-ui" loading={busy === 'deny'} disabled={!!busy} onClick={() => void act('deny')}>Deny</Button>
       )}
       {error && <span role="alert" className="basis-full text-caption text-error">{error}</span>}
     </Note>

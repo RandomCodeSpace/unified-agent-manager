@@ -6,6 +6,7 @@ import { asideQuestion, asideTurn } from '../lib/aside';
 import { cn } from '../lib/cn';
 import { Markdown, clockTime, dateTime } from './common';
 import { Key } from './InlinePicker';
+import { Button } from './ui/button';
 import { PHONE } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
@@ -280,11 +281,11 @@ export function AsideChip({ task, turn, sep = true }: Readonly<{ task: string; t
     <>
       {/* A phone's foot is already full: there the chip is its glyph and count, so Turn actions stay in view. */}
       {sep && <span aria-hidden="true" className="max-sm:hidden"> · </span>}
-      <button ref={button} type="button" data-aside-chip="" aria-haspopup="dialog" aria-expanded={!!at?.open} aria-label={`${count(n)} in this turn${waiting ? ', one waiting for its answer' : ''}`} className="flex h-6 items-center gap-1 rounded-sm bg-raised px-1.5 text-stamp max-sm:px-1 text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink aria-expanded:text-ink" onClick={(e) => setAt({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget, lift: e.currentTarget })}>
+      <Button ref={button} variant="secondary" size="xs" data-aside-chip="" aria-haspopup="dialog" aria-expanded={!!at?.open} aria-label={`${count(n)} in this turn${waiting ? ', one waiting for its answer' : ''}`} className="flex gap-1 text-stamp font-normal text-muted max-sm:px-1 aria-expanded:bg-fill-strong aria-expanded:text-ink [&_svg]:size-3" onClick={(e) => setAt({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget, lift: e.currentTarget })}>
         {waiting ? <Hourglass aria-hidden="true" className="size-3 text-accent" /> : <MessageCircleQuestion aria-hidden="true" className="size-3" />}
         <span className="font-medium max-sm:hidden">btw</span>
         <span className="tabular-nums">{n}</span>
-      </button>
+      </Button>
       {at && <AsideReader at={at} title="Asides in this turn" rows={rows} onClose={() => setAt((a) => a && { ...a, open: false })} onClosed={() => setAt(null)} finalFocus={() => (button.current?.isConnected ? button.current : null)} />}
     </>
   );

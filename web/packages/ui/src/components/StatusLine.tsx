@@ -210,8 +210,11 @@ export function stripHasTodos(session: SessionDetail): boolean {
   return !!(todos?.known && todos.counts.total) || todoTurns(session).length > 0;
 }
 
-/** A strip button: lit (`tint-hover`) on its own while hovered or open. */
-const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-11';
+/**
+ * A strip button: the ghost Button's tonal ramp (`fill-hover`, pressed and open `fill-strong`), switched at once. Not a
+ * `Button`: its `[&_svg]` size would resize the Blocks glyphs inside.
+ */
+const STRIP = 'flex h-8 items-center rounded-sm px-2 text-left text-caption text-muted hover:bg-fill-hover active:bg-fill-strong aria-expanded:bg-fill-strong pointer-coarse:h-11';
 
 /**
  * The strip in three sections on one row: the todo list, the progress line and the subagents,

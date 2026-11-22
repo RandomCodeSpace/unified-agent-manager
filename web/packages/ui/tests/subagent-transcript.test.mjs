@@ -75,7 +75,7 @@ const modules = {
   './VisualBoundary': { VisualBoundary: ({ children }) => children, Contained: ({ children }) => children },
   './Plan': { PlanNotice: () => null },
   './ui/blocks': { Blocks: ({ items }) => React.createElement('span', null, items.map((block) => block.title).join(' ')) },
-  './ui/button': { Button: element('button') },
+  './ui/button': { Button: (props) => React.createElement('button', { type: 'button', ...props, variant: undefined, size: undefined, loading: undefined }), rowClass: '' },
   './ui/chip': { Chip: element('span') },
   './ui/dialog': { PHONE: '(width < 481px)' },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },

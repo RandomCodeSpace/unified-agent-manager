@@ -85,17 +85,17 @@ export function Receipts({ stamps: given }: Readonly<{ stamps: readonly Stamp[] 
                 <span className="shrink-0 text-muted">{s.by ? `${s.note} · by ${s.by.name}` : s.note}</span>
               </>
             );
-            const className = 'flex h-6 max-w-full items-center gap-1.5 rounded-sm bg-error-wash px-1.5 text-meta tabular-nums text-error transition-colors duration-100';
+            const className = 'flex h-6 max-w-full items-center gap-1.5 rounded-sm bg-error-tint px-1.5 text-meta tabular-nums text-error';
             return (
               <li key={`${s.kind}:${s.claim}`} className="min-w-0 max-w-full">
                 {s.by && show ? (
-                  <button type="button" className={cn(className, 'hover:bg-tint-hover pointer-coarse:min-h-11')} title="Contradicted by the record. Show the subagent." onClick={() => show(s.by!.agentId)}>
+                  <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} title="Contradicted by the record. Show the subagent." onClick={() => show(s.by!.agentId)}>
                     {body}
-                  </button>
+                  </Button>
                 ) : s.itemId && locate ? (
-                  <button type="button" className={cn(className, 'hover:bg-tint-hover pointer-coarse:min-h-11')} title="Contradicted by the record. Show the call." onClick={() => void locate(s.itemId!)}>
+                  <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} title="Contradicted by the record. Show the call." onClick={() => void locate(s.itemId!)}>
                     {body}
-                  </button>
+                  </Button>
                 ) : (
                   <span className={className} title="Contradicted by the record">{body}</span>
                 )}

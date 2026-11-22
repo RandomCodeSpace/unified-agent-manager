@@ -20,7 +20,7 @@ import { Key } from './InlinePicker';
 import { SubagentTag, useActions, useScope } from './Subagents';
 import { plural } from './TimeSplit';
 import { Blocks, type Block } from './ui/blocks';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { PHONE } from './ui/dialog';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
@@ -92,7 +92,7 @@ function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, ope
           <TodoMark status={todo.status} />
         </span>
         {onToggle ? (
-          <button type="button" aria-expanded={open} onClick={onToggle} className={cn('-mx-1 -my-0.5 flex min-w-0 flex-1 flex-col rounded-sm px-1 py-0.5 text-left transition-colors duration-100 hover:bg-tint-hover', open && 'bg-tint-selected')}>
+          <button type="button" aria-expanded={open} onClick={onToggle} className={cn(rowClass, '-mx-1 -my-0.5 w-auto flex-1 flex-col items-stretch gap-0 px-1 py-0.5 text-[length:inherit] text-[color:inherit]', open && 'bg-fill text-ink shadow-highlight-tonal')}>
             {words}
           </button>
         ) : (
@@ -110,7 +110,7 @@ function TodoRow({ todo, name, now = false, quietName = false, stamp, waits, ope
 function DetailLink({ todo, onRow }: Readonly<{ todo: Todo; onRow: (id: string) => void }>) {
   return (
     <li>
-      <button type="button" onClick={() => onRow(todo.id)} className="-mx-1 flex max-w-full items-start gap-1.5 rounded-sm px-1 text-left text-body transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:items-center">
+      <button type="button" onClick={() => onRow(todo.id)} className={cn(rowClass, '-mx-1 w-auto max-w-full items-start gap-1.5 px-1 py-0 text-[length:inherit] pointer-coarse:min-h-11 pointer-coarse:items-center')}>
         <span className="flex h-4.5 shrink-0 items-center">
           <TodoMark status={todo.status} className="size-3" />
         </span>
@@ -376,7 +376,7 @@ function TodoBoard({ board, label, prompt, name, now, detail }: Readonly<{
                         data-card={todo.id}
                         aria-expanded={picked === todo.id}
                         onClick={() => setPicked((p) => (p === todo.id ? null : todo.id))}
-                        className={cn('flex min-w-0 items-start gap-1.5 rounded-md border bg-raised px-2 py-1 text-left text-caption transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11', CARD[todo.status], todo.status === 'done' ? 'text-muted' : 'text-body', picked === todo.id && 'bg-tint-selected', todo.id === now && todo.status === 'in_progress' && 'border-2')}
+                        className={cn('flex min-w-0 items-start gap-1.5 rounded-md border bg-raised px-2 py-1 text-left text-caption hover:bg-tint-hover pointer-coarse:min-h-11', CARD[todo.status], todo.status === 'done' ? 'text-muted' : 'text-body', picked === todo.id && 'bg-tint-selected', todo.id === now && todo.status === 'in_progress' && 'border-2')}
                       >
                         <span className="flex h-4.5 shrink-0 items-center">
                           <TodoMark status={todo.status} className="size-3" />
@@ -461,7 +461,7 @@ function TurnSectionView({ section, prompt, onTurn, unfolded, onFold, row }: Rea
   if (section.folded) {
     return (
       <section aria-label={label} className="flex min-w-0 flex-col gap-1.5">
-        <button type="button" aria-expanded={unfolded} onClick={onFold} className="-mx-1 flex h-6 min-w-0 items-center gap-2 rounded-sm px-1 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11">
+        <button type="button" aria-expanded={unfolded} onClick={onFold} className={cn(rowClass, '-mx-1 h-6 w-auto px-1 py-0 text-caption text-muted pointer-coarse:min-h-11')}>
           <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-100', unfolded && 'rotate-90')} />
           <span className="shrink-0 text-eyebrow uppercase">{label}</span>
           <span className="shrink-0 tabular-nums">{tally}</span>

@@ -209,10 +209,10 @@ function ParentCrumb({ id, name, badge, phone }: Readonly<{ id: string; name?: s
   } else {
     crumb = (
       <Tip label={`Started by ${name || 'an untitled thread'}. Open it`}>
-        <button type="button" className="flex h-7 min-w-0 max-w-60 items-center gap-1.5 rounded-sm px-1.5 text-ui text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11" onClick={open}>
+        <Button variant="ghost" size="sm" className="flex min-w-0 max-w-60 justify-start px-1.5 font-normal pointer-coarse:min-h-11" onClick={open}>
           {badge && <ProjectBadge badge={badge} />}
           <span className="truncate">{name || 'Untitled thread'}</span>
-        </button>
+        </Button>
       </Tip>
     );
   }

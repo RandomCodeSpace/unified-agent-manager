@@ -36,7 +36,7 @@ import { TurnWaybill } from './TurnWaybill';
 import { PlanNotice } from './Plan';
 import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
 import { Blocks, type Block } from './ui/blocks';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { PHONE } from './ui/dialog';
@@ -360,8 +360,8 @@ function TurnShell({ replyKey, head, children }: Readonly<{ replyKey: string; he
 
 /** The turn sign-off (DESIGN.md turn sign-off): one caption line that wraps whole onto the next line, then within itself on a narrow screen. */
 const SIGN = 'inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-baseline text-caption tabular-nums text-faint select-none';
-/** A button on the sign-off: its hit area reaches past the caption line. Its width may pass the line's by the 8px its margins take back, or a button alone on the line is clipped. */
-const SIGN_BUTTON = "relative -mx-1 flex h-5 min-w-0 max-w-[calc(100%+--spacing(2))] items-center gap-1 rounded-sm px-1 text-left whitespace-nowrap transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-3";
+/** A ghost `xs` Button on the sign-off, kept to the caption line's 20px: its hit area reaches past the line. Its width may pass the line's by the 8px its margins take back, or a button alone on the line is clipped. */
+const SIGN_BUTTON = '-mx-1 flex h-5 min-w-0 max-w-[calc(100%+--spacing(2))] justify-start gap-1 px-1 text-left font-normal pointer-coarse:after:-inset-y-3 [&_svg]:size-3';
 /** The status row a turn shows before any of it lands: "Working 8s", then "Took 12s" when it ends without one. */
 const HEAD = 'flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-ui tabular-nums text-muted';
 
@@ -426,9 +426,9 @@ function TurnTook({ timing, at, entries }: Readonly<{ timing?: TurnTiming; at?: 
   if (!elapsed || !timing?.output_tokens) return <span title={title} className="whitespace-nowrap">{words}</span>;
   return (
     <>
-      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`Took ${elapsed}. Show this turn's waybill`} title={title} className={cn(SIGN_BUTTON, 'aria-expanded:bg-tint-well aria-expanded:text-body')} onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
+      <Button ref={setButton} data-turn-waybill="" variant="ghost" size="xs" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-label={`Took ${elapsed}. Show this turn's waybill`} title={title} className={cn(SIGN_BUTTON, 'text-faint aria-expanded:bg-fill-strong aria-expanded:text-ink')} onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
         {words}
-      </button>
+      </Button>
       {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
     </>
   );
@@ -484,10 +484,11 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
       {dotted(facts)}
       {facts.length > 0 && counts.length + failures.length > 0 && <span aria-hidden="true" className="text-faint">·</span>}
       {counts.length + failures.length > 0 && (
-        <button
+        <Button
           ref={headButton}
           data-turn-steps=""
-          type="button"
+          variant="ghost"
+          size="xs"
           aria-expanded={open}
           aria-controls={opened ? timelineId : undefined}
           title={text}
@@ -504,12 +505,13 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
             ))}
           </span>
           <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-z-90')} />
-        </button>
+        </Button>
       )}
       {ledger.summary && (
-        <button
+        <Button
           data-turn-references=""
-          type="button"
+          variant="ghost"
+          size="xs"
           aria-expanded={ledger.open}
           aria-controls={ledger.opened ? ledger.listId : undefined}
           title={ledger.summary}
@@ -519,7 +521,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
         >
           <span className="min-w-0 truncate">{ledger.summary}</span>
           <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', ledger.open && 'rotate-z-90')} />
-        </button>
+        </Button>
       )}
       {subagents.length > 0 && chip && <SubagentChip subagents={subagents} calls={calls} tones={tones} reply={replyKey} />}
       {/* What the turn left follows the counts; the reply's "no record" line (Receipts) lands in its slot once the turn ended. */}
@@ -536,10 +538,10 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
         <Collapse open={open} appear className="-mt-3" inner="pt-3">
           <div aria-hidden="true" className="fade-rule" />
           <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} agentId={agentId} /></DetailVisibility>
-          <button type="button" aria-controls={timelineId} className="mb-1.5 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
-            <ChevronUp aria-hidden="true" className="size-3" />
+          <Button variant="ghost" size="xs" aria-controls={timelineId} className="mb-1.5 ml-1.5 flex w-fit gap-1 font-normal text-muted pointer-coarse:min-h-11 [&_svg]:size-3" onClick={collapse}>
+            <ChevronUp aria-hidden="true" />
             Collapse
-          </button>
+          </Button>
         </Collapse>
       )}
       {ledger.list}
@@ -607,7 +609,7 @@ function StepFrame({ at, icon, iconClass, edge, dur, under, children, ref, ...re
 /** A step's words as its button: the step, then its result words (`muted`, failures `error`, a person's decision `attention`); a phone puts the result under the step. */
 function StepButton({ label, result, open, onClick, fold = false, intent = false, ink = false, lead, title, buttonRef, className }: Readonly<{ label: ReactNode; result: StepWords['result']; open: boolean; onClick: () => void; fold?: boolean; intent?: boolean; ink?: boolean; lead?: ReactNode; title?: string; buttonRef?: Ref<HTMLButtonElement>; className?: string }>) {
   return (
-    <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className={cn("-mx-1.5 flex min-h-6 w-[calc(100%+0.75rem)] min-w-0 items-center gap-x-1 rounded-sm px-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11", className)}>
+    <button ref={buttonRef} type="button" aria-expanded={open} title={title} onClick={onClick} className={cn(rowClass, '-mx-1.5 min-h-6 w-[calc(100%+0.75rem)] gap-0 gap-x-1 px-1.5 py-0 text-caption max-sm:flex-col max-sm:items-start max-sm:justify-center max-sm:py-0.5 pointer-coarse:min-h-11', className)}>
       <span className="flex max-w-full min-w-0 shrink-0 items-center gap-1.5">
         {lead}
         <span className={cn('min-w-0 truncate', intent && 'text-muted italic', ink && 'text-ink')}>{label}</span>
@@ -876,7 +878,7 @@ function Timeline({ id, entries, ctx, agentId }: Readonly<{ id: string; entries:
       case 'more':
         return (
           <StepGap key={row.key}>
-            <button type="button" className="-mx-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11" onClick={showAll}>
+            <button type="button" className={cn(rowClass, '-mx-1.5 inline-block w-auto px-1.5 py-0 text-meta text-muted pointer-coarse:min-h-11')} onClick={showAll}>
               {row.hidden} earlier steps · <span className="text-ink">Show all {row.calls} calls</span>
             </button>
           </StepGap>
@@ -926,12 +928,12 @@ function ChangedChip({ files, additions, deletions, expanded, onClick }: Readonl
     <FileDiff aria-hidden="true" className="size-3 shrink-0 text-muted" />
     {files} {files === 1 ? 'file' : 'files'}{additions !== undefined && <> <LineCounts additions={additions} deletions={deletions ?? 0} /></>}
   </>;
-  const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-surface px-2 text-caption whitespace-nowrap tabular-nums text-ink';
+  const chip = 'relative inline-flex h-6 items-center gap-1.5 rounded-sm bg-fill px-2 text-caption whitespace-nowrap tabular-nums text-ink';
   // Focused first (Safari does not focus a clicked button), so closing what it opens brings focus back here.
   return onClick ? (
-    <button type="button" data-turn-changes="" aria-haspopup={expanded === undefined ? undefined : 'dialog'} aria-expanded={expanded} aria-label={label} title={label} className={cn(chip, "transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-expanded:bg-tint-selected pointer-coarse:after:-inset-y-2.5")} onClick={(e) => { e.currentTarget.focus(); onClick(e.currentTarget); }}>
+    <Button variant="secondary" size="xs" data-turn-changes="" aria-haspopup={expanded === undefined ? undefined : 'dialog'} aria-expanded={expanded} aria-label={label} title={label} className="gap-1.5 px-2 font-normal tabular-nums aria-expanded:bg-fill-strong [&_svg]:size-3" onClick={(e) => { e.currentTarget.focus(); onClick(e.currentTarget); }}>
       {body}
-    </button>
+    </Button>
   ) : (
     <span className={chip} title={label}><span className="sr-only">Changed </span>{body}</span>
   );
@@ -1559,7 +1561,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             ref={toggleButton}
             type="button"
             aria-expanded={open}
-            className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+            className={cn(rowClass, 'h-6 w-auto flex-1 rounded-full py-0 pr-8 pl-1.5 font-mono text-code-sm text-muted pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
             onClick={toggle}
           >
@@ -1616,7 +1618,7 @@ function NativeEdit({ item, edit }: Readonly<{ item: Item; edit: NativeFileEdit 
   const { state, visible, retry } = useEditDiff(item, event, edit.path, open && known);
   const label = `${edit.path} ${known ? lineCountsText(edit.additions ?? 0, edit.deletions ?? 0) : 'counts unavailable'}`;
   return <div className="mb-1">
-    <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="flex min-h-6 w-full items-center gap-2 rounded-sm px-1 text-left font-mono text-code-sm text-muted hover:bg-tint-well pointer-coarse:min-h-11" title={edit.path}>
+    <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className={cn(rowClass, 'min-h-6 px-1 py-0 font-mono text-code-sm text-muted pointer-coarse:min-h-11')} title={edit.path}>
       <ChevronRight className={cn('size-3 shrink-0', open && 'rotate-90')} />
       <span className="min-w-0 flex-1 truncate">{edit.path}</span>
       {known ? <span className="shrink-0"><LineCounts additions={edit.additions ?? 0} deletions={edit.deletions ?? 0} /></span> : <span className="shrink-0 font-sans text-meta">counts unavailable</span>}
@@ -1751,7 +1753,7 @@ function SettledQuestion({ id, asked }: Readonly<{ id: string; asked: AskedQuest
         aria-expanded={open}
         aria-controls={opened ? bodyId : undefined}
         aria-label={name}
-        className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11"
+        className={cn(rowClass, 'px-3 py-1.5 text-[length:inherit] text-[color:inherit] pointer-coarse:min-h-11')}
         onClick={() => {
           setOpened(true);
           setOpen((o) => !o);
