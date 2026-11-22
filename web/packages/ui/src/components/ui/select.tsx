@@ -1,7 +1,8 @@
 import { Select as BaseSelect } from '@base-ui/react/select';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronsUpDown } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn';
+import { corner } from './button';
 import { itemClass, popupClass } from './menu';
 
 export interface SelectOption {
@@ -14,7 +15,8 @@ export interface SelectOption {
 }
 
 /**
- * A form select on Base UI, used where a labelled control belongs (the project dialogs).
+ * A form select on Base UI, used where a labelled control belongs (the project dialogs): the text input's tonal
+ * well (`raised` inside the focus ring under keyboard focus), a step darker under the pointer and while its list is open.
  * `items` drives both the list and the trigger's text. Renders below the trigger, aligned to
  * its start edge; the popup hides its scrollbar with a class, not Base UI's inline <style> (CSP).
  */
@@ -45,13 +47,14 @@ export function Select({
         aria-label={ariaLabel}
         aria-describedby={describedBy}
         className={cn(
-          'flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-sm bg-sunken px-2.5 text-ui text-ink shadow-well transition-[background-color] select-none hover:not-data-disabled:bg-tint-hover data-disabled:opacity-45 data-disabled:cursor-not-allowed pointer-coarse:min-h-11',
+          'flex h-9 w-full min-w-0 items-center justify-between gap-2 bg-fill px-2.5 text-ui text-ink shadow-well select-none hover:not-data-disabled:bg-fill-strong data-popup-open:bg-fill-strong focus-visible:bg-raised focus-visible:shadow-[inset_0_0_0_1px_var(--color-hairline)] focus-visible:outline-offset-0 data-disabled:opacity-45 data-disabled:cursor-not-allowed pointer-coarse:min-h-11',
+          corner.sm,
           className,
         )}
       >
         <BaseSelect.Value className="truncate" />
         <BaseSelect.Icon className="flex text-muted">
-          <ChevronDown className="size-4" />
+          <ChevronsUpDown className="size-4" />
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>

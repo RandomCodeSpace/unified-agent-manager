@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, 
 import { cn } from '../../lib/cn';
 import { Button } from './button';
 import { backdropClass, readerPopupClass } from './dialog';
+import { floatClass } from './menu';
 
 /**
  * Anchored readers (DESIGN.md Floating panels): a modal panel beside what opened it over the dim,
@@ -78,7 +79,7 @@ export function BottomSheet({ open, onClose, onClosed, label, className, backdro
           aria-modal="true"
           initialFocus={initialFocus}
           finalFocus={finalFocus}
-          className={cn('fixed inset-x-0 bottom-[var(--app-bottom,0px)] z-50 flex max-h-[min(85dvh,var(--app-height,100dvh))] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', className)}
+          className={cn('fixed inset-x-0 bottom-[var(--app-bottom,0px)] z-50 flex max-h-[min(85dvh,var(--app-height,100dvh))] flex-col overflow-hidden rounded-t-xl pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full starting:translate-y-full', floatClass, className)}
         >
           <div
             aria-hidden="true"
