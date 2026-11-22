@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type Componen
 import type { ExtraProps } from 'react-markdown';
 import { useApi } from '../ApiContext';
 import type { Item, Reference } from '../api';
-import { citedNumbers, referenceName } from '../lib/references';
+import { citedNumbers, referenceName, referenceWords } from '../lib/references';
 
 // The references a reply cites (DESIGN.md turn outcome), held per Thread and reply, and the cited
 // numbers in its prose. Kept apart from the ledger (References.tsx) so the Markdown renderer can use
@@ -53,9 +53,10 @@ export function MdCite({ children, ...props }: ComponentProps<'button'> & ExtraP
   const index = Number((props as Record<string, unknown>)['data-reference']);
   const r = cites?.refs[index];
   if (!cites || !r) return <>{children}</>;
-  const what = r.status === 'unresolved' ? 'no definition in this Thread' : r.status === 'ambiguous' ? `${r.candidates?.length ?? 0} matches` : r.title || r.state || '';
+  const what = referenceWords(r) || r.state || '';
+  const name = what ? `${referenceName(r)}: ${what}` : referenceName(r);
   return (
-    <button type="button" title={what || undefined} aria-label={`${referenceName(r)}${what ? `: ${what}` : ''}. Show in this reply's references`} className="rounded-xs underline decoration-hairline-strong decoration-dotted underline-offset-3 transition-colors duration-100 hover:decoration-current" onClick={() => cites.pick(index)}>
+    <button type="button" title={what || undefined} aria-label={`${name}. Show in this reply's references`} className="rounded-xs underline decoration-hairline-strong decoration-dotted underline-offset-3 transition-colors duration-100 hover:decoration-current" onClick={() => cites.pick(index)}>
       {children}
     </button>
   );

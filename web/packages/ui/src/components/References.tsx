@@ -3,7 +3,7 @@ import { useApi } from '../ApiContext';
 import type { GitLabItemSummary, Item, Reference } from '../api';
 import { cn } from '../lib/cn';
 import { refKey, type GitLabRef } from '../lib/gitlabRefs';
-import { citesReferences, gitLabKind, mismatched, referenceName, referenceSummary } from '../lib/references';
+import { citesReferences, gitLabKind, mismatched, referenceName, referenceSummary, referenceWords } from '../lib/references';
 import { useDisclosure } from './Details';
 import { held, put, useHeld } from './ReferenceCite';
 import { stateBlocks, useSummaries, useTurnGitLabRefs } from './GitLabStrip';
@@ -134,7 +134,7 @@ function ReferenceRow({ id, r, gitlab }: Readonly<{ id: string; r: Reference; gi
   const state = r.state ?? '';
   const chip: Block[] = gitlab ? stateBlocks(gitlab) : state ? [{ key: 'state', tone, label: state.charAt(0).toUpperCase() + state.slice(1), title: bad ? `${state}, the reply says ${r.claimed}` : state }] : [];
   const resolved = r.status === 'resolved';
-  const words = r.status === 'unresolved' ? 'no definition in this Thread' : r.status === 'ambiguous' ? `${r.candidates?.length ?? 0} matches` : r.title || '';
+  const words = referenceWords(r);
   const body = (
     <>
       <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', resolved ? DOT[tone] : 'border border-dashed border-faint')} />

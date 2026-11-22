@@ -15,6 +15,13 @@ const unknown = (r: Reference) => r.status !== 'resolved';
 /** The reply's state word for an item differs from the state the Thread recorded. */
 export const mismatched = (r: Reference) => !!r.claimed && !!r.state && r.claimed.toLowerCase() !== r.state.toLowerCase();
 
+/** What a cited item is, in words: its title, or why there is none. */
+export function referenceWords(r: Reference): string {
+  if (r.status === 'unresolved') return 'no definition in this Thread';
+  if (r.status === 'ambiguous') return `${r.candidates?.length ?? 0} matches`;
+  return r.title || '';
+}
+
 /** How a row names the item: "#4" for an issue, "!7" for a merge request, else the reply's own label ("finding 3"). */
 export function referenceName(r: Reference): string {
   if (/^[#!]\d/.test(r.label)) return r.label;
@@ -46,7 +53,8 @@ interface MdNode { type: string; value?: string; children?: MdNode[]; data?: Rec
 
 // A number in prose: "#4", "!7" or a bare "4", never part of a word, a version, a time or a path.
 const NUMBER = /(?<![\w#!&./:-])([#!]?)(\d+)(?![\w%]|[.:/-]\d)/g;
-const AFTER_NOUN = new RegExp(`\\b(?:${NOUNS})s?\\s+$`, 'i');
+// Bounded, and tested on a short tail only: a whole-prefix `\s+$` backtracks on every number.
+const AFTER_NOUN = new RegExp(`\\b(?:${NOUNS})s?\\s{1,3}$`, 'i');
 const LIST_GAP = /^\s*(?:,|,?\s*(?:and|or|&))\s*$/i;
 
 /**
@@ -58,7 +66,7 @@ export function citedSpans(text: string, cited: ReadonlyMap<string, number>): { 
   const found = [...text.matchAll(NUMBER)].flatMap((m) => {
     const index = cited.get(m[2]);
     if (index === undefined) return [];
-    return [{ start: m.index, end: m.index + m[0].length, index, sure: !!m[1] || AFTER_NOUN.test(text.slice(0, m.index)) }];
+    return [{ start: m.index, end: m.index + m[0].length, index, sure: !!m[1] || AFTER_NOUN.test(text.slice(Math.max(0, m.index - 16), m.index)) }];
   });
   // A cited number listed with another one stands with it.
   for (let i = 1; i < found.length; i++) {
