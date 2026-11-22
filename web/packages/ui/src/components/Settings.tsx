@@ -37,6 +37,7 @@ import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { Input } from './ui/input';
@@ -353,25 +354,23 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
             <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto overflow-x-hidden rounded-sm bg-raised px-2 py-1 shadow-well">
               {matchingIds(draft.ids, draft.query).map((id) => (
                 <div key={id} className="flex min-h-7 items-center gap-3 text-ui text-ink">
-                  <label className="flex min-w-0 flex-1 items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="size-3.5 shrink-0 accent-accent"
+                  <label htmlFor={`custom-model-${id}`} className="flex min-w-0 flex-1 items-center gap-2">
+                    <Checkbox
+                      id={`custom-model-${id}`}
                       disabled={busy}
                       checked={draft.selected.includes(id)}
-                      onChange={(e) => setDraft({ ...draft, selected: e.target.checked ? [...draft.selected, id] : draft.selected.filter((s) => s !== id) })}
+                      onCheckedChange={(checked) => setDraft({ ...draft, selected: checked ? [...draft.selected, id] : draft.selected.filter((s) => s !== id) })}
                     />
                     <span className="break-all">{id}</span>
                   </label>
                   <Tip label="Only for models that support image input">
-                    <label className="flex shrink-0 items-center gap-2 text-muted">
-                      <input
-                        type="checkbox"
+                    <label htmlFor={`custom-vision-${id}`} className="flex shrink-0 items-center gap-2 text-muted">
+                      <Checkbox
+                        id={`custom-vision-${id}`}
                         aria-label={`Enable vision for ${id}`}
-                        className="size-3.5 accent-accent"
                         disabled={busy || !draft.selected.includes(id)}
                         checked={draft.vision.includes(id)}
-                        onChange={(e) => setDraft({ ...draft, vision: e.target.checked ? [...draft.vision, id] : draft.vision.filter((s) => s !== id) })}
+                        onCheckedChange={(checked) => setDraft({ ...draft, vision: checked ? [...draft.vision, id] : draft.vision.filter((s) => s !== id) })}
                       />
                       Vision
                     </label>
@@ -561,9 +560,9 @@ function pageMounted(id: SettingsPage, on: boolean, visited: ReadonlySet<Setting
 function PageSlot({ page, on, searching, line, onOpen, children }: Readonly<{ page: (typeof SETTINGS_PAGES)[number]; on: boolean; searching: boolean; line: string; onOpen: (id: SettingsPage) => void; children: ReactNode }>) {
   let head: ReactNode = null;
   if (searching) {
-    head = <button type="button" className="flex items-center gap-1 self-start rounded-sm px-1 text-caption text-muted hover:text-ink" onClick={() => onOpen(page.id)}>
+    head = <Button size="xs" className="h-auto gap-1 self-start px-1 font-normal text-muted" onClick={() => onOpen(page.id)}>
       {page.group.label}<ChevronRight aria-hidden="true" className="size-3.5" /><span className="font-medium text-ink">{page.label}</span>
-    </button>;
+    </Button>;
   } else if (line) {
     head = <p className="px-1 text-caption text-muted">{line}</p>;
   }

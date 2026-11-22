@@ -6,6 +6,7 @@ import { useApi } from '../ApiContext';
 import { describeError, LIVE, readOnly, type BranchList, type Project, type SessionSummary, type ThreadPlace } from '../api';
 import { cn } from '../lib/cn';
 import { timeAgo } from './common';
+import { Button } from './ui/button';
 import { itemClass, labelClass, popupClass, separatorClass } from './ui/menu';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
@@ -17,7 +18,6 @@ export const ROUTINE_PLACE_CAPABILITY = 'routine-place-v1';
 /** What a service that switches the Project folder to an existing branch advertises: the `switch` place and POST …/git/branch. */
 export const SWITCH_CAPABILITY = 'branch-switch-v1';
 
-const CHIP = 'flex h-7 min-w-0 items-center gap-1.5 rounded-sm px-2 text-caption text-body transition-colors hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-9 [&_svg]:size-3.5 [&_svg]:shrink-0';
 const TEXT = 'flex h-7 min-w-0 items-center gap-1.5 px-2 text-caption text-body [&_svg]:size-3.5 [&_svg]:shrink-0';
 
 type Branch = BranchList['branches'][number];
@@ -145,10 +145,10 @@ function BranchButton({ refFn, open, onClick, children, name }: Readonly<{ refFn
   return (
     // The face is the bare branch name; the tooltip says what it is, as the toolbar's pickers do.
     <Tip label={`Branch: ${name}`} disabled={open}>
-      <button ref={refFn} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Branch ${name}`} className={CHIP} onClick={onClick}>
+      <Button ref={refFn} size="sm" aria-haspopup="dialog" aria-expanded={open} aria-label={`Branch ${name}`} className="min-w-0 shrink text-caption font-normal aria-expanded:bg-fill-strong aria-expanded:text-ink pointer-coarse:h-9 [&_svg]:size-3.5" onClick={onClick}>
         {children}
         <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-      </button>
+      </Button>
     </Tip>
   );
 }

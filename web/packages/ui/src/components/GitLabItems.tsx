@@ -8,7 +8,7 @@ import { dateTime, Note, Skeleton } from './common';
 import { GitLabItemsContext, KIND_WORD, KindGlyph, itemLabel, statusLabel, statusTone, toneText, useSummaries, useSummaryRevision, type GitLabItems } from './GitLabStrip';
 import { GitLabMarkdown, GitLabReview } from './GitLabReview';
 import { useTaskActions } from './taskActions';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Chip } from './ui/chip';
 import { Clamp, PanelSection } from './ui/panel';
 // The GitLab side panel's views of one item opened from the conversation (GitLabStrip): a merge
@@ -28,10 +28,10 @@ export function GitLabItemView({ session, refs, current, onOpen }: Readonly<{ se
       {refs.length > 1 && (
         <div role="group" aria-label="This turn's GitLab items" className="flex flex-wrap gap-1">
           {refs.map((r) => (
-            <button key={refKey(r)} type="button" aria-pressed={sameRef(r, current)} onClick={() => onOpen(r)} className="inline-flex h-6 items-center gap-1 rounded-sm px-1.5 text-caption text-muted hover:bg-tint-hover hover:text-ink aria-pressed:bg-tint-selected aria-pressed:text-ink">
+            <Button key={refKey(r)} size="xs" aria-pressed={sameRef(r, current)} onClick={() => onOpen(r)} className="gap-1 font-normal text-muted [&_svg]:size-3">
               <KindGlyph r={r} item={items.get(refKey(r))} className="size-3" />
               <span className={cn(r.kind === 'job' && 'font-mono')}>{r.kind === 'pipeline' ? `#${r.id}` : itemLabel(r, items.get(refKey(r)))}</span>
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -70,8 +70,9 @@ function LinkRow({ link, onOpen }: Readonly<{ link: GitLabWorkItemLink; onOpen: 
     <span className={cn('shrink-0 text-caption', toneText(link.state))}>{statusLabel(link.state)}</span>
   </>;
   const className = '-mx-2 flex min-h-8 min-w-0 items-center gap-2 rounded-sm px-2 text-left text-ui';
-  if (r) return <button type="button" className={cn(className, 'hover:bg-tint-hover')} onClick={() => onOpen(r)}>{body}</button>;
-  return link.web_url ? <a href={link.web_url} target="_blank" rel="noreferrer" className={cn(className, 'hover:bg-tint-hover')}>{body}<ExternalLink aria-hidden="true" className="size-3 shrink-0 text-muted" /></a> : <div className={className}>{body}</div>;
+  const linkClass = cn(rowClass, '-mx-2 min-h-8 w-auto py-0');
+  if (r) return <button type="button" className={linkClass} onClick={() => onOpen(r)}>{body}</button>;
+  return link.web_url ? <a href={link.web_url} target="_blank" rel="noreferrer" className={linkClass}>{body}<ExternalLink aria-hidden="true" className="size-3 shrink-0 text-muted" /></a> : <div className={className}>{body}</div>;
 }
 
 function useRead<T>(read: (signal: AbortSignal) => Promise<T>, deps: unknown[]): { value?: T; error?: string } {
@@ -99,7 +100,7 @@ function MergeRequestView({ gl, session, r, item, onOpen }: Readonly<{ gl: GitLa
         facts={mr && <>{refText(r)} · <span className="font-mono text-code-sm">{mr.source_branch}</span> → <span className="font-mono text-code-sm">{mr.target_branch}</span>{mr.author && <> · {mr.author.name || mr.author.username}</>}</>} />
       {pipeline && (
         <PanelSection label="Pipeline" meta={pipeline.sha ? pipeline.sha.slice(0, 8) : undefined}>
-          <button type="button" className="-mx-2 flex min-h-8 min-w-0 items-center gap-2 rounded-sm px-2 text-left text-ui hover:bg-tint-hover" onClick={() => onOpen({ kind: 'pipeline', id: pipeline.id })}>
+          <button type="button" className={cn(rowClass, '-mx-2 min-h-8 w-auto py-0')} onClick={() => onOpen({ kind: 'pipeline', id: pipeline.id })}>
             <KindGlyph r={{ kind: 'pipeline', id: pipeline.id }} item={{ ref: '', kind: 'pipeline', state: pipeline.status }} />
             <span className="shrink-0 font-medium text-ink">#{pipeline.id}</span>
             <span className="min-w-0 flex-1 truncate font-mono text-code-sm text-body">{pipeline.ref}</span>
@@ -123,7 +124,7 @@ function WorkItemView({ gl, r, item, onOpen }: Readonly<{ gl: GitLabItems; r: Gi
     <>
       <Head title={w?.title ?? item?.title ?? itemLabel(r, item, true)} state={<StateChip state={w?.state ?? item?.state} />}
         facts={w && <>{KIND_WORD[w.kind] ?? 'Work item'} {refText(r)}{w.created_at && <> · opened {dateTime(w.created_at)}</>}{w.author && <> by {w.author.name || w.author.username}</>}{w.parent && <> · in {parent
-          ? <button type="button" className="inline-flex h-5 items-center gap-1 rounded-sm bg-tint-well px-1.5 align-middle text-caption text-ink hover:bg-sunken" onClick={() => onOpen(parent)}>{refText(parent)} {w.parent.title}</button>
+          ? <Button size="xs" variant="secondary" className="h-5 gap-1 align-middle font-normal" onClick={() => onOpen(parent)}>{refText(parent)} {w.parent.title}</Button>
           : <span className="text-body">{w.parent.title}</span>}</>}</>} />
       {error && <Note tone="error" role="alert">{error}</Note>}
       {!w && !error && <Skeleton label="Loading the work item…" rows={3} />}
@@ -206,11 +207,11 @@ function PipelineView({ gl, r, item }: Readonly<{ gl: GitLabItems; r: GitLabRef;
                 <div key={stage} role="group" aria-label={`Stage ${stage}`} className="flex min-w-0 flex-col gap-1">
                   <span className="truncate text-caption text-muted">{stage}</span>
                   {jobs.filter((job) => job.stage === stage).map((job) => (
-                    <button key={job.id} type="button" aria-pressed={job.id === selected?.id} onClick={() => setPicked(job.id)} className="flex h-8 min-w-0 items-center gap-1.5 rounded-sm bg-sunken px-2 text-left text-ui text-ink transition-colors duration-100 hover:bg-tint-hover aria-pressed:bg-tint-selected">
+                    <Button key={job.id} size="md" aria-pressed={job.id === selected?.id} onClick={() => setPicked(job.id)} className="w-full min-w-0 justify-start bg-sunken px-2 text-left font-normal text-ink [&_svg]:size-3.5">
                       <KindGlyph r={{ kind: 'job', id: job.id }} item={{ ref: '', kind: 'job', state: job.status }} />
                       <span className="min-w-0 flex-1 truncate font-mono text-code-sm">{job.name}</span>
                       <span className={cn('shrink-0 text-caption', toneText(job.status))}>{statusLabel(job.status).toLowerCase()}{job.allow_failure && job.status === 'failed' && ' · allowed'}</span>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ))}

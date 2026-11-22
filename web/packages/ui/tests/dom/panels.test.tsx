@@ -185,12 +185,12 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     const send = await sheet.findByRole('button', { name: 'Send 1 comment to the thread' });
-    const box = (await sheet.findAllByRole('checkbox', { name: /^Viewed / }))[0] as HTMLInputElement;
+    const box = (await sheet.findAllByRole('checkbox', { name: /^Viewed / }))[0];
     fireEvent.click(send);
     fireEvent.click(box); // while the send is in flight
-    expect(box.checked).toBe(true);
+    expect(box.getAttribute('aria-checked')).toBe('true');
     await sheet.findByText(/Comments (sent|queued)/);
-    expect(box.checked).toBe(true);
+    expect(box.getAttribute('aria-checked')).toBe('true');
     const stored = JSON.parse(localStorage.getItem('uam.review.t1') ?? 'null') as { viewed: Record<string, string>; comments: unknown[] } | null;
     expect(Object.keys(stored?.viewed ?? {})).toHaveLength(1);
     expect(stored?.comments).toEqual([]);

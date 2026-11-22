@@ -13,7 +13,7 @@ import { BADGE_TEXT, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, StateLabe
 import { lineCountsText } from '../lib/cost';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
-import { Button } from './ui/button';
+import { Button, rowClass as baseRowClass } from './ui/button';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, useLazyContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -450,7 +450,7 @@ function ConversationHits({ query, sessions }: Readonly<{ query: string; session
             const s = byId.get(h.thread_id)!;
             return (
               <li key={h.thread_id}>
-                <button type="button" onClick={() => a.select(s.id)} className="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left text-caption hover:bg-tint-hover focus-visible:-outline-offset-2">
+                <button type="button" onClick={() => a.select(s.id)} className={cn(baseRowClass, 'flex-col items-stretch gap-0.5 px-2.5 py-2 text-caption focus-visible:-outline-offset-2')}>
                   <span className="truncate text-ui text-ink">{taskName(s)}</span>
                   <span className="line-clamp-2 text-muted">
                     {h.snippet.map((p, i) => (p.match ? <mark key={i} className="bg-transparent font-medium text-ink">{p.text}</mark> : <span key={i}>{p.text}</span>))}
@@ -503,21 +503,23 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   // A machine linked to another Copilot account keeps its rows, faded; opening one shows why it is blocked.
   const unavailable = machine?.status.status === 'account-mismatch';
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A Thread row is flat on the rail, a 46px tile on a 48px pitch: `tint-hover` under the pointer (anywhere on the row, its Settle included), the open one `tint-selected`.
+  // A Thread row is flat on the rail, a 46px tile on a 48px pitch: `fill-hover` under the pointer (anywhere on the row, its Settle included), the open one `fill`.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
     rowClass = cn(
-      'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
+      baseRowClass,
+      'h-8 py-0 focus-visible:-outline-offset-2 pointer-coarse:h-11',
       weight,
       // Quiet at rest by colour, never by opacity (it would take the title under AA); the row's own ink on hover and focus.
-      !selected && cn('text-muted hover:bg-tint-hover', strong ? 'hover:text-ink focus-visible:text-ink' : 'hover:text-body focus-visible:text-body'),
-      selected && 'bg-tint-selected',
+      !selected && cn('text-muted', strong ? 'hover:text-ink focus-visible:text-ink' : 'hover:text-body focus-visible:text-body'),
+      selected && 'bg-fill text-ink shadow-highlight-tonal',
     );
   } else {
     rowClass = cn(
-      'flex min-h-11.5 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 text-left text-caption transition-[background-color] duration-100 focus-visible:-outline-offset-2',
-      selected ? 'bg-tint-selected' : 'group-hover/row:bg-tint-hover',
+      baseRowClass,
+      'min-h-11.5 flex-col items-stretch justify-center gap-0.5 px-2.5 py-0 text-caption focus-visible:-outline-offset-2',
+      selected ? 'bg-fill text-ink shadow-highlight-tonal' : 'group-hover/row:bg-fill-hover',
       readOnly(s) && !selected && 'text-muted',
       unavailable && !selected && 'opacity-60',
       weight,
@@ -578,15 +580,11 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
         <Tip label={settle.label}>
           <Button
             ref={settleRef}
-            size="sm"
+            size="xs"
             tabIndex={-1}
             data-settle=""
             aria-label={`Settle ${taskName(s) || 'New thread'}`}
-            className={cn(
-              'pointer-events-none absolute top-px right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-has-focus-visible/row:pointer-events-auto group-has-focus-visible/row:opacity-100 pointer-coarse:after:inset-0 [&_svg]:size-3.5',
-              // One step over the row's own tint, so its hover still reads.
-              selected ? 'bg-tint-selected' : 'not-aria-disabled:hover:bg-tint-selected',
-            )}
+            className="pointer-events-none absolute top-px right-1.5 min-w-16 justify-end gap-1 px-1 font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-has-focus-visible/row:pointer-events-auto group-has-focus-visible/row:opacity-100 not-aria-disabled:hover:bg-fill-strong pointer-coarse:after:inset-0"
             onClick={() => settle.onSelect()}
           >
             <CircleCheck aria-hidden="true" />
@@ -655,7 +653,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all,
         data-nav={`shelf:${label}`}
         tabIndex={tabStop === `shelf:${label}` ? 0 : -1}
         aria-expanded={open}
-        className="mt-1 flex h-7 w-full shrink-0 items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
+        className={cn(baseRowClass, 'mt-1 h-7 shrink-0 py-0 text-caption text-muted hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11')}
         onClick={onToggle}
       >
         <span className="whitespace-nowrap">

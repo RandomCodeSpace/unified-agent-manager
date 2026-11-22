@@ -243,10 +243,10 @@ describe('native configuration', () => {
     await user.click(form.getByLabelText('Argument hint (optional)'));
     await user.paste('[target]');
     await user.type(form.getByLabelText('Allowed tools (optional, one per line)'), 'read\nsearch');
-    const automatic = form.getByRole('checkbox', { name: 'Allow automatic skill invocation' }) as HTMLInputElement;
-    const manual = form.getByRole('checkbox', { name: 'Allow manual skill invocation' }) as HTMLInputElement;
-    expect(automatic.checked).toBe(true);
-    expect(manual.checked).toBe(true);
+    const automatic = form.getByRole('checkbox', { name: 'Allow automatic skill invocation' });
+    const manual = form.getByRole('checkbox', { name: 'Allow manual skill invocation' });
+    expect(automatic.getAttribute('aria-checked')).toBe('true');
+    expect(manual.getAttribute('aria-checked')).toBe('true');
     await user.click(automatic);
     await user.click(manual);
     expect(form.getByText(/Both automatic and manual invocation are disabled/)).toBeTruthy();

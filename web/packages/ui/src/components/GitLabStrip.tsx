@@ -6,6 +6,7 @@ import { cn } from '../lib/cn';
 import { needsBody, refKey, refText, sameRef, turnGitLabRefs, type GitLabOrigin, type GitLabOwnPipeline, type GitLabRef } from '../lib/gitlabRefs';
 import { useBodyRead } from './Details';
 import { Blocks, type Block, type BlockTone } from './ui/blocks';
+import { Button, buttonVariants } from './ui/button';
 import type { ChipProps } from './ui/chip';
 
 // GitLab from the conversation (DESIGN.md outcome bar): each reply that ended a turn which touched
@@ -290,12 +291,12 @@ export function TurnStrip({ items: calls, hide }: Readonly<{ items: Item[]; hide
           <span className={cn('min-w-0 truncate font-semibold', r.kind === 'job' && 'font-mono font-medium')}>{itemLabel(r, item)}</span>
           <Blocks items={stateBlocks(item)} />
         </>;
-        const className = "relative inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm bg-raised pr-0.5 pl-2 text-caption text-ink shadow-raised transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover aria-[current=true]:bg-tint-selected pointer-coarse:after:-inset-y-2.5";
+        const chipClass = 'min-w-0 max-w-full shrink bg-raised pr-0.5 pl-2 font-normal text-ink shadow-raised not-aria-disabled:hover:bg-fill-hover aria-[current=true]:bg-fill-strong [&_svg]:size-3';
         const name = item?.title && r.kind !== 'job' ? `${itemLabel(r, item, true)} · ${item.title}` : undefined;
         const title = item?.stale && !item.error ? `${name ? `${name} · ` : ''}Last known state: GitLab is rate limiting reads` : name;
         return item?.web_url
-          ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={className} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
-          : <button key={refKey(r)} type="button" aria-current={on || undefined} title={title} className={className} onClick={() => gl.open(refs, r)}>{body}</button>;
+          ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={cn(buttonVariants({ size: 'xs' }), chipClass)} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
+          : <Button key={refKey(r)} size="xs" aria-current={on || undefined} title={title} className={chipClass} onClick={() => gl.open(refs, r)}>{body}</Button>;
       })}
     </span>
   );

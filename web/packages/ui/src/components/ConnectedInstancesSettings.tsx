@@ -164,7 +164,7 @@ export function ConnectedInstancesSettings({ connections, statuses = {}, activeT
 
               <Switch checked={connection.enabled} disabled={busy} onCheckedChange={(enabled) => toggle(connection, enabled)} aria-label={`Enable ${connection.label}`} />
             </div>
-            <Note role="status" className="transition-colors duration-160 ease-app" tone={connection.enabled && status && status.status !== 'online' && status.status !== 'connecting' ? 'warn' : 'muted'}>
+            <Note role="status" tone={connection.enabled && status && status.status !== 'online' && status.status !== 'connecting' ? 'warn' : 'muted'}>
               {connection.enabled ? statusNote : 'Disabled'}
               {connection.enabled && status?.error ? ` — ${status.error}` : ''}
             </Note>

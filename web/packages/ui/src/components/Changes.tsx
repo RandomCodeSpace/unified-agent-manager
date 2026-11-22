@@ -12,10 +12,12 @@ import { Highlighted, InstanceName, LineCounts, Note, Skeleton } from './common'
 import { lineCountsText } from '../lib/cost';
 import { FileIcon } from './FileIcon';
 import { PanelHeader, SidePanel } from './Subagents';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu, type ActionItem } from './ui/menu';
 import { Segmented } from './ui/segmented';
+import { Textarea } from './ui/textarea';
 import { Tip } from './ui/tooltip';
 
 /** What Changes opens on: a turn's edited files (its first one scrolled to), or one file and line to comment on (Lens). */
@@ -508,6 +510,7 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
   draftLine?: number;
 }>) {
   const api = useApi();
+  const viewedId = useId();
   const [diff, setDiff] = useState<{ key: string; file: FileDiffData | null; error: string | null } | null>(null);
   const key = `${f.path}\n${fileDigest(f)}`;
   // Read when unfolded, and again only when the file's digest moves; the last diff stays on screen meanwhile.
@@ -565,10 +568,10 @@ function FileCard({ sessionId, file: f, viewed, folded, onFold, onViewed, onOpen
           <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="text-muted" />}><Ellipsis /></Menu.Trigger>
           <Menu.Content align="end"><Menu.Actions items={items} /></Menu.Content>
         </Menu.Root>
-        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-caption text-muted hover:bg-tint-hover pointer-coarse:min-h-11">
-          <input type="checkbox" className="size-3.5 cursor-pointer accent-success" aria-label={`Viewed ${f.path}`} checked={viewed === 'viewed'} onChange={(e) => onViewed(e.target.checked)} />
-          <span aria-hidden="true">Viewed</span>
-        </label>
+        <div className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-caption text-muted hover:bg-fill-hover pointer-coarse:min-h-11">
+          <Checkbox id={viewedId} aria-label={`Viewed ${f.path}`} checked={viewed === 'viewed'} onCheckedChange={onViewed} />
+          <label htmlFor={viewedId} className="cursor-pointer" aria-hidden="true">Viewed</label>
+        </div>
       </div>
       {!folded && (
         <div className="overflow-hidden rounded-b-md">
@@ -597,7 +600,7 @@ function CommentBatch({ comments, working, sending, note, onOpen, onRemove, onSe
         <ul className="max-h-32 overflow-y-auto overflow-x-hidden px-1 pt-1">
           {comments.map((c) => (
             <li key={c.id} className="flex items-center gap-1 text-caption">
-              <button type="button" className="min-w-0 flex-1 truncate rounded-xs px-2 py-1 text-left text-body hover:bg-tint-hover pointer-coarse:min-h-11" title={c.body} onClick={() => onOpen(c.path)}>
+              <button type="button" className={cn(rowClass, 'block w-auto flex-1 truncate text-caption pointer-coarse:min-h-11')} title={c.body} onClick={() => onOpen(c.path)}>
                 <span className="font-mono text-code-sm text-ink">{c.path.split('/').at(-1)}:{c.line}</span> {c.body}
               </button>
               <Button size="icon-sm" aria-label={`Remove comment on ${c.path} line ${c.line}`} className="text-muted" onClick={() => onRemove(c.id)}>
@@ -705,8 +708,8 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
           <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{file.old_path ? `${file.old_path} → ${file.path}` : file.path}</span>
             {onViewed && (
-              <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
-                <input type="checkbox" className="size-3.5 cursor-pointer accent-success" checked={!!viewed} onChange={(e) => onViewed(e.target.checked)} />
+              <label htmlFor={`${glyph}-viewed`} className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
+                <Checkbox id={`${glyph}-viewed`} checked={!!viewed} onCheckedChange={onViewed} />
                 Viewed
               </label>
             )}
@@ -869,8 +872,8 @@ function renderHunk(h: DiffHunk, hi: number, notes?: LineNotes, from = 0, to = h
           {notes?.revert || notes?.open ? (
             <span className="sticky left-3 flex items-center gap-2 pr-3 font-sans">
               <span className="w-0 min-w-0 flex-1 truncate">{skipped > 0 ? `${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'}` : `Lines ${h.newStart}–${h.newStart + Math.max(0, h.newLines - 1)}`}</span>
-              {first && <Button size="sm" variant="subtle" className="h-6 text-caption" onClick={() => notes.open?.({ side: first.side, line: first.line, code: first.code })}><MessageSquarePlus />Comment</Button>}
-              {notes.revert && <Button size="sm" variant="subtle" className="h-6 text-caption" loading={notes.reverting === hi} disabled={notes.reverting != null} onClick={() => notes.revert?.(hi, hunkText(h))}><Undo2 />Revert</Button>}
+              {first && <Button size="xs" variant="subtle" onClick={() => notes.open?.({ side: first.side, line: first.line, code: first.code })}><MessageSquarePlus />Comment</Button>}
+              {notes.revert && <Button size="xs" variant="subtle" loading={notes.reverting === hi} disabled={notes.reverting != null} onClick={() => notes.revert?.(hi, hunkText(h))}><Undo2 />Revert</Button>}
             </span>
           ) : <span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span>}
         </td>
@@ -961,12 +964,12 @@ function CommentBox({ label, onSave, onCancel }: Readonly<{ label: string; onSav
       className="ml-6 mr-2 flex flex-col gap-1.5 rounded-md bg-raised p-2 shadow-raised"
       onSubmit={(e) => { e.preventDefault(); save(); }}
     >
-      <textarea
+      <Textarea
         ref={ref}
         rows={3}
         aria-label={label}
         placeholder="What should the agent change here?"
-        className="w-full resize-y rounded-sm bg-sunken px-2 py-1.5 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none"
+        className="min-h-0 px-2 py-1.5"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
           if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }

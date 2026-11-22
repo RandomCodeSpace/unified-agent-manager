@@ -225,7 +225,7 @@ describe('Usage popover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
     const prices = within(await screen.findByRole('region', { name: 'Token costs' }));
     await prices.findByText('Unpriced. Add input and output prices to estimate cost.');
-    expect(prices.getByRole('checkbox', { name: 'Show all models' })).toHaveProperty('checked', false);
+    expect(prices.getByRole('checkbox', { name: 'Show all models' }).getAttribute('aria-checked')).toBe('false');
     expect(prices.getByRole('combobox', { name: 'Model', exact: true }).textContent).toContain('gpt-6-luna');
   });
 

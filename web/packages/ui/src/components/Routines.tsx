@@ -16,6 +16,7 @@ import { AlertDialog, Dialog, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { Select } from './ui/select';
+import { Textarea } from './ui/textarea';
 import { Tip } from './ui/tooltip';
 
 /** How often the open view reads the routines again, for next runs and outcomes. */
@@ -29,9 +30,6 @@ const TONE: Record<OutcomeTone, string> = {
   muted: 'text-muted',
   ink: 'text-ink',
 };
-
-const areaClass =
-  'min-h-28 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none';
 
 /**
  * Routines (docs/web.md, Routines): a view in the main pane like Settings. `#routines` lists every
@@ -439,10 +437,10 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
           <Input id="routine-name" ref={first} required aria-describedby="routine-name-hint" placeholder="Dependency check" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field id="routine-prompt" label="What the agent should do">
-          <textarea
+          <Textarea
             id="routine-prompt"
             required
-            className={areaClass}
+            className="min-h-28"
             placeholder="Check the dependencies for updates and write a short summary of what changed."
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

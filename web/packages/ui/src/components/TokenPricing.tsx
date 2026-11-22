@@ -4,6 +4,7 @@ import { describeError, type TokenPrice, type TokenPriceCatalog } from '../api';
 import { useApp } from './common';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
+import { Checkbox } from './ui/checkbox';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 
@@ -83,8 +84,8 @@ export function TokenPricing() {
   const row = models.find((model) => rowKey(model) === selected) ?? models.find(listed) ?? models[0];
   return <div className="flex flex-col gap-3">
     <p className="text-caption text-muted">USD per 1M tokens. Estimates only.</p>
-    <label className="flex min-h-8 items-center gap-2 self-start text-ui text-ink">
-      <input type="checkbox" className="size-3.5 accent-accent" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />
+    <label htmlFor="token-price-show-all" className="flex min-h-8 items-center gap-2 self-start text-ui text-ink">
+      <Checkbox id="token-price-show-all" checked={showAll} onCheckedChange={setShowAll} />
       Show all models
     </label>
     {error && <div role="alert" className="flex items-center gap-2 text-caption text-error">Could not load prices: {error}<Button size="sm" onClick={() => setRevision((n) => n + 1)}>Retry prices</Button></div>}

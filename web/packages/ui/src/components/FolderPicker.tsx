@@ -5,7 +5,7 @@ import { ApiError, describeError, isStatus, type DirList } from '../api';
 import { cn } from '../lib/cn';
 import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf } from '../lib/folders';
 import { Loading, Note } from './common';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Input } from './ui/input';
 
 /** One listing request. A fresh object each time, so the same folder can be listed again after a folder is created in it. */
@@ -308,16 +308,16 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
                       /
                     </span>
                   )}
-                  <button
-                    type="button"
+                  <Button
+                    size="xs"
                     aria-current={last ? 'location' : undefined}
                     aria-label={i === 0 ? 'Root' : undefined}
-                    className={cn('h-6 max-w-full truncate rounded-xs px-1 transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11', last ? 'text-ink' : 'text-muted')}
+                    className={cn('max-w-full justify-start px-1 font-normal', last ? 'text-ink' : 'text-muted')}
                     title={c.name}
                     onClick={() => open(c.path)}
                   >
-                    {c.name}
-                  </button>
+                    <span className="truncate">{c.name}</span>
+                  </Button>
                 </li>
               );
             })}
@@ -415,8 +415,8 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
                 tabIndex={-1}
                 disabled={variant === 'project' && loading}
                 className={cn(
-                  'flex h-8 w-full cursor-default items-center gap-2 rounded-sm pr-0 pl-2 text-left outline-hidden transition-[background-color,color] duration-100 select-none pointer-coarse:h-11',
-                  sel ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-surface',
+                  rowClass,
+                  'h-8 cursor-default py-0 pr-0 pl-2 outline-hidden pointer-coarse:h-11',
                   e.hidden && !sel && 'text-muted',
                   loading && 'opacity-60',
                 )}
@@ -441,7 +441,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
                 <span
                   data-opens=""
                   aria-hidden="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-xs text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:size-11"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-xs text-muted hover:bg-fill-hover hover:text-ink pointer-coarse:size-11"
                 >
                   <ChevronRight className="size-4" />
                 </span>
