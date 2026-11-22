@@ -1,14 +1,16 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
-import { lazy, Suspense, useEffect, useId, useRef, useState, type SubmitEvent , type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type SubmitEvent , type ReactNode } from 'react';
 import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { fieldHint } from '../lib/answer';
 import { approvalMark } from '../lib/transcript';
 import { Markdown, Note } from './common';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
+import { Checkbox, Radio, RadioGroup } from './ui/checkbox';
 import { Chip } from './ui/chip';
-import { Input, inputVariants } from './ui/input';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
 
 /** A touch screen, where focusing a field would raise the keyboard over the conversation. */
@@ -193,19 +195,41 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
   );
 }
 
+/** Enter in a radio submits its form through the form's default button, as a native radio does; Base UI's takes the key. */
+function submitOnEnter(event: KeyboardEvent<HTMLElement>) {
+  if (event.key !== 'Enter') return;
+  const form = event.currentTarget.closest('form');
+  const button = form?.querySelector<HTMLButtonElement>('[type="submit"]');
+  if (button) button.click();
+  else form?.requestSubmit();
+}
+
 /**
- * One choice as a selectable row: a radio or checkbox per `multiple`, 44px on a coarse pointer.
- * A radio's change fires only when it turns on; `again` takes the click on the chosen one too
- * (a radio's click fires either way), and `hint` sits at the chosen row's end to say what it does.
+ * The fieldset around a question's ChoiceRows. With one answer it is their RadioGroup too, which reports the choice
+ * (`onPick`); it keeps a fieldset's `group` role. Base UI controls ignore a fieldset's `disabled`, so each row takes it.
  */
-function ChoiceRow({ name, choice, multiple, on, again = false, hint, describedBy, disabled, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; describedBy?: string; disabled?: boolean; onToggle: () => void }>) {
+function ChoiceSet({ multiple, name, value, onPick, disabled, ...props }: Pick<ComponentProps<'fieldset'>, 'className' | 'children' | 'disabled' | 'aria-labelledby' | 'aria-describedby'> & { 'data-field'?: number; multiple: boolean; name: string; value: string | undefined; onPick: (choice: string) => void }) {
+  if (multiple) return <fieldset disabled={disabled} {...props} />;
+  return <RadioGroup render={<fieldset disabled={disabled} />} role="group" name={name} value={value ?? ''} disabled={disabled} onValueChange={(v) => onPick(v as string)} {...props} />;
+}
+
+/**
+ * One choice as a selectable row inside a ChoiceSet: a radio (`value`, the choice unless given) or a checkbox per
+ * `multiple`, 44px on a coarse pointer. A checkbox toggles through `onToggle`; a radio turns on through its set.
+ * `again` sends a pointer's click on the chosen radio to `onToggle` too, and `hint` sits at the chosen row's end to
+ * say what it does.
+ */
+function ChoiceRow({ name, choice, value = choice, multiple, on, again = false, hint, describedBy, disabled, onToggle }: Readonly<{ name: string; choice: string; value?: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; describedBy?: string; disabled?: boolean; onToggle: () => void }>) {
   const hintId = useId();
   const shown = on && !!hint;
-  const change = !multiple && again ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
+  // The name stays the choice; the hint is its description, so a screen reader announces it too.
+  const control = { 'aria-label': choice, 'aria-describedby': shown ? hintId : describedBy };
   return (
-    <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-      {/* The name stays the choice; the hint is its description, so a screen reader announces it too. */}
-      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} aria-label={choice} aria-describedby={shown ? hintId : describedBy} disabled={disabled} className="size-3.5 accent-accent" {...change} />
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events -- The click is the radio's own (it bubbles from the control or its label); `detail` leaves a key's click out.
+    <label data-selected={on || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11')} onClick={!multiple && again && on && !disabled ? (e) => { if (e.detail > 0) onToggle(); } : undefined}>
+      {multiple
+        ? <Checkbox name={name} checked={on} disabled={disabled} onCheckedChange={onToggle} {...control} />
+        : <Radio value={value} onKeyDown={submitOnEnter} {...control} />}
       <span className="min-w-0 flex-1">{choice}</span>
       {shown && <span id={hintId} className="shrink-0 text-caption text-muted animate-fade-in">{hint}</span>}
     </label>
@@ -259,11 +283,11 @@ export function ComposerQuestion({ interaction, question, chosen, disabled, onCh
           <Markdown text={question.text} />
         </div>
         {(question.choices?.length ?? 0) > 0 && (
-          <fieldset aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled}>
+          <ChoiceSet multiple={!!question.multiple} name={`q-${interactionId}-0`} value={chosen[0]} onPick={toggle} aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled}>
             {question.choices!.map((c) => (
-              <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={chosen.includes(c)} again hint={question.multiple ? undefined : AGAIN_HINT} onToggle={() => toggle(c)} />
+              <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={chosen.includes(c)} again hint={question.multiple ? undefined : AGAIN_HINT} disabled={disabled} onToggle={() => toggle(c)} />
             ))}
-          </fieldset>
+          </ChoiceSet>
         )}
       </div>
       <div className="fade-rule" aria-hidden="true" />
@@ -280,9 +304,9 @@ export function ComposerPlan({ plan, sessionId, planVersion, chosen, disabled, o
       <p id={labelId} className="text-ui text-ink">{plan.summary || 'Choose how to continue, or send feedback to revise the plan.'}</p>
       {plan.truncated && <Note tone="warn">The plan is shortened. Send feedback to request a smaller plan.</Note>}
     </div>
-    <fieldset aria-labelledby={labelId} className="flex min-w-0 flex-col gap-0.5" disabled={disabled || !!plan.truncated}>
-      {plan.actions?.map((action) => <ChoiceRow key={action} name={`plan-${plan.request_id}`} choice={PLAN_ACTION_LABEL[action]} multiple={false} on={chosen.includes(action)} again hint={AGAIN_HINT} onToggle={() => chosen.includes(action) ? onAnswer() : onChoose([action])} />)}
-    </fieldset>
+    <ChoiceSet multiple={false} name={`plan-${plan.request_id}`} value={chosen[0]} onPick={(action) => onChoose([action])} aria-labelledby={labelId} className="flex min-w-0 flex-col gap-0.5" disabled={disabled || !!plan.truncated}>
+      {plan.actions?.map((action) => <ChoiceRow key={action} name={`plan-${plan.request_id}`} choice={PLAN_ACTION_LABEL[action]} value={action} multiple={false} on={chosen.includes(action)} again hint={AGAIN_HINT} disabled={disabled || !!plan.truncated} onToggle={onAnswer} />)}
+    </ChoiceSet>
     <div className="fade-rule" aria-hidden="true" />
   </div>;
 }
@@ -352,7 +376,7 @@ function ActionForm({ questions, actions, disabled, sending, onSubmit, onDismiss
             <div key={i} data-field={i} className="flex min-w-0 flex-col gap-1">
               <label htmlFor={key} className="text-ui text-ink">{q.text}{required}</label>
               {f?.multiline ? (
-                <textarea {...common} rows={3} className={cn(inputVariants(), 'h-auto min-h-20 resize-y py-2')} onChange={(e) => set(i, [e.target.value])} />
+                <Textarea {...common} className="min-h-20" onChange={(e) => set(i, [e.target.value])} />
               ) : (
                 <Input {...common} onChange={(e) => set(i, [e.target.value])} />
               )}
@@ -370,14 +394,14 @@ function ActionForm({ questions, actions, disabled, sending, onSubmit, onDismiss
           );
         }
         return (
-          <fieldset key={i} data-field={i} className="flex min-w-0 flex-col gap-0.5" disabled={disabled || !!sending} aria-describedby={describedBy}>
+          <ChoiceSet key={i} multiple={!!q.multiple} name={key} value={v[0]} onPick={(c) => set(i, [c])} data-field={i} className="flex min-w-0 flex-col gap-0.5" disabled={disabled || !!sending} aria-describedby={describedBy}>
             <legend className="mb-1 text-ui text-ink">{q.text}{required}</legend>
             {(q.choices ?? []).map((c) => (
-              <ChoiceRow key={c} name={key} choice={c} multiple={!!q.multiple} on={v.includes(c)} onToggle={() => set(i, q.multiple ? (v.includes(c) ? v.filter((x) => x !== c) : [...v, c]) : [c])} />
+              <ChoiceRow key={c} name={key} choice={c} multiple={!!q.multiple} on={v.includes(c)} disabled={disabled || !!sending} onToggle={() => set(i, v.includes(c) ? v.filter((x) => x !== c) : [...v, c])} />
             ))}
             {help}
             {errorLine}
-          </fieldset>
+          </ChoiceSet>
         );
       })}
       {!disabled && (
@@ -455,7 +479,7 @@ function QuestionForm({
   return (
     <form onSubmit={submit} className="mt-2">
       {questions.map((q, qi) => (
-        <fieldset key={qi} className="mb-3 min-w-0" disabled={disabled || !!sending}>
+        <ChoiceSet key={qi} multiple={!!q.multiple} name={`q-${interactionId}-${qi}`} value={chosen[qi]?.[0]} onPick={(c) => toggle(qi, c, false)} className="mb-3 min-w-0" disabled={disabled || !!sending}>
           <legend className="mb-1.5 text-ui text-ink">
             {q.header && <span className="mr-1.5 text-caption text-muted">{q.header}</span>}
             {q.text}
@@ -463,7 +487,7 @@ function QuestionForm({
           </legend>
           <div className="flex flex-col gap-0.5">
             {(q.choices ?? []).map((c) => (
-              <ChoiceRow key={c} name={`q-${interactionId}-${qi}`} choice={c} multiple={!!q.multiple} on={(chosen[qi] ?? []).includes(c)} onToggle={() => toggle(qi, c, !!q.multiple)} />
+              <ChoiceRow key={c} name={`q-${interactionId}-${qi}`} choice={c} multiple={!!q.multiple} on={(chosen[qi] ?? []).includes(c)} disabled={disabled || !!sending} onToggle={() => toggle(qi, c, true)} />
             ))}
             {q.custom && (
               <label htmlFor={`q-${interactionId}-${qi}-custom`} className="mt-1 flex items-center">
@@ -472,7 +496,7 @@ function QuestionForm({
               </label>
             )}
           </div>
-        </fieldset>
+        </ChoiceSet>
       ))}
       {!disabled && (
         <div className="flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">

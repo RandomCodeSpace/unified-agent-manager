@@ -31,21 +31,31 @@ describe('answering from the composer', () => {
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     const once = box().getByRole('radio', { name: 'Retry once' });
     const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
-    expect(once).toHaveProperty('checked', true);
+    expect(once.getAttribute('aria-checked')).toBe('true');
     await user.click(thrice);
-    expect(once).toHaveProperty('checked', false);
-    expect(thrice).toHaveProperty('checked', true);
+    expect(once.getAttribute('aria-checked')).toBe('false');
+    expect(thrice.getAttribute('aria-checked')).toBe('true');
     await user.click(once);
-    expect(once).toHaveProperty('checked', true);
-    expect(thrice).toHaveProperty('checked', false);
+    expect(once.getAttribute('aria-checked')).toBe('true');
+    expect(thrice.getAttribute('aria-checked')).toBe('false');
     await user.click(thrice);
-    expect(thrice).toHaveProperty('checked', true);
+    expect(thrice.getAttribute('aria-checked')).toBe('true');
     expect(box().getByText('Click again to answer')).toBeTruthy();
     expect(mock.received).toEqual([]);
     await user.click(thrice);
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
     expect(mock.received.map((r) => r.route)).toEqual(['answer']);
     expect(mock.received[0].body.answers).toEqual([['Retry up to 3 times']]);
+  });
+
+  test('Enter in the chosen option answers with it, as a native radio submits its form; Space does not', async () => {
+    const { user, mock } = await openTask('t16');
+    box().getByRole('radio', { name: 'Retry once' }).focus();
+    await user.keyboard(' ');
+    expect(mock.received).toEqual([]);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received[0].body.answers).toEqual([['Retry once']]);
   });
 
   test('a question that takes several says so, and its checkboxes toggle without sending', async () => {
@@ -55,7 +65,7 @@ describe('answering from the composer', () => {
     const arm = box().getByRole('checkbox', { name: 'linux/arm64' });
     await user.click(arm);
     await user.click(arm);
-    expect(arm).toHaveProperty('checked', false);
+    expect(arm.getAttribute('aria-checked')).toBe('false');
     expect(mock.received).toEqual([]);
   });
 
@@ -84,7 +94,7 @@ describe('answering from the composer', () => {
   test('a question with options takes a typed answer, which clears the staged option, and sends it as the answer', async () => {
     const { user, mock } = await openTask('t16');
     await user.type(composer(), 'Retry twice, then fail loudly');
-    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('radio').some((r) => r.getAttribute('aria-checked') === 'true')).toBe(false);
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Pick a bound for the retry, or describe one')).toBeNull());
@@ -96,9 +106,9 @@ describe('answering from the composer', () => {
     const { user, mock } = await openTask('t16');
     const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
     await user.click(thrice);
-    expect(thrice).toHaveProperty('checked', true);
+    expect(thrice.getAttribute('aria-checked')).toBe('true');
     await user.type(composer(), 'Only on CI');
-    expect(thrice).toHaveProperty('checked', false);
+    expect(thrice.getAttribute('aria-checked')).toBe('false');
     expect(composer().placeholder).toBe('Type your answer…');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
@@ -122,7 +132,7 @@ describe('answering from the composer', () => {
     await user.click(box().getByRole('checkbox', { name: 'linux/arm64' }));
     await user.click(box().getByRole('checkbox', { name: 'darwin/arm64' }));
     await user.type(composer(), 'linux only');
-    expect(box().getAllByRole('checkbox').some((c) => (c as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('checkbox').some((c) => c.getAttribute('aria-checked') === 'true')).toBe(false);
     await user.click(answerButton());
     await waitFor(() => expect(box().queryByRole('checkbox')).toBeNull());
     expect(mock.received[0].body.answers).toEqual([['linux only']]);
@@ -207,7 +217,7 @@ describe('a recommended option', () => {
 
   test('arrives staged, sends nothing by itself, and Answer sends its label as offered', async () => {
     const { user, mock } = await openTask('t17');
-    expect(recommended()).toHaveProperty('checked', true);
+    expect(recommended().getAttribute('aria-checked')).toBe('true');
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     expect(mock.received).toEqual([]);
     await user.click(answerButton());
@@ -219,7 +229,7 @@ describe('a recommended option', () => {
   test('another option replaces it', async () => {
     const { user, mock } = await openTask('t17');
     await user.click(box().getByRole('radio', { name: 'yarn' }));
-    expect(recommended()).toHaveProperty('checked', false);
+    expect(recommended().getAttribute('aria-checked')).toBe('false');
     await user.click(answerButton());
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
     expect(mock.received[0].body.answers).toEqual([['yarn']]);
@@ -238,10 +248,10 @@ describe('a recommended option', () => {
     const { user } = await openTask('t17');
     await user.type(composer(), 'x');
     await user.keyboard('{Backspace}');
-    expect(recommended()).toHaveProperty('checked', false);
+    expect(recommended().getAttribute('aria-checked')).toBe('false');
     await switchTo('t4', 'Bump GitHub Actions pins');
     await switchTo('t17');
-    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('radio').some((r) => r.getAttribute('aria-checked') === 'true')).toBe(false);
     expect(answerButton().getAttribute('aria-disabled')).toBe('true');
   });
 
@@ -250,8 +260,8 @@ describe('a recommended option', () => {
     await user.click(box().getByRole('radio', { name: 'yarn' }));
     await switchTo('t4', 'Bump GitHub Actions pins');
     await switchTo('t17');
-    expect(box().getByRole('radio', { name: 'yarn' })).toHaveProperty('checked', true);
-    expect(recommended()).toHaveProperty('checked', false);
+    expect(box().getByRole('radio', { name: 'yarn' }).getAttribute('aria-checked')).toBe('true');
+    expect(recommended().getAttribute('aria-checked')).toBe('false');
     await user.click(answerButton());
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
     expect(mock.received[0].body.answers).toEqual([['yarn']]);
@@ -259,22 +269,22 @@ describe('a recommended option', () => {
 
   test('without one, the first option is staged; a question that takes several starts empty', async () => {
     await openTask('t16');
-    expect(box().getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([true, false, false]);
+    expect(box().getAllByRole('radio').map((r) => r.getAttribute('aria-checked') === 'true')).toEqual([true, false, false]);
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     await switchTo('t4', 'Bump GitHub Actions pins');
     await switchTo('t19');
-    expect(box().getAllByRole('checkbox').some((c) => (c as HTMLInputElement).checked)).toBe(false);
+    expect(box().getAllByRole('checkbox').some((c) => c.getAttribute('aria-checked') === 'true')).toBe(false);
   });
 
   test('typing replaces it, the typed text alone is sent, and the task draft comes back', async () => {
     localStorage.setItem('uam.draft.t17', JSON.stringify({ text: 'half a thought', files: [], attachments: [] }));
     const { user, mock } = await openTask('t17');
     expect(composer().value).toBe('');
-    expect(recommended()).toHaveProperty('checked', true);
+    expect(recommended().getAttribute('aria-checked')).toBe('true');
     await user.type(composer(), 'bun');
     await new Promise((r) => setTimeout(r, 400));
     expect(composer().value).toBe('bun');
-    expect(recommended()).toHaveProperty('checked', false);
+    expect(recommended().getAttribute('aria-checked')).toBe('false');
     expect(localStorage.getItem('uam.draft.t17')).toContain('half a thought');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());

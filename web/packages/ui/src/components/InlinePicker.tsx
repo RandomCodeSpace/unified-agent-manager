@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Loading } from './common';
+import { rowClass } from './ui/button';
 
 export interface PickerItem {
   /** Stable key; also the option's DOM id suffix. */
@@ -91,9 +92,10 @@ export function InlinePicker({
                 aria-disabled={item.disabled || undefined}
                 aria-label={item.label}
                 className={cn(
-                  'flex min-h-[30px] w-full cursor-default items-center gap-2 rounded-sm px-2 py-1 text-left text-ui text-body outline-hidden transition-colors duration-100 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0',
-                  // A clear gray step on the raised popup; the row's secondary text lifts a step so it stays readable on it.
-                  i === highlighted && 'bg-hairline text-ink [&_.text-faint]:text-muted [&_.text-muted]:text-body',
+                  rowClass,
+                  'min-h-[30px] cursor-default outline-hidden pointer-coarse:min-h-11 [&_svg]:size-4',
+                  // The highlighted row takes the row fill (`aria-selected`); its secondary text lifts a step so it stays readable on it.
+                  i === highlighted && '[&_.text-faint]:text-muted [&_.text-muted]:text-body',
                   // Dimmed like a disabled menu item; the note under the rows gives the reason.
                   item.disabled && 'opacity-45',
                 )}

@@ -369,6 +369,36 @@ describe('the review fixes', () => {
     expect(again).toEqual(lost);
   });
 
+  test('a long text field, a check box and the list pickers use the shared controls and write what the person picks', async () => {
+    const user = userEvent.setup();
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((v) => ({ label: v.toUpperCase(), value: v }));
+    draw(surfaceOf([
+      { id: 'root', component: 'Column', children: ['note', 'agree', 'many', 'one'] },
+      { id: 'note', component: 'TextField', label: 'Note', variant: 'longText', value: { '@path': '/note' } },
+      { id: 'agree', component: 'CheckBox', label: 'Agree', value: { '@path': '/agree' } },
+      { id: 'many', component: 'ChoicePicker', label: 'Tags', options: six, value: { '@path': '/tags' }, variant: 'multipleSelection' },
+      { id: 'one', component: 'ChoicePicker', label: 'Letter', options: six, value: { '@path': '/letter' }, variant: 'mutuallyExclusive' },
+    ], { note: '', agree: false, tags: ['a'], letter: 'b' }));
+    const note = screen.getByRole('textbox', { name: 'Note' });
+    expect(note.tagName).toBe('TEXTAREA');
+    await user.type(note, 'hi');
+    expect((note as HTMLTextAreaElement).value).toBe('hi');
+    const agree = screen.getByRole('checkbox', { name: 'Agree' });
+    expect(agree.getAttribute('aria-checked')).toBe('false');
+    await user.click(agree);
+    expect(screen.getByRole('checkbox', { name: 'Agree' }).getAttribute('aria-checked')).toBe('true');
+    const tags = screen.getByRole('group', { name: 'Tags' });
+    expect(within(tags).getByRole('checkbox', { name: 'A' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(tags).getByRole('checkbox', { name: 'C' }));
+    expect(within(screen.getByRole('group', { name: 'Tags' })).getByRole('checkbox', { name: 'C' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(screen.getByRole('group', { name: 'Tags' })).getByRole('checkbox', { name: 'A' }));
+    expect(within(screen.getByRole('group', { name: 'Tags' })).getByRole('checkbox', { name: 'A' }).getAttribute('aria-checked')).toBe('false');
+    const letter = screen.getByRole('group', { name: 'Letter' });
+    expect(within(letter).getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(letter).getByRole('radio', { name: 'E' }));
+    expect(within(screen.getByRole('group', { name: 'Letter' })).getByRole('radio', { name: 'E' }).getAttribute('aria-checked')).toBe('true');
+  });
+
   test('a picker whose value is blank or no option\'s shows no segment as picked', () => {
     const { container } = draw(surfaceOf([
       { id: 'root', component: 'List', children: { componentId: 'pick', path: '/rows' } },

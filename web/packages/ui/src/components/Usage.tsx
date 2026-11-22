@@ -8,7 +8,7 @@ import { accountQuota, formatCount, planName, quotaBurn, quotaFace, quotaLabel, 
 import { dateTime, Note, Num, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeTokenReports, sumCacheSavings } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Select } from './ui/select';
 import { HelpTip, Tip } from './ui/tooltip';
@@ -340,7 +340,7 @@ function NowSection({ calls, onClose }: Readonly<{ calls: ModelCalls; onClose: (
             const Icon = b.local ? Terminal : Cpu;
             return (
               <li key={b.id}>
-                <button type="button" className="flex h-8 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-ui transition-colors hover:bg-tint-hover focus-visible:-outline-offset-2 pointer-coarse:h-11" onClick={() => { onClose(); openTask(b.id); }}>
+                <button type="button" className={cn(rowClass, 'h-8 focus-visible:-outline-offset-2 pointer-coarse:h-11')} onClick={() => { onClose(); openTask(b.id); }}>
                   <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', b.local ? 'text-success' : 'text-accent')} />
                   <span className="min-w-0 flex-1 truncate text-ink">{b.name}</span>
                   <span className={cn('shrink-0 text-caption', b.local ? 'text-success' : 'text-accent')}>{busyWords(b)}</span>

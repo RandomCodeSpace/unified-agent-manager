@@ -36,7 +36,7 @@ import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
 import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
 import { Appear } from './ui/appear';
-import { Button } from './ui/button';
+import { Button, rowClass } from './ui/button';
 import { Chip } from './ui/chip';
 import { AlertDialog, PHONE, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
@@ -198,7 +198,7 @@ function Picker({
   const tone = lock ? 'text-body aria-disabled:cursor-default aria-disabled:opacity-100' : disabled ? 'text-muted' : 'text-body';
   if (phone || sheet !== null) {
     const radio = (c: Choice) => (
-      <Radio.Root key={c.value} value={c.value} disabled={c.disabled} className="group/choice flex min-h-11 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover focus-visible:-outline-offset-2 data-disabled:opacity-45">
+      <Radio.Root key={c.value} value={c.value} disabled={c.disabled} className={cn(rowClass, 'group/choice min-h-11 cursor-default items-start py-1.5 focus-visible:bg-fill-hover focus-visible:-outline-offset-2 data-disabled:pointer-events-none')}>
         <Check aria-hidden="true" strokeWidth={2.5} className="invisible mt-0.5 size-3.5 shrink-0 text-accent group-data-checked/choice:visible" />
         <span className="flex min-w-0 flex-col">
           <span className="text-ui text-ink">{c.label}</span>

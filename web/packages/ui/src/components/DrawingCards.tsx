@@ -134,9 +134,9 @@ export function DrawingCard({ path, edit }: Readonly<{ path: string; edit?: bool
         {doc && <Chip fill="well">Agent’s v{doc.agent_version}</Chip>}
         {changed && <Chip tone="warning" fill="well">{pill(doc.version)} · {changesWord(doc.changes.length)}</Chip>}
         <span className="flex-1" />
-        {changed && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" onClick={() => open('changes')}>Compare</Button>}
-        {editable && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" onClick={() => open('mine')}>Edit</Button>}
-        {editable && <Button size="sm" variant="subtle" className="h-6 px-1.5 text-caption font-normal" aria-haspopup="dialog" onClick={() => remove.ask(path)}>Delete</Button>}
+        {changed && <Button size="xs" variant="subtle" className="font-normal" onClick={() => open('changes')}>Compare</Button>}
+        {editable && <Button size="xs" variant="subtle" className="font-normal" onClick={() => open('mine')}>Edit</Button>}
+        {editable && <Button size="xs" variant="subtle" className="font-normal" aria-haspopup="dialog" onClick={() => remove.ask(path)}>Delete</Button>}
       </div>
       {state?.error && <Note tone="error" role="alert" className="px-3 py-2">{state.error}</Note>}
       {removing.error && <Note tone="error" role="alert" className="px-3 py-2">Could not delete the drawing: {removing.error}</Note>}
@@ -203,7 +203,7 @@ export function DrawingChipRow() {
           {!!x.selected_count && (
             <>
               <span>· {x.selected_count} selected</span>
-              <button type="button" aria-label={`Remove the selection in ${fileName(x.path)}`} className="rounded-xs hover:text-ink" onClick={() => void d.select(x.path, []).catch(() => {})}><X aria-hidden="true" className="size-3" /></button>
+              <Button size="icon-sm" aria-label={`Remove the selection in ${fileName(x.path)}`} className="size-3 rounded-xs text-current [&_svg]:size-3" onClick={() => void d.select(x.path, []).catch(() => {})}><X aria-hidden="true" /></Button>
             </>
           )}
         </span>

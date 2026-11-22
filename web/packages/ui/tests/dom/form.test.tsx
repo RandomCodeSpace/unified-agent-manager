@@ -78,8 +78,8 @@ describe('a uam form', () => {
     expect(version.getAttribute('aria-describedby')).toBeTruthy();
     expect(card.getByText('Like 1.2.3')).toBeTruthy();
     expect(card.getByRole('textbox', { name: 'Notes' }).tagName).toBe('TEXTAREA');
-    expect(card.getByRole('radio', { name: 'staging' })).toHaveProperty('checked', true);
-    expect(card.getByRole('checkbox', { name: 'Tag the release' })).toHaveProperty('checked', false);
+    expect(card.getByRole('radio', { name: 'staging' }).getAttribute('aria-checked')).toBe('true');
+    expect(card.getByRole('checkbox', { name: 'Tag the release' }).getAttribute('aria-checked')).toBe('false');
     const order = card.getAllByRole('button').map((b) => b.textContent);
     expect(order).toEqual(['Dismiss', 'Deploy', 'Later']);
     expect(card.queryByRole('button', { name: 'Decline' })).toBeNull();
