@@ -358,8 +358,8 @@ function TurnShell({ replyKey, head, children }: Readonly<{ replyKey: string; he
 
 /** The turn sign-off (DESIGN.md turn sign-off): one caption line that wraps whole onto the next line, then within itself on a narrow screen. */
 const SIGN = 'inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-baseline text-caption tabular-nums text-faint select-none';
-/** A button on the sign-off: its hit area reaches past the caption line. */
-const SIGN_BUTTON = "relative -mx-1 flex h-5 min-w-0 max-w-full items-center gap-1 rounded-sm px-1 text-left whitespace-nowrap transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-3";
+/** A button on the sign-off: its hit area reaches past the caption line. Its width may pass the line's by the 8px its margins take back, or a button alone on the line is clipped. */
+const SIGN_BUTTON = "relative -mx-1 flex h-5 min-w-0 max-w-[calc(100%+--spacing(2))] items-center gap-1 rounded-sm px-1 text-left whitespace-nowrap transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-well hover:text-body pointer-coarse:after:-inset-y-3";
 /** The status row a turn shows before any of it lands: "Working 8s", then "Took 12s" when it ends without one. */
 const HEAD = 'flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-ui tabular-nums text-muted';
 
@@ -512,7 +512,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, at, summ
   );
   return (
     <>
-      {slot ? createPortal(line, slot) : <div className="not-first:-mt-2">{line}</div>}
+      {slot ? createPortal(line, slot) : <div className="not-first:-mt-2 [[aria-label=Question]+&]:mt-0">{line}</div>}
       {outcome.reader}
       {opened && (
         <Collapse open={open} appear className="-mt-3" inner="pt-3">

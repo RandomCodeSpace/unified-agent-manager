@@ -17,8 +17,8 @@
     label/value grid; two to four that are each one short figure
     (`**Tests:** 742`, `**Coverage:** 81%`) are stat tiles;
   - put risks, caveats and what you did not verify in `> [!WARNING]`;
-  - `> [!QUESTION]` asks the owner to decide and `> [!BLOCKER]` says what
-    stops you until they act; the owner answers in the composer as usual;
+  - `> [!BLOCKER]` says what stops you until the owner acts; ask for a
+    decision with `ask_user` instead of a question in the reply;
   - a numbered list where every item starts with bold text is a step list;
   - a task list (`- [x]` / `- [ ]`) shows "N of M done" with a bar;
   - a task item, or a step's bold lead, with the same title as a todo row

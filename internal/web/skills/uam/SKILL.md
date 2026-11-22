@@ -64,6 +64,11 @@ needs, all in one step when it needs several:
 To ask two or more things at once, or to let the owner pick what happens next
 with buttons, use `uam_form` instead (see its reference file).
 
+- Ask for every decision you need with `ask_user`, never as a question at the
+  end of your reply: only `ask_user` gives the owner an answer field.
+- Before you call it, say in your reply what you found and what depends on
+  the answer; the question text alone is all the owner sees above the
+  composer.
 - The question shows above the owner's composer with its `choices` and waits
   with no time limit.
 - The option whose label ends in "(Recommended)" is pre-selected. On a
