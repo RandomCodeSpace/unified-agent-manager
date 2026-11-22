@@ -24,9 +24,9 @@ test('the sign-off lists the numbered issues a reply cites and each jumps to its
   await expect(conversation(page).getByText(/Issue\s+31 came up last week/)).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
 
-  // One disclosure on the sign-off: 7 cited, 5 recorded Open as well as 4, 8, 9 and 17; 31 is nowhere in the Thread.
-  const ledger = conversation(page).getByRole('button', { name: /^7 issues, 6 open, 1 closed, 1 unknown\. Show the references this reply cites$/ });
-  await expect(ledger).toHaveText('7 issues · 6 open · 1 closed · 1 unknown');
+  // One disclosure on the sign-off: 7 cited; 4, 5, 8, 9 and 17 recorded Open, 6 Closed; 31 is nowhere in the Thread.
+  const ledger = conversation(page).getByRole('button', { name: /^7 issues, 5 open, 1 closed, 1 unknown\. Show the references this reply cites$/ });
+  await expect(ledger).toHaveText('7 issues · 5 open · 1 closed · 1 unknown');
   await expect(ledger).toHaveAttribute('aria-expanded', 'false');
   await ledger.click();
   await expect(ledger).toHaveAttribute('aria-expanded', 'true');
