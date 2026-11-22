@@ -1989,7 +1989,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {(busy === 'stop' || stopping) && <output className="mr-1 text-caption text-muted">Stopping…</output>}
         <Appear show={stopShown}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => {
+            <Button size="icon-md" variant="ink" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => {
               // Marked at the press: the turn's end can arrive before the cancel request answers.
               stopRefocus.current = true;
               try { onSessionUpdate(await api.cancel(session.id)); } catch (err) { stopRefocus.current = false; throw err; }
