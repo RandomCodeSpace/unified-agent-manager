@@ -1,8 +1,10 @@
 package copilot
 
 import (
+	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
@@ -143,6 +145,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if sa, ok := c.subs.count(ev); ok {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
+		return
+	case *rpc.PromptCacheBreakData:
+		// Counted only, a subagent's too: the prefix is billed again.
+		if c.cacheBreaks == nil {
+			c.cacheBreaks = map[string]int{}
+		}
+		c.cacheBreaks[cacheBreakReason(d.PrimaryReason, c.cacheBreaks)]++
+		c.cacheBreakTokens += int(max(d.FrontierTokens, 0))
 		return
 	case *rpc.SessionUsageCheckpointData:
 		// The CLI's session-wide total, which the next reopen reads back.
@@ -424,4 +434,31 @@ func (c *conversation) emitUsageLocked() {
 	}
 	c.usageSent = c.nanoAIU
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventUsage, Usage: &agentapi.Usage{AIUnits: c.nanoAIU / nanoPerUnit}})
+}
+
+// maxCacheBreakReasons bounds the reasons kept per turn; each becomes a
+// counter name, and the provider's reasons are open strings.
+const maxCacheBreakReasons = 8
+
+// cacheBreakReason is reason as a counter-safe name: lower-case letters,
+// digits and underscores, at most 40 bytes, "unknown" when empty and "other"
+// once seen already holds maxCacheBreakReasons other reasons.
+func cacheBreakReason(reason string, seen map[string]int) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(reason) {
+		if b.Len() == 40 {
+			break
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		case r == '-' || r == '.' || r == ' ':
+			b.WriteByte('_')
+		}
+	}
+	name := cmp.Or(b.String(), "unknown")
+	if _, ok := seen[name]; !ok && len(seen) >= maxCacheBreakReasons {
+		return "other"
+	}
+	return name
 }

@@ -1177,7 +1177,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (written within ten seconds of a change, so a crash can lose the last few):
   prompts steered and queued, your permission answers by decision, assisted
   reviews approved and escalated, turns given up after a second stall,
-  read-once hits, fuse trips, web_fetch hosts blocked, tool calls uam refused, Auto fallback
+  read-once hits, prompt cache breaks by the provider's primary reason
+  (`cache_breaks_*`) and the tokens that were cached before them
+  (`cache_break_frontier_tokens`), fuse trips, web_fetch hosts blocked, tool calls uam refused, Auto fallback
   questions asked and answered, Threads `uam_create_task` started or refused
   and their end notes, forks, rewinds, hunk reverts, settles (by you,
   auto-settle, merged work or review), branches removed once merged

@@ -125,24 +125,41 @@ func (a sdkClientAdapter) ForceStop() { a.c.ForceStop(); removeEmptyExport(a.exp
 // Ping sends a raw ping on the current connection. Client.Ping starts a new
 // CLI when the connection is gone, which would hide a CLI that died.
 func (a sdkClientAdapter) Ping(ctx context.Context) error {
-	server := a.c.RPC
-	if server == nil {
-		return errors.New("client is not connected")
+	server, err := a.server()
+	if err != nil {
+		return err
 	}
-	_, err := server.Ping(ctx, nil)
+	_, err = server.Ping(ctx, nil)
 	return err
+}
+
+// server is the connection's RPC surface, read once per call: the SDK clears
+// Client.RPC when the CLI stops, and a call made through it then would panic.
+func (a sdkClientAdapter) server() (*rpc.ServerRPC, error) {
+	if server := a.c.RPC; server != nil {
+		return server, nil
+	}
+	return nil, errors.New("client is not connected")
 }
 
 // ListModels sends the same models.list request as Client.ListModels, which
 // caches its answer until the CLI stops; an entitlement change must show up
 // while the service runs.
 func (a sdkClientAdapter) ListModels(ctx context.Context) (*rpc.ModelList, error) {
-	return a.c.RPC.Models.List(ctx, &rpc.ModelsListRequest{})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Models.List(ctx, &rpc.ModelsListRequest{})
 }
 
 // Quota sends the experimental account.getQuota request.
 func (a sdkClientAdapter) Quota(ctx context.Context) (map[string]rpc.AccountQuotaSnapshot, error) {
-	res, err := a.c.RPC.Account.GetQuota(ctx, &rpc.AccountGetQuotaRequest{})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	res, err := server.Account.GetQuota(ctx, &rpc.AccountGetQuotaRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +187,11 @@ func (a sdkClientAdapter) ResumeSession(ctx context.Context, id string, cfg *cop
 }
 
 func (a sdkClientAdapter) ReadEvents(ctx context.Context, req *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error) {
-	return a.c.RPC.Sessions.ReadPersistedEvents(ctx, req)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Sessions.ReadPersistedEvents(ctx, req)
 }
 
 func (a sdkClientAdapter) ListSessions(ctx context.Context, workdir string) ([]copilot.SessionMetadata, error) {
@@ -181,7 +202,11 @@ func (a sdkClientAdapter) ListSessions(ctx context.Context, workdir string) ([]c
 }
 
 func (a sdkClientAdapter) CheckInUse(ctx context.Context, ids []string) ([]string, error) {
-	res, err := a.c.RPC.Sessions.CheckInUse(ctx, &rpc.SessionsCheckInUseRequest{SessionIDs: ids})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	res, err := server.Sessions.CheckInUse(ctx, &rpc.SessionsCheckInUseRequest{SessionIDs: ids})
 	if err != nil {
 		return nil, err
 	}

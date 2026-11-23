@@ -115,7 +115,11 @@ type mcpSession interface {
 }
 
 func (a sdkClientAdapter) MCPConfigList(ctx context.Context) (map[string]rpc.MCPSerializableServerConfig, error) {
-	res, err := a.c.RPC.MCP.Config().List(ctx)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	res, err := server.MCP.Config().List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +127,11 @@ func (a sdkClientAdapter) MCPConfigList(ctx context.Context) (map[string]rpc.MCP
 }
 
 func (a sdkClientAdapter) MCPDiscover(ctx context.Context, workdir string) ([]rpc.DiscoveredMCPServer, error) {
-	res, err := a.c.RPC.MCP.Discover(ctx, &rpc.MCPDiscoverRequest{WorkingDirectory: &workdir})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	res, err := server.MCP.Discover(ctx, &rpc.MCPDiscoverRequest{WorkingDirectory: &workdir})
 	if err != nil {
 		return nil, err
 	}
@@ -131,32 +139,51 @@ func (a sdkClientAdapter) MCPDiscover(ctx context.Context, workdir string) ([]rp
 }
 
 func (a sdkClientAdapter) MCPConfigAdd(ctx context.Context, name string, cfg rpc.MCPSerializableServerConfig) error {
-	_, err := a.c.RPC.MCP.Config().Add(ctx, &rpc.MCPConfigAddRequest{Name: name, Config: cfg})
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.MCP.Config().Add(ctx, &rpc.MCPConfigAddRequest{Name: name, Config: cfg})
 	return err
 }
 
 func (a sdkClientAdapter) MCPConfigUpdate(ctx context.Context, name string, cfg rpc.MCPSerializableServerConfig) error {
-	_, err := a.c.RPC.MCP.Config().Update(ctx, &rpc.MCPConfigUpdateRequest{Name: name, Config: cfg})
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.MCP.Config().Update(ctx, &rpc.MCPConfigUpdateRequest{Name: name, Config: cfg})
 	return err
 }
 
 func (a sdkClientAdapter) MCPConfigRemove(ctx context.Context, name string) error {
-	_, err := a.c.RPC.MCP.Config().Remove(ctx, &rpc.MCPConfigRemoveRequest{Name: name})
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.MCP.Config().Remove(ctx, &rpc.MCPConfigRemoveRequest{Name: name})
 	return err
 }
 
 func (a sdkClientAdapter) MCPConfigEnable(ctx context.Context, name string, enabled bool) error {
-	var err error
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
 	if enabled {
-		_, err = a.c.RPC.MCP.Config().Enable(ctx, &rpc.MCPConfigEnableRequest{Names: []string{name}})
+		_, err = server.MCP.Config().Enable(ctx, &rpc.MCPConfigEnableRequest{Names: []string{name}})
 	} else {
-		_, err = a.c.RPC.MCP.Config().Disable(ctx, &rpc.MCPConfigDisableRequest{Names: []string{name}})
+		_, err = server.MCP.Config().Disable(ctx, &rpc.MCPConfigDisableRequest{Names: []string{name}})
 	}
 	return err
 }
 
 func (a sdkClientAdapter) MCPConfigReload(ctx context.Context) error {
-	_, err := a.c.RPC.MCP.Config().Reload(ctx)
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.MCP.Config().Reload(ctx)
 	return err
 }
 

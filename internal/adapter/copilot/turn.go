@@ -105,6 +105,8 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 		log.Info("copilot read-once: repeat views not re-sent", "session", c.id, "count", c.viewRepeats)
 		c.viewRepeats = 0
 	}
+	turn.CacheBreaks, turn.CacheBreakTokens = c.cacheBreaks, c.cacheBreakTokens
+	c.cacheBreaks, c.cacheBreakTokens = nil, 0
 	// Subagents still running go on between turns: their phase follows the
 	// turn's end (emitTurnEndLocked).
 	c.endTurnPhaseLocked()

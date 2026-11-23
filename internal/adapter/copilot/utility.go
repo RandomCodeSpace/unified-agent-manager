@@ -252,8 +252,12 @@ func (u *utilityUsage) report(fn func(agentapi.UtilityUsage)) {
 }
 
 // titleEffort is the lowest reasoning effort model supports, or "" for its
-// default when it lists none or the catalog cannot be read.
+// default when it lists none or the catalog cannot be read. Fusion takes a
+// level, not a reasoning effort, and rejects one.
 func titleEffort(ctx context.Context, client sdkClient, model string) string {
+	if model == fusionModel {
+		return ""
+	}
 	list, err := client.ListModels(ctx)
 	if err != nil || list == nil {
 		return ""

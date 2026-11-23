@@ -130,6 +130,20 @@ func TestTitleEffortIsTheLowestTheModelOffers(t *testing.T) {
 	}
 }
 
+// Fusion takes a level, not a reasoning effort: a Utility call on it sends
+// none, whatever efforts the catalog lists for it.
+func TestUtilityOnFusionSendsNoEffort(t *testing.T) {
+	p, fc := titleProvider(func(context.Context, copilot.MessageOptions) (string, error) { return "draft", nil })
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	fc.models = []rpc.Model{{ID: fusionModel, SupportedReasoningEfforts: []string{"high"}}}
+	if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: fusionModel, Purpose: "configuration-draft", Prompt: "Create a draft"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fc.create[0].Inference.ReasoningEffort; got != "" {
+		t.Fatalf("Utility effort on Fusion = %q, want none", got)
+	}
+}
+
 func TestUtilityUsesLowestSupportedEffort(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

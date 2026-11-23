@@ -26,19 +26,35 @@ type configurationDiscoveryClient interface {
 }
 
 func (a sdkClientAdapter) DiscoverSkills(ctx context.Context, projectPaths, skillDirectories []string) (*rpc.ServerSkillList, error) {
-	return a.c.RPC.Skills.Discover(ctx, &rpc.SkillsDiscoverRequest{ProjectPaths: projectPaths, SkillDirectories: skillDirectories})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Skills.Discover(ctx, &rpc.SkillsDiscoverRequest{ProjectPaths: projectPaths, SkillDirectories: skillDirectories})
 }
 
 func (a sdkClientAdapter) DiscoverAgents(ctx context.Context, projectPaths []string) (*rpc.ServerAgentList, error) {
-	return a.c.RPC.Agents.Discover(ctx, &rpc.AgentsDiscoverRequest{ProjectPaths: projectPaths})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Agents.Discover(ctx, &rpc.AgentsDiscoverRequest{ProjectPaths: projectPaths})
 }
 
 func (a sdkClientAdapter) DiscoverHooks(ctx context.Context, projectPaths []string) (*rpc.HooksDiscoverResult, error) {
-	return a.c.RPC.Hooks.Discover(ctx, &rpc.HooksDiscoverRequest{ProjectPaths: projectPaths})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Hooks.Discover(ctx, &rpc.HooksDiscoverRequest{ProjectPaths: projectPaths})
 }
 
 func (a sdkClientAdapter) DiscoverInstructions(ctx context.Context, projectPaths []string) (*rpc.ServerInstructionSourceList, error) {
-	return a.c.RPC.Instructions.Discover(ctx, &rpc.InstructionsDiscoverRequest{ProjectPaths: projectPaths})
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Instructions.Discover(ctx, &rpc.InstructionsDiscoverRequest{ProjectPaths: projectPaths})
 }
 
 type skillSettingClient interface {
@@ -46,7 +62,11 @@ type skillSettingClient interface {
 }
 
 func (a sdkClientAdapter) SetSkillDisabled(ctx context.Context, name string, disabled bool) error {
-	_, err := a.c.RPC.Skills.Config().SetSkillDisabled(ctx, &rpc.SkillsConfigSetSkillDisabledRequest{Name: name, Disabled: disabled})
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.Skills.Config().SetSkillDisabled(ctx, &rpc.SkillsConfigSetSkillDisabledRequest{Name: name, Disabled: disabled})
 	return err
 }
 

@@ -16,7 +16,11 @@ import (
 // ForkSession is optional on the client seam so older runtimes and the
 // existing non-fork fixtures retain their ordinary conversation behavior.
 func (a sdkClientAdapter) ForkSession(ctx context.Context, req *rpc.SessionsForkRequest) (*rpc.SessionsForkResult, error) {
-	return a.c.RPC.Sessions.Fork(ctx, req)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Sessions.Fork(ctx, req)
 }
 
 type nativeForkClient interface {

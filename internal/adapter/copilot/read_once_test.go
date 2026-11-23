@@ -1,10 +1,16 @@
 package copilot
 
 import (
+	"context"
+	"fmt"
+	"maps"
+	"strings"
 	"testing"
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
 	"github.com/microsoft/copilot-sdk/go/v2/rpc"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
 const readOnceNote = "uam read-once: /work/a.go is unchanged since your earlier view in this conversation; use that result."
@@ -48,6 +54,41 @@ func TestReadOnceRepeatIsNoted(t *testing.T) {
 	endTurn(t, h, 10)
 	if n := h.conv.(*conversation).viewRepeats; n != 0 {
 		t.Errorf("viewRepeats after the turn = %d, want 0", n)
+	}
+}
+
+// A lost prompt cache prefix is counted by its primary reason, a subagent's
+// too, and reported once with the turn that ends next.
+func TestCacheBreaksAreReportedWithTheTurn(t *testing.T) {
+	h := openWeb(t)
+	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "hi"})
+	h.fs.onEvent(ev("b1", &rpc.PromptCacheBreakData{PrimaryReason: "tools_changed", ContributingReasons: []string{"tools_changed", "ttl_expired"}, FrontierTokens: 1000}))
+	h.fs.onEvent(agentEv("b2", "sub-1", &rpc.PromptCacheBreakData{PrimaryReason: "tools_changed", FrontierTokens: 200}))
+	h.fs.onEvent(ev("b3", &rpc.PromptCacheBreakData{PrimaryReason: "ttl_expired", FrontierTokens: 30, CacheConfigChangedFields: []string{"ttl"}}))
+	h.fs.onEvent(ev("b4", &rpc.PromptCacheBreakData{FrontierTokens: -5}))
+	lastTurn := func() agentapi.Turn {
+		t.Helper()
+		evs := h.sink.all()
+		for i := len(evs) - 1; i >= 0; i-- {
+			if evs[i].Kind == agentapi.EventTurn {
+				return *evs[i].Turn
+			}
+		}
+		t.Fatal("no turn")
+		return agentapi.Turn{}
+	}
+	if turn := lastTurn(); turn.State != agentapi.TurnWorking || turn.CacheBreaks != nil || turn.CacheBreakTokens != 0 {
+		t.Fatalf("running turn = %+v, want no cache breaks yet", turn)
+	}
+	endTurn(t, h, 10)
+	turn := lastTurn()
+	if want := map[string]int{"tools_changed": 2, "ttl_expired": 1, "unknown": 1}; !maps.Equal(turn.CacheBreaks, want) || turn.CacheBreakTokens != 1230 {
+		t.Fatalf("turn cache breaks = %v, %d tokens; want %v, 1230", turn.CacheBreaks, turn.CacheBreakTokens, want)
+	}
+	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "again"})
+	endTurn(t, h, 20)
+	if turn := lastTurn(); turn.CacheBreaks != nil || turn.CacheBreakTokens != 0 {
+		t.Fatalf("next turn repeated the cache breaks: %v, %d", turn.CacheBreaks, turn.CacheBreakTokens)
 	}
 }
 
@@ -145,5 +186,29 @@ func TestReadOnceResetsWhenTheConversationLosesMessages(t *testing.T) {
 				t.Fatalf("subagent repeat after the main agent's loss = %q", got)
 			}
 		})
+	}
+}
+
+func TestCacheBreakReasonIsABoundedCounterName(t *testing.T) {
+	seen := map[string]int{}
+	for in, want := range map[string]string{
+		"tools_changed":          "tools_changed",
+		"":                       "unknown",
+		"Model-Switch":           "model_switch",
+		"ttl=1\nx":               "ttl1x",
+		strings.Repeat("a", 100): strings.Repeat("a", 40),
+	} {
+		if got := cacheBreakReason(in, seen); got != want {
+			t.Errorf("cacheBreakReason(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for i := range maxCacheBreakReasons {
+		seen[fmt.Sprintf("r%d", i)] = 1
+	}
+	if got := cacheBreakReason("new_reason", seen); got != "other" {
+		t.Errorf("a reason past the bound = %q, want other", got)
+	}
+	if got := cacheBreakReason("r3", seen); got != "r3" {
+		t.Errorf("a reason already seen = %q, want r3", got)
 	}
 }
