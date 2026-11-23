@@ -24,7 +24,6 @@ var uamRouteOps = map[string][]string{
 	"POST /api/sessions/{id}/archive":             {"uam archive"},
 	"POST /api/sessions/{id}/chart/pin":           {"uam pin_chart"},
 	"DELETE /api/projects/{id}/charts/{chart_id}": {"uam unpin_chart"},
-	"POST /api/routines/{id}/run":                 {"uam run_routine"},
 	"PUT /api/sessions/{id}/drawings/{path...}":   {diagramEditToolName},
 	"POST /api/sessions/{id}/prompt":              {sendToolName},
 }
@@ -32,16 +31,17 @@ var uamRouteOps = map[string][]string{
 // uamRouteExclusions are the owner write routes no agent op takes, each with
 // why.
 var uamRouteExclusions = map[string]string{
-	"/":                          "static UI files, read only",
-	"/api/":                      "unknown API paths answer 404",
-	connectedProxyRoute:          "reaches a connected instance with the owner's grant",
-	"POST /api/login":            "sign-in",
-	"POST /api/logout":           "sign-out",
-	"POST /api/viewing":          "the owner's viewing presence",
-	"POST /api/fs/dirs":          "makes folders anywhere for the folder picker; agents use their shell",
-	"POST /api/push/subscribe":   "browser push subscription",
-	"POST /api/push/unsubscribe": "browser push subscription",
-	"POST /api/service/restart":  "restarts uam and every Thread",
+	"/":                           "static UI files, read only",
+	"/api/":                       "unknown API paths answer 404",
+	connectedProxyRoute:           "reaches a connected instance with the owner's grant",
+	"POST /api/routines/{id}/run": "uses the routine's daily run limit, which the scheduled runs need",
+	"POST /api/login":             "sign-in",
+	"POST /api/logout":            "sign-out",
+	"POST /api/viewing":           "the owner's viewing presence",
+	"POST /api/fs/dirs":           "makes folders anywhere for the folder picker; agents use their shell",
+	"POST /api/push/subscribe":    "browser push subscription",
+	"POST /api/push/unsubscribe":  "browser push subscription",
+	"POST /api/service/restart":   "restarts uam and every Thread",
 
 	"POST /api/projects":                                        "adding a project is the owner's confirmation (uam_create_task asks for it)",
 	"PATCH /api/projects/{id}":                                  "project settings",

@@ -101,23 +101,14 @@ func (m *Manager) uamWrite(ctx context.Context, id string, in uamRequest) (strin
 			return "", err
 		}
 		return uamJSON(map[string]any{"pinned_id": pin.ID, "title": uamText(pin.Title), "project": pin.ProjectID})
-	case "run_routine":
+	case "settle", "archive":
 		var args struct {
 			ID string `json:"id"`
 		}
 		if err := uamDecode(in.Args, &args); err != nil {
 			return "", err
 		}
-		return m.uamRunRoutine(caller, args.ID)
-	case "settle", "archive":
-		var args struct {
-			ID    string `json:"id"`
-			Force bool   `json:"force"`
-		}
-		if err := uamDecode(in.Args, &args); err != nil {
-			return "", err
-		}
-		return m.uamPutAway(ctx, id, in.Op, args.ID, args.Force)
+		return m.uamPutAway(ctx, id, in.Op, args.ID)
 	}
 	return "", errors.New("unknown operation")
 }
@@ -160,51 +151,10 @@ func (m *Manager) uamUnpin(id, project, callID string) (string, error) {
 	return "", errors.New("no chart of this thread with that call_id is pinned")
 }
 
-// uamRunRoutine fires a routine of the caller's Project now, as the owner's
-// Run now does, under the limits uam_create_task keeps: a Thread another
-// Thread or a routine started cannot start Threads, and a Yolo routine
-// needs a Yolo caller.
-func (m *Manager) uamRunRoutine(caller uamCallerView, id string) (string, error) {
-	if id == "" {
-		return "", errors.New("id is required")
-	}
-	if caller.spawned {
-		return "", errors.New("a thread started by another thread or a routine cannot start threads, so it cannot run routines")
-	}
-	// routines.mu is never taken while holding m.mu.
-	var held *Routine
-	if caller.project != "" {
-		for _, r := range m.listRoutines(caller.project) {
-			if r.ID == id {
-				held = &r
-				break
-			}
-		}
-	}
-	if held == nil {
-		return "", errors.New("no routine of your project has that id (uam op routines lists them)")
-	}
-	if held.Mode == string(store.ModeYolo) && !caller.yolo {
-		return "", errors.New("that routine runs in Yolo, so running it needs Yolo")
-	}
-	r, err := m.RunRoutine(id)
-	if err != nil {
-		return "", err
-	}
-	out := map[string]any{"id": r.ID, "name": uamText(r.Name)}
-	if len(r.Runs) > 0 {
-		run := r.Runs[0]
-		out["outcome"] = uamText(run.Outcome)
-		if run.Reason != "" {
-			out["reason"] = uamText(run.Reason)
-		}
-	}
-	return uamJSON(out)
-}
-
 // uamPutAway settles or archives a Thread the caller started, refused with
-// unsaved work of its own unless force, as the owner's route does.
-func (m *Manager) uamPutAway(ctx context.Context, id, op, target string, force bool) (string, error) {
+// unsaved work of its own as the owner's route does. Only the owner can force
+// past that check.
+func (m *Manager) uamPutAway(ctx context.Context, id, op, target string) (string, error) {
 	if target == "" {
 		return "", errors.New("id is required")
 	}
@@ -215,18 +165,16 @@ func (m *Manager) uamPutAway(ctx context.Context, id, op, target string, force b
 	if !mine {
 		return "", fmt.Errorf("you can %s only threads you started", op)
 	}
-	if !force {
-		if err := m.checkUnsaved(ctx, target); err != nil {
-			var refused *Error
-			if errors.As(err, &refused) && refused.Code == codeUnsavedWork {
-				files := ""
-				if len(refused.Refs) > 0 {
-					files = " Files: " + strings.Join(refused.Refs, ", ") + "."
-				}
-				return "", fmt.Errorf("%s%s Have it commit and push, or pass force true; a worktree with changes is kept", refused.Message, files)
+	if err := m.checkUnsaved(ctx, target); err != nil {
+		var refused *Error
+		if errors.As(err, &refused) && refused.Code == codeUnsavedWork {
+			files := ""
+			if len(refused.Refs) > 0 {
+				files = " Files: " + strings.Join(refused.Refs, ", ") + "."
 			}
-			return "", err
+			return "", fmt.Errorf("%s%s Have it commit and push first; only the owner can put it away with unsaved work", refused.Message, files)
 		}
+		return "", err
 	}
 	move := (*Manager).Settle
 	if op == "archive" {

@@ -1339,10 +1339,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent may take, through the same Manager calls and checks as the routes:
   `rename` and `set_budget` on its own Thread (a budget it may add or
   tighten, never raise or remove), `pin_chart` and `unpin_chart` on its own
-  `uam_chart` charts (one with a command needs Yolo), `run_routine` on its
-  Project's routines (not from a Thread another Thread or a routine started;
-  a Yolo routine needs Yolo), and `settle` and `archive` on the Threads it
-  started, refused with unsaved work of their own unless `force`.
+  `uam_chart` charts (one with a command needs Yolo), and `settle` and
+  `archive` on the Threads it started, refused with unsaved work of their
+  own (only the owner can force past that). Running a routine stays the
+  owner's, because a run uses the routine's daily limit.
   `uam_ops_routes_test.go` fails when an owner write route has neither an
   agent op nor a listed reason to stay the owner's.
 - **Threads started by an agent**: the agent can call `uam_create_task` to

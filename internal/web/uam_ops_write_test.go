@@ -136,54 +136,6 @@ func TestUAMPinChartOwnThread(t *testing.T) {
 }
 
 // An agent runs its Project's routines now, under uam_create_task's limits.
-func TestUAMRunRoutine(t *testing.T) {
-	m, prov, _, project := newRoutineManager(t)
-	caller, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "caller", Mode: "safe"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	conv := prov.Last()
-	in := hourly("Safe check")
-	in.Mode = ptr("safe")
-	safe := mustRoutine(t, m, project, in)
-	yolo := mustRoutine(t, m, project, hourly("Yolo check"))
-	elsewhere := mustRoutine(t, m, addProject(t, m, t.TempDir()), hourly("Elsewhere"))
-
-	uamRefused(t, conv, `{"op":"run_routine","args":{}}`, "id is required")
-	uamRefused(t, conv, fmt.Sprintf(`{"op":"run_routine","args":{"id":%q}}`, elsewhere.ID), "no routine of your project")
-	uamRefused(t, conv, fmt.Sprintf(`{"op":"run_routine","args":{"id":%q}}`, yolo.ID), "needs Yolo")
-	if runs := routine(t, m, project, yolo.ID).Runs; len(runs) != 0 {
-		t.Fatalf("refused run recorded: %+v", runs)
-	}
-	var out map[string]any
-	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"run_routine","args":{"id":%q}}`, safe.ID), &out)
-	if out["id"] != safe.ID || out["outcome"] != RunRunning {
-		t.Fatalf("run = %+v", out)
-	}
-	waitUntil(t, "the run's thread", func() bool {
-		runs := routine(t, m, project, safe.ID).Runs
-		return len(runs) == 1 && runs[0].TaskID != ""
-	})
-
-	for _, spawned := range []func(*webSession){
-		func(s *webSession) { s.spawnedBy = "parent" },
-		func(s *webSession) { s.routineID = safe.ID },
-	} {
-		setSession(m, caller.ID, func(s *webSession) { s.mode, s.spawnedBy, s.routineID = store.ModeYolo, "", "" })
-		setSession(m, caller.ID, spawned)
-		uamRefused(t, conv, fmt.Sprintf(`{"op":"run_routine","args":{"id":%q}}`, yolo.ID), "cannot start threads")
-	}
-	setSession(m, caller.ID, func(s *webSession) { s.spawnedBy, s.routineID = "", "" })
-	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"run_routine","args":{"id":%q}}`, yolo.ID), &out)
-	if out["id"] != yolo.ID || out["outcome"] != RunRunning {
-		t.Fatalf("Yolo run = %+v", out)
-	}
-	waitUntil(t, "the Yolo run's thread", func() bool {
-		runs := routine(t, m, project, yolo.ID).Runs
-		return len(runs) == 1 && runs[0].TaskID != ""
-	})
-}
-
 // An agent settles and archives only the Threads it started, through the
 // same stage rules as the owner.
 func TestUAMSettleAndArchiveStartedThreads(t *testing.T) {
@@ -232,7 +184,8 @@ func TestUAMSettleAndArchiveStartedThreads(t *testing.T) {
 	uamRefused(t, conv, fmt.Sprintf(`{"op":"archive","args":{"id":%q}}`, child), "cannot be archived")
 }
 
-// A started Thread with unsaved git work of its own is refused unless force.
+// A started Thread with unsaved git work of its own is refused, and an agent
+// cannot force past that.
 func TestUAMSettleStartedThreadAsksFirstWithUnsavedWork(t *testing.T) {
 	repo := sharedFolderWithOthersWork(t)
 	g := newGitTask(t, repo)
@@ -250,9 +203,8 @@ func TestUAMSettleStartedThreadAsksFirstWithUnsavedWork(t *testing.T) {
 			t.Fatalf("%s moved the child: %+v", op, got)
 		}
 	}
-	var row uamTaskRow
-	uamReadJSON(t, conv, fmt.Sprintf(`{"op":"settle","args":{"id":%q,"force":true}}`, child.ID), &row)
-	if row.Stage != StageSettled {
-		t.Fatalf("forced settle = %+v", row)
+	uamRefused(t, conv, fmt.Sprintf(`{"op":"settle","args":{"id":%q,"force":true}}`, child.ID), "unknown field")
+	if got := summaryOf(t, g.m, child.ID); got.Stage != StageActive {
+		t.Fatalf("force moved the child: %+v", got)
 	}
 }

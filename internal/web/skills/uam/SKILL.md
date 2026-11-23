@@ -29,7 +29,7 @@ needs, all in one step when it needs several:
   updating (`uam_surface`).
 - `references/uam-tool.md`: reading Thread or Project state, searching
   Threads' conversations or reading one, renaming your Thread, its budget,
-  pinning a chart, running a routine, settling or archiving a Thread you
+  pinning a chart, settling or archiving a Thread you
   started (`uam`).
 - `references/threads.md`: starting another Thread (`uam_create_task`), or a
   change outside your Thread's folder.

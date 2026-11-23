@@ -73,16 +73,12 @@ would be:
 - `pin_chart {call_id}` pins a chart your `uam_chart` call drew to the
   Project (its result names the `call_id`); `unpin_chart {call_id}` unpins
   it. Only your own charts; one that runs a command needs Yolo.
-- `run_routine {id}` runs one of your Project's routines now (`routines {}`
-  lists them), as the owner's Run now does: a run the routine's limits
-  refuse comes back as `outcome: "skipped"` with a `reason`. A routine in
-  Yolo needs you in Yolo, and a Thread another Thread or a routine started
-  cannot run routines.
-- `settle {id, force?}` and `archive {id, force?}` put away a Thread you
-  started (`uam_create_task`), never another. They are refused while it
-  works, has queued prompts or waits for an answer, and while it has unsaved
-  git work of its own, naming the files: have it commit and push first, or
-  pass `force: true` (a worktree with changes is kept).
+- `settle {id}` and `archive {id}` put away a Thread you started
+  (`uam_create_task`), never another. They are refused while it works, has
+  queued prompts or waits for an answer, and while it has unsaved git work
+  of its own, naming the files: have it commit and push first. Only the
+  owner can put away a Thread with unsaved work.
+- Running a routine stays the owner's: a run uses the routine's daily limit.
 
 `sense`, `tasks` and `task` include `workdir`, the Thread's working directory.
 `branch`, when available, is the last observed branch, so check Git before
