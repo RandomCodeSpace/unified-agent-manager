@@ -75,6 +75,10 @@ type conversation struct {
 	// (readOnceLocked); viewRepeats counts the turn's replaced repeats.
 	views       map[readKey][sha256.Size]byte
 	viewRepeats int
+	// cacheBreaks counts the prompt cache breaks since the last turn ended,
+	// by primary reason; cacheBreakTokens totals their prior cached tokens.
+	cacheBreaks      map[string]int
+	cacheBreakTokens int
 	// turnAt is when the running turn started. sending counts prompts on
 	// their way to the CLI, which Stop treats as a running turn.
 	turnAt  time.Time

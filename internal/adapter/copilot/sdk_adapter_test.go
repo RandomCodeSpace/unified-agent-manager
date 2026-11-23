@@ -223,6 +223,47 @@ func TestSDKClientAdapterPingAfterExit(t *testing.T) {
 	}
 }
 
+// TestSDKClientAdapterCallsAfterStop: the SDK clears its RPC surface when the
+// CLI is stopped; a call that arrives afterwards fails instead of panicking.
+func TestSDKClientAdapterCallsAfterStop(t *testing.T) {
+	a := startFakeSDK(t, startFakeRuntime(t))
+	a.ForceStop()
+	ctx := context.Background()
+	calls := map[string]func() error{
+		"Ping":        func() error { return a.Ping(ctx) },
+		"ListModels":  func() error { _, err := a.ListModels(ctx); return err },
+		"Quota":       func() error { _, err := a.Quota(ctx); return err },
+		"CurrentAuth": func() error { _, err := a.CurrentAuth(ctx); return err },
+		"Login":       func() error { _, err := a.Login(ctx, &rpc.AccountLoginRequest{}); return err },
+		"Logout":      func() error { return a.Logout(ctx, &rpc.AccountLogoutRequest{}) },
+		"ReadEvents": func() error {
+			_, err := a.ReadEvents(ctx, &rpc.SessionsReadPersistedEventsRequest{})
+			return err
+		},
+		"CheckInUse":           func() error { _, err := a.CheckInUse(ctx, []string{"s-1"}); return err },
+		"AskDecision":          func() error { _, err := a.AskDecision(ctx, &rpc.DecisionsAskRequest{}); return err },
+		"ForkSession":          func() error { _, err := a.ForkSession(ctx, &rpc.SessionsForkRequest{}); return err },
+		"DiscoverSkills":       func() error { _, err := a.DiscoverSkills(ctx, nil, nil); return err },
+		"DiscoverAgents":       func() error { _, err := a.DiscoverAgents(ctx, nil); return err },
+		"DiscoverHooks":        func() error { _, err := a.DiscoverHooks(ctx, nil); return err },
+		"DiscoverInstructions": func() error { _, err := a.DiscoverInstructions(ctx, nil); return err },
+		"SetSkillDisabled":     func() error { return a.SetSkillDisabled(ctx, "s", true) },
+		"MCPConfigList":        func() error { _, err := a.MCPConfigList(ctx); return err },
+		"MCPDiscover":          func() error { _, err := a.MCPDiscover(ctx, "/work"); return err },
+		"MCPConfigAdd":         func() error { return a.MCPConfigAdd(ctx, "m", nil) },
+		"MCPConfigUpdate":      func() error { return a.MCPConfigUpdate(ctx, "m", nil) },
+		"MCPConfigRemove":      func() error { return a.MCPConfigRemove(ctx, "m") },
+		"MCPConfigEnable":      func() error { return a.MCPConfigEnable(ctx, "m", true) },
+		"MCPConfigDisable":     func() error { return a.MCPConfigEnable(ctx, "m", false) },
+		"MCPConfigReload":      func() error { return a.MCPConfigReload(ctx) },
+	}
+	for name, call := range calls {
+		if err := call(); err == nil || err.Error() != "client is not connected" {
+			t.Errorf("%s after stop: %v, want client is not connected", name, err)
+		}
+	}
+}
+
 func TestSDKClientAdapterRequests(t *testing.T) {
 	rt := startFakeRuntime(t)
 	a := startFakeSDK(t, rt)

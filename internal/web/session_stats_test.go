@@ -371,6 +371,25 @@ func TestUAMCountsRoundTrip(t *testing.T) {
 	}
 }
 
+// A turn's prompt cache breaks land in uam's counts by primary reason, with
+// the tokens that were cached before them.
+func TestUAMCountsCacheBreaks(t *testing.T) {
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m, _, _ := newTestManager(t)
+	m.countTurn(agentapi.Turn{State: agentapi.TurnCompleted, CacheBreaks: map[string]int{"tools_changed": 2, "ttl=expired\n": 1}, CacheBreakTokens: 1230})
+	m.countTurn(agentapi.Turn{State: agentapi.TurnCompleted, CacheBreaks: map[string]int{"tools_changed": 1}, CacheBreakTokens: 70})
+	m.countTurn(agentapi.Turn{State: agentapi.TurnCompleted})
+	got, err := m.SessionStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []SessionStat{{"uam.cache_breaks_tools_changed", "3"}, {"uam.cache_breaks_ttl_expired_", "1"}, {"uam.cache_break_frontier_tokens", "1300"}} {
+		if !slices.Contains(got.Stats, want) {
+			t.Errorf("stats lack %v: %v", want, got.Stats)
+		}
+	}
+}
+
 // The cost counts: each model's cost and AI units, the main agent's model
 // calls per prompt (prompts with none recorded left out) and its tool calls,
 // and web_fetch failures by class with retries of a blocked host (not one

@@ -62,15 +62,27 @@ func (a sdkClientAdapter) AuthStatus(ctx context.Context) (*copilot.GetAuthStatu
 }
 
 func (a sdkClientAdapter) CurrentAuth(ctx context.Context) (*rpc.AccountGetCurrentAuthResult, error) {
-	return a.c.RPC.Account.GetCurrentAuth(ctx)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Account.GetCurrentAuth(ctx)
 }
 
 func (a sdkClientAdapter) Login(ctx context.Context, req *rpc.AccountLoginRequest) (*rpc.AccountLoginResult, error) {
-	return a.c.RPC.Account.Login(ctx, req)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Account.Login(ctx, req)
 }
 
 func (a sdkClientAdapter) Logout(ctx context.Context, req *rpc.AccountLogoutRequest) error {
-	_, err := a.c.RPC.Account.Logout(ctx, req)
+	server, err := a.server()
+	if err != nil {
+		return err
+	}
+	_, err = server.Account.Logout(ctx, req)
 	return err
 }
 

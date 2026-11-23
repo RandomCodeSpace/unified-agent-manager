@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"time"
@@ -142,6 +143,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if sa, ok := c.subs.count(ev); ok {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
+		return
+	case *rpc.PromptCacheBreakData:
+		// Counted only, a subagent's too: the prefix is billed again.
+		if c.cacheBreaks == nil {
+			c.cacheBreaks = map[string]int{}
+		}
+		c.cacheBreaks[cmp.Or(d.PrimaryReason, "unknown")]++
+		c.cacheBreakTokens += int(max(d.FrontierTokens, 0))
 		return
 	case *rpc.SessionUsageCheckpointData:
 		// The CLI's session-wide total, which the next reopen reads back.

@@ -23,7 +23,11 @@ const decisionFitsFloor = 0.5
 // AskDecision is optional on the client seam so the fixtures without a
 // decision model keep their ordinary behavior.
 func (a sdkClientAdapter) AskDecision(ctx context.Context, req *rpc.DecisionsAskRequest) (*rpc.DecisionsAskResult, error) {
-	return a.c.RPC.Decisions.Ask(ctx, req)
+	server, err := a.server()
+	if err != nil {
+		return nil, err
+	}
+	return server.Decisions.Ask(ctx, req)
 }
 
 type decisionClient interface {

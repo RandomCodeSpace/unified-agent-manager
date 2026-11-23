@@ -1531,6 +1531,11 @@ type Turn struct {
 	// Only uam's own counts read them.
 	ReadOnceHits int  `json:"-"`
 	StallGaveUp  bool `json:"-"`
+	// CacheBreaks counts, by the provider's primary reason, the times a
+	// cached prompt prefix was lost since the last turn ended;
+	// CacheBreakTokens totals the tokens that were cached before each.
+	CacheBreaks      map[string]int `json:"-"`
+	CacheBreakTokens int            `json:"-"`
 }
 
 // InteractionKind separates permission requests from questions.

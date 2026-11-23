@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,6 +111,11 @@ func (m *Manager) countTurn(t agentapi.Turn) {
 	if t.StallGaveUp {
 		m.count("stall_gave_up")
 	}
+	// The reason is the provider's text; the stats file is key=value lines.
+	for reason, n := range t.CacheBreaks {
+		m.countN("cache_breaks_"+strings.NewReplacer("=", "_", "\n", "_").Replace(reason), n)
+	}
+	m.countN("cache_break_frontier_tokens", t.CacheBreakTokens)
 }
 
 // autoFallbackTitle is the title of the Copilot adapter's question before a
