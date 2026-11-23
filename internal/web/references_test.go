@@ -413,3 +413,37 @@ func TestHistoryReadsEndWithTheirRequest(t *testing.T) {
 		}
 	}
 }
+
+// The routes hand the request's context to those reads.
+func TestHistoryRoutesEndWithTheirRequest(t *testing.T) {
+	m, prov, _, tasks := closedTasks(t, StageSettled)
+	release := make(chan struct{})
+	prov.SetReadHook(func(context.Context, agentapi.ReadRequest) (agentapi.History, error) {
+		<-release
+		return agentapi.History{}, context.Canceled
+	})
+	t.Cleanup(func() { close(release) })
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m, prov: prov}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelled := func(r *http.Request) { *r = *r.WithContext(ctx) }
+	path := "/api/sessions/" + tasks[0].ID
+	for _, route := range []struct{ method, target, body string }{
+		{http.MethodGet, path + "/references?reply=a0", ""},
+		{http.MethodGet, path + "/history?before=eA", ""},
+		{http.MethodPost, path + "/rerun", "{}"},
+	} {
+		done := make(chan struct{})
+		go func() { ts.do(route.method, route.target, route.body, withCookie(ts), cancelled); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s %s still waits after its request ended", route.method, route.target)
+		}
+	}
+}
