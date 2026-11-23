@@ -1,6 +1,7 @@
 # uam: Knowing uam: the uam tool
 
-Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
+Use `uam` with `{op, args}` for Thread and Project reads, and for the
+actions below. Every Thread has it.
 
 - `sense {}` gives your mode (`mode_unknown: true` after a failed mode
   change: nothing is allowed automatically, and reads stay in your Project,
@@ -61,6 +62,23 @@ Use `uam` with `{op, args}` for Thread and Project reads. Every Thread has it.
 - `routines {}` lists your Project's routines: schedule, next run, where
   each run works (`runs_in`: "Project folder", or "New worktree" with its
   source branch) and the 3 newest runs with their outcome.
+
+Actions, each as the owner takes it in uam and refused where the owner's
+would be:
+
+- `rename {name}` renames your own Thread; an empty name shows its title.
+- `set_budget {credits?, quota_percent?}` sets your own Thread's budget
+  (`references/notes.md`). You may add a limit or tighten the one the owner
+  set, never raise or remove it, and not at all once it is reached.
+- `pin_chart {call_id}` pins a chart your `uam_chart` call drew to the
+  Project (its result names the `call_id`); `unpin_chart {call_id}` unpins
+  it. Only your own charts; one that runs a command needs Yolo.
+- `settle {id}` and `archive {id}` put away a Thread you started
+  (`uam_create_task`), never another. They are refused while it works, has
+  queued prompts or waits for an answer, and while it has unsaved git work
+  of its own, naming the files: have it commit and push first. Only the
+  owner can put away a Thread with unsaved work.
+- Running a routine stays the owner's: a run uses the routine's daily limit.
 
 `sense`, `tasks` and `task` include `workdir`, the Thread's working directory.
 `branch`, when available, is the last observed branch, so check Git before

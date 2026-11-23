@@ -611,7 +611,7 @@ func (m *Manager) drawChart(ctx context.Context, taskID string, call agentapi.Ho
 		removeUploads(m.taskUploadDir(taskID))
 		return "", newError(http.StatusNotFound, msgSessionNotFound)
 	}
-	return chartSummary(spec, data, took), nil
+	return chartSummary(spec, data, took) + fmt.Sprintf(" Its call_id for uam op pin_chart is %q.", call.CallID), nil
 }
 
 // TaskChart returns the chart the Task id drew with the call callID, with

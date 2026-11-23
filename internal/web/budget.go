@@ -211,6 +211,12 @@ func (m *Manager) budgetToolLocked(s *webSession) (deny, note string) {
 // and ends a wrap-up: the turn goes on with its tools, and a handoff still
 // being written is dropped.
 func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSummary, error) {
+	return m.setBudget(id, credits, quotaPercent, nil)
+}
+
+// setBudget is SetBudget, refused when allow, given, refuses the Thread as
+// it is under mu.
+func (m *Manager) setBudget(id string, credits, quotaPercent float64, allow func(*webSession) error) (SessionSummary, error) {
 	if !(credits >= 0 && credits <= maxBudgetCredits) || !(quotaPercent >= 0 && quotaPercent <= 100) {
 		return SessionSummary{}, newError(http.StatusBadRequest, "budget credits must be 0 to %d and quota_percent 0 to 100", maxBudgetCredits)
 	}
@@ -222,6 +228,11 @@ func (m *Manager) SetBudget(id string, credits, quotaPercent float64) (SessionSu
 	}
 	if s.stage == StageArchived {
 		return SessionSummary{}, s.readOnlyLocked()
+	}
+	if allow != nil {
+		if err := allow(s); err != nil {
+			return SessionSummary{}, err
+		}
 	}
 	before := m.summaryLocked(s)
 	m.dropWrapLocked(s)
