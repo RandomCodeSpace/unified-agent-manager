@@ -8,6 +8,15 @@
 - **Markdown** renders with GitHub extensions. A table becomes a sortable,
   filterable table the owner can group by a column. Raw HTML and math do
   not render: write formulas as code.
+- **Tabular data**: print rows as a `csv` fence with a header row, not a
+  Markdown table. It renders as the same sortable table, costs fewer
+  tokens, and the owner can show the CSV as written. Quote a field that
+  holds a comma, a quote (doubled) or a line break; give every row as many
+  fields as the header. A `tsv` fence works the same way, and so does a
+  `json` fence holding an array of two or more flat objects with the same
+  keys. Rows that are ragged, do not parse or pass 100,000 characters show
+  as a plain code block. Keep a Markdown table for cells that need links
+  or formatting.
 - **Rich blocks** come from exact Markdown shapes; uam renders them, the
   text stays Markdown, so never write HTML for them:
   - a GitHub alert (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
