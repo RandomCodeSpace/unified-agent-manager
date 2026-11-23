@@ -143,3 +143,32 @@ func TestPreToolUseAsksNoHealthWithoutAnAllowlist(t *testing.T) {
 		t.Fatalf("preToolUse = %+v, %v", out, err)
 	}
 }
+
+// Calls that overlap in one agent's turn, as a Fusion turn's do, cannot be
+// told apart at their ends, so a failure is never pinned on the wrong model.
+func TestOverlappingModelCallsAreNotMisattributed(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	a, b := "gpt-6-luna", "deepseek-v4.1-flash"
+	c.onEvent(ev("1", &rpc.ModelCallStartData{Model: &a, TurnID: "t1"}))
+	c.onEvent(ev("2", &rpc.ModelCallStartData{Model: &b, TurnID: "t1"}))
+	c.onEvent(ev("3", &rpc.ModelCallFinishedData{TurnID: "t1", Outcome: rpc.ModelCallFinishedOutcomeError}))
+	c.onEvent(ev("4", &rpc.ModelCallFinishedData{TurnID: "t1", Outcome: rpc.ModelCallFinishedOutcomeSuccess}))
+	// Overlapping calls on one model still say which model ended.
+	c.onEvent(ev("5", &rpc.ModelCallStartData{Model: &a, TurnID: "t2"}))
+	c.onEvent(ev("6", &rpc.ModelCallStartData{Model: &a, TurnID: "t2"}))
+	c.onEvent(ev("7", &rpc.ModelCallFinishedData{TurnID: "t2", Outcome: rpc.ModelCallFinishedOutcomeError}))
+	c.onEvent(ev("8", &rpc.ModelCallFinishedData{TurnID: "t2", Outcome: rpc.ModelCallFinishedOutcomeError}))
+	// Once the overlap has ended, the turn's next call is reported again.
+	c.onEvent(ev("9", &rpc.ModelCallStartData{Model: &b, TurnID: "t1"}))
+	c.onEvent(ev("10", &rpc.ModelCallFinishedData{TurnID: "t1", Outcome: rpc.ModelCallFinishedOutcomeRejected}))
+	want := []agentapi.ModelCall{{Model: a, Outcome: "error"}, {Model: a, Outcome: "error"}, {Model: b, Outcome: "rejected"}}
+	if got := modelCalls(h.sink); !reflect.DeepEqual(got, want) {
+		t.Fatalf("model calls = %+v, want %+v", got, want)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.callModels) != 0 {
+		t.Fatalf("ended calls kept: %v", c.callModels)
+	}
+}

@@ -36,7 +36,7 @@ type conversation struct {
 	tokenOrder []string
 	// callModels is the model of each model call in flight, by agent and
 	// turn (model_calls.go).
-	callModels map[string]string
+	callModels map[string]callModel
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
 	elicits          elicitLinks // elicitation.requested events with elicitation callbacks
