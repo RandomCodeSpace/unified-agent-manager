@@ -1,6 +1,7 @@
 import type { HistoryPage, Item, SessionDetail } from '../api';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, placeIdleSteerEchoes, TAIL_ITEMS } from './historyWindow.ts';
 import { questionOf } from './transcript.ts';
+import { isRealUserTurn } from './turnState.ts';
 
 /** Identity/grouping records survive page eviction; no deferred or chat text does. */
 export function indexItem(item: Item): Item {
@@ -86,7 +87,7 @@ export function groupIdentities(items: Item[], previous?: Map<string, string>): 
     group = [];
   };
   for (const item of items) {
-    if (item.kind === 'user' && !item.delivery) flush();
+    if (isRealUserTurn(item)) flush();
     else group.push(item.id);
   }
   flush();

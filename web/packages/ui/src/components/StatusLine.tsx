@@ -25,6 +25,7 @@ import { backgroundCommands, commandRunning, countSubagents } from '../lib/subag
 import { fusionStep, reviews } from '../lib/fusion';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
 import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
+import { openCall, turnState } from '../lib/turnState';
 import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './common';
 import { useItemBody } from './Details';
 import { Key } from './InlinePicker';
@@ -59,7 +60,8 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting, live: liveLine(session, compacting) };
     const turn = session.turn_timings?.at(-1);
     // The Thread runs a turn whose timing has not come yet: all there is belongs to the last turn, which ended or was cut off, so the line says "Working" alone.
-    if ((turn?.ended_at || (connected && turn?.state === 'unknown')) && LIVE.includes(session.state)) return { kind: 'working', lead: '', compacting };
+    const last = turnState(turn, connected);
+    if ((last === 'ended' || last === 'cut') && LIVE.includes(session.state)) return { kind: 'working', lead: '', compacting };
     const activity = session.turn_activity;
     const todo = todoLine(activity?.todos, turn?.started_at);
     return { kind: 'working', lead: activity?.intent ?? '', compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), ...(session.compacting_background ? { background: true } : {}), todo, live: liveLine(session, compacting) };
@@ -121,7 +123,7 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   const items = (session.recent_items ?? session.items).filter((i) => !i.agent_id);
   if (phase.kind === 'local') {
     const tool = phase.tool ?? '';
-    const calls = items.filter((i) => i.kind === 'tool' && (i.tool?.status === 'running' || i.tool?.status === 'pending') && !isSubagentCall(i));
+    const calls = items.filter((i) => i.kind === 'tool' && openCall(i.tool?.status) && !isSubagentCall(i));
     // A plain local phase may be a subagent's tool mid-turn: with no call of the main agent's running, it waits on them.
     if (running && !calls.length) return { mark: 'subagents', phase: waiting };
     const reads = calls.filter((i) => READS.has(i.tool?.name.toLowerCase() ?? '')).length;

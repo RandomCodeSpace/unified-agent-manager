@@ -11,6 +11,7 @@ import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
+import { isRealUserTurn, turnBusy } from '../lib/turnState';
 import { stopWords } from '../lib/stop';
 import { failureWords } from '../lib/failure';
 import type { ChangesPlace, ChangesTurn } from './Changes';
@@ -167,7 +168,7 @@ function headerState(session: SessionSummary, state: SessionState, failures: str
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
   // Working is a still dot in its tone: the one moving mark in the pane is the strip's live line.
-  if (state === 'working' || state === 'starting') icon = <span aria-hidden="true" className="mx-1 size-1.5 rounded-full bg-accent" />;
+  if (turnBusy(state)) icon = <span aria-hidden="true" className="mx-1 size-1.5 rounded-full bg-accent" />;
   if (state === 'working' && session.budget?.wrapping_up) {
     detail = 'Wrapping up: budget reached, tools are denied and the agent is writing a handoff';
   } else if (stop) {
@@ -419,7 +420,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     return () => { alive.current = false; };
   }, []);
   const live = LIVE.includes(session.state);
-  const working = session.state === 'working' || session.state === 'starting';
+  const working = turnBusy(session.state);
   // The turn's timing ends a moment before the state flips: once the timing this page saw running ends, the transcript
   // folds the turn then, not twice. Keyed, since at a turn's start the last timing is the previous turn's, already ended.
   const lastTiming = session.turn_timings?.at(-1);
@@ -433,7 +434,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [seed, setSeed] = useState<{ text: string } | null>(null);
   const loadCall = (itemId: string) => api.itemBody(session.id, itemId, '').then((body) => body.item);
   // A prompt begun since its end starts the next turn: the queue's next is sent with the state never seen turning.
-  const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming && !liveItems.some((item) => item.kind === 'user' && !item.delivery && !(Date.parse(item.time) < Date.parse(lastTiming.ended_at!)));
+  const turnOver = working && !!lastTiming?.ended_at && lastTiming.id === runningTiming && !liveItems.some((item) => isRealUserTurn(item) && !(Date.parse(item.time) < Date.parse(lastTiming.ended_at!)));
   // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
   const [opened] = useState(() => new Date().toISOString());
   const [sinceMark, setSinceMark] = useState(since);

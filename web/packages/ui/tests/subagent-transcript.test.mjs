@@ -13,6 +13,7 @@ import * as history from '../src/lib/historyState.ts';
 import * as subagentsLib from '../src/lib/subagents.ts';
 import * as receiptsLib from '../src/lib/receipts.ts';
 import * as gitlabRefsLib from '../src/lib/gitlabRefs.ts';
+import * as turnStateLib from '../src/lib/turnState.ts';
 
 // Render the real transcript component with local UI shells and no browser or data reads.
 const require = createRequire(import.meta.url);
@@ -43,6 +44,7 @@ const modules = {
   '../lib/transcript': transcript,
   '../lib/cost': { formatCount: (n) => String(n) },
   '../lib/historyState': history,
+  '../lib/turnState': turnStateLib,
   '../lib/subagents': subagentsLib,
   '../lib/receipts': receiptsLib,
   '../lib/gitlabRefs': gitlabRefsLib,
