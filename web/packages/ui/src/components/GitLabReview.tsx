@@ -6,6 +6,7 @@ import { useApi } from '../ApiContext';
 import { ApiError, LIVE, describeError, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
 import { cn } from '../lib/cn';
 import { gitLabMarkdown } from '../lib/gitlabRefs';
+import { isRealUserTurn } from '../lib/turnState';
 import { dateTime, FileRef, Markdown, Note, Skeleton, Summary } from './common';
 import { GitLabItemsContext } from './GitLabStrip';
 import { Button, rowClass } from './ui/button';
@@ -26,7 +27,7 @@ function actionTurn(session: SessionDetail | undefined, requestId: string) {
   const timing = session.turn_timings?.find((turn) => turn.user_item_id === user.id);
   if (!timing || timing.state === 'working' || !timing.ended_at) return;
   const ownerIndex = items.findIndex((item) => item.id === user.id);
-  const nextIndex = items.findIndex((item, index) => item.kind === 'user' && !item.agent_id && !item.delivery && (ownerIndex >= 0 ? index > ownerIndex : Date.parse(item.time) > Date.parse(user.time)));
+  const nextIndex = items.findIndex((item, index) => isRealUserTurn(item) && !item.agent_id && (ownerIndex >= 0 ? index > ownerIndex : Date.parse(item.time) > Date.parse(user.time)));
   const reply = items.slice(ownerIndex + 1, nextIndex < 0 ? undefined : nextIndex).filter((item) => item.kind === 'assistant' && !item.agent_id && Date.parse(item.time) >= Date.parse(user.time) && Date.parse(item.time) <= Date.parse(timing.ended_at!)).at(-1);
   return { timing, reply };
 }

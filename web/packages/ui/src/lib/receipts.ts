@@ -1,5 +1,6 @@
 import type { Item } from '../api';
 import { mainArgument, patchPaths, PIPED, toolKind } from './transcript.ts';
+import { isRealUserTurn } from './turnState.ts';
 
 // Receipts (DESIGN.md Receipts): what a turn's last reply claims, checked against what the
 // turn's record shows. The reply names paths and commands in code spans and says whether tests
@@ -376,7 +377,7 @@ export function lastTurnContradicted(items: readonly Item[]): boolean {
   let reply: Item | undefined;
   for (; start > 0; start--) {
     const item = items[start - 1];
-    if (item.kind === 'user' && !item.agent_id && !item.delivery) break;
+    if (isRealUserTurn(item) && !item.agent_id) break;
     if (!reply && item.kind === 'assistant' && !item.agent_id) reply = item;
   }
   return !!reply?.text && receipts(reply.text, items.slice(start)).some((stamp) => stamp.verdict === 'contradicted');

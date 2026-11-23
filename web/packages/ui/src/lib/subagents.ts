@@ -1,5 +1,6 @@
 import type { BackgroundTasks, Fusion, Item, OutlineItem, Subagent, SubagentStatus, TurnTiming } from '../api';
 import { duration, toolKind } from './transcript.ts';
+import { isRealUserTurn } from './turnState.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
 // tones, the live rows' set, a list's families and the strip sheet's groups.
@@ -150,7 +151,7 @@ export function replyIndex(index: readonly OutlineItem[], subagents: readonly Su
     byKey.set(key, reply);
   };
   for (const item of index) {
-    if (item.kind === 'user' && !item.delivery) {
+    if (isRealUserTurn(item)) {
       open(item.id, item.time);
       continue;
     }
@@ -395,7 +396,7 @@ export function indexGroups(index: readonly OutlineItem[], items: readonly Item[
   const position = new Map<string, number>();
   let user: OutlineItem | null = null;
   index.forEach((item, i) => {
-    if (item.kind === 'user' && !item.delivery) user = item;
+    if (isRealUserTurn(item)) user = item;
     replyOf.set(item.id, user);
     position.set(item.id, i);
   });
@@ -424,7 +425,7 @@ export function indexGroups(index: readonly OutlineItem[], items: readonly Item[
     const message = replyOf.get(key);
     if (message?.id === key) group(key, message, true).refs.push(...refs);
   }
-  const messages = index.filter((item) => item.kind === 'user' && !item.delivery && !Number.isNaN(ms(item.time)));
+  const messages = index.filter((item) => isRealUserTurn(item) && !Number.isNaN(ms(item.time)));
   const at = (time: string | undefined, routed = false) => {
     const t = ms(time);
     if (Number.isNaN(t)) return group('', null, false);

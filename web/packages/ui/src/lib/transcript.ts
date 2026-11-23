@@ -6,6 +6,7 @@
 import { lineCountsText } from './cost.ts';
 import { isChartCall } from './chart.ts';
 import { isSurfaceCall } from './surface.ts';
+import { isRealUserTurn, openCall } from './turnState.ts';
 import type { Interaction, InteractionState, Item, Subagent, ToolCall, TurnTiming } from '../api';
 
 /** Argument keys per tool name, most telling first; `GENERIC` serves every other tool. */
@@ -205,7 +206,7 @@ export async function rerunRequest(call: InterruptedCall, load: (id: string) => 
 /** Reveal roughly 100 more items, keeping the first turn whole (including steers). */
 export function transcriptWindowStart(items: Item[], before = items.length): number {
   let start = Math.max(0, before - 100);
-  while (start > 0 && (items[start].kind !== 'user' || items[start].delivery)) start--;
+  while (start > 0 && !isRealUserTurn(items[start])) start--;
   return start;
 }
 
@@ -549,7 +550,7 @@ export function isWork(entry: Entry): boolean {
 /** The current turn includes every segment across steer messages. */
 export function foregroundItems(items: Item[]): Item[] {
   for (let i = items.length - 1; i >= 0; i--) {
-    if (items[i].kind === 'user' && !items[i].delivery) return items.slice(i);
+    if (isRealUserTurn(items[i])) return items.slice(i);
   }
   return items;
 }
@@ -1007,7 +1008,6 @@ export function agentIdOf(tool: ToolCall | undefined): string {
 
 const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 const baseName = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1) || path;
-const openCall = (status?: string) => status === 'pending' || status === 'running';
 
 /** The line of a failed call's output that says what broke: the first naming an error, a failure or a `file:line:`, else the first non-empty one. */
 export function firstErrorLine(output: string | undefined): string {

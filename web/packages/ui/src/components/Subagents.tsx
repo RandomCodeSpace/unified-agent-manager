@@ -10,6 +10,7 @@ import { fusionLevel, fusionRoute, fusionStep, phaseCaption, phaseStatus, review
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { historyPage } from '../lib/historyArchive';
+import { isRealUserTurn } from '../lib/turnState';
 import { formatCount } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
 import { IDENTITY_LIMIT, PAGE_ROWS, RUNS_KEPT, backgroundCommands, commandNoun, commandRunning, countParts, countSubagents, families, liveCommands, type BackgroundCommand, followUps, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, subagentName, subagentNoun, totalTokens, type CountPart, type FollowUp, type IdentityTone, type IndexFilter, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
@@ -293,7 +294,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, onLoca
   const held = [...session.items, ...(session.recent_items ?? [])];
   const calls = useKept(held.filter((item) => isSubagentCall(item) || byParent.has(item.id)));
   const messages = useKept(held.filter((item) => item.kind === 'user'));
-  const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id))));
+  const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => isRealUserTurn(item) || isSubagentCall(item) || byParent.has(item.id))));
   const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
   const replies = useMemo(() => replyIndex(outline, session.subagents, session.turn_timings), [outline, session.subagents, session.turn_timings]);
   const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);

@@ -8,6 +8,8 @@ import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from 
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 
+/** Why the send button and the execution mode wait while the Thread starts. */
+const WAIT_START = 'Wait for this thread to start.';
 /** On a phone the composer's pickers span the viewport (less the 8px collision gutters): a menu wider than the room beside its trigger would otherwise be shoved sideways and hang off it. */
 const PHONE_PICKER = 'max-sm:w-[calc(100vw-16px)] max-sm:max-w-none';
 import { formatCount, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
@@ -561,7 +563,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** Why the execution mode cannot change now; empty when it can. */
   function describeExecutionReason(): string {
     if (locked) return 'This thread is read-only.';
-    if (session.state === 'starting') return 'Wait for this thread to start.';
+    if (session.state === 'starting') return WAIT_START;
     if (commandsError) return commandsError;
     if (!commands) return 'Loading execution controls…';
     if (!autopilotCommand) return 'Autopilot is unavailable for this provider.';
@@ -1427,7 +1429,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
     if (blocked) return blocked;
-    if (session.state === 'starting') return 'Wait for this thread to start.';
+    if (session.state === 'starting') return WAIT_START;
     if (empty) return answering ? 'Choose an option or type an answer first.' : 'Type a message or attach a file first.';
     if (sendOff && settingsSteerReason) return settingsSteerReason;
     if (answering) {

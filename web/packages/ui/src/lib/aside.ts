@@ -1,6 +1,7 @@
 // Ask aside (`/btw`): the follow-up question built from the Task's kept asides, and the turn a new one belongs to.
 
 import type { Item } from '../api';
+import { isRealUserTurn } from './turnState.ts';
 
 /** The service's limit on an aside question (internal/web/aside.go `maxAsideQuestionBytes`), in UTF-8 bytes. */
 export const ASIDE_QUESTION_BYTES = 16 << 10;
@@ -34,7 +35,7 @@ export function asideQuestion(prior: readonly PriorAside[], question: string): s
 export function asideTurn(items: readonly Item[]): string {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
-    if (item.kind === 'user' && !item.delivery && !item.agent_id) return item.id;
+    if (isRealUserTurn(item) && !item.agent_id) return item.id;
   }
   return '';
 }

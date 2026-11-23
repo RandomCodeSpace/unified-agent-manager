@@ -17,6 +17,7 @@ import { cn } from '../lib/cn';
 import { formatCount, lineCountsText } from '../lib/cost';
 import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
+import { isRealUserTurn, openCall, turnState } from '../lib/turnState';
 import { namedSubagent, parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { receipts, type Stamp } from '../lib/receipts';
 import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
@@ -177,7 +178,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
   let group: Entry[] = [];
   let showedWorking = false;
   const firstIndex = identityItems.findIndex(item => item.id === items[0]?.id);
-  let userItemId: string | undefined = identityItems.slice(0, Math.max(0, firstIndex)).reverse().find(item => item.kind === 'user' && !item.delivery)?.id;
+  let userItemId: string | undefined = identityItems.slice(0, Math.max(0, firstIndex)).reverse().find(isRealUserTurn)?.id;
   // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
   let ownMessage = false;
   let footLive = live;
@@ -186,11 +187,12 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     // A turn that ended is over, also while the next one starts before its message lands: it keeps its
     // end, and a call it left running is not the running step. A row begun after its end is a turn's that came without one.
     // So is a turn the service cut off (unknown without an end) while the stream is up, up to the next turn's start.
-    const cut = connected && timing?.state === 'unknown' && !timing.ended_at;
-    const end = cut ? turnTimings[turnTimings.indexOf(timing) + 1]?.started_at : timing?.ended_at;
+    const turn = turnState(timing, connected);
+    const cut = turn === 'cut';
+    const end = cut ? turnTimings[turnTimings.indexOf(timing!) + 1]?.started_at : timing?.ended_at;
     const ended = end ? Date.parse(end) : cut ? Infinity : Number.NaN;
     const begunSince = (entry: Entry) => !!entry.item && !(Date.parse(entry.item.time) < ended);
-    const open = !(timing?.ended_at || cut) || group.some(begunSince);
+    const open = turn === 'idle' || turn === 'running' || group.some(begunSince);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live: live && open });
     if (!group.length) {
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
@@ -237,7 +239,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     group = [];
   };
   mergeByTime(items, [...loose, ...questions]).forEach((entry) => {
-    if (entry.item?.kind !== 'user' || entry.item.delivery) {
+    if (!entry.item || !isRealUserTurn(entry.item)) {
       group.push(entry);
       return;
     }
@@ -721,14 +723,14 @@ const StepCall = memo(function StepCall({ item, live, sessionId, approvals, edge
   const actions = useToolActions(item, open, toggle, sessionId);
   const context = useLazyContextMenu();
   const t = item.tool;
-  const running = live && isActive(t?.status);
+  const running = live && openCall(t?.status);
   const agentId = agentIdOf(t);
   const agent = useScope((d) => (agentId ? d.subagents.find((s) => s.id === agentId) : undefined));
   const words = callWords(full ?? item, live, approvals, agent);
   const Icon = STEP_ICONS[words.icon];
   const glyph = running ? <ToolMark tone="running" /> : <Icon aria-hidden="true" />;
   const took = running ? null : itemTook(item);
-  const ended = !live && isActive(t?.status);
+  const ended = !live && openCall(t?.status);
   const title = ended ? 'The turn ended before this tool reported a result' : undefined;
   const under = (
     <>
@@ -1181,7 +1183,7 @@ export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean
   let turn: string | undefined;
   for (const item of items) {
     if (item.agent_id) continue;
-    if (item.kind === 'user' && !item.delivery) turn = item.id;
+    if (isRealUserTurn(item)) turn = item.id;
     else if (item.kind === 'assistant' && turn) lastReply.set(turn, item);
   }
   if (!lastReply.size) return undefined;
@@ -1413,10 +1415,9 @@ function WholeNote({ whole }: Readonly<{ whole: WholeText }>) {
   );
 }
 
-const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
 function toolProgress(tool: Item['tool'], named = false) {
-  if (!tool?.progress || !isActive(tool.status)) return null;
+  if (!tool?.progress || !openCall(tool.status)) return null;
   return <p className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
 }
 
@@ -1546,7 +1547,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const { items, anchor: toggleButton, label, copyError } = useToolActions(item, open, toggle, sessionId);
   const status = t?.status ?? 'pending';
   // Display only: a tool still pending/running after the turn ended never reported a result.
-  const ended = !live && isActive(status);
+  const ended = !live && openCall(status);
   const tone = ended || t?.budget_stopped ? 'ended' : status;
   const { name, arg } = toolLabel(t);
   const word = statusWord(status, ended);
@@ -1580,7 +1581,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
         {live && toolProgress(t)}
         {opened && (
           <Collapse open={open} appear>
-            <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
+            <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && openCall(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
           </Collapse>
         )}
       </div>
