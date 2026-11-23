@@ -147,7 +147,8 @@ another machine therefore counts as one client.
 server as well as in the browser: the cookie is recorded as signed out in
 `~/.config/uam/web-signed-out.json` (mode 0600, beside the token) until it
 would have expired, so a copy of it is refused from then on, also after a
-restart. Other browsers stay signed in.
+restart. The file views that session opened end with it. Other browsers stay
+signed in.
 
 The token lives in `~/.config/uam/web-token` (mode 0600, or
 `$UAM_CONFIG_DIR/web-token`). To revoke every browser session, stop the

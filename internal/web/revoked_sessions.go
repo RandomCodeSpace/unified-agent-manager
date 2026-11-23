@@ -16,11 +16,13 @@ const signedOutFileName = "web-signed-out.json"
 // revokedSessions is the set of session cookies that were signed out, by
 // their MAC, each kept until the cookie would have expired on its own. A
 // cookie is stateless otherwise, so without this set a copy of it would keep
-// working after Log out. The file keeps the set across restarts.
+// working after Log out. A signed-out session's file views (fileSession) are
+// in the set too, until the last file key issued under it expires. The file
+// keeps the set across restarts.
 type revokedSessions struct {
 	path  string
 	mu    sync.Mutex
-	until map[string]int64 // cookie MAC -> expiry (Unix seconds)
+	until map[string]int64 // cookie MAC or file session -> expiry (Unix seconds)
 }
 
 // openRevokedSessions reads the set at path, dropping entries whose cookie

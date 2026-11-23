@@ -133,6 +133,48 @@ func TestConnectedFilesPreviewUsesHomeGrantAndCompanionCookie(t *testing.T) {
 	}
 }
 
+// Log out on the home instance ends the connected file views opened under that
+// sign-in, and only those.
+func TestConnectedFilesPreviewEndsWithItsSignIn(t *testing.T) {
+	f := newConnectedFileFixture(t)
+	home, err := url.Parse(f.proxy.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(session string) (string, []*http.Cookie) {
+		t.Helper()
+		target := "/api/connected/" + f.proxy.target.ID + "/api/sessions/" + f.task.ID + "/files/view/out/index.html?uam_generation=" + strconv.FormatUint(f.proxy.target.Generation, 10)
+		response := f.readGrant(t, "GET", target, []*http.Cookie{{Name: cookieName, Value: session}}, nil)
+		if response.StatusCode != http.StatusFound {
+			t.Fatalf("preview bootstrap=%d", response.StatusCode)
+		}
+		return response.Header.Get("Location"), response.Cookies()
+	}
+	first, second := validCookie(f.proxy.home.srv, home.Host), validCookie(f.proxy.home.srv, home.Host)
+	firstLocation, firstCookies := open(first)
+	secondLocation, secondCookies := open(second)
+	for _, v := range []struct {
+		location string
+		cookies  []*http.Cookie
+	}{{firstLocation, firstCookies}, {secondLocation, secondCookies}} {
+		if response := f.readGrant(t, "GET", v.location, v.cookies, nil); response.StatusCode != http.StatusOK {
+			t.Fatalf("preview before logout=%d", response.StatusCode)
+		}
+	}
+	logout := f.proxy.home.do(http.MethodPost, "/api/logout", "", withHost(home.Host), func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: first})
+	})
+	if logout.Code != http.StatusNoContent {
+		t.Fatalf("logout=%d", logout.Code)
+	}
+	if response := f.readGrant(t, "GET", firstLocation, firstCookies, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("signed-out preview=%d, want 403", response.StatusCode)
+	}
+	if response := f.readGrant(t, "GET", secondLocation, secondCookies, nil); response.StatusCode != http.StatusOK {
+		t.Fatalf("other sign-in's preview=%d, want 200", response.StatusCode)
+	}
+}
+
 func TestConnectedFilesRangesHeadDownloadAndConfinement(t *testing.T) {
 	f := newConnectedFileFixture(t)
 	initial := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/files/view/bytes.txt?download=1", "", nil)

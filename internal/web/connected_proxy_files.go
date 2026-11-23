@@ -42,9 +42,10 @@ func (s *Server) redirectConnectedView(w http.ResponseWriter, r, local *http.Req
 	expires := time.Now().Add(fileKeyTTL).Unix()
 	scope := connectedFileScope(target, task, "")
 	prefix := connectedPathPrefix + target.ID + "/files/" + task + "/"
-	key := fileKey(s.signKey, r.Host, scope, expires)
+	session := s.requestFileSession(r)
+	key := fileKey(s.signKey, r.Host, session, scope, expires)
 	if s.secureRequest(r) {
-		setFileCookie(w, fileCookie(s.signKey, r.Host, scope, expires), prefix, int(fileKeyTTL/time.Second))
+		setFileCookie(w, fileCookie(s.signKey, r.Host, session, scope, expires), prefix, int(fileKeyTTL/time.Second))
 	}
 	location := prefix + key + "/" + viewPath(filePath)
 	if r.URL.Query().Get("download") == "1" {
@@ -123,10 +124,11 @@ func (s *Server) rewriteConnectedGrant(response *http.Response, r, local *http.R
 	scope := connectedFileScope(target, task, grant.ID)
 	expires := grant.ExpiresAt.Unix()
 	prefix := connectedPathPrefix + target.ID + "/grants/" + task + "/" + grant.ID + "/"
-	grant.URL = prefix + fileKey(s.signKey, r.Host, scope, expires)
+	session := s.requestFileSession(r)
+	grant.URL = prefix + fileKey(s.signKey, r.Host, session, scope, expires)
 	if s.secureRequest(r) {
 		cookie := &http.Cookie{ // #nosec G124 -- SameSite=None is required for opaque sandbox requests; Secure and HttpOnly are always set, with a signed URL and one grant-scoped path.
-			Name: fileCookieName, Value: fileCookie(s.signKey, r.Host, scope, expires), Path: prefix,
+			Name: fileCookieName, Value: fileCookie(s.signKey, r.Host, session, scope, expires), Path: prefix,
 			MaxAge: int(time.Until(grant.ExpiresAt).Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode}
 		response.Header.Add("Set-Cookie", cookie.String())
 	}
