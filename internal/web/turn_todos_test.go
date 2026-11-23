@@ -457,3 +457,22 @@ func TestTodoHistoryMergesTurnsAndKeepsTheLastList(t *testing.T) {
 		t.Fatalf("missing Task = %d", code)
 	}
 }
+
+// A write a crash cut short leaves a line without its newline; the next
+// append starts a line of its own, so readers skip only the torn one.
+func TestAppendPrivateEndsATornLine(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "task")
+	path := filepath.Join(dir, "records.jsonl")
+	if _, err := appendPrivate(root, dir, path, []byte(`{"a":1}`+"\n"+`{"b":`)); err != nil {
+		t.Fatal(err)
+	}
+	size, err := appendPrivate(root, dir, path, []byte(`{"c":3}`+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"a":1}` + "\n" + `{"b":` + "\n" + `{"c":3}` + "\n"
+	if data, _ := os.ReadFile(path); string(data) != want || size != int64(len(want)) {
+		t.Fatalf("file = %q (size %d), want %q", data, size, want)
+	}
+}

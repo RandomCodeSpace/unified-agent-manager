@@ -292,3 +292,39 @@ func TestRemovedLogKeepsAnUnreadableFile(t *testing.T) {
 		t.Fatalf("unreadable log overwritten: %q %v", data, err)
 	}
 }
+
+// A worktree with an open Terminal is in use: settling its Thread keeps it.
+func TestWorktreeWithAnOpenTerminalIsInUse(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	sum, project := worktreeThread(t, ts, repo, "")
+	path := sum.Worktree.Path
+	setTerminal(t, ts.m, true)
+	term, err := ts.m.openTerminal(project, sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			ts.m.closeTerminal(term) // Shutdown waits for every open terminal
+		}
+	})
+	if _, err := ts.m.Settle(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	ts.m.mu.Lock()
+	inUse := ts.m.worktreeInUseLocked(path)
+	ts.m.mu.Unlock()
+	if !inUse {
+		t.Fatal("a worktree with an open Terminal would be removed")
+	}
+	ts.m.closeTerminal(term)
+	closed = true
+	ts.m.mu.Lock()
+	inUse = ts.m.worktreeInUseLocked(path)
+	ts.m.mu.Unlock()
+	if inUse {
+		t.Fatal("a settled worktree is in use after its Terminal closed")
+	}
+}
