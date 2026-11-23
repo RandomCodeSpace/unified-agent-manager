@@ -64,6 +64,24 @@ test('running items are read every 20 s and open merge requests every minute, to
   expect(asked(read)).toEqual(['mr:2', 'mr:2', 'mr:2']);
 });
 
+test('a caller with no items does not redraw when another item\'s state changes', async () => {
+  states.set('pipeline:11', { state: 'running' });
+  serve();
+  const drawn = vi.fn();
+  function Empty() {
+    drawn();
+    useSummaries('quiet', []);
+    return null;
+  }
+  render(<><Probe sessionId="quiet" refs={[{ kind: 'pipeline', id: 11 }]} /><Empty /></>);
+  const first = drawn.mock.calls.length;
+  await advance(0);
+  states.set('pipeline:11', { state: 'failed' });
+  await advance(20_000);
+  expect(screen.getByText('pipeline:11=failed')).toBeTruthy();
+  expect(drawn).toHaveBeenCalledTimes(first);
+});
+
 test('a hidden tab reads nothing; coming back reads what is older than 15 s at once', async () => {
   states.set('job:7', { state: 'running' });
   const read = serve();

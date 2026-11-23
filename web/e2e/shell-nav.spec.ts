@@ -121,3 +121,27 @@ test('on a phone the sidebar is a drawer: Esc closes it every time and a tap ope
     await context.close();
   }
 });
+
+test('a narrow header shrinks the parent Thread crumb instead of drawing it over the title', async ({ page, project, model, uam }) => {
+  model.toolRound('start a helper thread', [{ id: 'call_spawn', name: 'uam_create_task', arguments: { project: project.id, prompt: 'helper thread task', name: 'Helper', worktree: false } }], 'Helper started.');
+  model.reply('helper thread task', 'Helper reply.');
+  const url = await startThread(page, project, 'start a helper thread');
+  await expect(conversation(page).getByText('Helper started.')).toBeVisible();
+  // A long parent name, set by hand so the background title cannot replace it.
+  const parent = 'Investigate the flaky arm64 runners and the export retries together';
+  await uam.api('PATCH', `/api/sessions/${url.split('#task=')[1]}`, { name: parent });
+  await expect(page.getByRole('heading', { level: 1, name: parent })).toBeVisible();
+
+  await page.getByRole('navigation', { name: 'Threads' }).getByRole('button', { name: /Finished Helper/ }).click();
+  const title = page.getByRole('heading', { level: 1, name: 'Helper' });
+  await expect(title).toBeVisible();
+  // Just above the phone breakpoint, where the header has least room.
+  await page.setViewportSize({ width: 490, height: 800 });
+  const crumb = page.getByRole('button', { name: parent, exact: true });
+  await expect(crumb).toBeVisible();
+  // How far the crumb's right edge runs past the title's left edge.
+  await expect.poll(async () => {
+    const [c, t] = [await crumb.boundingBox(), await title.boundingBox()];
+    return Math.max(0, c!.x + c!.width - t!.x);
+  }).toBeLessThanOrEqual(1);
+});

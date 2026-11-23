@@ -56,3 +56,13 @@ test('typing /btw shows the aside cue beside Send as the text changes', async ()
   await user.clear(composer());
   expect(screen.queryByText('Aside · not sent to the agent')).toBeNull();
 });
+
+test('while an answer is on its way the choice rows say they are disabled, so they stop looking pressable', () => {
+  const question = { text: 'Which one?', choices: ['Red', 'Blue'], custom: false };
+  const asked: Interaction = { id: 'q2', kind: 'question', title: 'Question', state: 'pending', time: '2026-11-04T00:00:00Z', questions: [question] };
+  const rows = () => ['Red', 'Blue'].map((name) => screen.getByRole('radio', { name }).closest('label')!.hasAttribute('data-disabled'));
+  const { rerender } = render(<ComposerQuestion interaction={asked} question={question} chosen={['Red']} disabled={false} onChoose={() => {}} onAnswer={() => {}} />);
+  expect(rows()).toEqual([false, false]);
+  rerender(<ComposerQuestion interaction={asked} question={question} chosen={['Red']} disabled onChoose={() => {}} onAnswer={() => {}} />);
+  expect(rows()).toEqual([true, true]);
+});

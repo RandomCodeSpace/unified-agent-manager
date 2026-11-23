@@ -461,22 +461,23 @@ describe('messages', () => {
 });
 
 describe('activity', () => {
-  test('tool progress shows its latest plain status before its body loads', () => {
+  test('tool progress shows its latest plain status before its body loads, as plain text: the status line is the one announcer', () => {
     const call: Item = { id: 'call', kind: 'tool', time: '2026-10-09T00:00:01Z', compact: { has_reasoning: false, has_text: false }, tool: { name: 'mcp_fetch', status: 'running', has_input: true, has_output: false, progress: '**Reading** https://example.test' } };
     const prompt: Item = { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Fetch the file' };
     const draw = (item: Item, live = true) => <Transcript sessionId="s" items={[prompt, item]} interactions={[]} subagents={[]} live={live} working={live} provider="copilot" workdir="/w" liveCard />;
     const view = render(draw(call));
-    const progress = () => view.getByRole('status', { name: 'Tool progress' });
+    const progress = () => view.getByText(/Reading\*\* https:\/\/example\.test|Waiting for file/);
     expect(progress().textContent).toContain('**Reading** https://example.test');
+    expect(progress().closest('[role="status"], [aria-live]:not([aria-live="off"])')).toBeNull();
     expect(view.queryByRole('link')).toBeNull();
     expect(view.queryByText('No details yet.')).toBeNull();
     view.rerender(draw({ ...call, tool: { ...call.tool!, progress: 'Waiting for file' } }));
     expect(progress().textContent).toContain('Waiting for file');
     expect(view.queryByText('**Reading** https://example.test')).toBeNull();
     view.rerender(draw({ ...call, tool: { ...call.tool!, status: 'completed', progress: 'Stale' } }));
-    expect(view.queryByRole('status', { name: 'Tool progress' })).toBeNull();
+    expect(view.queryByText(/Stale/)).toBeNull();
     view.rerender(draw(call, false));
-    expect(view.queryByRole('status', { name: 'Tool progress' })).toBeNull();
+    expect(view.queryByText(/Reading\*\*/)).toBeNull();
   });
 
   test('a saved Detailed preference still uses the turn timeline and its tool details', async () => {

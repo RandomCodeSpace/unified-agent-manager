@@ -408,6 +408,20 @@ describe('the review fixes', () => {
     expect(hidden).toEqual([true, true, true, false]);
   });
 
+  test('a list picker bound to nothing marks its rows disabled, so they do not look pressable', () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((v) => ({ label: v.toUpperCase(), value: v }));
+    draw(surfaceOf([
+      { id: 'root', component: 'Column', children: ['many', 'one', 'bound'] },
+      { id: 'many', component: 'ChoicePicker', label: 'Tags', options: six, variant: 'multipleSelection' },
+      { id: 'one', component: 'ChoicePicker', label: 'Letter', options: six, variant: 'mutuallyExclusive' },
+      { id: 'bound', component: 'ChoicePicker', label: 'Bound', options: six, value: { '@path': '/bound' }, variant: 'multipleSelection' },
+    ], { bound: [] }));
+    const rows = (group: string, role: 'checkbox' | 'radio') => within(screen.getByRole('group', { name: group })).getAllByRole(role).map((c) => c.closest('label')!.hasAttribute('data-disabled'));
+    expect(rows('Tags', 'checkbox')).toEqual(Array(6).fill(true));
+    expect(rows('Letter', 'radio')).toEqual(Array(6).fill(true));
+    expect(rows('Bound', 'checkbox')).toEqual(Array(6).fill(false));
+  });
+
   test('typing in one template row redraws that row, not the others', async () => {
     const user = userEvent.setup();
     const seen = vi.fn(media);

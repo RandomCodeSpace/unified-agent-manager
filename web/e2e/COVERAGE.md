@@ -58,6 +58,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | planned |
 | NAV-46 | Where this Thread runs (PlacePicker: Current branch / Worktree) on the draft; a worktree Thread's row shows the… | place-foot.test.tsx, needs-you.test.tsx | planned |
 | NAV-47 | A `sessions.json` that cannot be read at start: the first view says it was set aside, names the backup and how to recover, and keeps this browser's drafts | drafts.test.mjs, store_write_failure_test.go | spec: shell-state-set-aside.spec.ts |
+| NAV-48 | A Thread another Thread started shows its parent as the header's first crumb; in a narrow header the crumb shrinks and truncates instead of drawing over the title | css.test.mjs | spec: shell-nav.spec.ts |
 | CMP-01 | New thread: the first Send creates the Thread (sidebar row appears only then) and its reply streams in | app.test.tsx | spec: first-thread.spec.ts |
 | CMP-02 | Enter sends on an idle Thread and clears the box; Shift+Enter adds a line; one Send button when idle | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-03 | A long multi-line message grows the box up to a cap (max-h 40dvh), then scrolls inside it; Send and the toolbar stay… | none | planned |
@@ -147,6 +148,10 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-37 | A Copilot Fusion turn shows its route on the working head (a Standard turn, the model it picked and why), a row per phase at the conversation's foot, and "Critic reviewing" on the strip | fusion-route.test.tsx, fusion.test.mjs | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
 | TRN-38 | The strip's "Agents and commands" list holds Fusion's recorded phases and the background commands with the subagents, under their message, with kind chips; a phase opens its reader with the verdict and Show in conversation | fusion-list.test.tsx, subagents.test.mjs, fusion_test.go | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
 | TRN-39 | A whole reply at a working turn's foot shows its alerts and rich blocks at once; a reply still arriving keeps its last block as written | reply-callout.test.tsx, stream_text_test.go | not feasible (the reply that stays last while its turn works is Copilot Fusion's; aimock serves one model) |
+| TRN-40 | The conversation is a log but not a live region (streamed text is not read out again); a running tool's progress is plain text; the status line is the one announcer | app.test.tsx, transcript.test.tsx, details.test.tsx | spec: transcript-scroll.spec.ts (the log) |
+| TRN-41 | `Jump to bottom` floats on the float shadow (every Tactile shadow is one tailwind-merge group, so a caller's shadow replaces the button's) | css.test.mjs | spec: transcript-scroll.spec.ts |
+| TRN-42 | A cited number's definition and a receipt stamp's reason are tips on hover and keyboard focus, not native titles; a stamp with nothing to open shows its reason on a press | references-ledger.test.tsx, receipts.test.tsx | spec: references.spec.ts, transcript-turn.spec.ts |
+| TRN-43 | GitLab item state polls redraw only the turn heads that cite GitLab items | gitlab-live.test.tsx | not feasible (a render count; the pack has no GitLab) |
 | ACT-01 | A tool call appears as a running step with its live output tail, then becomes a finished row with its output; the… | activity.test.mjs, state.test.mjs | spec: activity-steps.spec.ts |
 | ACT-02 | A failing command shows as failed on its row while the turn still ends Finished | activity.test.mjs | spec: activity-steps.spec.ts |
 | ACT-03 | Long command output opens in the command output side panel | none | planned |
@@ -193,6 +198,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-44 | Settings → Background AI logs uam's Utility calls; subagent labels come from one Utility call | none | planned |
 | ACT-45 | A transcript row that throws renders as one muted line; the rest stays | none | planned |
 | ACT-46 | A subagent whose Utility name says what its own name says shows the name once | none | spec: activity-agents.spec.ts |
+| ACT-47 | Choice rows of a question (and a uam_surface list picker bound to nothing) look disabled and stop reacting to the pointer while an answer is on its way | interactions-card.test.tsx, surface.test.tsx | not feasible (the send window is a local request too short to observe) |
 | WSP-01 | The Thread header's Changes button and the sidebar row show the number of files the Thread changed | changes.test.mjs | spec: changes.spec.ts |
 | WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | planned |
 | WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | spec: workspace-changes.spec.ts |
