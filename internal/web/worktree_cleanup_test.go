@@ -229,7 +229,7 @@ func TestRunAgainRunsInTheWorktree(t *testing.T) {
 	}
 	waitUntil(t, "worktree removed", func() bool { return worktreeGone(path) })
 
-	again, err := ts.m.Rerun(sum.ID, RerunRequest{RequestID: mustUUID(t)})
+	again, err := ts.m.Rerun(t.Context(), sum.ID, RerunRequest{RequestID: mustUUID(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -241,6 +241,7 @@ func (m *Manager) publishItemsTrimmedLocked(s *webSession, removed []trimmedItem
 // Item mutation barriers are bounded to retained IDs and precede every publication.
 func (m *Manager) markItemMutationLocked(s *webSession, it agentapi.Item) {
 	m.seq++
+	s.itemsGen++
 	if s.itemSeq == nil {
 		s.itemSeq = map[string]uint64{}
 	}
@@ -598,6 +599,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 }
 
 func (s *webSession) rebuildIndex() {
+	s.itemsGen++
 	s.itemIdx = make(map[string]int, len(s.items))
 	for i, it := range s.items {
 		s.itemIdx[itemKey(it.AgentID, it.ID)] = i

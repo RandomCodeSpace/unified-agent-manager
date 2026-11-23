@@ -251,7 +251,10 @@ type webSession struct {
 	historyUsed, historyFailed time.Time
 	// references caches resolved replies' references (references.go); not
 	// persisted.
-	references map[string]referencesCache
+	references     map[string]referencesCache
+	referencesUsed uint64
+	// itemsGen changes with every change to the retained items.
+	itemsGen uint64
 	// terminalID preserves links imported before terminal support was retired.
 	// It still requires the provider's external-holder check before sending.
 	terminalID string

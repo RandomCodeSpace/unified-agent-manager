@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"slices"
@@ -57,36 +58,94 @@ const (
 	referenceUnresolved = "unresolved"
 )
 
+// referenceScanLimit bounds the scans running at once; a scan is CPU-bound
+// regex work over a whole transcript.
+const referenceScanLimit = 2
+
 type referencesKey struct {
 	items int
 	seq   uint64
 }
 
+// referencesCache is one resolved reply. gen is the Thread's item generation
+// the key was last checked at, and used orders entries for eviction.
 type referencesCache struct {
-	key  referencesKey
-	refs []Reference
+	key       referencesKey
+	gen, used uint64
+	refs      []Reference
 }
 
 // References resolves the citations of assistant item reply in Thread id.
-func (m *Manager) References(id, reply string) ([]Reference, error) {
+func (m *Manager) References(ctx context.Context, id, reply string) ([]Reference, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
 		return nil, err
 	}
+	if refs, items, _, _, err := m.cachedReferences(s, reply); items == nil {
+		return refs, err
+	}
+	select {
+	case m.referenceScans <- struct{}{}:
+		defer func() { <-m.referenceScans }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	// A scan this one waited behind may have resolved the same reply.
+	refs, items, key, gen, err := m.cachedReferences(s, reply)
+	if items == nil {
+		return refs, err
+	}
+	refs = resolveReferences(items)
+
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !s.removed {
+		if _, ok := s.references[reply]; !ok && len(s.references) >= referenceCacheSize {
+			oldest := ""
+			for id, c := range s.references {
+				if oldest == "" || c.used < s.references[oldest].used {
+					oldest = id
+				}
+			}
+			delete(s.references, oldest)
+		}
+		if s.references == nil {
+			s.references = map[string]referencesCache{}
+		}
+		s.referencesUsed++
+		s.references[reply] = referencesCache{key: key, gen: gen, used: s.referencesUsed, refs: refs}
+	}
+	return refs, nil
+}
+
+// cachedReferences returns reply's cached references, or on a miss the items
+// to scan with the key and item generation to store the result under.
+func (m *Manager) cachedReferences(s *webSession, reply string) ([]Reference, []agentapi.Item, referencesKey, uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if s.removed {
-		m.mu.Unlock()
-		return nil, newError(http.StatusNotFound, msgSessionNotFound)
+		return nil, nil, referencesKey{}, 0, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	s.historyUsed = m.now()
+	c, cached := s.references[reply]
+	hit := func() ([]Reference, []agentapi.Item, referencesKey, uint64, error) {
+		s.referencesUsed++
+		c.gen, c.used = s.itemsGen, s.referencesUsed
+		s.references[reply] = c
+		return c.refs, nil, c.key, c.gen, nil
+	}
+	// No item changed since the key was last checked, so it still holds
+	// without walking the items.
+	if cached && c.gen == s.itemsGen {
+		return hit()
+	}
 	items := s.agentItems("")
 	end := slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == reply && it.Kind == agentapi.ItemAssistant })
 	if end < 0 {
-		m.mu.Unlock()
-		return nil, newError(http.StatusNotFound, "reply not found")
+		return nil, nil, referencesKey{}, 0, newError(http.StatusNotFound, "reply not found")
 	}
 	items = items[:end+1]
 	// A replaced item keeps its place but gets a newer mutation sequence, so
@@ -95,23 +154,10 @@ func (m *Manager) References(id, reply string) ([]Reference, error) {
 	for _, it := range items {
 		key.seq = max(key.seq, s.itemSeq[itemKey(it.AgentID, it.ID)])
 	}
-	if c, ok := s.references[reply]; ok && c.key == key {
-		m.mu.Unlock()
-		return c.refs, nil
+	if cached && c.key == key {
+		return hit()
 	}
-	m.mu.Unlock()
-
-	refs := resolveReferences(items)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !s.removed {
-		if s.references == nil || len(s.references) >= referenceCacheSize {
-			s.references = map[string]referencesCache{}
-		}
-		s.references[reply] = referencesCache{key: key, refs: refs}
-	}
-	return refs, nil
+	return nil, items, key, s.itemsGen, nil
 }
 
 func (s *Server) handleReferences(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +166,7 @@ func (s *Server) handleReferences(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "reply is required")
 		return
 	}
-	refs, err := s.m.References(r.PathValue("id"), reply)
+	refs, err := s.m.References(r.Context(), r.PathValue("id"), reply)
 	if err != nil {
 		writeFailure(w, err)
 		return

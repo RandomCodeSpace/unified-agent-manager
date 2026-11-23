@@ -434,12 +434,12 @@ const maxRerunRead = 200
 // The new Task records id as rerun_of. A message's attachments are not sent
 // again. The effort and context size go back to their defaults with another
 // model.
-func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
+func (m *Manager) Rerun(ctx context.Context, id string, req RerunRequest) (SessionSummary, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
 		return SessionSummary{}, err
 	}
 	m.mu.Lock()
@@ -500,7 +500,7 @@ func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	summary, err := s.m.Rerun(r.PathValue("id"), req)
+	summary, err := s.m.Rerun(r.Context(), r.PathValue("id"), req)
 	if err != nil {
 		writeFailure(w, err)
 		return

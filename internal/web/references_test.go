@@ -1,12 +1,15 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -258,5 +261,189 @@ func TestReferencesRoute(t *testing.T) {
 	}
 	if w := ts.do(http.MethodGet, "/api/sessions/nope/references?reply=a-status", "", auth); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown thread: %d", w.Code)
+	}
+}
+
+// fillReferenceScans takes every scan slot, so a call that returns while
+// they are held did not scan. The returned func frees them.
+func fillReferenceScans(m *Manager) func() {
+	for range referenceScanLimit {
+		m.referenceScans <- struct{}{}
+	}
+	return func() {
+		for range referenceScanLimit {
+			<-m.referenceScans
+		}
+	}
+}
+
+func refRows(refs []Reference) string {
+	var rows []string
+	for _, r := range refs {
+		rows = append(rows, refRow(r))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func TestReferencesCacheHitDoesNotScan(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	finishTurn(conv, "review", "## Issues\n1. Login times out\n2. Crash on save")
+	finishTurn(conv, "status", "Issue 1 is still open.")
+	const want = "issue 1|resolved|Login times out||open@a-review"
+	first, err := m.References(t.Context(), sum.ID, "a-status")
+	if err != nil || refRows(first) != want {
+		t.Fatalf("first = %q, %v", refRows(first), err)
+	}
+	free := fillReferenceScans(m)
+	short := func() ([]Reference, error) {
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+		return m.References(ctx, sum.ID, "a-status")
+	}
+	if refs, err := short(); err != nil || refRows(refs) != want {
+		t.Fatalf("unchanged Thread rescanned: %q, %v", refRows(refs), err)
+	}
+	// An item after the reply changes the Thread but not what the reply reads.
+	finishTurn(conv, "later", "1. Something else")
+	if refs, err := short(); err != nil || refRows(refs) != want {
+		t.Fatalf("later item rescanned: %q, %v", refRows(refs), err)
+	}
+	// A replaced earlier item must be read again, which needs a slot.
+	conv.EmitItem(agentapi.Item{ID: "a-review", Kind: agentapi.ItemAssistant, Text: "## Issues\n1. Logout hangs"})
+	if _, err := short(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("changed Thread with no free slot = %v, want a wait", err)
+	}
+	free()
+	if refs, err := m.References(t.Context(), sum.ID, "a-status"); err != nil || refRows(refs) != "issue 1|resolved|Logout hangs||open@a-review" {
+		t.Fatalf("after the change = %q, %v", refRows(refs), err)
+	}
+}
+
+func TestReferencesScansAreBounded(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	finishTurn(conv, "review", "## Issues\n1. Login times out")
+	finishTurn(conv, "status", "Issue 1 is still open.")
+	free := fillReferenceScans(m)
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.References(context.Background(), sum.ID, "a-status")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("scan ran past the limit: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	free()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("scan still waits with slots free")
+	}
+	if len(m.referenceScans) != 0 {
+		t.Fatalf("%d slots still held", len(m.referenceScans))
+	}
+}
+
+func TestReferencesCacheEvictsLeastRecentlyUsed(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	for i := range referenceCacheSize + 1 {
+		finishTurn(conv, fmt.Sprint(i), "No citations.")
+	}
+	ask := func(i int) {
+		t.Helper()
+		if _, err := m.References(t.Context(), sum.ID, fmt.Sprintf("a-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range referenceCacheSize {
+		ask(i)
+	}
+	ask(0) // reply 1 is now the least recently used
+	ask(referenceCacheSize)
+	s, _ := m.lookup(sum.ID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(s.references) != referenceCacheSize {
+		t.Fatalf("cache holds %d, want %d", len(s.references), referenceCacheSize)
+	}
+	if _, ok := s.references["a-1"]; ok {
+		t.Fatal("the least recently used reply was kept")
+	}
+	for _, kept := range []string{"a-0", "a-2", fmt.Sprintf("a-%d", referenceCacheSize)} {
+		if _, ok := s.references[kept]; !ok {
+			t.Fatalf("%s was evicted", kept)
+		}
+	}
+}
+
+// A read of an evicted transcript ends when its request does, not when the
+// record's read does.
+func TestHistoryReadsEndWithTheirRequest(t *testing.T) {
+	m, prov, _, tasks := closedTasks(t, StageSettled)
+	release := make(chan struct{})
+	prov.SetReadHook(func(context.Context, agentapi.ReadRequest) (agentapi.History, error) {
+		<-release
+		return agentapi.History{}, context.Canceled
+	})
+	t.Cleanup(func() { close(release) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	id := tasks[0].ID
+	for name, call := range map[string]func() error{
+		"References":   func() error { _, err := m.References(ctx, id, "a"); return err },
+		"OlderHistory": func() error { _, err := m.OlderHistory(ctx, id, "eA"); return err },
+		"Rerun":        func() error { _, err := m.Rerun(ctx, id, RerunRequest{}); return err },
+	} {
+		done := make(chan error, 1)
+		go func() { done <- call() }()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("%s = %v, want the request's cancellation", name, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s still waits after its request ended", name)
+		}
+	}
+}
+
+// The routes hand the request's context to those reads.
+func TestHistoryRoutesEndWithTheirRequest(t *testing.T) {
+	m, prov, _, tasks := closedTasks(t, StageSettled)
+	release := make(chan struct{})
+	prov.SetReadHook(func(context.Context, agentapi.ReadRequest) (agentapi.History, error) {
+		<-release
+		return agentapi.History{}, context.Canceled
+	})
+	t.Cleanup(func() { close(release) })
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m, prov: prov}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelled := func(r *http.Request) { *r = *r.WithContext(ctx) }
+	path := "/api/sessions/" + tasks[0].ID
+	for _, route := range []struct{ method, target, body string }{
+		{http.MethodGet, path + "/references?reply=a0", ""},
+		{http.MethodGet, path + "/history?before=eA", ""},
+		{http.MethodPost, path + "/rerun", "{}"},
+	} {
+		done := make(chan struct{})
+		go func() { ts.do(route.method, route.target, route.body, withCookie(ts), cancelled); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s %s still waits after its request ended", route.method, route.target)
+		}
 	}
 }

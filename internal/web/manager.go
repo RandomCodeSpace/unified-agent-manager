@@ -96,6 +96,8 @@ type Manager struct {
 	// persistMu too. It is taken before mu, never while holding it.
 	persistMu sync.Mutex
 	wake      chan struct{}
+	// referenceScans bounds concurrent reference scans (references.go).
+	referenceScans chan struct{}
 
 	// surfaceMu serializes uam_surface calls' changes to the Threads'
 	// surfaces files (surface.go).
@@ -281,30 +283,31 @@ type Manager struct {
 func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		store:     st,
-		epoch:     rand.Text(),
-		providers: map[string]agentapi.Provider{},
-		links:     map[string]store.AccountLink{},
-		accountAt: map[string]time.Time{},
-		ctx:       ctx,
-		cancel:    cancel,
-		wake:      make(chan struct{}, 1),
-		infos:     map[string]ProviderInfo{},
-		modelsAt:  map[string]time.Time{},
-		fetching:  map[string]bool{},
-		projects:  map[string]*Project{},
-		sessions:  map[string]*webSession{},
-		dirty:     map[string]struct{}{},
-		creating:  map[string]chan struct{}{},
-		subs:      map[*Subscriber]struct{}{},
-		now:       time.Now,
-		pick:      randomPick,
-		branchAt:  map[string]time.Time{},
-		quota:     map[string]*quotaCache{},
-		quotaKick: make(chan struct{}, 1),
-		cliKick:   make(chan struct{}, 1),
-		quotaTick: quotaCheck,
-		spawnWait: viewWait,
+		store:          st,
+		epoch:          rand.Text(),
+		providers:      map[string]agentapi.Provider{},
+		links:          map[string]store.AccountLink{},
+		accountAt:      map[string]time.Time{},
+		ctx:            ctx,
+		cancel:         cancel,
+		wake:           make(chan struct{}, 1),
+		referenceScans: make(chan struct{}, referenceScanLimit),
+		infos:          map[string]ProviderInfo{},
+		modelsAt:       map[string]time.Time{},
+		fetching:       map[string]bool{},
+		projects:       map[string]*Project{},
+		sessions:       map[string]*webSession{},
+		dirty:          map[string]struct{}{},
+		creating:       map[string]chan struct{}{},
+		subs:           map[*Subscriber]struct{}{},
+		now:            time.Now,
+		pick:           randomPick,
+		branchAt:       map[string]time.Time{},
+		quota:          map[string]*quotaCache{},
+		quotaKick:      make(chan struct{}, 1),
+		cliKick:        make(chan struct{}, 1),
+		quotaTick:      quotaCheck,
+		spawnWait:      viewWait,
 
 		titleSlots: make(chan struct{}, maxTitleJobs),
 		imageJobs:  make(chan imageJob, maxImageJobs),

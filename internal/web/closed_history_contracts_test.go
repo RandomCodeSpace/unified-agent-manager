@@ -381,7 +381,7 @@ func TestClosedHistoryRerunFindsTheOwnerBeyondTheNewestWindow(t *testing.T) {
 	if held, _ := m.heldItems(sum.ID); len(held) != 0 {
 		t.Fatal("closed transcript was not released")
 	}
-	again, err := m.Rerun(sum.ID, RerunRequest{RequestID: mustUUID(t)})
+	again, err := m.Rerun(t.Context(), sum.ID, RerunRequest{RequestID: mustUUID(t)})
 	if err != nil || again.RerunOf != sum.ID {
 		t.Fatalf("rerun after close = %+v, %v", again, err)
 	}

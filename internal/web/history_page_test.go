@@ -46,7 +46,7 @@ func TestHistoryPagesStayBoundedAndWalkEveryItem(t *testing.T) {
 	got := first.Items
 	before := *first.HistoryBefore
 	for before != "" {
-		page, err := m.OlderHistory(sum.ID, before)
+		page, err := m.OlderHistory(t.Context(), sum.ID, before)
 		if err != nil {
 			t.Fatal(err)
 		}
