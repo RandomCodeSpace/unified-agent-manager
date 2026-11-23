@@ -673,7 +673,7 @@ They appear in sidebar Thread metadata (where the Project name beside the badge 
 | `badge-violet` | #6b4fc2 | 5.96 | 5.34 | 5.96 |
 | `badge-pink` | #ad3479 | 5.93 | 5.30 | 5.93 |
 
-Every tone clears AA for the text on it (≥4.5:1; the tightest is `orange` at 5.38) and the 3:1 non-text minimum against the sidebar and the canvas.
+Every tone clears AA for the text on it (≥4.5:1; the tightest is `cyan` at 5.76) and the 3:1 non-text minimum against the sidebar and the canvas.
 A new tone must keep both.
 
 ### Contrast (WCAG 2.x, computed)

@@ -153,7 +153,7 @@ for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
 }
 
 test('the tinted button has no caller: its accent-tint pairs join the contrast test with its first one', () => {
-  assert.deepEqual(sources().filter(([, text]) => /variant="tinted"|bg-(accent|warning)-tint/.test(text)).map(([file]) => file), ['components/ui/button.tsx']);
+  assert.deepEqual(sources().filter(([, text]) => /variant(="|: ')tinted|(accent|warning)-tint/.test(text)).map(([file]) => file), ['components/ui/button.tsx']);
 });
 
 test('faint never colours words: text that reads as faint is muted', () => {
