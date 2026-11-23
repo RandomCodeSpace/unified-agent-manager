@@ -1335,6 +1335,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   files, those marked `session_tracked`, compared with how they were when
   the Thread started. Settled or archived Threads cannot call the
   tool. Calls fold into the turn's activity like other tool calls.
+- **Acting through uam**: the `uam` tool also takes the owner's actions an
+  agent may take, through the same Manager calls and checks as the routes:
+  `rename` and `set_budget` on its own Thread (a budget it may add or
+  tighten, never raise or remove), `pin_chart` and `unpin_chart` on its own
+  `uam_chart` charts (one with a command needs Yolo), `run_routine` on its
+  Project's routines (not from a Thread another Thread or a routine started;
+  a Yolo routine needs Yolo), and `settle` and `archive` on the Threads it
+  started, refused with unsaved work of their own unless `force`.
+  `uam_ops_routes_test.go` fails when an owner write route has neither an
+  agent op nor a listed reason to stay the owner's.
 - **Threads started by an agent**: the agent can call `uam_create_task` to
   start a new Thread. It gives the Project's ID or exact name, or a `path`,
   and the first message (up to 16 KiB, with no control characters

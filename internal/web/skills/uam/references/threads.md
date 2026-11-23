@@ -43,7 +43,9 @@ when known and the start of its last reply (up to 600 bytes; `history {id}`
 reads the rest): with your next tool call, or as your next turn starts if you
 are idle. When it waits for the owner on a question or permission request,
 and when the owner answers, you get a note with the question and the answer.
-Wait for these notes instead of polling the Thread with `uam`. A Thread can start at most 5; deleting
+Wait for these notes instead of polling the Thread with `uam`. Once its
+work is saved, you may settle or archive it with `uam` op `settle` or
+`archive` (`references/uam-tool.md`). A Thread can start at most 5; deleting
 one frees its place. A Thread started this way, or by one of the owner's
 routines (scheduled runs), does not have the tool: tell the owner what to
 start instead.

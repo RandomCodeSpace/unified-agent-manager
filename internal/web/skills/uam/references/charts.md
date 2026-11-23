@@ -4,7 +4,8 @@ When the owner asks a data question (counts over time, sizes per kind,
 durations), answer with a chart: call `uam_chart` with a `title` (up to 120
 characters) and a `kind`. The chart shows in your reply with a sortable
 table of its rows and Copy CSV, and the owner can pin it to the Project and
-refresh it later without you.
+refresh it later without you. When the owner asks you to pin it, use `uam`
+op `pin_chart` with the `call_id` the result names (`references/uam-tool.md`).
 
 - **Prefer `command`, even when the rows need computing.** Give a shell
   command (a pipeline, or a short script such as a `python3` heredoc) that
