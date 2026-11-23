@@ -109,7 +109,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	}
 	m.mu.Lock()
 	state, conv := s.state(), s.conv
-	willQueue := mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused))
+	willQueue := mode == ModeQueue && (turnRunning(state) || s.queueSending != nil || (len(s.queue) > 0 && !s.queuePaused))
 	current := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
 	selection := current
 	if in.command == "" {
@@ -160,7 +160,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		m.count("prompt_steered")
 		m.countLargeText(in.text, uploads)
 		return m.steer(s, conv, in, uploads, reqID)
-	case busy(state) || s.queueSending != "":
+	case busy(state) || s.queueSending != nil:
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
 	}
@@ -491,7 +491,7 @@ func (m *Manager) reservePrompt(s *webSession, reqID string) error {
 	// Only saved: viewers hear the outcome, not the reservation.
 	m.dirty[s.id] = struct{}{}
 	m.mu.Unlock()
-	err := m.flush()
+	err := m.saveState()
 	if err != nil {
 		m.unreserve(s, reqID)
 	}

@@ -817,7 +817,7 @@ func uncertainDelivery(t *testing.T, m *Manager, ca, cb *agenttest.Conversation,
 	waitUntil(t, "the drain", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.sessions[b.ID].queueSending == ""
+		return m.sessions[b.ID].queueSending == nil
 	})
 	cb.SetSendHook(nil)
 	if p := onlyPair(t, m); p.Used != 2 || lastStatus(p) != peerQueued {

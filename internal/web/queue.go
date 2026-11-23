@@ -16,10 +16,15 @@ func (s *webSession) queueSnapshot() []QueuedPrompt {
 
 // savedQueue is the part of the queue that is saved with the Task: the
 // owner's prompts. Another Thread's message ends as interrupted when the
-// service starts again (loadPairsLocked), so it is left out.
+// service starts again (loadPairsLocked), so it is left out. The head a drain
+// took stays first until its request is in the ledger (reservePrompt): a
+// crash before that loses nothing, and after it the ledger answers a retry.
 func (s *webSession) savedQueue() []QueuedPrompt {
-	var out []QueuedPrompt
-	for _, q := range s.queue {
+	var out, queue []QueuedPrompt
+	if h := s.queueSending; h != nil && !slices.ContainsFunc(s.commandSubmissions, func(sub Submission) bool { return sub.RequestID == h.RequestID }) {
+		queue = append(queue, *h)
+	}
+	for _, q := range append(queue, s.queue...) {
 		if q.From == nil {
 			out = append(out, q)
 		}
@@ -67,7 +72,7 @@ func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, 
 // same request ID queues it once. The caller holds s.op, so no drain has
 // taken it meanwhile.
 func (m *Manager) saveQueued(s *webSession, reqID string) error {
-	err := m.flush()
+	err := m.saveState()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err != nil {
@@ -118,13 +123,13 @@ func (m *Manager) drain(s *webSession) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || s.queueSending != "" || busy(s.state()) || s.budget.Reached {
+	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || s.queueSending != nil || busy(s.state()) || s.budget.Reached {
 		m.mu.Unlock()
 		return
 	}
 	before := m.summaryLocked(s)
 	head := s.queue[0]
-	s.queueSending = head.RequestID
+	s.queueSending = &head
 	s.queue = slices.Delete(s.queue, 0, 1)
 	s.queueChanged = true
 	m.changedLocked(s, before)
@@ -141,7 +146,7 @@ func (m *Manager) drain(s *webSession) {
 		if why != "" {
 			before := m.summaryLocked(s)
 			m.peerEndLocked(head.From, peerFailure(head.From), why)
-			s.queueSending = ""
+			s.queueSending = nil
 			m.changedLocked(s, before)
 			m.kickDrainLocked(s)
 		}
@@ -153,7 +158,7 @@ func (m *Manager) drain(s *webSession) {
 	sub, err := m.send(s, in, head.RequestID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s.queueSending = ""
+	s.queueSending = nil
 	if head.From != nil && err == nil && sub.Status != SubmissionAccepted && sub.Status != SubmissionUncertain {
 		m.peerEndLocked(head.From, peerFailure(head.From), sub.Error)
 	}
@@ -201,7 +206,7 @@ func (m *Manager) CancelQueued(id, reqID string) error {
 	}
 	i := slices.IndexFunc(s.queue, func(q QueuedPrompt) bool { return q.RequestID == reqID })
 	if i < 0 {
-		if s.queueSending != "" && s.queueSending == reqID {
+		if s.queueSending != nil && s.queueSending.RequestID == reqID {
 			return newError(http.StatusConflict, "the prompt was already sent")
 		}
 		sub, ok := s.findSubmission(reqID)

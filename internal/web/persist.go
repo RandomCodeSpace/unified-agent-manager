@@ -118,12 +118,28 @@ type recordPatch struct {
 	queue []QueuedPrompt
 }
 
-// flush writes the durable state of every dirty session.
-func (m *Manager) flush() (err error) {
+// flush writes the durable state of every dirty session, then the token
+// ledger, and reports either failure.
+func (m *Manager) flush() error {
+	return errors.Join(m.flushParts())
+}
+
+// saveState is flush for a caller that answers on the sessions' save alone:
+// a token ledger failure is logged, and the next flush writes it again.
+func (m *Manager) saveState() error {
+	err, ledgerErr := m.flushParts()
+	if ledgerErr != nil {
+		log.Warn("persist token usage failed", "error", ledgerErr)
+	}
+	return err
+}
+
+// flushParts is flush with the sessions' and the token ledger's errors apart.
+func (m *Manager) flushParts() (err, ledgerErr error) {
 	m.persistMu.Lock()
 	defer m.persistMu.Unlock()
-	defer func() { m.noteSave(err) }()
-	defer func() { err = errors.Join(err, m.flushTokenLedger()) }()
+	defer func() { m.noteSave(errors.Join(err, ledgerErr)) }()
+	defer func() { ledgerErr = m.flushTokenLedger() }()
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
 	var kept []keptTodos
@@ -177,7 +193,7 @@ func (m *Manager) flush() (err error) {
 	}
 	m.mu.Unlock()
 	if len(patches) == 0 && !writePairs {
-		return nil
+		return nil, nil
 	}
 	for i := range patches {
 		if len(patches[i].queue) > 0 {
@@ -230,9 +246,9 @@ func (m *Manager) flush() (err error) {
 		}
 		m.pairsDirty = m.pairsDirty || writePairs
 		m.mu.Unlock()
-		return err
+		return err, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // noteSave keeps the latest flush's failure, or clears it, and tells the
