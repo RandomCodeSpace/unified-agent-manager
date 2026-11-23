@@ -259,6 +259,7 @@ type Manager struct {
 	// lasts, and only the first is a log line (assist.go).
 	utility            utilityLog
 	counts             uamCounts             // uam's own action counts (uam_counts.go)
+	health             modelHealth           // each model's recent calls (model_health.go)
 	fetchFuses         map[string]*fetchFuse // guarded by mu; saved beside the store (fuses.go)
 	suggestPauseLogged atomic.Bool
 	tokens             tokenLedger   // guarded by mu; persisted by the existing flush loop

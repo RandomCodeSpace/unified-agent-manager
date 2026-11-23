@@ -292,6 +292,17 @@ type TokenUsage struct {
 	Cost       float64
 }
 
+// ModelCall is how one model call ended, a subagent's included.
+type ModelCall struct {
+	Model string
+	// Outcome is "success", "error" (the provider or the transport failed),
+	// "rejected" (the response was not accepted) or "cancelled".
+	Outcome string
+	// DurationMS is the time the call took, the provider's own reconnects
+	// included.
+	DurationMS int64
+}
+
 // UsageSessionRecorder lets the host persist ownership of provider sessions
 // before inference. Configure it before starting or checking the provider.
 // Active marks ownership before inference; inactive follows a successful disconnect.
@@ -652,6 +663,10 @@ type ToolHooks struct {
 	Failed func(context.Context, ToolUse, string) string
 	// Prompt adds host context to a prompt as its turn starts.
 	Prompt func(context.Context) string
+	// SubagentModel may move a subagent off picked, the model it is about to
+	// start on, to another of usable: the models it may start on, in the
+	// owner's order. Any other answer keeps picked.
+	SubagentModel func(picked string, usable []string) string
 }
 
 // OpenRequest identifies the managed session and its project.
@@ -1089,8 +1104,10 @@ const (
 	// EventContext reports main-agent context usage; it is never persisted.
 	EventContext EventKind = "context"
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
-	EventUsage     EventKind = "usage"
-	EventTokens    EventKind = "tokens"
+	EventUsage  EventKind = "usage"
+	EventTokens EventKind = "tokens"
+	// EventModelCall reports how one model call ended in Event.ModelCall.
+	EventModelCall EventKind = "model_call"
 	EventExecution EventKind = "execution"
 	// EventCompaction reports that the provider started (Compacting) or
 	// finished compacting the main conversation, or that the compaction goes
@@ -1128,6 +1145,7 @@ type Event struct {
 	Context         *Context
 	Usage           *Usage
 	Tokens          *TokenUsage
+	ModelCall       *ModelCall
 	Execution       *ExecutionState
 	// Error is the sanitized reason for EventExit.
 	Error string

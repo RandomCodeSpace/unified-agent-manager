@@ -179,6 +179,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			m.countTurnTokensLocked(s, *ev.Tokens)
 			m.wrapCallLocked(s)
 		}
+	case agentapi.EventModelCall:
+		if ev.ModelCall != nil {
+			m.recordModelCall(*ev.ModelCall)
+		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title, s.titleFallback = title, false
