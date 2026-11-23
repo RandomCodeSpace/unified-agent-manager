@@ -152,6 +152,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-41 | `Jump to bottom` floats on the float shadow (every Tactile shadow is one tailwind-merge group, so a caller's shadow replaces the button's) | css.test.mjs | spec: transcript-scroll.spec.ts |
 | TRN-42 | A cited number's definition and a receipt stamp's reason are tips on hover and keyboard focus, not native titles; a stamp with nothing to open shows its reason on a press | references-ledger.test.tsx, receipts.test.tsx | spec: references.spec.ts, transcript-turn.spec.ts |
 | TRN-43 | GitLab item state polls redraw only the turn heads that cite GitLab items | gitlab-live.test.tsx | not feasible (a render count; the pack has no GitLab) |
+| TRN-44 | A ```csv or ```tsv fence, and a ```json array of two or more flat objects with the same keys, render as the sortable table with `Show CSV` / `Show JSON` for the fence as written; ragged, unparsable or oversized data stays a code block | fence-table.test.mjs, fence-table.test.tsx | spec: transcript-markdown.spec.ts |
 | ACT-01 | A tool call appears as a running step with its live output tail, then becomes a finished row with its output; the… | activity.test.mjs, state.test.mjs | spec: activity-steps.spec.ts |
 | ACT-02 | A failing command shows as failed on its row while the turn still ends Finished | activity.test.mjs | spec: activity-steps.spec.ts |
 | ACT-03 | Long command output opens in the command output side panel | none | planned |

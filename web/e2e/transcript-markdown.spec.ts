@@ -1,4 +1,4 @@
-// How a reply's Markdown renders: structure, code highlighting and copy, unsafe HTML, wide and long tables.
+// How a reply's Markdown renders: structure, code highlighting and copy, unsafe HTML, wide and long tables, data fences as tables.
 import { conversation, expect, startThread, test, threadState } from './harness';
 import { pageErrors } from './transcript-helpers';
 
@@ -112,4 +112,40 @@ test('a wide table scrolls in its own box, and a long table sorts, pages and fil
   await conv.getByRole('button', { name: 'Clear filters' }).click();
   await expect(body).toHaveCount(100);
   await expect(status).toHaveText('1–100 of 150 rows');
+});
+
+test('a csv fence and a json array of rows render as sortable tables; irregular data stays a code block', async ({ page, project, model }) => {
+  const csv = 'package,requests\nrouter,"48,210"\n"auth, core",864\nsearch,9\n';
+  const json = '[{"host":"a","up":true},{"host":"b","up":false}]';
+  model.reply('show data', ['Rows:', `\`\`\`csv\n${csv}\`\`\``, `\`\`\`json\n${json}\n\`\`\``, '```csv\nragged,row\n1,2,3\n```', '```json\n{"single":"object"}\n```'].join('\n\n'));
+  await startThread(page, project, 'show data');
+  const conv = conversation(page);
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  const reply = conv.locator('[data-reply]');
+
+  const table = reply.getByRole('region', { name: 'Table: package, requests' });
+  const body = table.locator('tbody tr');
+  await expect(body).toHaveText(['router48,210', 'auth, core864', 'search9']);
+  await table.getByRole('button', { name: 'Sort or filter requests' }).click();
+  await page.getByRole('button', { name: 'Sort ascending' }).click();
+  await expect(body).toHaveText(['search9', 'auth, core864', 'router48,210']);
+  await page.keyboard.press('Escape');
+  await expect(reply.getByRole('region', { name: 'Table: host, up' }).locator('tbody tr')).toHaveText(['atrue', 'bfalse']);
+
+  // What does not read as one regular table is the code block it always was.
+  await expect(reply.locator('pre')).toHaveText(['ragged,row\n1,2,3', '{"single":"object"}']);
+  await expect(reply.getByRole('table')).toHaveCount(2);
+
+  // The fence as written is one press away.
+  await reply.getByRole('button', { name: 'Show JSON' }).click();
+  await expect(reply.locator('pre').first()).toHaveText(json);
+  await expect(reply.getByRole('table')).toHaveCount(1);
+  await reply.getByRole('button', { name: 'Show table' }).click();
+  await expect(reply.getByRole('table')).toHaveCount(2);
+
+  // On a phone the table keeps to the conversation's width.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeVisible();
+  expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
+  expect(await conv.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 });

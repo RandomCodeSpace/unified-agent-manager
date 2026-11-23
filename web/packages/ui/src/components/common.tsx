@@ -10,6 +10,8 @@ import { COMPACT_FROM, formatCount, fullNumber } from '../lib/cost';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed, mermaidFences } from '../lib/diagram';
+import { fenceTable, TABLE_FENCES } from '../lib/fence-table';
+import { magnitude } from '../lib/table-visual';
 import { codeFile, decodePath, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
 import { SEVERITY_ORDER, STATUS_ORDER, commandsOf, outlineOf, remarkRich, type CalloutKind, type Command, type Outline } from '../lib/richMarkdown';
 import type { TodoStatus } from '../api';
@@ -25,7 +27,8 @@ import { useFederation, type Machine } from '../FederationContext';
 import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
-import { MarkdownTable } from './DataTable';
+import { DataTable, MarkdownTable } from './DataTable';
+import { VisualBoundary } from './VisualBoundary';
 import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
 import { chipVariants } from './ui/chip';
@@ -1269,6 +1272,35 @@ function CommandRows({ commands }: Readonly<{ commands: Command[] }>) {
   return <ul translate="no" className="md-cmds">{commands.map((c, i) => <CommandRow key={i} command={c} />)}</ul>;
 }
 
+/**
+ * A csv, tsv or json fence that reads as rows (`fenceTable`) shows as the reply's sortable table, with
+ * the fence as written one press away. Any other, and one still streaming, is its code block.
+ */
+function DataFence({ language, source, children }: Readonly<{ language: string; source: string; children: ReactNode }>) {
+  const { streaming } = useContext(MdContext);
+  const [raw, setRaw] = useState(false);
+  const data = useMemo(() => {
+    const table = streaming ? null : fenceTable(language, source);
+    if (!table) return null;
+    const rows = table.rows.map((values, id) => ({ id, values, cells: values.map(value => value === null ? '—' : String(value)) }));
+    // A column of figures is right-aligned, as in a Markdown table.
+    const figures = (index: number) => {
+      const values = rows.map(row => row.values[index]).filter(value => value !== null && value !== '');
+      return values.length > 0 && values.every(value => magnitude(value) !== null);
+    };
+    return { columns: table.columns.map((name, index) => ({ name, align: figures(index) ? 'right' as const : undefined })), rows };
+  }, [language, source, streaming]);
+  if (!data) return <CodeBlock language={language}>{children}</CodeBlock>;
+  const toggle = <Button size="xs" className="text-muted" onClick={() => setRaw(!raw)}>{raw ? 'Show table' : `Show ${language.toUpperCase()}`}</Button>;
+  if (raw) return <CodeBlock language={language} head={<><span className="flex-1" />{toggle}</>}>{children}</CodeBlock>;
+  return (
+    <div className="min-w-0 max-w-full">
+      <VisualBoundary fallback={<DataTable {...data} />}><DataTable {...data} visual /></VisualBoundary>
+      <div className="-mt-1.5 mb-2.5 flex justify-end">{toggle}</div>
+    </div>
+  );
+}
+
 const mdComponents: Components = {
   a: MdLink,
   img: MdImage,
@@ -1308,6 +1340,7 @@ const mdComponents: Components = {
       );
     }
     const first = code?.type === 'element' ? code.children[0] : undefined;
+    if (language && TABLE_FENCES.has(language) && first?.type === 'text') return <DataFence language={language} source={first.value}>{children}</DataFence>;
     const commands = language && SHELL.has(language) && first?.type === 'text' ? commandsOf(first.value) : null;
     if (commands) return <CodeBlock language={language} text={commands.map((c) => c.command).join('\n')} body={<CommandRows commands={commands} />}>{children}</CodeBlock>;
     // GitLab's ```suggestion:-0+0 fence: the lines a reviewer proposes.

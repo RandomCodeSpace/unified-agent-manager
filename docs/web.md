@@ -1239,6 +1239,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   where and what is wrong. Code blocks with a language are
   highlighted (Go, TypeScript, JavaScript, shell, JSON, YAML, Python, Rust,
   SQL, HTML/XML, CSS, Markdown, Dockerfile, Makefile, INI/TOML, diff).
+  A ` ```csv ` or ` ```tsv ` block with a header row, and a ` ```json `
+  block that is an array of two or more flat objects with the same keys,
+  shows as a sortable table like a Markdown table, with **Show CSV** /
+  **Show JSON** for the block as written. Data that does not parse, has
+  rows of different lengths or is over 100,000 characters stays a code block.
   Diagrams render in the browser inside a sandboxed frame that cannot read
   your session or call the service (ADR 0004); the first diagram of a page
   load fetches Mermaid (3.4 MB). A diagram renders once scrolling has paused
