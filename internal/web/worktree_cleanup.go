@@ -333,10 +333,18 @@ func (m *Manager) worktreeThreadsLocked() map[string][]*webSession {
 }
 
 // worktreeInUseLocked says whether a Thread is active, or being made, in
-// the worktree at path.
+// the worktree at path, or a Terminal is open in it.
 func (m *Manager) worktreeInUseLocked(path string) bool {
 	users := m.worktreeThreadsLocked()[path]
-	return m.worktrees.keep[path] > 0 || len(users) > 0 && users[0].stage == StageActive
+	if m.worktrees.keep[path] > 0 || len(users) > 0 && users[0].stage == StageActive {
+		return true
+	}
+	for t := range m.terminals {
+		if withinDir(path, t.dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // worktreePending reads the branch of the worktree at dir, its files a

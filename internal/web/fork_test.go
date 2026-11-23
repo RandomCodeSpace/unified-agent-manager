@@ -610,3 +610,47 @@ func TestForkIsTitledNotStartedAndKeepsItsAttachments(t *testing.T) {
 		t.Fatal("a branch that was sent a message still reads not started")
 	}
 }
+
+// A branch carries the files its source kept beside its uploads: its
+// surface cards, charts, todo list and asides, as copies of its own.
+func TestForkCarriesTheThreadFiles(t *testing.T) {
+	m, p, _, source := taskForkManager(t)
+	root := `{"id":"root","component":"Text","text":"hi"}`
+	if res := callSurface(t, p.Last(), "c1", string(surfaceArgs(surfaceCreate("a", root)))); res.Failed {
+		t.Fatal(res.Text)
+	}
+	if err := writePrivateJSON(m.uploadRoot(), m.chartFile(source.ID, "chart-1"), Chart{}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.lookup(source.ID)
+	if err := m.keepAside(s, &Aside{Question: "why", Answer: "because"}); err != nil {
+		t.Fatal(err)
+	}
+	m.appendTurnTodos(keptTodos{s: s, live: TodoView{Known: true}})
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.TaskSurface(branch.ID, "c1"); err != nil {
+		t.Errorf("branch surface: %v", err)
+	}
+	if _, err := m.TaskChart(branch.ID, "chart-1"); err != nil {
+		t.Errorf("branch chart: %v", err)
+	}
+	if h, err := m.TodoHistory(branch.ID); err != nil || h.Live == nil {
+		t.Errorf("branch todos = %+v, %v", h, err)
+	}
+	if got, err := m.Asides(branch.ID); err != nil || len(got) != 1 || got[0].Answer != "because" {
+		t.Errorf("branch asides = %+v, %v", got, err)
+	}
+	// The copies are the branch's own: the source's next aside stays with it.
+	if err := m.keepAside(s, &Aside{Question: "and", Answer: "then"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Asides(branch.ID); len(got) != 1 {
+		t.Errorf("branch asides after the source's next = %+v", got)
+	}
+	if info, err := os.Stat(filepath.Join(m.taskUploadDir(branch.ID), surfacesFile)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("branch surfaces file: %v", err)
+	}
+}

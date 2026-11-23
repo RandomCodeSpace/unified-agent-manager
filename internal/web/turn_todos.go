@@ -168,16 +168,28 @@ func (m *Manager) retryAppendLocked(s *webSession, failed bool) {
 }
 
 // appendPrivate appends data to path, owner-only, creating it and its
-// directories, syncs it and returns its size.
+// directories, syncs it and returns its size. A last line a crash cut short
+// is ended first, so data starts a line of its own.
 func appendPrivate(root, dir, path string, data []byte) (int64, error) {
 	if err := privateDirs(root, dir); err != nil {
 		return 0, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) // #nosec G304 -- UAM's own directory and file name.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600) // #nosec G304 -- UAM's own directory and file name.
 	if err != nil {
 		return 0, err
 	}
-	_, err = f.Write(data)
+	last := []byte{'\n'}
+	if info, statErr := f.Stat(); statErr != nil {
+		err = statErr
+	} else if info.Size() > 0 {
+		_, err = f.ReadAt(last, info.Size()-1)
+	}
+	if err == nil && last[0] != '\n' {
+		data = append([]byte{'\n'}, data...)
+	}
+	if err == nil {
+		_, err = f.Write(data)
+	}
 	if err == nil {
 		err = f.Sync()
 	}

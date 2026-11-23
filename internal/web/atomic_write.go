@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // writeFileAtomic replaces path with data, owner-only (0600). It writes a
 // new temporary file named by pattern (os.CreateTemp) beside path, syncs it
-// to disk and renames it over path, so a crash leaves the old file or the
-// new one, never part of either. path's directory must exist.
+// to disk, renames it over path and syncs the directory, so a crash leaves
+// the old file or the new one, never part of either. path's directory must
+// exist.
 func writeFileAtomic(path, pattern string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), pattern)
 	if err != nil {
@@ -25,7 +27,24 @@ func writeFileAtomic(path, pattern string, data []byte) error {
 	if err = errors.Join(err, tmp.Close()); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir syncs dir, so the names just made or renamed in it survive a
+// crash. A file system that cannot sync a directory has nothing to sync.
+func syncDir(dir string) error {
+	f, err := os.Open(dir) // #nosec G304 -- UAM's own directory.
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+		err = nil
+	}
+	return errors.Join(err, f.Close())
 }
 
 // removeTempFiles removes the files in dir that writeFileAtomic left when the

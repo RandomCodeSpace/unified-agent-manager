@@ -32,3 +32,26 @@ func TestStartRemovesTempFilesOfAKilledRun(t *testing.T) {
 		}
 	}
 }
+
+// writeFileAtomic leaves the whole new file, owner-only, and no temp file.
+func TestWriteFileAtomicReplacesWhole(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.json")
+	for _, data := range []string{"first", "second"} {
+		if err := writeFileAtomic(path, ".f-*", []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != data {
+			t.Fatalf("file = %q, %v", got, err)
+		}
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", info.Mode())
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("dir holds %d files", len(entries))
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "missing", "f"), ".f-*", nil); err == nil {
+		t.Fatal("wrote into a missing directory")
+	}
+}

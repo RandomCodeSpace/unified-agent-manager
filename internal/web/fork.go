@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -397,7 +398,8 @@ func branchTitle(source string) string {
 
 // copyUploads gives a branch its source's kept files, the uploads its
 // prompts carried and the images its tools returned, so the copied history
-// shows them as chips and thumbnails as the source does. Each keeps its ID
+// shows them as chips and thumbnails as the source does, and its
+// threadFiles, so its cards and lists show too. Each upload keeps its ID
 // and record; the bytes are linked where the file system allows, else
 // copied. A file that cannot be copied shows by name only, as before.
 func (m *Manager) copyUploads(source, branch *webSession) {
@@ -409,10 +411,10 @@ func (m *Manager) copyUploads(source, branch *webSession) {
 		}
 	}
 	m.mu.Unlock()
-	if len(kept) == 0 {
+	from, to := m.taskUploadDir(source.id), m.taskUploadDir(branch.id)
+	if _, err := os.Stat(from); err != nil {
 		return
 	}
-	from, to := m.taskUploadDir(source.id), m.taskUploadDir(branch.id)
 	if err := privateDirs(m.uploadRoot(), to); err != nil {
 		log.Warn("copy branch attachments failed", "session", branch.id, "error", err)
 		return
@@ -425,6 +427,11 @@ func (m *Manager) copyUploads(source, branch *webSession) {
 			continue
 		}
 		copied[u.ID] = u
+	}
+	for _, name := range threadFiles {
+		if err := copyThreadFile(filepath.Join(from, name), filepath.Join(to, name)); err != nil {
+			log.Warn("copy branch file failed", "session", branch.id, "file", name, "error", err)
+		}
 	}
 	m.mu.Lock()
 	removed := branch.removed
@@ -454,6 +461,37 @@ func copyUpload(from, to string, u *upload) error {
 		return writeUpload(filepath.Dir(to), to, u, data)
 	}
 	return writeUploadRecord(to, u)
+}
+
+// copyThreadFile copies the file src, or the files of the folder src, to
+// dst, owner-only. Appended files change in place, so each is copied, never
+// linked. A missing src copies nothing.
+func copyThreadFile(src, dst string) error {
+	info, err := os.Lstat(src)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case info.IsDir():
+		entries, err := os.ReadDir(src)
+		if err == nil {
+			err = privateDirs(dst)
+		}
+		for _, e := range entries {
+			if err == nil && e.Type().IsRegular() {
+				err = copyThreadFile(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()))
+			}
+		}
+		return err
+	case !info.Mode().IsRegular():
+		return nil
+	}
+	data, err := os.ReadFile(src) // #nosec G304 -- UAM's own directory and file name.
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(dst, ".copy-*", data)
 }
 
 // DismissFork clears the one unresolved reservation for this source, owner

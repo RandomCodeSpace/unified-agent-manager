@@ -83,6 +83,11 @@ func (m *Manager) taskUploadDir(taskID string) string {
 	return filepath.Join(m.uploadRoot(), filepath.Clean("/"+taskID))
 }
 
+// threadFiles are the files and folders a Thread keeps in its upload
+// directory beside its uploads; a branch gets a copy of each, so a new one
+// belongs here. Delete and a failed import remove the whole directory.
+var threadFiles = []string{surfacesFile, chartsDir, asidesFile, todosFile, turnTodosFile, turnChangesFile, planReviewsFile}
+
 // sniff returns the MIME type UAM stores and sends for data, from the bytes
 // alone: png, jpeg, gif, webp, PDF, or UTF-8 text without a NUL byte, sent
 // as text/plain. Everything else, SVG included, is refused.
@@ -269,11 +274,11 @@ func writeUpload(root, dir string, u *upload, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
 	}
-	if err := f.Close(); err != nil {
+	if err = errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 	return writeUploadRecord(dir, u)
@@ -295,25 +300,14 @@ func privateDirs(dirs ...string) error {
 	return nil
 }
 
-// writeUploadRecord replaces <id>.json atomically.
+// writeUploadRecord replaces <id>.json atomically. Its directory sync also
+// keeps the name of the upload written beside it.
 func writeUploadRecord(dir string, u *upload) error {
 	data, err := json.Marshal(u)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".record-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, u.ID+".json"))
+	return writeFileAtomic(filepath.Join(dir, u.ID+".json"), ".record-*", data)
 }
 
 func removeUploads(dir string) {
