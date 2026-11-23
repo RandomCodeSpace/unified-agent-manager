@@ -12,7 +12,7 @@ colors:
   bubble-user: "#efeff0"
   ink: "#1d1d1f"
   body: "#3a3a3c"
-  muted: "#636366"
+  muted: "#5f5f62"
   faint: "#6e6e73"
   hairline: "#e8e8ea"
   hairline-strong: "#c6c6c8"
@@ -25,11 +25,11 @@ colors:
   selection: "#d6d6db"
   attention: "#ad3a0b"
   attention-wash: "#fbe5d6"
-  success: "#137739"
+  success: "#137538"
   success-wash: "#dcfce7"
-  warning: "#8f5d00"
+  warning: "#8c5b00"
   warning-wash: "#fbefc6"
-  error: "#c4262d"
+  error: "#b22329"
   error-wash: "#fde0e0"
   info: "#1d1d1f"
   info-wash: "#ececef"
@@ -61,11 +61,11 @@ colors:
   warning-tint: "rgba(214, 158, 0, 0.14)"
   track: "#8a8a8f"
   badge-red: "#b42d2d"
-  badge-orange: "#a74c0e"
-  badge-amber: "#866100"
-  badge-lime: "#4c7111"
-  badge-green: "#21763e"
-  badge-teal: "#107469"
+  badge-orange: "#a64b0e"
+  badge-amber: "#845f00"
+  badge-lime: "#4c7011"
+  badge-green: "#21743d"
+  badge-teal: "#107267"
   badge-cyan: "#0d6f88"
   badge-blue: "#0265c0"
   badge-violet: "#6b4fc2"
@@ -584,11 +584,11 @@ The ViewTransition was removed later; Thread switches render at once.
 ### Theme
 Two schemes on one token set.
 **Light** (the values in this file's tables): Mono · Signal (owner, 2026-10-18), which supersedes the cool light direction of 2026-09-24: a neutral near-white canvas, pale grey rail and user bubbles, white raised controls, a blue accent, colour on labels only (state and identity).
-**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls (`raised` #161618, `float` #232326), the monochrome ink ladder inverted, a light blue accent (#50a0ff), a deeper blue `accent-fill` under the primary button's white text and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
+**Dark** (owner, 2026-10-02: "pure black, no extra colour"): `#000` canvas and rail, near-black raised controls (`raised` #161618, `float` #232326), the monochrome ink ladder inverted, a light blue accent (#54a2ff), a deeper blue `accent-fill` under the primary button's white text and no accent stripes; its values are the `:root[data-theme='dark']` block in `index.css`.
 Every token has both values; every text pair keeps AA and `faint` keeps 3:1 in both schemes (`tests/theme.test.mjs` checks them).
 Semantic status colors retain their meaning in both.
 The blue is azure (owner, 2026-11-09, revamp mock 5 B: OKLCH hue 254), one value for `accent`, `link` and `badge-blue`.
-In Dark the signal tones (`success` #70e093, `warning` #f0bb3b, `attention` #fe8f5b, `error` #ff847d) share one chroma (OKLCH 0.15) inside lightness 0.75–0.82, so none glares and none sits back; a new dark tone keeps both.
+In Dark the signal tones (`success` #70e093, `warning` #f0bb3b, `attention` #fe8f5b, `error` #ff8780) share one chroma (OKLCH 0.15) inside lightness 0.75–0.82, so none glares and none sits back; a new dark tone keeps both.
 The scheme is Settings → This browser → **Theme** (`Light` | `Dark` | `Match system`, Match system the default, kept per browser as `uam.theme`).
 It is `data-theme="light|dark"` on `<html>`, set before the first paint by `src/theme.js` (a file, for the CSP; the build names it by its content hash) and kept current by `lib/theme.ts`, which follows the OS while Match system is chosen, sets `color-scheme` so native controls follow, and points `theme-color` at the canvas.
 Views that draw with resolved token values (charts, diagrams, the terminal) redraw when the scheme changes.
@@ -605,7 +605,7 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 | `raised` | #ffffff | Composer, interaction cards, menus, dialogs, inputs |
 | `sunken` | #efeff0 | Wells: code blocks, thinking body, inline code, meter track |
 | `bubble-user` | #efeff0 | User message bubble |
-| `tint-well` | #f5f5f7 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.50:1, `faint` glyphs 4.66:1) |
+| `tint-well` | #f5f5f7 | One step below `canvas`: activity and tool-row pills, chips and uploads on the well, the settled question block and the finish card (`muted` text 5.84:1, `faint` glyphs 4.66:1) |
 | `code-bg` | #f2f2f5 | Neutral background for code |
 | `selection` | #d6d6db | `::selection` |
 | `backdrop` | rgba(17,17,17,.35) | Behind dialogs, the drawer and overlay panels |
@@ -622,7 +622,7 @@ Tailwind's own palette is removed (`--color-*: initial`), so nothing outside thi
 |---|---|---|
 | `ink` | #1d1d1f | Titles, selected and needs-you rows, user bubble text, code |
 | `body` | #3a3a3c | Assistant prose, default UI text, rows at rest |
-| `muted` | #636366 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
+| `muted` | #5f5f62 | Meta, captions, times, ledger rows, shelf headers, placeholders, thinking text |
 | `faint` | #6e6e73 | Glyphs only: chevrons, idle and closed marks, separators, version (≥3:1) |
 
 ### Lines
@@ -640,14 +640,14 @@ Everywhere else separation is spacing, a surface step or an elevation level.
 |---|---|---|
 | `primary` / `on-primary` | #1d1d1f / #ffffff (dark #f5f5f7 / #000000) | The ink fill: the `ink` button (the composer's Stop), tooltips, step marks. |
 | `accent-fill` / `on-accent-fill` | #0265c0 / #ffffff (dark #1269c8 / #ffffff) | The primary button (Tactile, owner 2026-11-22). Hover #0a70d0 (dark #1672d6), pressed #01549f (dark #0f5cb0); white text keeps AA on all three in both schemes. |
-| `accent` / `on-accent` | #0265c0 / #ffffff (dark #50a0ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
-| `link` | #0265c0 (dark #50a0ff) | Web links in prose, the same blue as `accent` and `badge-blue` (owner, 2026-11-09: one blue; owner, 2026-10-18: links and file references must read apart from the text and from each other) |
+| `accent` / `on-accent` | #0265c0 / #ffffff (dark #54a2ff / #000000) | Working dot and word, spinners, meters, switches when on, selected radio check, panel handle when active, caret |
+| `link` | #0265c0 (dark #54a2ff) | Web links in prose, the same blue as `accent` and `badge-blue` (owner, 2026-11-09: one blue; owner, 2026-10-18: links and file references must read apart from the text and from each other) |
 | `file-link` | #0f6c62 (dark #4fd1bf) | A resolved file reference in prose: the file chip's name and glyph, on its `tint-well` chip |
 | `accent-wash` | #e2eefe (dark #0f2239) | Locate flash in the transcript, the Settled shelf header's flash |
 | `attention` / `attention-wash` | #ad3a0b / #fbe5d6 | "Needs you": permission and question states, the Needs permission / Needs answer row words, the chip on a pending card, the yolo mode icon |
-| `success` / `success-wash` | #137739 / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
-| `warning` / `warning-wash` | #8f5d00 / #fbefc6 | Interrupted state, reconnecting banner, context meter at ≥90% |
-| `error` / `error-wash` | #c4262d / #fde0e0 | Failed state, Deny and Delete, error lines, offline banner, diff `−` counts |
+| `success` / `success-wash` | #137538 / #dcfce7 | Completed mark and "Finished" row word, connected dot, diff `+` counts |
+| `warning` / `warning-wash` | #8c5b00 / #fbefc6 | Interrupted state, reconnecting banner, context meter at ≥90% |
+| `error` / `error-wash` | #b22329 / #fde0e0 | Failed state, Deny and Delete, error lines, offline banner, diff `−` counts |
 
 ### Diff
 | Role | Value |
@@ -663,11 +663,11 @@ They appear in sidebar Thread metadata (where the Project name beside the badge 
 | Token | Value | On `on-primary` text | Against `rail` | Against `canvas` |
 |---|---|---|---|---|
 | `badge-red` | #b42d2d | 6.26 | 5.60 | 6.26 |
-| `badge-orange` | #a74c0e | 5.70 | 5.10 | 5.70 |
-| `badge-amber` | #866100 | 5.64 | 5.05 | 5.64 |
-| `badge-lime` | #4c7111 | 5.71 | 5.11 | 5.71 |
-| `badge-green` | #21763e | 5.64 | 5.04 | 5.64 |
-| `badge-teal` | #107469 | 5.64 | 5.05 | 5.64 |
+| `badge-orange` | #a64b0e | 5.78 | 5.17 | 5.78 |
+| `badge-amber` | #845f00 | 5.80 | 5.19 | 5.80 |
+| `badge-lime` | #4c7011 | 5.78 | 5.17 | 5.78 |
+| `badge-green` | #21743d | 5.78 | 5.18 | 5.78 |
+| `badge-teal` | #107267 | 5.79 | 5.19 | 5.79 |
 | `badge-cyan` | #0d6f88 | 5.76 | 5.15 | 5.76 |
 | `badge-blue` | #0265c0 | 5.79 | 5.18 | 5.79 |
 | `badge-violet` | #6b4fc2 | 5.96 | 5.34 | 5.96 |
@@ -678,7 +678,11 @@ A new tone must keep both.
 
 ### Contrast (WCAG 2.x, computed)
 Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is glyph-only and held at ≥3:1.
-The Mono values (2026-10-18, `success` and `faint` darkened a step to hold this) are checked in both schemes by `tests/theme.test.mjs`; the tightest pairs are `warning`, `success` and `error` on `tint-selected` (4.52, 4.53, 4.60) and `faint` on `tint-selected` (4.07; in Dark 3.85).
+The Mono values (2026-10-18, `success` and `faint` darkened a step to hold this) are checked in both schemes by `tests/theme.test.mjs`; the tightest opaque pairs are `success`, `accent` and `warning` on `tint-selected` (4.65, 4.65, 4.67) and `faint` on `tint-selected` (4.07; in Dark 4.00).
+The translucent fills are checked blended over `rail`, `canvas`, `surface`, `raised`, `float` and `sunken` (2026-11-23, when the text tones were nudged a step to hold this; the fills kept their values): `ink`, `body` and `muted` on `fill-hover`, `fill` and `fill-strong`, `error` on `error-tint` and `error-tint-hover`, and every coloured word and badge tone on a hovered or selected row (`fill-hover`, `fill`; not over `sunken`), all at 4.5:1; `faint` and `focus` at 3:1.
+The tightest are `badge-cyan` on `fill` over `rail` (4.50), `error` on `error-tint-hover` over `sunken` (4.51) and, in Dark, `accent` on `fill`, `error` on `error-tint-hover` and `muted` on `fill-strong` over `float` (4.51, 4.51, 4.52).
+A pressed step (`fill-press`, `error-tint-press`) lasts only while the pointer is down and is held at 3:1.
+`accent-tint` and `warning-tint` have no caller and are not checked; the test fails when one gains a caller, and its pairs are added then.
 Do not lighten them and do not darken the grounds.
 The badge tones have their own table above.
 

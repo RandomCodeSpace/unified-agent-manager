@@ -148,20 +148,20 @@ const LIGHT: ITheme = {
   cursorAccent: '#ffffff',
   selectionBackground: '#d6d6db', // selection
   black: '#1d1d1f', // ink
-  red: '#c4262d', // error
-  green: '#137739', // success
-  yellow: '#8f5d00', // warning
+  red: '#b22329', // error
+  green: '#137538', // success
+  yellow: '#8c5b00', // warning
   blue: '#2a55bd',
   magenta: '#8e3a9a',
   cyan: '#0d6f88', // badge-cyan
   white: '#3a3a3c', // body
-  brightBlack: '#636366', // muted
+  brightBlack: '#5f5f62', // muted
   brightRed: '#b42d2d', // badge-red
-  brightGreen: '#21763e', // badge-green
-  brightYellow: '#866100', // badge-amber
+  brightGreen: '#21743d', // badge-green
+  brightYellow: '#845f00', // badge-amber
   brightBlue: '#0265c0', // badge-blue
   brightMagenta: '#ad3479', // badge-pink
-  brightCyan: '#107469', // badge-teal
+  brightCyan: '#107267', // badge-teal
   brightWhite: '#1d1d1f', // ink
 };
 const DARK: ITheme = {
@@ -170,19 +170,19 @@ const DARK: ITheme = {
   cursor: '#f5f5f7',
   cursorAccent: '#000000',
   selectionBackground: '#3a3a3c', // selection
-  black: '#a1a1a6', // muted: a true black would vanish on the canvas
-  red: '#ff847d', // error
+  black: '#a8a8ad', // muted: a true black would vanish on the canvas
+  red: '#ff8780', // error
   green: '#70e093', // success
   yellow: '#f0bb3b', // warning
   blue: '#7aa5ff',
   magenta: '#c792ea',
   cyan: '#5cc8e6', // badge-cyan
   white: '#d1d1d6', // body
-  brightBlack: '#a1a1a6', // muted
+  brightBlack: '#a8a8ad', // muted
   brightRed: '#f2867c', // badge-red
   brightGreen: '#6fcf8f', // badge-green
   brightYellow: '#e3be5a', // badge-amber
-  brightBlue: '#50a0ff', // badge-blue
+  brightBlue: '#54a2ff', // badge-blue
   brightMagenta: '#f08cc4', // badge-pink
   brightCyan: '#4fd1bf', // badge-teal
   brightWhite: '#f5f5f7', // ink
