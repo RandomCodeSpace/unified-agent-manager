@@ -179,3 +179,26 @@ func TestLogoutKeepsFileViewsRevokedPastTheCookieExpiry(t *testing.T) {
 		t.Fatalf("file views revoked until %d, want at least %d", until, least)
 	}
 }
+
+// A signed-out set that cannot be saved still ends the session and its file
+// views in this process.
+func TestLogoutRevokesFileViewsWhenTheSetCannotBeSaved(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := viewTask(t, ts)
+	session := ts.login(t, "127.0.0.1:8260")
+	w := ts.do(http.MethodGet, viewURL(sum.ID, "notes.md"), "", session)
+	if w.Code != http.StatusFound {
+		t.Fatalf("view = %d", w.Code)
+	}
+	location := w.Header().Get("Location")
+	ts.srv.revoked.path = filepath.Join(t.TempDir(), "missing", signedOutFileName)
+	if w := ts.do(http.MethodPost, "/api/logout", "", session); w.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions", "", session); w.Code != http.StatusUnauthorized {
+		t.Fatalf("session after logout = %d, want 401", w.Code)
+	}
+	if w := ts.do(http.MethodGet, location, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("file view after logout = %d, want 401", w.Code)
+	}
+}

@@ -617,9 +617,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// by up to fileKeyTTL.
 	if mac, exp, ok := s.sessionMAC(r); ok {
 		now := time.Now().Unix()
-		err := s.revoked.revoke(mac, exp, now)
-		if err == nil {
-			err = s.revoked.revoke(fileSession(mac), max(exp, now+int64(fileKeyTTL/time.Second)), now)
+		// Both are recorded even when a save fails: the set still holds in
+		// this process.
+		err := s.revoked.revoke(fileSession(mac), max(exp, now+int64(fileKeyTTL/time.Second)), now)
+		if sessionErr := s.revoked.revoke(mac, exp, now); sessionErr != nil {
+			err = sessionErr
 		}
 		if err != nil {
 			log.Warn("web logout: the signed-out session may come back after a restart", "err", err)
