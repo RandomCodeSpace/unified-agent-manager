@@ -133,7 +133,7 @@ func TestNoFinishedNoticeWhileTheQueueDrains(t *testing.T) {
 	waitUntil(t, "the queued prompt dispatch to finish", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return len(conv.Sends()) == 1 && m.sessions[sum.ID].queueSending == ""
+		return len(conv.Sends()) == 1 && m.sessions[sum.ID].queueSending == nil
 	})
 	if got := notices(t, sub); len(got) != 0 {
 		t.Fatalf("notices while the queue drains = %+v", got)

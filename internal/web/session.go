@@ -217,7 +217,7 @@ type webSession struct {
 	// paused after a restart; another Thread's message is not.
 	queue []QueuedPrompt
 	// queueSending is the head removed for a send whose outcome is pending.
-	queueSending string
+	queueSending *QueuedPrompt
 	// queuePaused keeps the queue from draining after a turn that did not
 	// complete or a prompt that was not accepted, until the user resumes or
 	// clears it. It is never set with an empty queue.

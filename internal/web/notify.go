@@ -119,7 +119,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	}
 	m.recordAttentionLocked()
 	kind := noticeKind(after)
-	if kind == noticeFinished && s.queueSending != "" {
+	if kind == noticeFinished && s.queueSending != nil {
 		// The queue's head left it to be sent: its turn is starting.
 		kind = ""
 	}

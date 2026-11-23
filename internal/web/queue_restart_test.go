@@ -3,8 +3,11 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -157,7 +160,7 @@ func TestQueuedPromptTakenForSendingWhenTheServiceStopsIsKept(t *testing.T) {
 	waitUntil(t, "the queued prompt is taken for sending", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return s.queueSending != ""
+		return s.queueSending != nil
 	})
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -168,5 +171,111 @@ func TestQueuedPromptTakenForSendingWhenTheServiceStopsIsKept(t *testing.T) {
 	m2 := startManager(t, st, agenttest.NewProvider("fake", allCaps))
 	if d := detail(t, m2, sum.ID); queueTexts(d) != "B" || !d.QueuePaused {
 		t.Fatalf("after the restart: queue %q, paused %v", queueTexts(d), d.QueuePaused)
+	}
+}
+
+// crashCopy is the state file as a kill would leave it now, opened as a store
+// of its own.
+func crashCopy(t *testing.T, st *store.Store) *store.Store {
+	t.Helper()
+	data, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), filepath.Base(st.Path()))
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	copied, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return copied
+}
+
+// A kill after the drain took the queue's head, before the send reserved its
+// request, loses nothing: the head is still in the saved queue, comes back
+// paused and, resumed, is sent once.
+func TestQueuedPromptTakenForSendingSurvivesACrash(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	b := mustUUID(t)
+	mustSubmit(t, m, sum.ID, "B", b, ModeQueue, SubmissionQueued)
+	// A git action in the Thread's folder holds the send after the take.
+	m.mu.Lock()
+	s := m.sessions[sum.ID]
+	m.gitWrites = map[string]chan struct{}{realPath(s.workdir): make(chan struct{})}
+	m.mu.Unlock()
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the queued prompt is taken for sending", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return s.queueSending != nil
+	})
+	if err := m.CancelQueued(sum.ID, b); err == nil {
+		t.Fatal("the prompt taken for sending was cancelled")
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	prov2 := agenttest.NewProvider("fake", allCaps)
+	prov2.AddConversation(sum.ConversationID, nil)
+	m2 := startManager(t, crashCopy(t, st), prov2)
+	if d := detail(t, m2, sum.ID); queueTexts(d) != "B" || !d.QueuePaused {
+		t.Fatalf("after the crash: queue %q, paused %v", queueTexts(d), d.QueuePaused)
+	}
+	if err := m2.ResumeQueue(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if last := waitLastSubmission(t, m2, sum.ID, b); last.Status != SubmissionAccepted {
+		t.Fatalf("resumed prompt = %+v", last)
+	}
+	if sends := prov2.Last().Sends(); len(sends) != 1 || sends[0] != "B" {
+		t.Fatalf("sends after the resume = %q", sends)
+	}
+}
+
+// A kill after the send reserved the queue's head never sends it again: the
+// ledger answers its request, and the saved queue no longer holds it.
+func TestQueuedPromptReservedBeforeACrashIsNotSentAgain(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	b := mustUUID(t)
+	mustSubmit(t, m, sum.ID, "B", b, ModeQueue, SubmissionQueued)
+	sending, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	conv.SetSendHook(func(ctx context.Context, prompt string) error {
+		if prompt == "B" {
+			close(sending)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		}
+		return nil
+	})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	select {
+	case <-sending:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the queued prompt was not sent")
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	prov2 := agenttest.NewProvider("fake", allCaps)
+	prov2.AddConversation(sum.ConversationID, nil)
+	m2 := startManager(t, crashCopy(t, st), prov2)
+	if d := detail(t, m2, sum.ID); len(d.Queue) != 0 {
+		t.Fatalf("after the crash: queue %q", queueTexts(d))
+	}
+	if sub, err := m2.Submit(sum.ID, PromptRequest{Text: "B", RequestID: b, Mode: ModeQueue}); err != nil || sub.Status != SubmissionUncertain {
+		t.Fatalf("retry after the crash = %+v, %v", sub, err)
+	}
+	if err := m2.ResumeQueue(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if opens := prov2.Opens(); len(opens) != 0 {
+		t.Fatalf("the reserved prompt was sent again: %d opens", len(opens))
 	}
 }

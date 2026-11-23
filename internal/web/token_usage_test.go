@@ -67,6 +67,27 @@ func TestTokenUsageSinkAndUtility(t *testing.T) {
 	}
 }
 
+// A token ledger that cannot be written refuses no prompt: a prompt waits only
+// for the state file's save, and the ledger is written again later.
+func TestTokenLedgerWriteFailureRefusesNoPrompt(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	path := m.tokenLedgerPath()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.recordTokensLocked("p", agentapi.TokenUsage{Model: "m", Input: 1})
+	m.mu.Unlock()
+	sum, _ := busySession(t, m, prov)
+	mustSubmit(t, m, sum.ID, "queued", mustUUID(t), ModeQueue, SubmissionQueued)
+	if err := m.flush(); err == nil {
+		t.Fatal("the ledger's write failure was hidden")
+	}
+}
+
 func TestTokenUsageWriteFailureAndInvalidLedger(t *testing.T) {
 	st := openTestStore(t)
 	m := NewManager(st, nil)

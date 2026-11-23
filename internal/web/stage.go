@@ -139,7 +139,7 @@ func (s *webSession) settleableLocked() error {
 		return newError(http.StatusConflict, "the thread is running or waiting for input; stop the turn first")
 	case slices.ContainsFunc(s.interactions, func(ix *interaction) bool { return ix.State == agentapi.InteractionPending }):
 		return newError(http.StatusConflict, "a permission request is still being answered; try again")
-	case len(s.queue) > 0 || s.queueSending != "":
+	case len(s.queue) > 0 || s.queueSending != nil:
 		return newError(http.StatusConflict, "the thread has queued prompts; send or clear them first")
 	case s.runningSubagents() > 0:
 		return newError(http.StatusConflict, "subagents are still running; wait for them or stop them first")

@@ -278,7 +278,7 @@ func TestForkRejectsInvalidModelBusyHolderAndChangedSourceBeforeRPC(t *testing.T
 				p.Last().EmitTurn(agentapi.TurnWorking, "")
 			case "queue-dispatch":
 				m.mu.Lock()
-				s.queueSending = "sending"
+				s.queueSending = &QueuedPrompt{RequestID: "sending"}
 				m.mu.Unlock()
 			case "holder":
 				if _, err := m.Close(source.ID); err != nil {
