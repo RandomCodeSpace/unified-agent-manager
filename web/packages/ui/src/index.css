@@ -27,7 +27,7 @@
   --color-bubble: #efeff0;
   --color-ink: #1d1d1f;
   --color-body: #3a3a3c;
-  --color-muted: #636366;
+  --color-muted: #5f5f62;
   /* Non-text only (glyphs, chevrons, rules): 3:1 on every surface, never under words. Text that read as faint is `muted`. */
   --color-faint: #6e6e73;
   --color-hairline: #e8e8ea;
@@ -46,11 +46,11 @@
   --color-selection: #d6d6db;
   --color-attention: #ad3a0b;
   --color-attention-wash: #fbe5d6;
-  --color-success: #137739;
+  --color-success: #137538;
   --color-success-wash: #dcfce7;
-  --color-warning: #8f5d00;
+  --color-warning: #8c5b00;
   --color-warning-wash: #fbefc6;
-  --color-error: #c4262d;
+  --color-error: #b22329;
   --color-error-wash: #fde0e0;
   --color-info: #1d1d1f;
   --color-info-wash: #ececef;
@@ -61,8 +61,8 @@
   --color-diff-del-text: #7f1d1d;
   --color-backdrop: rgba(17, 17, 17, 0.35);
   --color-scrim: rgba(10, 10, 10, 0.8);
-  /* The three tint steps between the surfaces: a hover on raised/canvas (1.21:1 on raised, muted text stays 4.94:1),
-     the selected row on the rail (muted text 4.81:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
+  /* The three tint steps between the surfaces: a hover on raised/canvas (1.21:1 on raised, muted text stays 5.25:1),
+     the selected row on the rail (muted text 5.11:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
   --color-tint-hover: #e9e9ec;
   --color-tint-selected: #e6e6e9;
   --color-tint-well: #f5f5f7;
@@ -93,11 +93,11 @@
   /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, and the Project name's text on a
      Thread row (rail, raised, tint-hover, tint-selected); every pair at least 4.5:1. */
   --color-badge-red: #b42d2d;
-  --color-badge-orange: #a74c0e;
-  --color-badge-amber: #866100;
-  --color-badge-lime: #4c7111;
-  --color-badge-green: #21763e;
-  --color-badge-teal: #107469;
+  --color-badge-orange: #a64b0e;
+  --color-badge-amber: #845f00;
+  --color-badge-lime: #4c7011;
+  --color-badge-green: #21743d;
+  --color-badge-teal: #107267;
   --color-badge-cyan: #0d6f88;
   --color-badge-blue: #0265c0;
   --color-badge-violet: #6b4fc2;
@@ -299,18 +299,18 @@
     --color-bubble: #1c1c1f;
     --color-ink: #f5f5f7;
     --color-body: #d1d1d6;
-    --color-muted: #a1a1a6;
-    --color-faint: #86868b;
+    --color-muted: #a8a8ad;
+    --color-faint: #89898e;
     --color-hairline: #222223;
     --color-hairline-strong: #38383a;
     --color-primary: #f5f5f7;
     --color-on-primary: #000000;
-    --color-accent: #50a0ff;
+    --color-accent: #54a2ff;
     --color-on-accent: #000000;
     --color-accent-wash: #0f2239;
-    --color-link: #50a0ff;
+    --color-link: #54a2ff;
     --color-file-link: #4fd1bf;
-    --color-focus: #50a0ff;
+    --color-focus: #54a2ff;
     --color-selection: #3a3a3c;
     --color-attention: #fe8f5b;
     --color-attention-wash: #2e1a0c;
@@ -318,7 +318,7 @@
     --color-success-wash: #0b2818;
     --color-warning: #f0bb3b;
     --color-warning-wash: #2b2209;
-    --color-error: #ff847d;
+    --color-error: #ff8780;
     --color-error-wash: #331210;
     --color-info: #f5f5f7;
     --color-info-wash: #26262a;
@@ -357,7 +357,7 @@
     --color-badge-green: #6fcf8f;
     --color-badge-teal: #4fd1bf;
     --color-badge-cyan: #5cc8e6;
-    --color-badge-blue: #50a0ff;
+    --color-badge-blue: #54a2ff;
     --color-badge-violet: #b39cff;
     --color-badge-pink: #f08cc4;
     --elevation-raised: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 1px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.5);

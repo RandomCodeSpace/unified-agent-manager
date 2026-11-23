@@ -53,7 +53,7 @@ test('"phone" is one width: the JavaScript media query is the stylesheet\'s sm b
 });
 
 test('the terminal palette holds the token values it names, in both schemes', () => {
-  // Each palette line names its token: `red: '#c4262d', // error`. The dark palette is the second object.
+  // Each palette line names its token: `red: '#b22329', // error`. The dark palette is the second object.
   const src = readFileSync(new URL('../src/components/Terminal.tsx', import.meta.url), 'utf8');
   const split = src.indexOf("background: '", src.indexOf("background: '") + 1);
   const drift = [];
@@ -90,14 +90,20 @@ test('a page heading is `title` in a view\'s bar or `display-md` on an empty sta
   assert.deepEqual(headers, []);
 });
 
-// WCAG relative luminance and contrast of #rrggbb colours.
-const luminance = (hex) => {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+// WCAG relative luminance and contrast. A colour is a token value (#rrggbb or rgba()) or an [r, g, b] triple.
+const rgba = (c) => (c.startsWith('#') ? [...[1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)), 1] : c.match(/[\d.]+/g).map(Number));
+const luminance = (c) => {
+  const [r, g, b] = (typeof c === 'string' ? rgba(c) : c).slice(0, 3).map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
 const contrast = (a, b) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
+};
+// A translucent fill is seen blended over the opaque ground it sits on.
+const over = (fill, ground) => {
+  const [r, g, b, a] = rgba(fill);
+  return [r, g, b].map((v, i) => v * a + rgba(ground)[i] * (1 - a));
 };
 
 for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
@@ -120,7 +126,35 @@ for (const [scheme, tokens] of [['light', light], ['dark', dark]]) {
     const low = pairs.filter(([fg, bg, min]) => contrast(tokens[fg], tokens[bg]) < min).map(([fg, bg, min]) => `${fg} on ${bg}: ${contrast(tokens[fg], tokens[bg]).toFixed(2)} < ${min}`);
     assert.deepEqual(low, []);
   });
+
+  test(`${scheme} text keeps AA on the translucent fills, blended over each surface they sit on`, () => {
+    const grounds = ['rail', 'canvas', 'surface', 'raised', 'float', 'sunken'];
+    const pairs = [];
+    for (const ground of grounds) {
+      // A control or a row at hover, at rest and selected; an input's placeholder and a strip's label are muted.
+      for (const fill of ['fill-hover', 'fill', 'fill-strong']) for (const text of ['ink', 'body', 'muted']) pairs.push([text, fill, ground, 4.5]);
+      for (const fill of ['fill-hover', 'fill', 'fill-strong']) pairs.push(['faint', fill, ground, 3], ['focus', fill, ground, 3]);
+      // The destructive button and a destructive menu item, at rest and hover.
+      pairs.push(['error', 'error-tint', ground, 4.5], ['error', 'error-tint-hover', ground, 4.5]);
+      // Pressed lasts only while the pointer is down: the label stays legible at 3:1.
+      for (const text of ['ink', 'body', 'muted']) pairs.push([text, 'fill-press', ground, 3]);
+      pairs.push(['error', 'error-tint-press', ground, 3]);
+    }
+    // A hovered and a selected row carry coloured words: a Project name in its tone, a state, a link. Rows are not laid on a sunken well.
+    const coloured = ['accent', 'link', 'file-link', 'attention', 'success', 'warning', 'error', ...Object.keys(tokens).filter((k) => k.startsWith('badge-'))];
+    for (const ground of grounds.filter((g) => g !== 'sunken')) for (const fill of ['fill-hover', 'fill']) for (const text of coloured) pairs.push([text, fill, ground, 4.5]);
+    const low = [];
+    for (const [fg, fill, ground, min] of pairs) {
+      const ratio = contrast(tokens[fg], over(tokens[fill], tokens[ground]));
+      if (ratio < min) low.push(`${fg} on ${fill} over ${ground}: ${ratio.toFixed(2)} < ${min}`);
+    }
+    assert.deepEqual(low, []);
+  });
 }
+
+test('the tinted button has no caller: its accent-tint pairs join the contrast test with its first one', () => {
+  assert.deepEqual(sources().filter(([, text]) => /variant(="|: ')tinted|(accent|warning)-tint/.test(text)).map(([file]) => file), ['components/ui/button.tsx']);
+});
 
 test('faint never colours words: text that reads as faint is muted', () => {
   // A tag with `text-faint` in its className must be self-closing (an icon), aria-hidden, an icon Button, or hold only punctuation.
