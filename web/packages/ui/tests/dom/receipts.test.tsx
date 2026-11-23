@@ -63,6 +63,15 @@ describe('receipts', () => {
     expect(rows).toEqual(['npm test· not run this turn', 'inventory.py· not changed this turn']);
   });
 
+  test('why a stamp is red is a tip its focusable stamp shows on focus, not a native title', async () => {
+    render(<Receipts stamps={receipts('Ran `make t1`.', [bash('b9', 'make t1', { exit_code: 2, status: 'failed' })])} />);
+    const stamp = within(screen.getByRole('listitem')).getByRole('button', { name: /make t1/ });
+    expect(stamp.hasAttribute('title')).toBe(false);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(stamp);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Contradicted by the record');
+  });
+
   test('the line waits until no stamp is pending', async () => {
     const held = bash('b2', 'go test ./... 2>&1 | tail -3', { input: undefined, display_arg: 'go test ./... 2>&1 | tail -3', has_output: true }, { compact: { has_text: false, has_reasoning: false } });
     bodies.set('b2', bash('b2', 'go test ./... 2>&1 | tail -3', { output: 'ok  \tpkg\t0.2s' }));

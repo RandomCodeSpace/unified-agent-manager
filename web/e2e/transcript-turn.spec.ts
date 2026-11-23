@@ -64,7 +64,13 @@ test('receipts stamp the claims the turn record contradicts, list the unrecorded
   // A stamp opens the call that is its evidence: the turn's activity unfolds to the npm test row.
   const call = conv.locator('[id^="item-"]', { hasText: 'npm test' });
   await expect(call).toHaveCount(0);
-  await stamps.filter({ hasText: /all tests pass/i }).getByRole('button').click();
+  // Why a stamp is red is a tip on keyboard focus, not a native title.
+  const stamp = stamps.filter({ hasText: /all tests pass/i }).getByRole('button');
+  await expect(stamp).not.toHaveAttribute('title');
+  await page.keyboard.press('Shift');
+  await stamp.focus();
+  await expect(page.getByRole('tooltip')).toHaveText('Contradicted by the record. Show the call.');
+  await stamp.click();
   await expect(call).toBeInViewport();
 
   await page.reload();

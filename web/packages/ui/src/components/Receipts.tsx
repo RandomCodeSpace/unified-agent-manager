@@ -9,6 +9,7 @@ import { mainCall } from '../lib/subagents';
 import { useBodyRead } from './Details';
 import { useActions, useLocateItem, useScope } from './Subagents';
 import { Button } from './ui/button';
+import { Tip } from './ui/tooltip';
 
 // Receipts (DESIGN.md Receipts): under a turn's last reply, the claims its record proves wrong,
 // each stamped with what the record shows. Silent otherwise: a claim that holds, or one the turn
@@ -89,15 +90,24 @@ export function Receipts({ stamps: given }: Readonly<{ stamps: readonly Stamp[] 
             return (
               <li key={`${s.kind}:${s.claim}`} className="min-w-0 max-w-full">
                 {s.by && show ? (
-                  <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} title="Contradicted by the record. Show the subagent." onClick={() => show(s.by!.agentId)}>
-                    {body}
-                  </Button>
+                  <Tip label="Contradicted by the record. Show the subagent.">
+                    <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} onClick={() => show(s.by!.agentId)}>
+                      {body}
+                    </Button>
+                  </Tip>
                 ) : s.itemId && locate ? (
-                  <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} title="Contradicted by the record. Show the call." onClick={() => void locate(s.itemId!)}>
-                    {body}
-                  </Button>
+                  <Tip label="Contradicted by the record. Show the call.">
+                    <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')} onClick={() => void locate(s.itemId!)}>
+                      {body}
+                    </Button>
+                  </Tip>
                 ) : (
-                  <span className={className} title="Contradicted by the record">{body}</span>
+                  // Nothing to open: a press only shows the reason, so it reaches a touch screen and the keyboard too.
+                  <Tip label="Contradicted by the record" openOnClick>
+                    <Button variant="danger" size="xs" className={cn(className, 'justify-start font-normal pointer-coarse:min-h-11 [&_svg]:size-3')}>
+                      {body}
+                    </Button>
+                  </Tip>
                 )}
               </li>
             );

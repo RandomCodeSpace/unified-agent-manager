@@ -226,7 +226,7 @@ function ChoiceRow({ name, choice, value = choice, multiple, on, again = false, 
   const control = { 'aria-label': choice, 'aria-describedby': shown ? hintId : describedBy };
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events -- The click is the radio's own (it bubbles from the control or its label); `detail` leaves a key's click out.
-    <label data-selected={on || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11')} onClick={!multiple && again && on && !disabled ? (e) => { if (e.detail > 0) onToggle(); } : undefined}>
+    <label data-selected={on || undefined} data-disabled={disabled || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11 data-disabled:pointer-events-none')} onClick={!multiple && again && on && !disabled ? (e) => { if (e.detail > 0) onToggle(); } : undefined}>
       {multiple
         ? <Checkbox name={name} checked={on} disabled={disabled} onCheckedChange={onToggle} {...control} />
         : <Radio value={value} onKeyDown={submitOnEnter} {...control} />}

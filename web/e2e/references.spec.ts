@@ -51,6 +51,14 @@ test('the sign-off lists the numbered issues a reply cites and each jumps to its
   await rows.nth(0).getByRole('button').click();
   await expect(page.locator(':focus')).toContainText('Issues found');
 
+  // A cited number's definition is a tip on keyboard focus (a native title never shows there, nor on a phone).
+  const cite = conversation(page).getByRole('button', { name: /^#5: / });
+  await expect(cite).not.toHaveAttribute('title');
+  await page.keyboard.press('Shift');
+  await cite.focus();
+  await expect(page.getByRole('tooltip')).toHaveText('Crash when opening an empty project');
+  await page.keyboard.press('Escape');
+
   // A cited number in the prose opens the list again on its row.
   await ledger.click();
   await expect(ledger).toHaveAttribute('aria-expanded', 'false');

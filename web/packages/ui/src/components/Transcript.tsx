@@ -1417,7 +1417,7 @@ const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
 function toolProgress(tool: Item['tool'], named = false) {
   if (!tool?.progress || !isActive(tool.status)) return null;
-  return <p role="status" aria-label="Tool progress" className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
+  return <p className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
 }
 
 /** A call's state as a glyph: three dots that light in turn while it runs, a still dashed circle while it waits to start, a check, a cross, or a dash for a call that never reported. */

@@ -75,6 +75,15 @@ test('a cited number in the prose opens the ledger', async () => {
   expect(screen.getByRole('list', { name: 'References this reply cites' })).toBeTruthy();
 });
 
+test('a cited number\'s definition is a tip on keyboard focus, not a native title', async () => {
+  draw('task-cite-tip', REFS);
+  const cite = await screen.findByRole('button', { name: "#5: Crash on save. Show in this reply's references" });
+  expect(cite.hasAttribute('title')).toBe(false);
+  await userEvent.tab();
+  expect(document.activeElement).toBe(cite);
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Crash on save');
+});
+
 test('a failed read shows no ledger and the number stays text', async () => {
   const spy = draw('task-failed', new Error('offline'));
   await vi.waitFor(() => expect(spy).toHaveBeenCalled());

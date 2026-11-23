@@ -209,7 +209,7 @@ function ParentCrumb({ id, name, badge, phone }: Readonly<{ id: string; name?: s
   } else {
     crumb = (
       <Tip label={`Started by ${name || 'an untitled thread'}. Open it`}>
-        <Button variant="ghost" size="sm" className="flex min-w-0 max-w-60 justify-start px-1.5 font-normal pointer-coarse:min-h-11" onClick={open}>
+        <Button variant="ghost" size="sm" className="flex min-w-0 max-w-60 shrink justify-start px-1.5 font-normal pointer-coarse:min-h-11" onClick={open}>
           {badge && <ProjectBadge badge={badge} />}
           <span className="truncate">{name || 'Untitled thread'}</span>
         </Button>
@@ -1066,7 +1066,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
             {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
             {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-            <div ref={log} className="flex w-full flex-col gap-4 px-3 pt-4 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+            <div ref={log} className="flex w-full flex-col gap-4 px-3 pt-4 pb-16 sm:px-4 md:px-6" role="log" aria-live="off" aria-busy={historyLoading || undefined}>
               {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
               {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
               {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}

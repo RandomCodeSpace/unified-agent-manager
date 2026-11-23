@@ -9,10 +9,14 @@ test('scrolling up mid-stream holds still, and Jump to bottom follows the stream
   const jump = page.getByRole('button', { name: 'Jump to bottom' });
   await expect(conv.getByText(line(60), { exact: true })).toBeAttached();
   await expectPinned(page);
+  // A log, but not a live region: each streamed delta would be read out again.
+  await expect(conv.getByRole('log')).toHaveAttribute('aria-live', 'off');
 
   await conv.hover();
   await page.mouse.wheel(0, -800);
   await expect(jump.first()).toBeVisible();
+  // Floats over the conversation: its float shadow wins over the secondary button's own highlight.
+  await expect(jump.first()).toHaveCSS('box-shadow', /0px 8px 24px -4px/);
   const held = await settledScrollTop(page);
   // The first line fully inside the box, which must stay where the reader put it.
   const firstShown = () => conv.evaluate((el) => {

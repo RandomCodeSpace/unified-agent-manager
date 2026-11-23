@@ -36,7 +36,7 @@ test('tool progress remains visible with an unloaded body and requests no body',
       </ApiContext.Provider>,
     );
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-    expect(screen.getByRole('status').textContent).toBe('Waiting for file');
+    expect(screen.getByText('Waiting for file')).toBeTruthy();
     expect(FakeEventSource.opened).toHaveLength(0);
   } finally {
     window.EventSource = saved;

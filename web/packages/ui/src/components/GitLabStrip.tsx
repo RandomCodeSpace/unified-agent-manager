@@ -167,9 +167,10 @@ function listen() {
 export function useSummaries(sessionId: string, refs: GitLabRef[], target?: RefObject<Element | null>): Map<string, GitLabItemSummary | undefined> {
   const api = useApi();
   const scope = api.cacheKey(sessionId);
-  useSyncExternalStore(subscribe, () => version);
   const keys = refs.map(refKey);
   const joined = keys.join(' ');
+  // With no items, a poll for others' items must not redraw this caller (every turn head has one).
+  useSyncExternalStore(subscribe, () => (joined ? version : 0));
   useEffect(() => {
     if (!joined) return;
     listen();

@@ -3,6 +3,7 @@ import type { ExtraProps } from 'react-markdown';
 import { useApi } from '../ApiContext';
 import type { Item, Reference } from '../api';
 import { citedNumbers, referenceName, referenceWords } from '../lib/references';
+import { Tip } from './ui/tooltip';
 
 // The references a reply cites (DESIGN.md turn outcome), held per Thread and reply, and the cited
 // numbers in its prose. Kept apart from the ledger (References.tsx) so the Markdown renderer can use
@@ -56,8 +57,10 @@ export function MdCite({ children, ...props }: ComponentProps<'button'> & ExtraP
   const what = referenceWords(r) || r.state || '';
   const name = what ? `${referenceName(r)}: ${what}` : referenceName(r);
   return (
-    <button type="button" title={what || undefined} aria-label={`${name}. Show in this reply's references`} className="rounded-xs underline decoration-hairline-strong decoration-dotted underline-offset-3 transition-colors duration-100 hover:decoration-current" onClick={() => cites.pick(index)}>
-      {children}
-    </button>
+    <Tip label={what}>
+      <button type="button" aria-label={`${name}. Show in this reply's references`} className="rounded-xs underline decoration-hairline-strong decoration-dotted underline-offset-3 transition-colors duration-100 hover:decoration-current" onClick={() => cites.pick(index)}>
+        {children}
+      </button>
+    </Tip>
   );
 }

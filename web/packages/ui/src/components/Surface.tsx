@@ -706,7 +706,7 @@ function SurfaceChoice({ ctx, c, base, weight, place, name }: Part) {
       {options.map((o) => {
         const on = chosen.includes(o.value);
         return (
-          <label key={o.value} data-selected={on || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11')}>
+          <label key={o.value} data-selected={on || undefined} data-disabled={!path || undefined} className={cn(rowClass, 'min-h-8 cursor-pointer py-0 pointer-coarse:min-h-11 data-disabled:pointer-events-none')}>
             {multiple
               ? <Checkbox name={id} checked={on} disabled={!path} onCheckedChange={() => choose(on ? chosen.filter((x) => x !== o.value) : [...chosen, o.value])} aria-invalid={aria['aria-invalid']} />
               : <Radio value={o.value} aria-invalid={aria['aria-invalid']} />}

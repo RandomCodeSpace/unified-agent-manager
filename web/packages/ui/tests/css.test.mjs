@@ -63,6 +63,23 @@ test('the chosen Usage period\'s fill replaces the ghost tint instead of losing 
   assert.deepEqual(cn(ghost, period).split(' ').filter((c) => c.startsWith('aria-pressed:bg-')), ['aria-pressed:bg-raised']);
 });
 
+test('every @theme shadow is one tailwind-merge group, so a caller\'s shadow replaces a variant\'s', async () => {
+  const { cn } = await import('../src/lib/cn.ts');
+  const names = [...source('index.css').matchAll(/^\s*--shadow-([a-z-]+):/gm)].map((m) => m[1]);
+  assert.ok(names.includes('highlight-tonal') && names.includes('thumb'), names.join(' '));
+  for (const a of names) for (const b of names) if (a !== b) assert.equal(cn(`shadow-${a}`, `shadow-${b}`), `shadow-${b}`);
+  const secondary = source('components/ui/button.tsx').match(/secondary:\s*'([^']*)'/)[1];
+  assert.deepEqual(cn(secondary, 'shadow-float').split(' ').filter((c) => c.startsWith('shadow-')), ['shadow-float']);
+});
+
+test('the parent Thread crumb shrinks in a narrow header instead of spilling over the title', async () => {
+  const { cn } = await import('../src/lib/cn.ts');
+  const base = source('components/ui/button.tsx').match(/buttonVariants = cva\(\s*`([^`]*)`/)[1];
+  const crumb = source('components/Task.tsx').match(/<Tip label=\{`Started by [^>]*>\s*<Button [^>]*className="([^"]*)"/)[1];
+  const merged = cn(base, crumb).split(' ');
+  assert.ok(merged.includes('shrink') && !merged.includes('shrink-0'), merged.join(' '));
+});
+
 // happy-dom loads no stylesheet, so the DOM tests (tests/dom) assert what a user or a screen reader gets: roles, names,
 // text and state attributes. How a thing looks lives here, once: [file under src, the pattern its source keeps, what the
 // pattern guarantees, false when the pattern must be absent]. A restyle that changes one of these updates this table.

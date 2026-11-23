@@ -47,6 +47,8 @@ describe('app shell', () => {
     await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
     expect(window.location.hash).toBe('#task=t3');
+    // A log, but not a live region: streamed text would be read again on every delta; the status line announces.
+    expect(screen.getByRole('log').getAttribute('aria-live')).toBe('off');
     const log = within(screen.getByRole('log'));
     expect(await log.findByText(/Does it handle/)).toBeTruthy();
     // The composer takes focus on a fine pointer.
