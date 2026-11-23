@@ -612,9 +612,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// The route is behind authentication, so the cookie verified: end its
 	// session on the server too, or a copy of it would work until it expires.
-	// Other browsers' cookies have their own MAC and stay signed in.
+	// Other browsers' cookies have their own MAC and stay signed in. The file
+	// views opened under the session end with it; they can outlive its cookie
+	// by up to fileKeyTTL.
 	if mac, exp, ok := s.sessionMAC(r); ok {
-		if err := s.revoked.revoke(mac, exp, time.Now().Unix()); err != nil {
+		now := time.Now().Unix()
+		// Both are recorded even when a save fails: the set still holds in
+		// this process.
+		err := s.revoked.revoke(fileSession(mac), max(exp, now+int64(fileKeyTTL/time.Second)), now)
+		if sessionErr := s.revoked.revoke(mac, exp, now); sessionErr != nil {
+			err = sessionErr
+		}
+		if err != nil {
 			log.Warn("web logout: the signed-out session may come back after a restart", "err", err)
 		}
 	}
@@ -1243,11 +1252,12 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		exp := time.Now().Add(fileKeyTTL).Unix()
-		key := fileKey(s.signKey, r.Host, id, exp)
+		session := s.requestFileSession(r)
+		key := fileKey(s.signKey, r.Host, session, id, exp)
 		prefix := "/api/sessions/" + url.PathEscape(id) + "/files/key/"
 		target := prefix + key + "/" + viewPath(r.PathValue("path"))
 		if s.secureRequest(r) {
-			setFileCookie(w, fileCookie(s.signKey, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
+			setFileCookie(w, fileCookie(s.signKey, r.Host, session, id, exp), prefix, int(fileKeyTTL/time.Second))
 		}
 		if r.URL.Query().Get("download") == "1" {
 			target += "?download=1"

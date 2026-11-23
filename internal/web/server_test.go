@@ -747,7 +747,7 @@ func TestSigningUsesASeparateSecret(t *testing.T) {
 	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+byToken+"/notes.md", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("file key signed with the token = %d", w.Code)
 	}
-	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+fileKey(ts.srv.signKey, "127.0.0.1:8260", sum.ID, time.Now().Add(time.Hour).Unix())+"/notes.md", ""); w.Code != http.StatusOK {
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+fileKey(ts.srv.signKey, "127.0.0.1:8260", "test-session", sum.ID, time.Now().Add(time.Hour).Unix())+"/notes.md", ""); w.Code != http.StatusOK {
 		t.Fatalf("file key = %d", w.Code)
 	}
 	old := sessionCookie([]byte(testToken), "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())

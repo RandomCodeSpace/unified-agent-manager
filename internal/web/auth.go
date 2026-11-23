@@ -200,32 +200,42 @@ func cookieMAC(key []byte, host, exp, nonce string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// fileKey derives the key the file key route takes in place of the cookie,
-// for one Task on the request host until exp (Unix seconds). A page opened
-// from the Task's directory is sandboxed, so its requests for its sibling
-// files carry no cookie; under a key in the path its relative links still
-// resolve, and the key opens no other route and no other Task.
-func fileKey(key []byte, host, id string, exp int64) string {
-	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileKeyMAC(key, host, id, e)
+// fileSession names the sign-in a file key or file cookie is issued under, so
+// Log out can revoke them with it. It is a digest of the session cookie's MAC,
+// which itself never goes into a URL.
+func fileSession(sessionMAC string) string {
+	sum := sha256.Sum256([]byte("uam-web-file-session|" + sessionMAC))
+	return hex.EncodeToString(sum[:16])
 }
 
-func fileKeyMAC(key []byte, host, id, exp string) string {
+// requestFileSession is fileSession for r's sign-in, or "" without one. A
+// key or cookie issued under "" opens nothing.
+func (s *Server) requestFileSession(r *http.Request) string {
+	if mac, _, ok := s.sessionMAC(r); ok {
+		return fileSession(mac)
+	}
+	return ""
+}
+
+// fileKey derives the key the file key route takes in place of the cookie,
+// for one Task on the request host until exp (Unix seconds), under sign-in
+// session (fileSession). A page opened from the Task's directory is
+// sandboxed, so its requests for its sibling files carry no cookie; under a
+// key in the path its relative links still resolve, and the key opens no
+// other route and no other Task.
+func fileKey(key []byte, host, session, id string, exp int64) string {
+	e := strconv.FormatInt(exp, 10)
+	return e + "." + session + "." + fileKeyMAC(key, host, session, id, e)
+}
+
+func fileKeyMAC(key []byte, host, session, id, exp string) string {
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("uam-web-file-v2|" + strings.ToLower(host) + "|" + id + "|" + exp))
+	mac.Write([]byte("uam-web-file-v3|" + strings.ToLower(host) + "|" + session + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (s *Server) validFileKey(key, host, id string) bool {
-	exp, mac, ok := strings.Cut(key, ".")
-	if !ok {
-		return false
-	}
-	until, err := strconv.ParseInt(exp, 10, 64)
-	if err != nil || time.Now().Unix() >= until {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.signKey, host, id, exp))) == 1
+	return s.validFileValue(key, func(session, exp string) string { return fileKeyMAC(s.signKey, host, session, id, exp) })
 }
 
 // fileCookie derives the companion a file key needs over HTTPS: the view route
@@ -233,14 +243,14 @@ func (s *Server) validFileKey(key, host, id string) bool {
 // path, so the key in a view URL opens nothing without the browser that
 // opened it. SameSite=None lets the sandboxed page's own requests carry it;
 // plain HTTP cannot set such a cookie, so there the key alone is checked.
-func fileCookie(key []byte, host, id string, exp int64) string {
+func fileCookie(key []byte, host, session, id string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + fileCookieMAC(key, host, id, e)
+	return e + "." + session + "." + fileCookieMAC(key, host, session, id, e)
 }
 
-func fileCookieMAC(key []byte, host, id, exp string) string {
+func fileCookieMAC(key []byte, host, session, id, exp string) string {
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("uam-web-file-cookie-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
+	mac.Write([]byte("uam-web-file-cookie-v2|" + strings.ToLower(host) + "|" + session + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -248,19 +258,26 @@ func fileCookieMAC(key []byte, host, id, exp string) string {
 // Task id on its host.
 func (s *Server) validFileCookie(r *http.Request, id string) bool {
 	for _, c := range r.CookiesNamed(fileCookieName) {
-		exp, mac, ok := strings.Cut(c.Value, ".")
-		if !ok {
-			continue
-		}
-		until, err := strconv.ParseInt(exp, 10, 64)
-		if err != nil || time.Now().Unix() >= until {
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.signKey, r.Host, id, exp))) == 1 {
+		if s.validFileValue(c.Value, func(session, exp string) string { return fileCookieMAC(s.signKey, r.Host, session, id, exp) }) {
 			return true
 		}
 	}
 	return false
+}
+
+// validFileValue checks a file key or file cookie, exp.session.mac: unexpired,
+// signed as sign computes, and issued under a sign-in that has not logged out.
+func (s *Server) validFileValue(value string, sign func(session, exp string) string) bool {
+	exp, rest, _ := strings.Cut(value, ".")
+	session, mac, ok := strings.Cut(rest, ".")
+	if !ok || session == "" {
+		return false
+	}
+	until, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || time.Now().Unix() >= until {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(mac), []byte(sign(session, exp))) == 1 && !s.revoked.revoked(session)
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
