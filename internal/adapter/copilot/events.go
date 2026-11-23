@@ -56,6 +56,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	}
 	c.observePhaseLocked(ev, agentID)
+	c.observeModelCallLocked(ev, agentID)
 	if c.observeFusionLocked(ev) || c.observeActivityLocked(ev, agentID) {
 		return
 	}

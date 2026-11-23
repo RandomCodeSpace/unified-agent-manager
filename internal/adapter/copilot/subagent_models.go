@@ -103,6 +103,13 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 	if model == "" {
 		return &copilot.PreToolUseHookOutput{PermissionDecision: "deny", PermissionDecisionReason: "No model allowed for subagents in UAM Settings is usable: a custom model's API key is missing. Do the work without a subagent."}, nil
 	}
+	if c.hooks.SubagentModel != nil {
+		usable := slices.DeleteFunc(slices.Clone(allowed), func(id string) bool { return c.p.customKeyErr(id) != nil })
+		// The host only picks among the allowed models; any other answer is ignored.
+		if alt := c.hooks.SubagentModel(model, usable); alt != model && slices.Contains(usable, alt) {
+			model, why = alt, model+"'s recent model calls failed and "+why
+		}
+	}
 	if model == requested {
 		return contextOnly(note), nil
 	}

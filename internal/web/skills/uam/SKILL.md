@@ -89,7 +89,8 @@ with buttons, use `uam_form` instead (see its reference file).
 - The owner can limit the models subagents run on in Settings. uam then
   moves a subagent you start to an allowed model and tells you so: that is
   final, so do not start it again. If no allowed model is usable, the launch
-  is refused: do the work yourself.
+  is refused: do the work yourself. uam also moves a subagent off an allowed
+  model whose recent calls kept failing, to the next allowed one.
 - A subagent that uam cancelled after a model stall can be started again once.
 
 ## Attachments

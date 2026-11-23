@@ -88,6 +88,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	}
 	req.Hooks.Succeeded = func(ctx context.Context, use agentapi.ToolUse) { m.succeededToolUse(ctx, s, use) }
 	req.Hooks.Prompt = func(context.Context) string { return m.takeHostNotes(s) }
+	req.Hooks.SubagentModel = m.subagentModel
 	req.SkillDirectories = m.skillDirs
 	req.Instructions = m.placeInstructionsLocked(s)
 	req.OutputStyle = m.outputStyleLocked(s)

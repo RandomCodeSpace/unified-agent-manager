@@ -168,6 +168,7 @@ func (m *Manager) uamStats() []SessionStat {
 	}
 	l.mu.Unlock()
 	counts["utility_days_kept"] = len(days)
+	m.health.stats(m.now(), counts)
 	routines := m.AllRoutines()
 	counts["routines"] = len(routines)
 	for _, r := range routines {
