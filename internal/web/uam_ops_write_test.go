@@ -58,10 +58,17 @@ func TestUAMRenameAndBudgetOwnThread(t *testing.T) {
 		t.Fatalf("tightened budget = %+v", b)
 	}
 	uamRefused(t, conv, `{"op":"set_budget","args":{"credits":3,"quota_percent":41}}`, "only tighten")
+	// Credits already spent count: the new limit starts afresh, so it fits in what is left.
+	setSession(m, caller.ID, func(s *webSession) { s.usage = &agentapi.Usage{AIUnits: s.budget.From + 2} })
+	uamRefused(t, conv, `{"op":"set_budget","args":{"credits":2,"quota_percent":40}}`, "credits above 0 and up to the 1.00 left, and quota_percent above 0 and up to 40")
+	uamReadJSON(t, conv, `{"op":"set_budget","args":{"credits":1,"quota_percent":40}}`, &row)
+	if b := budgetOf(m, caller.ID); b.Credits != 1 || b.Reached {
+		t.Fatalf("budget tightened after spending = %+v", b)
+	}
 	if _, err := m.SetBudget(caller.ID, 0, 50); err != nil {
 		t.Fatal(err)
 	}
-	uamRefused(t, conv, `{"op":"set_budget","args":{"credits":2}}`, "only tighten")
+	uamRefused(t, conv, `{"op":"set_budget","args":{"credits":2}}`, "only tighten the budget the owner set: give quota_percent above 0 and up to 50")
 	uamReadJSON(t, conv, `{"op":"set_budget","args":{"credits":2,"quota_percent":50}}`, &row)
 	setSession(m, caller.ID, func(s *webSession) { s.budget.Reached = true })
 	uamRefused(t, conv, `{"op":"set_budget","args":{"credits":1,"quota_percent":10}}`, "only the owner")

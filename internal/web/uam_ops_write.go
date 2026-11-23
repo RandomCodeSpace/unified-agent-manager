@@ -129,8 +129,16 @@ func budgetTightens(b store.Budget, spent, credits, quotaPercent float64) error 
 	if b.Reached {
 		return errors.New("the budget is reached; only the owner can change it now")
 	}
+	// Only the limits that are set are named: "up to the 0.00 left" for a limit that does not exist reads as no way through.
+	var limits []string
+	if b.Credits > 0 {
+		limits = append(limits, fmt.Sprintf("credits above 0 and up to the %.2f left", max(0, b.Credits-spent)))
+	}
+	if b.QuotaPercent > 0 {
+		limits = append(limits, fmt.Sprintf("quota_percent above 0 and up to %g", b.QuotaPercent))
+	}
 	if b.Credits > 0 && !(credits > 0 && credits <= b.Credits-spent) || b.QuotaPercent > 0 && !(quotaPercent > 0 && quotaPercent <= b.QuotaPercent) {
-		return fmt.Errorf("you can only tighten the budget the owner set: credits above 0 and up to the %.2f left, quota_percent above 0 and up to %g; 0 keeps no limit only where none is set", max(0, b.Credits-spent), b.QuotaPercent)
+		return fmt.Errorf("you can only tighten the budget the owner set: give %s", strings.Join(limits, ", and "))
 	}
 	return nil
 }
