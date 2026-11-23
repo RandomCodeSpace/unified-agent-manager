@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1482,7 +1483,13 @@ func (s *Store) loadNoLock() (Config, error) {
 	}
 	// Untrusted on-disk records are validated and coerced on every load path,
 	// including the read-only newer-schema one below.
-	dropInvalidRecords(&cfg)
+	dropped := dropInvalidRecords(&cfg)
+	// A newer-schema file is read-only: no save can remove its records.
+	if cfg.SchemaVersion <= CurrentSchemaVersion {
+		if err := s.keepDropped(data, dropped); err != nil {
+			return Config{}, fmt.Errorf("keep dropped session records of %s: %w", s.path, err)
+		}
+	}
 	dropInvalidProjects(&cfg)
 	dropInvalidRoutines(&cfg)
 	dropInvalidMessagePairs(&cfg)
@@ -1572,12 +1579,15 @@ var prURLRE = regexp.MustCompile(`^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+$
 // dropInvalidRecords removes any session record whose untrusted on-disk fields
 // fail validation, logging each drop. It runs on load ONLY (not on the write
 // path via normalize) so a single corrupt or hostile record cannot brick the
-// whole store — the bad record is discarded and the rest survive.
-func dropInvalidRecords(cfg *Config) {
+// whole store — the bad record is discarded and the rest survive. It returns
+// the keys it dropped.
+func dropInvalidRecords(cfg *Config) []string {
+	var dropped []string
 	for key, rec := range cfg.Sessions {
 		if reason := validateRecord(rec); reason != "" {
 			log.Warn("dropping invalid session record", "key", key, "reason", reason)
 			delete(cfg.Sessions, key)
+			dropped = append(dropped, key)
 			continue
 		}
 		// The PR URL is display metadata, never argv-bound: a malformed one
@@ -1609,6 +1619,60 @@ func dropInvalidRecords(cfg *Config) {
 			cfg.Sessions[key] = rec
 		}
 	}
+	return dropped
+}
+
+// keepDropped writes the records a load dropped, as they are in data, to a
+// file beside the config before a save can remove them from it. The name
+// carries a hash of the records, so loading the same file again, from any
+// process, keeps one copy. A failure is returned: the config file is then the
+// only copy and must not be saved over.
+func (s *Store) keepDropped(data []byte, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	var raw struct {
+		Sessions map[string]json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	records := make(map[string]json.RawMessage, len(keys))
+	for _, key := range keys {
+		records[key] = raw.Sessions[key]
+	}
+	out, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(out)
+	kept := fmt.Sprintf("%s.dropped.%x", s.path, sum[:8])
+	if _, err := os.Stat(kept); err == nil {
+		return nil
+	}
+	// Written under saveNoLock's temp name, so sweepTemp removes a killed write.
+	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(out)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp, kept)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	// The records are untrusted and can hold prompts, so only the path is logged.
+	log.Warn("kept the dropped session records in a file beside the config", "path", kept, "records", len(keys))
+	return syncDir(filepath.Dir(s.path))
 }
 
 // dropInvalidProjects removes web projects whose ID or directory fails the

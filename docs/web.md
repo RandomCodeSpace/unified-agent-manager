@@ -3226,6 +3226,13 @@ back, or restart `uam web` to start empty. While the strip shows, the browser
 keeps its composer drafts, review marks and cached conversations of Threads
 the service does not list.
 
+A single Thread record that fails validation is left out when the file is
+read, and the rest load as usual. Before a save can remove it from
+`sessions.json`, the service copies it unchanged to
+`sessions.json.dropped.<hash>` beside it and logs the path; no strip shows.
+To get the Thread back, stop `uam web`, correct the record, put it back under
+`sessions` in `sessions.json` and start `uam web`.
+
 ## Stop
 
 ```sh
