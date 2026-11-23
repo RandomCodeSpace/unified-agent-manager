@@ -47,17 +47,20 @@ export function parseDelimited(text: string, delimiter: string): string[][] | nu
   }
 }
 
+/** Two or more columns, each named. */
+const named = (columns: string[]) => columns.length >= 2 && columns.length <= MAX_COLUMNS && columns.every(Boolean);
+
 /** A header row of two or more named columns, then one or more rows of exactly as many fields. */
 function delimitedTable(source: string, delimiter: string): ChartTable | null {
   const records = parseDelimited(source, delimiter);
   if (!records || records.length < 2) return null;
-  const [header, ...rows] = records;
-  const columns = header.map(name => name.trim());
-  if (columns.length < 2 || columns.length > MAX_COLUMNS || !columns.every(Boolean)) return null;
+  // A space after the delimiter is padding: trimmed, a figure still sorts as a number.
+  const [columns, ...rows] = records.map(record => record.map(field => field.trim()));
+  if (!named(columns)) return null;
   return rows.every(row => row.length === columns.length) ? { columns, rows } : null;
 }
 
-/** An array of two or more objects with the same keys, each value a string, number, boolean or null. */
+/** An array of two or more objects with the same two or more named keys, each value a string, number, boolean or null. */
 function jsonTable(source: string): ChartTable | null {
   let parsed: unknown;
   try { parsed = JSON.parse(source); } catch { return null; }
@@ -66,7 +69,7 @@ function jsonTable(source: string): ChartTable | null {
     && Object.values(entry).every(value => value === null || ['string', 'number', 'boolean'].includes(typeof value));
   if (!parsed.every(flat)) return null;
   const columns = Object.keys(parsed[0]);
-  if (!columns.length || columns.length > MAX_COLUMNS) return null;
+  if (!named(columns)) return null;
   if (!parsed.every(entry => Object.keys(entry).length === columns.length && columns.every(column => Object.hasOwn(entry, column)))) return null;
   return { columns, rows: parsed.map(entry => columns.map((column) => { const value = entry[column]; return typeof value === 'boolean' ? String(value) : value; })) };
 }

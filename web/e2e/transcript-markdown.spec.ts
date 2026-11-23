@@ -115,7 +115,7 @@ test('a wide table scrolls in its own box, and a long table sorts, pages and fil
 });
 
 test('a csv fence and a json array of rows render as sortable tables; irregular data stays a code block', async ({ page, project, model }) => {
-  const csv = 'package,requests\nrouter,"48,210"\n"auth, core",864\nsearch,9\n';
+  const csv = 'package,requests\nrouter,"48,210"\n"auth, core",864\nsearch, 9\n';
   const json = '[{"host":"a","up":true},{"host":"b","up":false}]';
   model.reply('show data', ['Rows:', `\`\`\`csv\n${csv}\`\`\``, `\`\`\`json\n${json}\n\`\`\``, '```csv\nragged,row\n1,2,3\n```', '```json\n{"single":"object"}\n```'].join('\n\n'));
   await startThread(page, project, 'show data');

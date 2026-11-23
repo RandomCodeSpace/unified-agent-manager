@@ -18,6 +18,8 @@ test('a quote inside an unquoted field is text; an unclosed or trailed quoted fi
 test('a csv or tsv fence with a header and regular rows is a table', () => {
   assert.deepEqual(fenceTable('csv', 'pkg, requests\r\nrouter,"48,210"\r\nauth,31904\r\n'), { columns: ['pkg', 'requests'], rows: [['router', '48,210'], ['auth', '31904']] });
   assert.deepEqual(fenceTable('tsv', 'pkg\tn\nrouter\t1\n'), { columns: ['pkg', 'n'], rows: [['router', '1']] });
+  // A space after the comma is padding, as in the header: the figures still read as numbers.
+  assert.deepEqual(fenceTable('csv', 'pkg, requests\nrouter, 48210\nauth , 864 \n'), { columns: ['pkg', 'requests'], rows: [['router', '48210'], ['auth', '864']] });
 });
 test('ragged rows, a lone header, one column, an unnamed column and an oversized fence stay code', () => {
   for (const source of ['a,b\n1,2,3', 'a,b\n1', 'a,b\n', 'a\n1\n2', 'a,\n1,2', '', 'a,b\n"open,2', `a,b\n${'1,2\n'.repeat(25_000)}`]) assert.equal(fenceTable('csv', source), null, JSON.stringify(source.slice(0, 20)));
@@ -27,5 +29,5 @@ test('a json array of two or more flat objects with the same keys is a table', (
   assert.deepEqual(fenceTable('json', '[{"name":"a","n":1,"ok":true,"note":null},{"n":2.5,"name":"b","ok":false,"note":"x"}]'), { columns: ['name', 'n', 'ok', 'note'], rows: [['a', 1, 'true', null], ['b', 2.5, 'false', 'x']] });
 });
 test('any other json stays code', () => {
-  for (const source of ['{"a":1}', '[{"a":1}]', '[1,2]', '[{"a":1},{"b":2}]', '[{"a":1},{"a":2,"b":3}]', '[{"a":1,"b":2},{"a":2}]', '[{"a":{"x":1}},{"a":2}]', '[{"a":[1]},{"a":2}]', '[{},{}]', '[{"a":1},null]', '[{"a":1},{"a":2}', 'not json']) assert.equal(fenceTable('json', source), null, source);
+  for (const source of ['{"a":1}', '[{"a":1}]', '[1,2]', '[{"a":1},{"b":2}]', '[{"a":1},{"a":2,"b":3}]', '[{"a":1,"b":2},{"a":2}]', '[{"a":{"x":1}},{"a":2}]', '[{"a":[1]},{"a":2}]', '[{},{}]', '[{"a":1},null]', '[{"a":1},{"a":2}]', '[{"":1,"b":2},{"":3,"b":4}]', '[{"a":1},{"a":2}', 'not json']) assert.equal(fenceTable('json', source), null, source);
 });
