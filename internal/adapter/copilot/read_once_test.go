@@ -2,7 +2,9 @@ package copilot
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"strings"
 	"testing"
 
 	copilot "github.com/microsoft/copilot-sdk/go/v2"
@@ -184,5 +186,29 @@ func TestReadOnceResetsWhenTheConversationLosesMessages(t *testing.T) {
 				t.Fatalf("subagent repeat after the main agent's loss = %q", got)
 			}
 		})
+	}
+}
+
+func TestCacheBreakReasonIsABoundedCounterName(t *testing.T) {
+	seen := map[string]int{}
+	for in, want := range map[string]string{
+		"tools_changed":          "tools_changed",
+		"":                       "unknown",
+		"Model-Switch":           "model_switch",
+		"ttl=1\nx":               "ttl1x",
+		strings.Repeat("a", 100): strings.Repeat("a", 40),
+	} {
+		if got := cacheBreakReason(in, seen); got != want {
+			t.Errorf("cacheBreakReason(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for i := range maxCacheBreakReasons {
+		seen[fmt.Sprintf("r%d", i)] = 1
+	}
+	if got := cacheBreakReason("new_reason", seen); got != "other" {
+		t.Errorf("a reason past the bound = %q, want other", got)
+	}
+	if got := cacheBreakReason("r3", seen); got != "r3" {
+		t.Errorf("a reason already seen = %q, want r3", got)
 	}
 }
