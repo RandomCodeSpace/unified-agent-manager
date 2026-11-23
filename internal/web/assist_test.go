@@ -426,7 +426,7 @@ func TestRerunStartsALinkedTaskWithTheLastMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Rerun(sum.ID, RerunRequest{}); statusOf(err) != 409 {
+	if _, err := m.Rerun(t.Context(), sum.ID, RerunRequest{}); statusOf(err) != 409 {
 		t.Fatalf("rerun without a message = %v", err)
 	}
 	finishTurn(prov.Last(), "first", "one")
@@ -434,7 +434,7 @@ func TestRerunStartsALinkedTaskWithTheLastMessage(t *testing.T) {
 	// In autopilot the CLI continues the turn with a message of its own.
 	prov.Last().EmitItem(agentapi.Item{ID: "auto", Kind: agentapi.ItemUser, Text: "Continue working on the task.", Delivery: agentapi.DeliveryAutopilot})
 
-	again, err := m.Rerun(sum.ID, RerunRequest{RequestID: mustUUID(t)})
+	again, err := m.Rerun(t.Context(), sum.ID, RerunRequest{RequestID: mustUUID(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestRerunStartsALinkedTaskWithTheLastMessage(t *testing.T) {
 	if sends := prov.Last().Sends(); !slices.Equal(sends, []string{"second"}) {
 		t.Fatalf("run again sent %q", sends)
 	}
-	other, err := m.Rerun(sum.ID, RerunRequest{Model: "b"})
+	other, err := m.Rerun(t.Context(), sum.ID, RerunRequest{Model: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}

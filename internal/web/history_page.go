@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -49,7 +50,7 @@ func recentDetail(d SessionDetail) SessionDetail {
 
 // OlderHistory uses an item boundary, so concurrent appends cannot move the
 // page. Eviction or replacement of the boundary requires a fresh snapshot.
-func (m *Manager) OlderHistory(id, before string) (HistoryPage, error) {
+func (m *Manager) OlderHistory(ctx context.Context, id, before string) (HistoryPage, error) {
 	boundary, err := base64.RawURLEncoding.DecodeString(before)
 	if err != nil || len(boundary) == 0 || len(boundary) > 4096 {
 		return HistoryPage{}, newError(http.StatusBadRequest, "invalid history cursor")
@@ -58,7 +59,7 @@ func (m *Manager) OlderHistory(id, before string) (HistoryPage, error) {
 	if err != nil {
 		return HistoryPage{}, err
 	}
-	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
 		return HistoryPage{}, err
 	}
 	m.mu.Lock()
@@ -92,7 +93,7 @@ func (s *Server) handleHistoryPage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, page)
 		return
 	}
-	page, err := s.m.OlderHistory(r.PathValue("id"), r.URL.Query().Get("before"))
+	page, err := s.m.OlderHistory(r.Context(), r.PathValue("id"), r.URL.Query().Get("before"))
 	if err != nil {
 		writeFailure(w, err)
 		return

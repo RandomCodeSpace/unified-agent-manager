@@ -144,7 +144,7 @@ func TestEveryFirstMessageLeavesATitle(t *testing.T) {
 				}
 				source := created(t, m, project, "")
 				finishTurn(prov.Last(), "Tidy the README", "Done.")
-				again, err := m.Rerun(source, RerunRequest{RequestID: mustUUID(t)})
+				again, err := m.Rerun(t.Context(), source, RerunRequest{RequestID: mustUUID(t)})
 				if err != nil {
 					t.Fatal(err)
 				}
