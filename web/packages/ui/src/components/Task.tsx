@@ -33,7 +33,6 @@ import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { HandoffCard, InterruptedCard } from './Handoff';
-import { DrawingsProvider } from './Drawing';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
@@ -1037,7 +1036,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent} onOutput={showOutput}>
     <GitLabItemsContext.Provider value={gitlabItems}>
     <ReplyContext.Provider value={replyTools}>
-    <DrawingsProvider key={session.id} session={session} writable={!readOnly(session)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
@@ -1175,7 +1173,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       <Contained what="This panel" of={!!output}>{outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}</Contained>
       <Contained what="This panel" of={!!preview.selection}>{previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}</Contained>
     </div>
-    </DrawingsProvider>
     </ReplyContext.Provider>
     </GitLabItemsContext.Provider>
     </SubagentScope>

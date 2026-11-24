@@ -23,7 +23,6 @@ import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
 import { PlaceFoot } from './PlacePicker';
 import { TimeSplitSummary } from './TimeSplit';
-import { DrawingChips } from './Drawing';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
@@ -1723,7 +1722,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </AlertDialog>
       )}
 
-      {!locked && <DrawingChips />}
       {(uploads.length > 0 || files.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-3">
           {uploads.map((u) => (

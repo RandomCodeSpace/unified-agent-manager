@@ -73,7 +73,6 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		QueuePaused:      s.queuePaused,
 		History:          s.historyState(),
 		HistoryReason:    s.historyReason,
-		Drawings:         m.drawingSummaries(s.id),
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.public())

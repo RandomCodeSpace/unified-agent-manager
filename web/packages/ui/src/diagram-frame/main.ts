@@ -1,5 +1,4 @@
 import mermaid from 'mermaid';
-import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw';
 import figtree from '@fontsource-variable/figtree/files/figtree-latin-wght-normal.woff2?inline';
 import { DIAGRAM_FONT, intrinsicSize, parseRequest, type DiagramReply } from '../lib/diagram';
 
@@ -16,8 +15,7 @@ const fontReady = (async () => {
 /**
  * The diagram frame: a classic script (module scripts cannot load from an opaque origin
  * without CORS) in `/diagram-frame.html`, sandboxed with `allow-scripts` only. It renders
- * Mermaid on request from its parent and posts the SVG back, or converts a flowchart or
- * sequence diagram to Excalidraw element skeletons; it can reach nothing else.
+ * Mermaid on request from its parent and posts the SVG back; it can reach nothing else.
  */
 
 const XY_TEXT = ['titleColor', 'dataLabelColor', 'legendTextColor', 'xAxisTitleColor', 'xAxisLabelColor', 'xAxisTickColor', 'xAxisLineColor', 'yAxisTitleColor', 'yAxisLabelColor', 'yAxisTickColor', 'yAxisLineColor'];
@@ -76,7 +74,7 @@ async function handle(id: string, source: string, theme: Record<string, string>)
     const { svg } = await mermaid.render(id, source, box);
     const sized = intrinsicSize(svg);
     if (!sized) return { id, error: 'The diagram has no size' };
-    return { id, ...sized, svg: sized.svg.replace(/^<svg\b[^>]*>/, (tag) => `${tag}<style>${fontFace}</style>`), diagramType };
+    return { id, ...sized, svg: sized.svg.replace(/^<svg\b[^>]*>/, (tag) => `${tag}<style>${fontFace}</style>`) };
   } catch (err) {
     return { id, error: err instanceof Error ? err.message : String(err) };
   } finally {
@@ -84,22 +82,11 @@ async function handle(id: string, source: string, theme: Record<string, string>)
   }
 }
 
-/** The converter initialises Mermaid itself, so the page's theme is not in the way; the elements carry no colours but the page's. */
-async function convert(id: string, source: string): Promise<DiagramReply> {
-  try {
-    await fontReady;
-    const { elements } = await parseMermaidToExcalidraw(source, { themeVariables: { fontSize: '16px' } });
-    return { id, elements: elements as unknown as Record<string, unknown>[] };
-  } catch (err) {
-    return { id, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 window.addEventListener('message', (e: MessageEvent) => {
   if (e.source !== window.parent) return;
   const req = parseRequest(e.data);
   if (!req) return;
-  const work = 'convert' in req ? convert(req.id, req.convert) : handle(req.id, req.source, req.theme);
+  const work = handle(req.id, req.source, req.theme);
   const reply = (r: DiagramReply) => window.parent.postMessage(r, e.origin);
   // A reply the browser cannot post (it does not clone) still answers, with why.
   void work.then(reply).catch((err: unknown) => reply({ id: req.id, error: err instanceof Error ? err.message : String(err) }));

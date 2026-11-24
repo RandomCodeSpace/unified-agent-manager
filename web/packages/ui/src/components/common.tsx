@@ -9,7 +9,7 @@ import { useCopied } from '../lib/clipboard';
 import { COMPACT_FROM, formatCount, fullNumber } from '../lib/cost';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
-import { fenceClosed, mermaidFences } from '../lib/diagram';
+import { fenceClosed } from '../lib/diagram';
 import { fenceTable, TABLE_FENCES } from '../lib/fence-table';
 import { magnitude } from '../lib/table-visual';
 import { codeFile, decodePath, localPath, looksLikePath, splitBlocks, taskFile } from '../lib/markdown';
@@ -566,9 +566,6 @@ interface MdSource {
 
 const MdContext = createContext<MdSource>({ text: '', streaming: false });
 
-/** The reply an assistant message's markdown belongs to (its id and whole text), so a mermaid fence knows which drawing is its own. */
-export const ItemContext = createContext<{ id: string; text: string } | null>(null);
-
 /** What a reply's rich blocks reach in their Thread: `plan`, the todo list's states by title key (`planKey`; the live list, else the kept one), which a reply's task list or steps tick off. */
 export interface ReplyTools { plan?: ReadonlyMap<string, TodoStatus> }
 export const ReplyContext = createContext<ReplyTools>({});
@@ -915,12 +912,9 @@ interface Span {
 
 function MermaidBlock({ source, position, children }: Readonly<{ source: string; position?: Span; children: ReactNode }>) {
   const { text, streaming } = useContext(MdContext);
-  const item = useContext(ItemContext);
   const ready = !streaming || !position || fenceClosed(text, position.start.offset ?? 0, position.end.offset ?? text.length);
-  // The fence's index among the reply's mermaid fences (its `fence_index`); two fences of one source share the first's.
-  const index = item ? mermaidFences(item.text).indexOf(source.trim()) : -1;
   return (
-    <DiagramCard source={source} ready={ready} fence={item && index >= 0 ? { itemId: item.id, index } : undefined}>
+    <DiagramCard source={source} ready={ready}>
       {children}
     </DiagramCard>
   );

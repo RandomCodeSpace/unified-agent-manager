@@ -119,9 +119,6 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-08 | Markdown tables fill the width | table-visual.test.mjs | spec: transcript.spec.ts, transcript-markdown.spec.ts |
 | TRN-09 | Rich replies: exact Markdown shapes (alerts/callouts, label grids, stat tiles, step lists, task lists, status lists,… | none | spec: transcript-messages.spec.ts |
 | TRN-10 | A ```mermaid fence renders as a diagram (a `data:` SVG `img alt="Diagram"` drawn in a hidden `iframe… | diagram.test.mjs | spec: transcript-visuals.spec.ts |
-| TRN-11 | `Edit as drawing` on a flowchart asks `Create an editable drawing?`: `Create drawing` writes `docs/*.excalidraw` and… | none | spec: transcript-visuals.spec.ts |
-| TRN-12 | `Use selection in message` sends the selected shapes with the next message | none | spec: transcript-visuals.spec.ts |
-| TRN-13 | The draw.io editor (Settings → Conversation → Diagram editor) at a named origin | none | spec: transcript-visuals.spec.ts (a loopback draw.io stand-in that speaks the embed protocol) |
 | TRN-14 | A `uam_chart` call shows a chart card (`Chart: <title>`) with Table, Copy CSV and Pin to project | chart.test.mjs, chart-table.test.mjs | spec: transcript-visuals.spec.ts (Pin to project not covered) |
 | TRN-15 | A chart with `command` runs it in the Thread folder only in Yolo mode (30 s, 1 MiB) | unsure: none found in UI tests (Go tests | spec: transcript-visuals.spec.ts (the 30 s limit not covered: it needs a 30 s wait) |
 | TRN-16 | Scrolling up loads older pages until the first recorded message | history-paging (7), history-window (14), | spec: transcript-history.spec.ts |
@@ -296,7 +293,6 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-39 | Account quota and AI credits (allowance in Usage and the composer chip, budget in AI credits or quota %) | usage.test.tsx, usage-ai.test.tsx, task-usage.test.tsx | not feasible: custom models use no quota |
 | SET-40 | Session stats: scans every journal under `COPILOT_HOME/session-state`, shows counts grouped by prefix, writes… | session-stats-settings.test.tsx | spec: settings-server.spec.ts |
 | SET-41 | Connected instances: Add instance (label, address, access key, private-address switch), a refused pairing clears the… | connected-instances-settings.test.tsx | spec: settings-server.spec.ts |
-| SET-42 | draw.io: Enable waits for a server check of the origin, a failed check shows the error and keeps Enable off; enabled… | drawio-settings.test.tsx | spec: settings-server.spec.ts |
 | SET-43 | This browser: Theme Light / Dark / Match system and Motion are kept per browser (`localStorage` `uam.theme`) and… | settings-groups.test.tsx, theme.test.mjs | spec: settings-nav.spec.ts |
 | SET-44 | Notify me when a Thread needs me or finishes (push notifications) | settings.test.tsx | not feasible: needs OS push |
 | SET-45 | Log out in UAM and access ends the session and returns to sign-in | settings.test.tsx | spec: settings-nav.spec.ts |

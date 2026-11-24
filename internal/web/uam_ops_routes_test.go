@@ -24,7 +24,6 @@ var uamRouteOps = map[string][]string{
 	"POST /api/sessions/{id}/archive":             {"uam archive"},
 	"POST /api/sessions/{id}/chart/pin":           {"uam pin_chart"},
 	"DELETE /api/projects/{id}/charts/{chart_id}": {"uam unpin_chart"},
-	"PUT /api/sessions/{id}/drawings/{path...}":   {diagramEditToolName},
 	"POST /api/sessions/{id}/prompt":              {sendToolName},
 }
 
@@ -56,7 +55,6 @@ var uamRouteExclusions = map[string]string{
 
 	"PATCH /api/settings":                                       "settings",
 	"POST /api/settings/custom-models/discover":                 "settings, with provider keys",
-	"POST /api/settings/drawio/check":                           "settings",
 	"POST /api/configuration/{kind}/draft":                      "agent, skill and instruction files that change what agents can do",
 	"POST /api/configuration/skills/list":                       "agent, skill and instruction files that change what agents can do",
 	"POST /api/configuration/skills/install":                    "agent, skill and instruction files that change what agents can do",
@@ -111,8 +109,6 @@ var uamRouteExclusions = map[string]string{
 	"POST /api/sessions/{id}/changes/revert":                       "discards work; agents use their own git and edit tools",
 	"POST /api/sessions/{id}/git/init":                             "agents use git in their shell",
 	"POST /api/sessions/{id}/git/branch":                           "agents use git in their shell",
-	"DELETE /api/sessions/{id}/drawings/{path...}":                 "agents delete files with their own tools",
-	"PATCH /api/sessions/{id}/drawings/{path...}":                  "the owner's selection, which uam_diagram_read reports",
 	"POST /api/sessions/{id}/subagents/{agent_id}/prompt":          "the owner's message to a Thread's subagent",
 	"POST /api/sessions/{id}/aside":                                "the owner's side question to a Utility model",
 	"POST /api/sessions/{id}/suggestions":                          "the owner's composer suggestions",
@@ -224,7 +220,7 @@ func TestEveryOwnerWriteRouteHasAnAgentOpOrAReason(t *testing.T) {
 		t.Fatalf("route scan missed known routes: %q", routes)
 	}
 	tools := map[string]bool{}
-	for _, tool := range []agentapi.HostTool{createTaskTool, sendTool, chartTool, formTool, surfaceTool, diagramReadTool, diagramEditTool, uamTool} {
+	for _, tool := range []agentapi.HostTool{createTaskTool, sendTool, chartTool, formTool, surfaceTool, uamTool} {
 		tools[tool.Name] = true
 	}
 	seen := map[string]bool{}
