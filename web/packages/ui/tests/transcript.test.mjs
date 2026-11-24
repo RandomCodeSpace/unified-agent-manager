@@ -454,6 +454,8 @@ test('interruptedCall names the last turn\'s started call that never ended', () 
   assert.equal(interruptedCall([items[2], unasked('2026-11-05T09:59:59.000Z')], stop), null);
   assert.equal(interruptedCall(cut), null);
   assert.equal(interruptedCall([items[2], { ...unasked('2026-11-05T10:00:01Z'), tool: { ...unasked().tool, unasked: false } }], stop), null);
+  // The CLI died after recording the denial and before the call's failure: still running in the record, it never ran.
+  assert.equal(interruptedCall([items[2], { ...unasked(), tool: { ...unasked().tool, status: 'running' } }], stop).waiting, true);
 });
 
 test('interruptedCall names the command whose shell a cut read_bash polled', () => {

@@ -1,5 +1,5 @@
 // uam's own tools the agent calls: uam_form and uam_surface (internal/web/form.go, surface.go).
-import { conversation, expect, lastUserText, startThread, test, threadState, toolResult } from './harness';
+import { conversation, expect, lastUserText, send, startThread, test, threadState, toolResult } from './harness';
 
 test('uam_form renders, and the submitted answer reaches the model', async ({ page, project, model }) => {
   model.toolRound('show the form', [{
@@ -58,4 +58,51 @@ test('uam_surface draws a card; pressing its button reaches the model, which upd
   const press = model.served().map((s) => lastUserText(s.request)).find((t) => t.includes('[uam_surface action] '));
   expect(press).toContain('"name":"button_clicked"');
   expect(press).toContain('"label":"Press me"');
+});
+
+test('an invalid uam_form shows nothing, and the agent is told why', async ({ page, project, model }) => {
+  model.toolRound('show a broken form', [{
+    id: 'call_bad_form', name: 'uam_form', arguments: {
+      title: 'Broken form', body: 'Never shown.',
+      fields: [{ kind: 'TextField', name: 'version', label: 'Version' }],
+      actions: [{ name: 'ship', label: 'Ship' }, { name: 'ship', label: 'Ship again' }],
+    },
+  }], 'The form was refused.');
+  await startThread(page, project, 'show a broken form');
+  await expect(conversation(page).getByText('The form was refused.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Broken form' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Ship again' })).toHaveCount(0);
+  expect(toolResult(model, 'call_bad_form')).toContain('action name "ship" is used twice');
+});
+
+test('a card the agent deletes leaves a removed line, and cards survive a reload', async ({ page, project, model }) => {
+  const surface = (...messages: object[]) => ({ messages: messages.map((m) => ({ version: '1.0', ...m })) });
+  const card = (surfaceId: string, text: string) => [
+    { createSurface: { surfaceId, catalogId: 'urn:uam:catalog:v1' } },
+    { updateComponents: { surfaceId, components: [{ id: 'root', component: 'Column', children: ['title'] }, { id: 'title', component: 'Text', text, variant: 'title' }] } },
+  ];
+  model.toolRound('draw two cards', [
+    { id: 'call_keep', name: 'uam_surface', arguments: surface(...card('keep', 'Card that stays')) },
+    { id: 'call_gone', name: 'uam_surface', arguments: surface(...card('gone', 'Card that goes')) },
+  ], 'Two cards drawn.');
+  model.toolRound('delete one card', [{ id: 'call_delete', name: 'uam_surface', arguments: surface({ deleteSurface: { surfaceId: 'gone' } }) }], 'One card deleted.');
+  await startThread(page, project, 'draw two cards');
+  const conv = conversation(page);
+  await expect(conv.getByText('Two cards drawn.')).toBeVisible();
+  await expect(conv.getByRole('region', { name: 'Card that stays' })).toBeVisible();
+  await expect(conv.getByRole('region', { name: 'Card that goes' })).toBeVisible();
+  await page.reload();
+  await expect(conv.getByRole('region', { name: 'Card that stays' })).toBeVisible();
+  await expect(conv.getByRole('region', { name: 'Card that goes' })).toBeVisible();
+
+  await send(page, 'delete one card');
+  await expect(conv.getByText('One card deleted.')).toBeVisible();
+  await expect(conv.getByText('Removed by the agent')).toBeVisible();
+  await expect(conv.getByRole('region', { name: 'Card that goes' })).toHaveCount(0);
+  await expect(conv.getByRole('region', { name: 'Card that stays' })).toBeVisible();
+  await page.reload();
+  await expect(conv.getByText('Removed by the agent')).toBeVisible();
+  await expect(conv.getByRole('region', { name: 'Card that goes' })).toHaveCount(0);
+  await expect(conv.getByRole('region', { name: 'Card that stays' })).toBeVisible();
 });

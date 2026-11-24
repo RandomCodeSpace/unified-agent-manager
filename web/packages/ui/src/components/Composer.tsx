@@ -1014,7 +1014,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setNotice(null);
     try {
       const answered = await api.respond(session.id, answering.interaction.id, answer);
-      clearBuffer();
+      // The live stream can settle the question before this response does: the parked draft is back then, and only a typed answer left in its place goes.
+      if (askedId.current === answering.interaction.id) clearBuffer();
+      else setText((now) => (now === text ? '' : now));
       answering.onAnswered(answered);
     } catch (e) {
       // Answered from another tab or withdrawn: the card's wording, as a note.
