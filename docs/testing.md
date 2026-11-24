@@ -38,9 +38,9 @@ aimock fails them. `UAM_AIMOCK_CLI` overrides the path of aimock's `cli.js`.
 `web/e2e` is a Playwright pack that drives the real app in Chromium: the built
 `uam` serving its web interface, the real `copilot` CLI with no GitHub login,
 and aimock as the model, through a custom model named `mock`. It spends no AI
-credits, needs no secrets and uses only loopback. CI runs it as `test-ui` in
-the merge queue and before a release; it is one of the jobs the required `ci`
-check waits for.
+credits, needs no secrets and uses only loopback. CI runs it as `test-ui`, in
+three shards, in the merge queue and before a release; it is one of the jobs
+the required `ci` check waits for.
 
 **The rule:** a fix for a `uam web` bug lands with the spec that reproduces it,
 in the same pull request. When a fix cannot be covered by a spec, the pull
