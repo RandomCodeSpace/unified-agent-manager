@@ -1,13 +1,11 @@
-// Settings about the server itself: the Copilot CLI card, the UAM version, session stats, connected instances, and the
-// draw.io origin check.
+// Settings about the server itself: the Copilot CLI card, the UAM version, session stats and connected instances.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { binary, conversation, expect, startService, startThread, stopService, test, threadState } from './harness';
-import { binaryWith, openSettings, quietBackground, readSettings, threadId, tlsFront } from './settings-helpers';
+import { binaryWith, openSettings, quietBackground, threadId, tlsFront } from './settings-helpers';
 import { ownService } from './shell-helpers';
 
 type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
@@ -265,59 +263,4 @@ test('Connected instances: a pairing over HTTPS lists the instance as Connected;
     wrapped.remove();
     await front.close();
   }
-});
-
-test('draw.io: an origin that fails the server\'s check shows why and Enable stays off; one that passes lets Enable save it and asks for a reload', async ({ page, uam }) => {
-  // A self-hosted draw.io page on loopback: what the check looks for is a draw.io marker and no framing refusal.
-  const drawio = http.createServer((_, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>draw.io</title><div class="geApp"></div>'));
-  await new Promise<void>((resolve) => drawio.listen(0, '127.0.0.1', resolve));
-  const origin = `http://127.0.0.1:${(drawio.address() as net.AddressInfo).port}`;
-  try {
-    await openSettings(page, 'Conversation');
-    const section = page.getByRole('region', { name: 'Diagram editor' });
-    const editor = section.getByRole('radiogroup', { name: 'Editor' });
-    await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
-    await expect(section.getByRole('switch', { name: 'Enable draw.io' })).toHaveCount(0);
-    await editor.getByRole('radio', { name: 'draw.io' }).click();
-    const enable = section.getByRole('switch', { name: 'Enable draw.io' });
-    await expect(enable).toBeDisabled();
-    await expect(enable).toHaveAccessibleDescription('Check the origin first; Enable waits for a check that passed.');
-    await expect(section.getByRole('button', { name: 'Check' })).toBeDisabled();
-
-    // Nothing listens at this origin.
-    await section.getByRole('textbox', { name: 'Origin' }).fill('https://127.0.0.1:1');
-    await section.getByRole('button', { name: 'Check' }).click();
-    await expect(section.getByRole('alert')).toHaveText('the origin could not be reached');
-    await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing blocked');
-    await expect(enable).toBeDisabled();
-    await expect(enable).not.toBeChecked();
-    expect(await readSettings(uam)).not.toHaveProperty('drawio');
-    // The rail's summary still names the built-in editor.
-    await page.reload();
-    await openSettings(page, 'Conversation');
-    await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
-
-    await editor.getByRole('radio', { name: 'draw.io' }).click();
-    await section.getByRole('textbox', { name: 'Origin' }).fill(`${origin}/`);
-    await section.getByRole('button', { name: 'Check' }).click();
-    await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing allowed');
-    await expect(section.getByRole('alert')).toHaveCount(0);
-    await expect(section.getByText('the origin sends no Access-Control-Allow-Origin; the editor runs with allow-same-origin on its own origin only')).toBeVisible();
-    await expect(enable).toBeEnabled();
-    await expect(enable).toHaveAccessibleDescription('Drawings open in draw.io at this origin.');
-    await enable.click();
-    await expect(enable).toBeChecked();
-    await expect.poll(async () => (await readSettings(uam)).drawio).toEqual({ origin, enabled: true });
-    await expect(section.getByText('Reload the page to open drawings in draw.io: the page admits the origin from its next load.')).toBeVisible();
-    await section.getByRole('button', { name: 'Reload' }).click();
-    await openSettings(page, 'Conversation');
-    await expect(editor.getByRole('radio', { name: 'draw.io' })).toBeChecked();
-    await expect(section.getByRole('textbox', { name: 'Origin' })).toHaveValue(origin);
-    await expect(enable).toBeChecked();
-    await expect(section.getByText(/^Reload the page/)).toHaveCount(0);
-  } finally {
-    await uam.api('PATCH', '/api/settings', { drawio: { origin: '', enabled: false } });
-    drawio.close();
-  }
-  expect(await readSettings(uam)).not.toHaveProperty('drawio');
 });

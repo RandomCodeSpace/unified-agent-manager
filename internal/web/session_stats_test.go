@@ -486,3 +486,10 @@ func TestSessionStatsCostCounts(t *testing.T) {
 		t.Fatalf("file holds a host:\n%s", data)
 	}
 }
+
+// countOf is the Manager's session-stats counter name.
+func countOf(m *Manager, name string) int {
+	m.counts.mu.Lock()
+	defer m.counts.mu.Unlock()
+	return m.counts.n[name]
+}

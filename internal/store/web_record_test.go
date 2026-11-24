@@ -270,14 +270,15 @@ func TestWebTaskDefaultsRoundTripAndLoadClean(t *testing.T) {
 	}
 }
 
-// The removed planner's switch of earlier versions is no longer a setting:
-// a file that has it still loads, and the next save drops the key.
-func TestWebPlannerSettingDropsOnSave(t *testing.T) {
+// The removed planner's switch and draw.io editor setting of earlier versions
+// are no longer settings: a file that has them still loads, and the next save
+// drops the keys.
+func TestRetiredWebSettingsDropOnSave(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"planner":true}}`), 0o600); err != nil {
+	if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"planner":true,"drawio":{"origin":"https://embed.diagrams.net","enabled":true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Load(); err != nil {
@@ -287,7 +288,7 @@ func TestWebPlannerSettingDropsOnSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(s.Path())
-	if err != nil || strings.Contains(string(data), `"planner"`) || string(webSettingsField(t, s.Path(), "send_default")) != `"queue"` {
+	if err != nil || strings.Contains(string(data), `"planner"`) || strings.Contains(string(data), `"drawio"`) || string(webSettingsField(t, s.Path(), "send_default")) != `"queue"` {
 		t.Fatalf("settings after save: %s, %v", data, err)
 	}
 }

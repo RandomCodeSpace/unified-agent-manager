@@ -45,7 +45,6 @@ import { Segmented } from './ui/segmented';
 import { HelpTip, Tip } from './ui/tooltip';
 
 const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
-const DrawioSettings = lazy(() => import('./DrawioSettings').then((m) => ({ default: m.DrawioSettings })));
 
 /** Wide enough for the rail beside the page; narrower, the rail is a list of pages that opens one at a time. */
 const WIDE = '(min-width: 768px)';
@@ -466,12 +465,11 @@ function NotifyRow() {
 type Catalog = ReturnType<typeof useApp>['meta'];
 
 /** What needs the user, marked on its page in the rail. */
-function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem, motionNotice }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; drawioProblem: string | null; motionNotice: boolean }>): Partial<Record<SettingsPage, PageAttention>> {
+function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, motionNotice }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog; motionNotice: boolean }>): Partial<Record<SettingsPage, PageAttention>> {
   const attention: Partial<Record<SettingsPage, PageAttention>> = {};
   if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
   else if (pausedPurposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.map(purposeLabel).join(', ')}` };
-  const conversation = [repliesPaused && 'Suggested replies are paused for today', drawioProblem].filter(Boolean).join(' · ');
-  if (conversation) attention.composer = { tone: 'warning', text: conversation };
+  if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
   if (missingKeys.length) attention.providers = { tone: 'error', text: `API key missing: ${missingKeys.map((p) => p.name).join(', ')}` };
   if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
   else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
@@ -509,7 +507,7 @@ function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, u
   const customNoun = customCount === 1 ? 'model' : 'models';
   return {
     'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
-    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'} · ${settings.drawio?.enabled ? `draw.io at ${settings.drawio.origin}` : 'Excalidraw'}`,
+    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
     models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
     'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
     copilot: accountSummary(accounts, cliUpdate),
@@ -643,7 +641,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [drawioProblem, setDrawioProblem] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
   // The one-time reduced-motion dot on This browser, due when Settings opens and gone once that page has been on screen.
   const [motionDue] = useState(motionNoticeDue);
@@ -744,7 +741,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   const accounts = (meta?.providers ?? []).filter((p) => p.capabilities.account);
   const missingKeys = configured.filter((p) => !p.key_present);
-  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, drawioProblem, motionNotice: motionDue && !visited.has('browser') });
+  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta, motionNotice: motionDue && !visited.has('browser') });
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
   const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme });
@@ -856,9 +853,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </Note>
       )}
     </Section>
-      <Section id="drawings" title="Diagram editor" help="A mermaid diagram in a reply can be edited as a drawing. Excalidraw is built in; draw.io runs a page from an origin the server checks first.">
-        {api.supports('drawings-v1') ? <Suspense fallback={null}><DrawioSettings value={settings.drawio} saving={saving} onSave={(drawio) => void save({ drawio })} onProblem={setDrawioProblem} /></Suspense> : <Unsupported what="drawings" />}
-      </Section>
     </> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
     worktrees: api.supports('worktrees-v1') ? <WorktreesSettings projectFolder={projectFolder} /> : <>
       {projectFolder && <Section id="folders" title="Folders">{projectFolder}</Section>}

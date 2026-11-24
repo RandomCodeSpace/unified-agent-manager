@@ -27,7 +27,7 @@ import { ReferenceProse } from './ReferenceCite';
 import { useReferenceLedger } from './References';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, FileRef, Highlighted, ItemContext, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, Summary, WorkdirContext, clockTime, dateTime } from './common';
+import { CodeBlock, FileRef, Highlighted, LineCounts, Markdown, PlainText, SessionContext, Skeleton, StepDots, SubagentLinkContext, Summary, WorkdirContext, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentTag, useFusionRoute, useLiveSubagentIds, useScope, useSubagentReplies } from './Subagents';
@@ -1274,7 +1274,7 @@ function assistantMessage({ item, text, sessionId, streaming = false, className,
       <div data-history-anchor={item.id} data-note={note ? '' : undefined} className={note ? 'text-ui text-muted [&_:not(a)>code]:text-body [&_p:not(:last-child)]:mb-1' : 'text-chat text-body'}>
         {/* A reply that ends its turn: each number it cites opens the turn's references (`sessionId` is given only then). */}
         <ReferenceProse sessionId={sessionId} reply={item}>
-          {whole?.status === 'whole' ? plainText(text) : text.includes('mermaid') ? <ItemContext.Provider value={itemContext(item, text)}><Markdown text={text} streaming={streaming} after={after} /></ItemContext.Provider> : <Markdown text={text} streaming={streaming} after={after} />}
+          {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} after={after} />}
         </ReferenceProse>
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
@@ -1282,17 +1282,6 @@ function assistantMessage({ item, text, sessionId, streaming = false, className,
       </div>
     </Copyable>
   );
-}
-
-/** A reply's context for its mermaid fences (only a reply that mentions mermaid gets one), one object per item and text, so the provider's value holds still across renders. */
-const itemContexts = new WeakMap<Item, { id: string; text: string }>();
-function itemContext(item: Item, text: string) {
-  let ctx = itemContexts.get(item);
-  if (!ctx || ctx.text !== text) {
-    ctx = { id: item.id, text };
-    itemContexts.set(item, ctx);
-  }
-  return ctx;
 }
 
 function noticeRow({ text, className, whole }: MessageParts) {
@@ -1314,10 +1303,10 @@ const THREAD_NOTE = /^uam thread: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\), which 
 /** A `uam trail:` note (trails.go): the running Thread's quoted name and ID, the file it edited and when; the agent's instruction after it is not shown. */
 const TRAIL_NOTE = /^uam trail: Thread "((?:[^"\\]|\\.)*)" \(([^)]+)\) edited (.+?) (\d+ min ago) and is still running\./;
 
-/** The head of a drawing change note (drawings_diff.go): the owner made the changes, so only the agent gets their list. */
+/** The head of a drawing change note (the drawing editor of earlier versions): the owner made the changes, so only the agent gets their list. */
 const DRAWING_NOTE = /^The user edited (.+?) since your version \((v\d+ → v\d+)\):/;
 
-/** A drawing selection note (drawings_edit.go): the file after the head, the picked elements up to the tail. */
+/** A drawing selection note (the drawing editor of earlier versions): the file after the head, the picked elements up to the tail. */
 const SELECTION_NOTE = 'The user selected in ';
 const SELECTION_TAIL = '. Their message refers to these.';
 

@@ -267,11 +267,6 @@ type Manager struct {
 	usageHome          string        // set by RunDaemon before Start; empty disables local discovery
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
-	// drawings are the Threads' drawing indexes (drawings.go), and policy
-	// the page's Content-Security-Policy, which follows the draw.io
-	// setting (drawioPolicy).
-	drawings drawingStore
-	policy   atomic.Pointer[string]
 	// routines is the routine scheduler (routines.go).
 	routines routineState
 	// binary follows the uam binary on disk for a restart onto a new one
@@ -421,10 +416,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, ThreadMessages: cfg.WebSettings.ThreadMessages, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
-		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, OutputStyles: cfg.WebSettings.OutputStyles, OutputStyle: cfg.WebSettings.OutputStyle, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir, DrawIO: DrawIOSettings(cfg.WebSettings.DrawIO)}
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, CommitPrompt: cfg.WebSettings.CommitPrompt, OutputStyles: cfg.WebSettings.OutputStyles, OutputStyle: cfg.WebSettings.OutputStyle, CoAuthor: cfg.WebSettings.CoAuthor, WorktreesDir: cfg.WebSettings.WorktreesDir}
 	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
 	m.setGitRules(m.settings)
-	m.setPolicy(m.settings)
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}

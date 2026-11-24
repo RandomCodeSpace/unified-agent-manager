@@ -7,8 +7,6 @@ const mermaid = vi.hoisted(() => ({
   render: vi.fn(),
 }));
 vi.mock('mermaid', () => ({ default: mermaid }));
-const converter = vi.hoisted(() => ({ parseMermaidToExcalidraw: vi.fn() }));
-vi.mock('@excalidraw/mermaid-to-excalidraw', () => converter);
 
 await import('../../src/diagram-frame/main');
 
@@ -60,42 +58,20 @@ describe('diagram frame', () => {
     expect(reply).toMatchObject({ id: 'd1', width: 2160, height: 320 });
   });
 
-  test('other diagrams keep the frame body, whose width a gantt takes, and the reply names the diagram type', async () => {
+  test('other diagrams keep the frame body, whose width a gantt takes', async () => {
     mermaid.parse.mockResolvedValueOnce({ diagramType: 'flowchart-v2', config: {} });
     mermaid.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 100 50"></svg>' });
     const reply = await draw('d2', 'flowchart LR\n  a --> b');
     expect(mermaid.render).toHaveBeenLastCalledWith('d2', 'flowchart LR\n  a --> b', undefined);
-    expect(reply).toMatchObject({ id: 'd2', diagramType: 'flowchart-v2' });
-  });
-
-  /** Posts a convert request as the parent does and resolves with the reply. */
-  const convert = (id: string, source: string) =>
-    new Promise<unknown>((resolve) => {
-      const post = vi.spyOn(window.parent, 'postMessage').mockImplementationOnce((reply: unknown) => {
-        post.mockRestore();
-        resolve(reply);
-      });
-      window.dispatchEvent(new MessageEvent('message', { data: { id, convert: source }, source: window.parent, origin: 'http://localhost' }));
-    });
-
-  test('a convert request answers with the converter’s element skeletons', async () => {
-    const elements = [{ type: 'rectangle', id: 'a', x: 0, y: 0, width: 10, height: 10, label: { text: 'A' } }];
-    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements, files: { f1: { dataURL: 'data:image/png;base64,AAAA' } } });
-    expect(await convert('c1', 'flowchart LR\n  a --> b')).toEqual({ id: 'c1', elements });
-    expect(converter.parseMermaidToExcalidraw).toHaveBeenLastCalledWith('flowchart LR\n  a --> b', { themeVariables: { fontSize: '16px' } });
-    expect(mermaid.render).not.toHaveBeenCalledWith('c1', expect.anything(), expect.anything());
-  });
-
-  test('a diagram the converter rejects answers with its error', async () => {
-    converter.parseMermaidToExcalidraw.mockRejectedValueOnce(new Error('Unsupported diagram type: gantt'));
-    expect(await convert('c2', 'gantt\n  title x')).toEqual({ id: 'c2', error: 'Unsupported diagram type: gantt' });
+    expect(reply).toMatchObject({ id: 'd2', width: 100, height: 50 });
   });
 
   test.each([
     ['an Error', new DOMException('could not be cloned', 'DataCloneError'), 'could not be cloned'],
     ['a value', 'refused', 'refused'],
   ])('a reply the browser cannot post answers with why (%s thrown)', async (_kind, thrown, error) => {
-    converter.parseMermaidToExcalidraw.mockResolvedValueOnce({ elements: [{ type: 'rectangle', id: 'a' }] });
+    mermaid.parse.mockResolvedValueOnce({ diagramType: 'flowchart-v2', config: {} });
+    mermaid.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 100 50"></svg>' });
     const reply = await new Promise<unknown>((resolve) => {
       const post = vi.spyOn(window.parent, 'postMessage')
         .mockImplementationOnce(() => { throw thrown; })
@@ -103,7 +79,7 @@ describe('diagram frame', () => {
           post.mockRestore();
           resolve(r);
         });
-      window.dispatchEvent(new MessageEvent('message', { data: { id: 'c3', convert: 'flowchart LR\n  a --> b' }, source: window.parent, origin: 'http://localhost' }));
+      window.dispatchEvent(new MessageEvent('message', { data: { id: 'c3', source: 'flowchart LR\n  a --> b', theme: {} }, source: window.parent, origin: 'http://localhost' }));
     });
     expect(reply).toEqual({ id: 'c3', error });
   });

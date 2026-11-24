@@ -65,7 +65,7 @@ test.describe('at phone width', () => {
     try {
       await page.goto('/#settings');
       const conversation = railPage(page, 'Conversation');
-      await expect(conversation).toHaveAccessibleDescription('Enter while running: Send now · Suggested replies on · Excalidraw');
+      await expect(conversation).toHaveAccessibleDescription('Enter while running: Send now · Suggested replies on');
       await expect(railPage(page, 'UAM and access')).toHaveAccessibleDescription(/^Running \S+ · Terminal off$/);
       await expect(railPage(page, 'Appearance & alerts')).toHaveAccessibleDescription('Theme: Match system');
       await expect(railPage(page, 'Custom providers')).toHaveAccessibleDescription(/^mock · \d+ models?$/);
@@ -83,7 +83,7 @@ test.describe('at phone width', () => {
 
       await back.click();
       await expect(conversation).toBeFocused();
-      await expect(conversation).toHaveAccessibleDescription('Enter while running: Send now · Suggested replies off · Excalidraw');
+      await expect(conversation).toHaveAccessibleDescription('Enter while running: Send now · Suggested replies off');
       await expect(page.getByRole('region', { name: 'Composer' })).toBeHidden();
       await expect(page.getByRole('heading', { level: 1 })).toHaveText('Settings');
     } finally {
