@@ -12,51 +12,51 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ID | Behaviour | Component tests | Status |
 |---|---|---|---|
 | NAV-01 | Signing in with the printed token opens the app; a wrong token says "That token was not accepted."; the session… | login.test.tsx, web-ui-fixes.test.tsx, sign_in_limit_test.go | spec: sign-in.spec.ts |
-| NAV-02 | Settings → UAM and access → Log out ends the session on the server, also after a restart | settings.test.tsx, web-ui-fixes.test.tsx, revoked_sessions_test.go | planned |
-| NAV-03 | A session that ends while a view is open (token changed + restart) drops to the sign-in screen titled "UAM" | web-ui-fixes.test.tsx, federation.test.tsx | planned |
-| NAV-04 | Sign-in is rate limited: past 10 failed attempts per client in 10 min the page says "Too many sign-in attempts…" | login.test.tsx, sign_in_limit_test.go | planned |
+| NAV-02 | Settings → UAM and access → Log out ends the session on the server, also after a restart | settings.test.tsx, web-ui-fixes.test.tsx, revoked_sessions_test.go | spec: sign-in.spec.ts |
+| NAV-03 | A session that ends while a view is open (token changed + restart) drops to the sign-in screen titled "UAM" | web-ui-fixes.test.tsx, federation.test.tsx | spec: sign-in.spec.ts |
+| NAV-04 | Sign-in is rate limited: past 10 failed attempts per client in 10 min the page says "Too many sign-in attempts…" | login.test.tsx, sign_in_limit_test.go | spec: sign-in.spec.ts |
 | NAV-05 | Add project: folder picker browses the real host (home first, git/symlink marks, Show hidden, New folder, typed… | projects.test.tsx, folders.test.mjs, dirs_test.go | spec: first-thread.spec.ts |
-| NAV-06 | A folder with more than 1,000 subfolders lists 1,000; Filter folders asks the server and finds the rest | projects.test.tsx, dirs_test.go | planned |
-| NAV-07 | Adding a directory that already has a Project points to the existing one; a relative path is refused with the reason | projects.test.tsx | planned |
-| NAV-08 | Edit project (gear in the Project filter) renames the Project; the sidebar rows show the new name, kept after reload | projects.test.tsx | planned |
-| NAV-09 | Remove project is refused while any of its Threads is not archived, and allowed once all are archived | projects.test.tsx | planned |
-| NAV-10 | Previous sessions lists Copilot sessions started in the Project's directory outside uam; Import makes a closed… | projects.test.tsx, import_test.go | planned (needs a CLI session made outside uam) |
+| NAV-06 | A folder with more than 1,000 subfolders lists 1,000; Filter folders asks the server and finds the rest | projects.test.tsx, dirs_test.go | spec: nav-projects.spec.ts |
+| NAV-07 | Adding a directory that already has a Project points to the existing one; a relative path is refused with the reason | projects.test.tsx | spec: nav-projects.spec.ts |
+| NAV-08 | Edit project (gear in the Project filter) renames the Project; the sidebar rows show the new name, kept after reload | projects.test.tsx | spec: nav-projects.spec.ts |
+| NAV-09 | Remove project is refused while any of its Threads is not archived, and allowed once all are archived | projects.test.tsx | spec: nav-projects.spec.ts |
+| NAV-10 | Previous sessions lists Copilot sessions started in the Project's directory outside uam; Import makes a closed… | projects.test.tsx, import_test.go | not feasible (Previous sessions and Import are offered only while the Copilot provider is available, which needs a real GitHub sign-in; the pack runs the CLI signed out) |
 | NAV-11 | New thread (pen / Alt+N) opens the Project palette (single Project skips it), opens an empty draft; the Thread… | app.test.tsx, home.test.tsx | spec: first-thread.spec.ts |
 | NAV-12 | A new Thread takes its first message as title at once, then the Utility model's title replaces it; "Waiting for a… | thread-title.test.tsx, brand-title.test.tsx | spec: first-thread.spec.ts |
-| NAV-13 | Rename a Thread in place (row menu, F2, double-click, header menu); the name survives reload; focus returns to the row | app.test.tsx | planned |
-| NAV-14 | Sidebar: one flat list of unsettled Threads across Projects, newest created first whatever their state; Project… | needs-you.test.tsx, projects.test.tsx | planned |
+| NAV-13 | Rename a Thread in place (row menu, F2, double-click, header menu); the name survives reload; focus returns to the row | app.test.tsx | spec: nav-sidebar.spec.ts |
+| NAV-14 | Sidebar: one flat list of unsettled Threads across Projects, latest activity first whatever their state; the Project filter narrows it and is kept per browser | needs-you.test.tsx, projects.test.tsx | spec: nav-sidebar.spec.ts |
 | NAV-15 | Each row's status follows the real turn: Working → Needs permission → Working → Finished (and Error, Stopped); the… | needs-you.test.tsx, sidebar-transition.test.tsx | spec: shell-stage.spec.ts |
-| NAV-16 | A Thread that finishes while another Thread is open (or the tab is hidden) shows as unread (teal, eye) until opened;… | needs-you.test.tsx | planned |
-| NAV-17 | Needs you count shows in the tab title "(N) UAM - <name>", on the sidebar toggle and on Home; Alt+J / Alt+K walk the… | brand-title.test.tsx, needs-you.test.tsx, home.test.tsx | planned |
-| NAV-18 | The row shows the folder's unsaved git work ("✎N ↑M") read from the real repo at page load and when a turn ends | unsaved-work.test.tsx | planned |
+| NAV-16 | A Thread that finishes while another Thread is open (or the tab is hidden) shows as unread (teal, eye) until opened;… | needs-you.test.tsx | spec: nav-sidebar.spec.ts (the hidden-tab half not feasible: headless Chromium keeps every page visible) |
+| NAV-17 | Needs you count shows in the tab title "(N) UAM - <name>", on the sidebar toggle and on Home; Alt+J / Alt+K walk the… | brand-title.test.tsx, needs-you.test.tsx, home.test.tsx | spec: nav-home.spec.ts |
+| NAV-18 | A row shows how many files its own Thread changed ("N files changed by this thread"), never the folder's git counts, at page load and when a turn ends | unsaved-work.test.tsx | spec: nav-sidebar.spec.ts |
 | NAV-19 | Settle a clean, idle Thread from the row hover or header menu: it moves to the Settled shelf, opens read-only;… | app.test.tsx, sidebar-transition.test.tsx | spec: shell-stage.spec.ts |
 | NAV-20 | Settle/Archive are refused while a turn runs, with one reason ("Stop the turn, answer what is waiting…") | app.test.tsx | spec: shell-stage.spec.ts |
 | NAV-21 | Settle/Archive with the Thread's own unsaved files opens one anchored popover ("Settle with unsaved work?" /… | settle-guard.test.tsx, archive_test.go | spec: shell-stage.spec.ts |
 | NAV-22 | Archive → read-only; Settings → Archived lists it newest first; Unarchive restores it as Finished without a turn;… | archived-settings.test.tsx, app.test.tsx | spec: shell-stage.spec.ts |
-| NAV-23 | Settled shelf: collapsible, newest ten then Show all, scrolls within 40% of height; settling while closed flashes… | sidebar-transition.test.tsx, web-ui-fixes.test.tsx, app.test.tsx | planned |
-| NAV-24 | A Thread quiet for 7 days settles itself (hourly check), unless it has unsaved work, a pending request or is open | auto_settle_test.go | planned (needs a clock or sweep trigger) |
-| NAV-25 | A worktree Thread whose branch landed on origin's default branch settles itself and its worktree/branch are removed | Go worktree/auto-settle tests | planned (needs a clock or sweep trigger) |
-| NAV-26 | Search threads matches names, titles, Project names and branches, archived included | projects.test.tsx, archived-settings.test.tsx, app.test.tsx | planned |
-| NAV-27 | From 3 characters, search adds "In conversations": Threads whose prompts/replies hold every word, read from the… | conversation-search.test.tsx, search_test.go | planned |
+| NAV-23 | Settled shelf: collapsible, newest ten then Show all, scrolls within 40% of height; settling while closed flashes… | sidebar-transition.test.tsx, web-ui-fixes.test.tsx, app.test.tsx | spec: nav-sidebar.spec.ts |
+| NAV-24 | A Thread quiet for 7 days settles itself (hourly check), unless it has unsaved work, a pending request or is open | auto_settle_test.go | planned (needs a clock or sweep trigger: the quiet-Thread sweep runs only hourly, never at start) |
+| NAV-25 | A worktree Thread whose branch landed on origin's default branch settles itself and its worktree/branch are removed | Go worktree/auto-settle tests | planned (needs a clock or sweep trigger: the merged-work sweep runs only hourly, never at start) |
+| NAV-26 | Search threads matches names, titles, Project names and branches, archived included | projects.test.tsx, archived-settings.test.tsx, app.test.tsx | spec: nav-sidebar.spec.ts |
+| NAV-27 | From 3 characters, search adds "In conversations": Threads whose prompts/replies hold every word, read from the… | conversation-search.test.tsx, search_test.go | spec: nav-sidebar.spec.ts |
 | NAV-28 | Reload or a pasted link restores the same place: `#task=<id>`, `#settings`, `#routines`; Back/Forward move between… | app.test.tsx | spec: navigation.spec.ts, shell-nav.spec.ts |
-| NAV-29 | Settings opens over the Thread; × or Esc brings the Thread back with its scroll position, open rows and side panels;… | app.test.tsx | planned |
-| NAV-30 | Ctrl+B (or the UAM mark) collapses the sidebar to the rail; kept per browser; keeps the selected Thread and URL; the… | app.test.tsx, empty-sidebar.test.tsx | planned |
+| NAV-29 | Settings opens over the Thread; × or Esc brings the Thread back with its scroll position, open rows and side panels;… | app.test.tsx | spec: nav-shell.spec.ts |
+| NAV-30 | Ctrl+B (or the UAM mark) collapses the sidebar to the rail; kept per browser; keeps the selected Thread and URL; the… | app.test.tsx, empty-sidebar.test.tsx | spec: nav-shell.spec.ts |
 | NAV-31 | Narrow window: the sidebar is a drawer; its first rows are ready on first open; Esc closes it every time and gives… | app.test.tsx | spec: shell-nav.spec.ts |
-| NAV-32 | Home with no Thread open: "What are you working on?", New thread, Needs you list, Budgets, "Nothing needs you.";… | home.test.tsx | planned |
+| NAV-32 | Home with no Thread open: "What are you working on?", New thread, Needs you list, Budgets, "Nothing needs you.";… | home.test.tsx | spec: nav-home.spec.ts |
 | NAV-33 | Theme: Settings → This browser → Theme Light / Dark / Match system (default, follows the OS live); kept per browser… | theme.test.mjs, settings.test.tsx | spec: shell-nav.spec.ts |
 | NAV-34 | Connection indicator: after the service restarts the page shows "Connection lost, reconnecting…", then reconnects on… | event-stream.test.mjs, app.test.tsx, restart_test.go | spec: shell-restart.spec.ts |
 | NAV-35 | A turn running when uam restarts shows Interrupted afterwards; it is not resumed or resent | needs-you.test.tsx, queue_restart_test.go | spec: shell-restart.spec.ts |
-| NAV-36 | Several tabs on plain HTTP keep working (live updates over one WebSocket each, not 2–3 EventSources per tab) | event-stream.test.mjs, event_socket_test.go | planned |
-| NAV-37 | A stream that goes silent without closing (no heartbeat for 2.5 × 15 s) is shown as lost and reopened; live updates… | event-stream.test.mjs | planned |
-| NAV-38 | After a new `uam web` build is deployed, an open page reloads itself on reconnect, or shows "UAM was updated." +… | update.test.mjs, uam-service.test.tsx | planned (needs a second build) |
-| NAV-39 | Notifications: the switch asks permission only when turned on; a Thread that needs you or finishes is announced once… | notify.test.tsx, notify.test.mjs, sw.test.mjs, notify_test.go | planned |
-| NAV-40 | Installable app: manifest served, service worker registers, app badge follows Needs you | sw.test.mjs, needs-you.test.tsx | planned (manifest and service worker only) |
-| NAV-41 | Instance switcher scopes the list, Home and Project filter to one instance; remote deep links; Settle/Archive on… | federation.test.tsx, connected-instances-settings.test.tsx, instance-identity.test.mjs, connected-api.test.mjs | planned (needs a second instance) |
-| NAV-42 | Close conversation (row or header menu, confirmed) closes the CLI session; the next message reopens it | app.test.tsx | planned |
-| NAV-43 | A save the service refuses shows a strip over the pane until a save succeeds | resilience.test.tsx | planned |
-| NAV-44 | With browser storage refusing reads/writes the app still renders, opens Threads and shelves | storage-refused.test.tsx | planned |
-| NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | planned |
-| NAV-46 | Where this Thread runs (PlacePicker: Current branch / Worktree) on the draft; a worktree Thread's row shows the… | place-foot.test.tsx, needs-you.test.tsx | planned |
+| NAV-36 | Several tabs on plain HTTP keep working (live updates over one WebSocket each, not 2–3 EventSources per tab) | event-stream.test.mjs, event_socket_test.go | spec: nav-live.spec.ts |
+| NAV-37 | A stream that goes silent without closing (no heartbeat for 2.5 × 15 s) is shown as lost and reopened; live updates… | event-stream.test.mjs | spec: nav-live.spec.ts |
+| NAV-38 | After a new `uam web` build is deployed, an open page reloads itself on reconnect, or shows "UAM was updated." +… | update.test.mjs, uam-service.test.tsx | planned (needs a second build: a uam binary with another version to restart the service onto) |
+| NAV-39 | Notifications: the switch asks permission only when turned on; a Thread that needs you or finishes is announced once… | notify.test.tsx, notify.test.mjs, sw.test.mjs, notify_test.go | spec: nav-live.spec.ts |
+| NAV-40 | Installable app: manifest served, service worker registers, app badge follows Needs you | sw.test.mjs, needs-you.test.tsx | spec: nav-live.spec.ts, nav-home.spec.ts |
+| NAV-41 | Instance switcher scopes the list, Home and Project filter to one instance; remote deep links; Settle/Archive on… | federation.test.tsx, connected-instances-settings.test.tsx, instance-identity.test.mjs, connected-api.test.mjs | planned (needs a second instance served over HTTPS, with the home service trusting its certificate: pairing refuses plain HTTP) |
+| NAV-42 | Close conversation (row or header menu, confirmed) closes the CLI session; the next message reopens it | app.test.tsx | spec: nav-shell.spec.ts |
+| NAV-43 | A save the service refuses shows a strip over the pane until a save succeeds | resilience.test.tsx | spec: nav-live.spec.ts |
+| NAV-44 | With browser storage refusing reads/writes the app still renders, opens Threads and shelves | storage-refused.test.tsx | spec: nav-live.spec.ts |
+| NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | spec: nav-sidebar.spec.ts |
+| NAV-46 | Where this Thread runs (Project folder / New worktree) on the draft; a worktree Thread's row shows the worktree's branch | place-foot.test.tsx, needs-you.test.tsx | spec: nav-sidebar.spec.ts |
 | NAV-47 | A `sessions.json` that cannot be read at start: the first view says it was set aside, names the backup and how to recover, and keeps this browser's drafts | drafts.test.mjs, store_write_failure_test.go | spec: shell-state-set-aside.spec.ts |
 | NAV-48 | A Thread another Thread started shows its parent as the header's first crumb; in a narrow header the crumb shrinks and truncates instead of drawing over the title | css.test.mjs | spec: shell-nav.spec.ts |
 | CMP-01 | New thread: the first Send creates the Thread (sidebar row appears only then) and its reply streams in | app.test.tsx | spec: first-thread.spec.ts |
