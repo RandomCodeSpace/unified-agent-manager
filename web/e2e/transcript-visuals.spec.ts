@@ -1,8 +1,9 @@
-// Visuals in replies: Mermaid diagrams, uam_chart cards, and what a reload brings back.
+// Visuals in replies: Mermaid diagrams (the React Flow view and the Mermaid image), uam_chart cards, and what a reload brings back.
 import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, send, startThread, test, threadState, toolResult } from './harness';
 import { expectPinned, pageErrors, yolo } from './transcript-helpers';
+import { systemText, useMockUtility } from './composer-helpers';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
@@ -11,22 +12,40 @@ const COMMITS = {
   data: [{ day: 'Mon', commits: 3 }, { day: 'Tue', commits: 5 }, { day: 'Wed', commits: 2 }],
 };
 
-test('a Mermaid diagram renders from the sandboxed frame, toggles to its code, opens large, and a broken one says why', async ({ page, project, model }) => {
+test('a Mermaid flowchart opens in the React Flow view, toggles to the Mermaid image and its code, opens large, and a broken one says why', async ({ page, project, model }) => {
   const errors = pageErrors(page);
-  model.reply('draw a flow', 'A flow:\n\n```mermaid\ngraph TD; A[Start]-->B[End]\n```\n');
+  model.reply('draw a flow', 'A flow:\n\n```mermaid\ngraph TD; A[Start]-->|go| B{Ready?}\nB --> C[(Store)]\n```\n');
   model.reply('draw a broken flow', 'Broken:\n\n```mermaid\ngraph TD; A-->\n```\n');
   await startThread(page, project, 'draw a flow');
   const conv = conversation(page);
+  const view = conv.getByRole('group', { name: 'View' });
+  await expect(view.getByRole('button', { name: 'React Flow' })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
+  const flow = conv.getByRole('figure', { name: 'Diagram' });
+  for (const label of ['Start', 'Ready?', 'Store', 'go']) await expect(flow.getByText(label, { exact: true })).toBeVisible();
+  // A node selected lights its edges; the label of an edge it does not touch dims.
+  await flow.getByText('Store', { exact: true }).click();
+  await expect(flow.locator('.flow-edge.is-hot')).toHaveCount(1);
+  await expect(flow.locator('.flow-edge-label.is-dim')).toHaveText('go');
+  // A dragged node takes its edges along, off ELK's route, until Reset layout puts it back.
+  const store = await flow.locator('.react-flow__node', { hasText: 'Store' }).boundingBox();
+  await page.mouse.move(store!.x + store!.width / 2, store!.y + store!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(store!.x + store!.width / 2 + 120, store!.y + store!.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await flow.getByRole('button', { name: 'Reset layout' }).click();
+  await expect(flow.getByRole('button', { name: 'Reset layout' })).toHaveCount(0);
+
+  await view.getByRole('button', { name: 'Mermaid' }).click();
   const diagram = conv.getByRole('img', { name: 'Diagram' });
   await expect(diagram).toBeVisible({ timeout: 30_000 });
+  await expect(flow).toHaveCount(0);
   expect(await diagram.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
   await expect(page.locator('iframe[sandbox="allow-scripts"][src$="/diagram-frame.html"]')).toBeAttached();
 
-  const view = conv.getByRole('group', { name: 'View' });
   await view.getByRole('button', { name: 'Code' }).click();
   await expect(diagram).toHaveCount(0);
-  await expect(conv.locator('pre')).toContainText('A[Start]-->B[End]');
-  await view.getByRole('button', { name: 'Diagram' }).click();
+  await expect(conv.locator('pre')).toContainText('A[Start]-->|go| B{Ready?}');
+  await view.getByRole('button', { name: 'Mermaid' }).click();
   await expect(diagram).toBeVisible();
 
   await conv.getByRole('button', { name: 'Open diagram' }).click();
@@ -35,11 +54,57 @@ test('a Mermaid diagram renders from the sandboxed frame, toggles to its code, o
   await page.keyboard.press('Escape');
   await expect(large).toHaveCount(0);
 
+  // A flowchart the React Flow view cannot read opens in Mermaid, which says why it cannot draw it either; React Flow stays a click away.
   await send(page, 'draw a broken flow');
   await expect(threadState(page, 'Finished')).toBeVisible();
   await expect(conv.getByText(/^Diagram could not be rendered: \S/)).toBeVisible({ timeout: 30_000 });
   await expect(conv.locator('pre', { hasText: 'graph TD; A-->' }).last()).toBeVisible();
+  await expect(view.last().getByRole('button')).toHaveText(['React Flow', 'Mermaid', 'Code']);
+  await expect(view.last().getByRole('button', { name: 'Mermaid' })).toHaveAttribute('aria-pressed', 'true');
   await expect(diagram).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test('a diagram the React Flow view cannot read opens in Mermaid, and its React Flow tab asks the Utility model for the graph once', async ({ page, project, model, uam }) => {
+  const errors = pageErrors(page);
+  const restore = await useMockUtility(uam);
+  try {
+    const graph = {
+      direction: 'TB', groups: [],
+      nodes: [{ id: 'Idle', label: 'Idle', kind: 'step', group: '' }, { id: 'Busy', label: 'Busy', kind: 'decision', group: '' }],
+      edges: [{ from: 'Idle', to: 'Busy', label: 'start', dashed: false, thick: false, head: 'end' }],
+    };
+    let asked = 0;
+    uam.scripts.push({
+      match: { predicate: (req) => systemText(req).includes('You convert a Mermaid diagram') },
+      response: (req) => {
+        asked++;
+        uam.served.push({ fixture: 'diagram graph', request: req });
+        return { content: JSON.stringify(graph) };
+      },
+    });
+    uam.apply();
+    model.reply('draw the states', 'States:\n\n```mermaid\nstateDiagram-v2\n  Idle --> Busy: start\n```\n');
+    await startThread(page, project, 'draw the states');
+    const conv = conversation(page);
+    const view = conv.getByRole('group', { name: 'View' });
+    await expect(view.getByRole('button', { name: 'Mermaid' })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
+    await expect(conv.getByRole('img', { name: 'Diagram' })).toBeVisible({ timeout: 30_000 });
+    expect(asked).toBe(0);
+
+    await view.getByRole('button', { name: 'React Flow' }).click();
+    const flow = conv.getByRole('figure', { name: 'Diagram' });
+    for (const label of ['Idle', 'Busy', 'start']) await expect(flow.getByText(label, { exact: true })).toBeVisible({ timeout: 60_000 });
+    // Back and forth costs nothing more: the graph is kept per source.
+    await view.getByRole('button', { name: 'Mermaid' }).click();
+    await view.getByRole('button', { name: 'React Flow' }).click();
+    await expect(flow.getByText('Busy', { exact: true })).toBeVisible();
+    expect(asked).toBe(1);
+    const log = (await uam.api('GET', '/api/utility')) as { calls: { purpose: string; valid?: boolean }[] };
+    expect(log.calls.filter((c) => c.purpose === 'diagram-graph').map((c) => c.valid)).toEqual([true]);
+  } finally {
+    await restore();
+  }
   expect(errors).toEqual([]);
 });
 
@@ -122,7 +187,7 @@ test('a reload restores a finished rich conversation: table, diagram, code, char
   model.toolRound('rich turn two', [{ id: 'call_rich', name: 'uam_chart', arguments: COMMITS }], 'Done');
   await startThread(page, project, 'rich turn one');
   const conv = conversation(page);
-  await expect(conv.getByRole('img', { name: 'Diagram' })).toBeVisible({ timeout: 30_000 });
+  await expect(conv.getByRole('figure', { name: 'Diagram' }).getByText('A', { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(threadState(page, 'Finished')).toBeVisible();
   await send(page, 'rich turn two');
   await expect(conv.getByText('Done', { exact: true })).toBeVisible();
@@ -132,7 +197,7 @@ test('a reload restores a finished rich conversation: table, diagram, code, char
   await page.reload();
   await expect(conv.getByRole('row', { name: /alpha\s*1/ })).toBeVisible();
   await expect(conv.getByRole('row', { name: /beta\s*2/ })).toBeVisible();
-  await expect(conv.getByRole('img', { name: 'Diagram' })).toBeAttached({ timeout: 30_000 });
+  await expect(conv.getByRole('figure', { name: 'Diagram' }).getByText('B', { exact: true })).toBeAttached({ timeout: 30_000 });
   await expect(conv.locator('pre', { hasText: 'func main() {}' })).toBeAttached();
   await expect(conv.getByRole('button', { name: 'Copy code' })).toHaveCount(2);
   await expect(conv.getByRole('figure', { name: 'Chart: Commits per day' })).toBeVisible();

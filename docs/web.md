@@ -823,6 +823,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `{"asides": [...]}`, every kept aside oldest first, also for a settled or
   archived Thread. The Thread's event stream sends each newly kept one as an
   `aside` event (`session_id`, `aside`).
+
+  `POST /api/sessions/{id}/diagram-graph` takes `source`, a mermaid diagram
+  of at most 12,000 bytes, and returns its graph for the React Flow view:
+  `direction` (`LR` or `TB`), `groups` (`id`, `label`, `group`), `nodes`
+  (`id`, `label`, `kind`: `step`, `store`, `decision` or `terminal`, `group`)
+  and `edges` (`from`, `to`, `label`, `dashed`, `thick`, `head`: `end`,
+  `both` or `none`); at most 60 nodes, 30 groups and 150 edges.
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Thread says
   so: the status line above the message box (and, during a turn, the line
@@ -1235,10 +1242,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   ends only the summary line remains. Questions, permission requests and
   subagents appear as before.
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
-  a diagram once its fence has closed, with a Diagram / Code toggle and Copy
+  a diagram once its fence has closed, with a Mermaid / Code toggle and Copy
   code in its header; clicking the diagram opens it as large as the window
-  allows. A block Mermaid cannot parse shows the code with a note that says
-  where and what is wrong. Code blocks with a language are
+  allows. A flowchart (`flowchart` or `graph`) of up to 60 nodes opens in
+  the **React Flow** view instead, with React Flow / Mermaid / Code in the
+  header: the page draws it with its own boxes and colours, laid out by ELK,
+  so it can be panned and zoomed with a mouse, clicking a node lights its
+  links, and a node can be dragged (its links follow; **Reset layout** among
+  the zoom buttons puts every node back; nothing is saved). Shapes fold into
+  four kinds (step, store, decision, start/end); Mermaid styles and classes
+  show only in the Mermaid view. A flowchart the React Flow view cannot read
+  opens in Mermaid. In a Thread, such a flowchart, and a state, class, ER,
+  mindmap, block, architecture, requirement or C4 diagram, keeps the React
+  Flow tab: choosing it asks the Utility model (the Thread's model when none
+  is set) to turn the diagram into a graph, logged as `diagram-graph`. The
+  answer is checked, then kept per source until the service restarts; one
+  that fails leaves the Mermaid view with a note, and the tab tries again.
+  A block Mermaid cannot parse shows the code with a note that says where
+  and what is wrong. Code blocks with a language are
   highlighted (Go, TypeScript, JavaScript, shell, JSON, YAML, Python, Rust,
   SQL, HTML/XML, CSS, Markdown, Dockerfile, Makefile, INI/TOML, diff).
   A ` ```csv ` or ` ```tsv ` block with a header row, and a ` ```json `
@@ -1248,7 +1269,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   rows of different lengths or is over 100,000 characters stays a code block.
   Diagrams render in the browser inside a sandboxed frame that cannot read
   your session or call the service (ADR 0004); the first diagram of a page
-  load fetches Mermaid (3.4 MB). A diagram renders once scrolling has paused
+  load fetches Mermaid (3.4 MB), and the first flowchart fetches the React
+  Flow view (about 140 KB compressed) and its layout worker (about 475 KB
+  compressed). A diagram renders once scrolling has paused
   for 150 ms, so a fast scroll through history does not stutter.
 - **Images in replies**: an image the agent refers to by path, as
   `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
@@ -3325,7 +3348,8 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
 - **Diagrams.** Only fenced ` ```mermaid ` blocks render; other diagram
-  languages stay code. Mermaid draws with the interface font (Figtree, embedded
+  languages stay code. The React Flow view takes flowcharts only, up to 60
+  nodes; larger ones and other Mermaid types show as the Mermaid image. Mermaid draws with the interface font (Figtree, embedded
   in each diagram), and a diagram wider than the pane is scaled down; open it
   for full size. The first diagram on a page fetches a 3.4 MB script, once.
 - **Late steers (Copilot).** A steer that arrives while Copilot writes the

@@ -6,6 +6,7 @@
 import { visibleModels } from './lib/models';
 import { foregroundRead } from './lib/reads';
 import { PREVIEW_BYTES, previewMetadata, readTextPreview, type PreviewMetadata, type TextPreview } from './lib/preview';
+import type { FlowGraph } from './lib/flowGraph';
 
 export type SessionState =
   | 'idle'
@@ -2723,6 +2724,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     taskTimeSplit: (id: string, signal?: AbortSignal) => call<TimeSplit>('GET', `/api/sessions/${enc(id)}/time-split`, undefined, false, signal),
     /** `question` goes to the model; `typed`, what the owner asked, is what the Task keeps. */
     askAside: (id: string, question: string, typed: string, signal?: AbortSignal) => slow<AsideAnswer>(`/api/sessions/${enc(id)}/aside`, { question, typed }, signal),
+    /** A mermaid diagram as the React Flow view's graph, written by the Utility model (cached per source on the server). */
+    diagramGraph: (id: string, source: string) => slow<FlowGraph>(`/api/sessions/${enc(id)}/diagram-graph`, { source }),
     asides: (id: string) => call<{ asides: Aside[] }>('GET', `/api/sessions/${enc(id)}/asides`).then((r) => r.asides),
     taskMcp: (id: string, summary = false) => call<McpTaskStatus>('GET', `/api/sessions/${enc(id)}/mcp${summary ? '?summary=1' : ''}`),
     taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}?summary=1`),

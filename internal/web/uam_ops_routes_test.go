@@ -111,6 +111,7 @@ var uamRouteExclusions = map[string]string{
 	"POST /api/sessions/{id}/git/branch":                           "agents use git in their shell",
 	"POST /api/sessions/{id}/subagents/{agent_id}/prompt":          "the owner's message to a Thread's subagent",
 	"POST /api/sessions/{id}/aside":                                "the owner's side question to a Utility model",
+	"POST /api/sessions/{id}/diagram-graph":                        "a diagram's graph for the owner's React Flow view, by a Utility model",
 	"POST /api/sessions/{id}/suggestions":                          "the owner's composer suggestions",
 	"POST /api/sessions/{id}/rerun":                                "rewrites the owner's conversation",
 	"POST /api/sessions/{id}/fork":                                 "rewrites the owner's conversation",
