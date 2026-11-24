@@ -124,3 +124,46 @@ test('a background command\'s output opens in the Command output panel, and Jump
   await expect(panel).toHaveCount(0);
   expect(Math.abs((await conv.evaluate((el) => el.scrollTop)) - before)).toBeLessThanOrEqual(2);
 });
+
+test('Finish evidence: Changes opens with the checks, the claims and what nothing backs, and the turn\'s files', async ({ page, project, model, uam, workdir }) => {
+  fs.writeFileSync(path.join(workdir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'exit 0', build: 'exit 1' } }));
+  // The edit first, then the checks, so the test run comes after every change.
+  model.on({ toolCallId: 'call_build' }, { content: 'I created `b.py`. All tests pass. The build passes. I updated the README.' }, {}, 'result of call_build');
+  model.on({ toolCallId: 'call_edit' }, {
+    toolCalls: [
+      { id: 'call_tests', name: 'bash', arguments: JSON.stringify({ command: 'npm test', description: 'Run the tests' }) },
+      { id: 'call_build', name: 'bash', arguments: JSON.stringify({ command: 'npm run build', description: 'Build' }) },
+    ],
+  }, {}, 'checks after call_edit');
+  model.on({ userMessage: 'finish with evidence' }, {
+    toolCalls: [{ id: 'call_edit', name: 'create', arguments: JSON.stringify({ path: path.join(workdir, 'b.py'), file_text: 'y=2\n' }) }],
+  }, {}, 'edit for finish with evidence');
+  await startThread(page, project, 'finish with evidence');
+  await yolo(page, uam.api);
+  await expect(threadState(page, 'Finished')).toBeVisible();
+
+  const changes = page.getByRole('group', { name: 'Version control' }).getByRole('button', { name: /^Open changes.+evidence available/ });
+  await changes.click();
+  const card = page.getByRole('region', { name: 'Finished — check the evidence' });
+  await expect(card).toContainText('2 claims not verified');
+  const rows = card.getByRole('listitem');
+  // The checks first, failures first, each with its command, exit status and output.
+  await expect(rows.nth(0)).toHaveText(/^Ran the build\s*npm run build · exit 1 · /);
+  await expect(rows.nth(0).getByRole('img', { name: 'Failed' })).toBeVisible();
+  await expect(rows.nth(1)).toHaveText(/^Ran the tests\s*npm test · exit 0 · /);
+  await expect(rows.nth(1).getByRole('img', { name: 'Passed' })).toBeVisible();
+  // Then each claim with what backs it, or why nothing does.
+  const claim = (words: string) => rows.filter({ hasText: `“${words}”` });
+  await expect(claim('All tests pass.')).toContainText('Backed by npm test · exit 0');
+  await expect(claim('All tests pass.').getByRole('img', { name: 'Verified' })).toBeVisible();
+  await expect(claim('The build passes.')).toContainText('Not verified · the last run failed (exit 1)');
+  await expect(claim('I updated the README.')).toContainText('Not verified · no edit to README in this turn');
+  await expect(claim('I updated the README.').getByRole('img', { name: 'Not verified' })).toBeVisible();
+  // Then the files the turn changed.
+  await expect(card.getByRole('heading', { name: 'Changed in this turn' })).toBeVisible();
+  await expect(rows.filter({ hasText: 'b.py' })).toHaveText(/b\.py\s*\+1 −0/);
+
+  await rows.nth(0).getByRole('button', { name: 'Show output' }).click();
+  const output = page.getByRole('complementary', { name: 'Command output' }).or(page.getByRole('dialog', { name: 'Command output' }));
+  await expect(output.getByRole('region', { name: 'Output of npm run build' })).toContainText('exit 1');
+});
