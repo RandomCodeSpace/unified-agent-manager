@@ -36,7 +36,8 @@ test('four tabs on plain HTTP each take live updates over one WebSocket, with no
   }
   await send(tabs[0], 'second for all tabs');
   for (const tab of tabs) await expect(conversation(tab).getByText('Every tab sees this.')).toBeVisible();
-  for (const own of sockets) expect(own).toContain('/api/events/socket');
+  // One socket per stream the tab follows, and no other kind.
+  for (const own of sockets) expect([...new Set(own)]).toEqual(['/api/events/socket']);
   expect(sources).toEqual([]);
   // The last tab still answers ordinary requests at once: no connection pool is exhausted.
   await threads(tabs[3]).getByRole('button', { name: 'Settings', exact: true }).click();
@@ -118,7 +119,10 @@ test('notifications: permission is asked only when turned on; a Thread finishing
     await context.grantPermissions(['notifications']);
     await notifyingContext(context);
     const bystander = await idleThread(uam.api, project, 'Notify bystander');
-    model.title('notify me later', 'Notify target').reply('notify me later', Array.from({ length: 6 }, (_, i) => `notify line ${i + 1}`).join('\n\n'), { latency: 100, chunkSize: 4 });
+    // Named by hand: the notice carries the name the Thread has when its turn ends, and a background title may land later.
+    const target = await idleThread(uam.api, project, 'Notify target');
+    const url = `${uam.url}/#task=${target}`;
+    model.reply('notify me later', Array.from({ length: 6 }, (_, i) => `notify line ${i + 1}`).join('\n\n'), { latency: 100, chunkSize: 4 });
     model.reply('again while watching', 'Watched reply.');
     model.reply('third off screen', Array.from({ length: 6 }, (_, i) => `third line ${i + 1}`).join('\n\n'), { latency: 100, chunkSize: 4 });
     const a = await context.newPage();
@@ -134,7 +138,9 @@ test('notifications: permission is asked only when turned on; a Thread finishing
     await expect(a.getByText(/only while UAM is open in a tab/)).toBeVisible();
     await openHome(b);
 
-    const url = await startThread(a, project, 'notify me later');
+    await a.goto(url);
+    await send(a, 'notify me later');
+    await expect(conversation(a).getByText('notify me later')).toBeVisible();
     await a.goto(`/#task=${bystander}`);
     await expect(a.getByRole('heading', { level: 1, name: 'Notify bystander' })).toBeVisible();
     await expect.poll(async () => [...await shown(a), ...await shown(b)]).toEqual(['Notify target: Finished']);

@@ -113,7 +113,14 @@ test('Close conversation asks first, closes the CLI session, and the next messag
   await expect(threadState(page, 'Finished')).toBeVisible();
   const next = model.served().find((s) => s.fixture === 'reply which colour was it')!.request;
   expect(next.messages.some((m) => m.role === 'user' && JSON.stringify(m.content).includes('remember the colour teal'))).toBe(true);
-  await expect((await menu(page)).getByRole('menuitem', { name: 'Close conversation' })).toBeVisible();
-  await page.keyboard.press('Escape');
+
+  // The row menu closes it too.
+  // The Project's only Thread; its title may not have landed before the close.
+  await threads(page).getByRole('button', { name: new RegExp(`^${project.name} `) }).focus();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Close conversation' }).click();
+  await confirm.getByRole('button', { name: 'Close conversation' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(threadState(page, 'Idle')).toBeVisible();
 });
 
