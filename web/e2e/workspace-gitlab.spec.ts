@@ -70,7 +70,9 @@ async function glabService(browser: Browser, mockURL: string, dir: string, api: 
   process.env.PATH = before;
   const own = await started;
   const calls = () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { args: string[]; description: string | null });
-  return { ...own, calls, stop: async () => { await own.stop(); fs.rmSync(bin, { recursive: true, force: true }); } };
+  /** Changes what the stand-in answers to `glab api` from now on. */
+  const answer = (next: Api) => fs.writeFileSync(apiFile, JSON.stringify({ ...ACCOUNT, ...next }));
+  return { ...own, calls, answer, stop: async () => { await own.stop(); fs.rmSync(bin, { recursive: true, force: true }); } };
 }
 
 test('Settings → GitLab shows the glab instance, the account and the token, and Check access reads again', async ({ browser, uam, workdir }) => {
@@ -214,6 +216,45 @@ test('a reply that touched GitLab items carries one chip per item with its state
     await items.getByRole('button', { name: '#14' }).click();
     await expect(panel.getByRole('heading', { name: 'Login breaks', level: 2 })).toBeVisible();
     await expect(panel.getByRole('link', { name: 'Open in GitLab' })).toHaveAttribute('href', `${WEB}/issues/14`);
+  } finally {
+    await own.stop();
+  }
+});
+
+test('a running pipeline is read again after 20 s and an open merge request after a minute', async ({ browser, uam, model, workdir }) => {
+  // Two real waits: uam's own read of an item is kept 15 s, so a page clock alone would not show a new state.
+  test.setTimeout(240_000);
+  const mr = { iid: 2, project_id: 42, title: 'Add d', state: 'opened', web_url: `${WEB}/merge_requests/2`, source_branch: 'feat/d', target_branch: 'main' };
+  const pipeline = { id: 91, project_id: 42, ref: 'main', sha: 'abc', status: 'running', web_url: `${WEB}/pipelines/91` };
+  model.reply('gitlab rereads', `See ${WEB}/merge_requests/2 and ${WEB}/pipelines/91.`);
+  const own = await glabService(browser, uam.mock.url, workdir, { 'projects/42/merge_requests/2': mr, 'projects/42/pipelines/91': pipeline });
+  try {
+    const { page } = own;
+    const asked: { at: number; refs: string[] }[] = [];
+    page.on('request', (r) => { if (r.url().includes('/gitlab/items?')) asked.push({ at: Date.now(), refs: new URL(r.url()).searchParams.getAll('ref') }); });
+    await startYoloThread(page, own.project, 'gitlab rereads');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const chips = conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link');
+    await expect(chips.nth(0)).toHaveAccessibleName('!2 open');
+    await expect(chips.nth(1)).toHaveAccessibleName('Pipeline #91 running');
+    const first = asked.length;
+    expect(first).toBeGreaterThan(0);
+    const start = asked[first - 1].at;
+    own.answer({ 'projects/42/merge_requests/2': { ...mr, state: 'merged' }, 'projects/42/pipelines/91': { ...pipeline, status: 'success' } });
+
+    // The running pipeline alone is asked for again, 20 s on; the merge request keeps what the page last read.
+    await expect(chips.nth(1)).toHaveAccessibleName('Pipeline #91 success', { timeout: 60_000 });
+    const fast = asked.slice(first);
+    expect(fast.map((a) => a.refs.length)).toEqual([1]);
+    expect(fast[0].at - start).toBeGreaterThanOrEqual(19_000);
+    await expect(chips.nth(0)).toHaveAccessibleName('!2 open');
+
+    // The open merge request is asked for a minute on; the finished pipeline never again.
+    await expect(chips.nth(0)).toHaveAccessibleName('!2 merged', { timeout: 90_000 });
+    const slow = asked.slice(first + 1);
+    expect(slow).toHaveLength(1);
+    expect(slow[0].refs).not.toEqual(fast[0].refs);
+    expect(slow[0].at - start).toBeGreaterThanOrEqual(59_000);
   } finally {
     await own.stop();
   }

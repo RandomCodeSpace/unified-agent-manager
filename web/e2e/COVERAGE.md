@@ -249,7 +249,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-47 | A reply ending a turn that touched GitLab items carries one chip per item in its outcome bar (`!2` draft, `Pipeline… | gitlab-refs.test.mjs | spec: workspace-gitlab.spec.ts |
 | WSP-48 | Pressing a chip opens the GitLab side panel: MR (discussions as Markdown, head pipeline), pipeline (jobs by stage,… | none | spec: workspace-gitlab.spec.ts |
 | WSP-49 | A failed job chip names the failure kind (**Tests failed · 2 tests**, **Runner failure · not your change**…) | none | spec: workspace-gitlab.spec.ts |
-| WSP-50 | Running items are reread every 20 s and open MRs every minute | none | planned (needs a clock: rereads come 20 s and a minute apart) |
+| WSP-50 | Running items are reread every 20 s and open MRs every minute | none | spec: workspace-gitlab.spec.ts |
 | WSP-51 | MR review actions on the Thread's own MR: reply, resolve, draft reply, Investigate, Fix | none | planned (needs a fake GitLab that maps the Thread's own commit to its merge request and takes discussion writes) |
 | WSP-52 | Shell rules for agent glab calls: `glab api` and `search` are refused with a replacement, lists get `-P 10`, and… | glab_hooks_test.go | spec: workspace-gitlab.spec.ts |
 | WSP-53 | Before `git push`, committed CI changes get `glab ci lint` | none | spec: workspace-gitlab.spec.ts |

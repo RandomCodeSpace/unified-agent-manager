@@ -14,14 +14,14 @@ test('renamed, binary, oversized, deleted, glob-named and risky files each read 
   commitFixtures(workdir, {
     'old.txt': Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n') + '\n',
     'gone.txt': 'bye 1\nbye 2\n',
-    'f[ab].txt': 'glob\n',
-    'fa.txt': 'a\n',
+    'f[AB].txt': 'glob\n',
+    'fA.txt': 'a\n',
   });
   const shell = [
     'git mv old.txt new.txt && echo extra >> new.txt',
     'rm gone.txt',
     "printf '\\000\\001\\002' > bin.dat",
-    'echo more-a >> fa.txt',
+    'echo more-a >> fA.txt',
     // Over 1 MiB of diff.
     "head -c 1200000 /dev/zero | tr '\\0' a | fold -w 100 > big.txt",
     'mkdir -p .github/workflows db/migrations auth',
@@ -33,8 +33,8 @@ test('renamed, binary, oversized, deleted, glob-named and risky files each read 
   ].join(' && ');
   model.toolRound('change every kind of file', [
     bash('call_mix', shell),
-    // f[ab].txt is also a pathspec for fa.txt; its diff must name it alone.
-    { id: 'call_glob', name: 'edit', arguments: { path: path.join(workdir, 'f[ab].txt'), old_str: 'glob', new_str: 'glob\nmore' } },
+    // f[AB].txt is also a pathspec for fA.txt, which sorts first; its diff must name it alone.
+    { id: 'call_glob', name: 'edit', arguments: { path: path.join(workdir, 'f[AB].txt'), old_str: 'glob', new_str: 'glob\nmore' } },
   ], 'Every kind changed.');
   await startYoloThread(page, project, 'change every kind of file');
   await expect(conversation(page).getByText('Every kind changed.')).toBeVisible();
@@ -51,7 +51,7 @@ test('renamed, binary, oversized, deleted, glob-named and risky files each read 
   const order = await files.evaluateAll((bs) => bs.map((b) => /^Go to (.*?), /.exec(b.getAttribute('aria-label') ?? '')?.[1]));
   expect(new Set(order.slice(0, 5))).toEqual(new Set(Object.keys(risky)));
   for (const [name, label] of Object.entries(risky)) await expect(card(name).getByText(label, { exact: true })).toBeVisible();
-  for (const name of ['new.txt', 'fa.txt', 'f[ab].txt']) await expect(card(name).getByText(/^(CI workflow|Docker|Lockfile|Migration|Deploy|Auth\/security)$/)).toHaveCount(0);
+  for (const name of ['new.txt', 'fA.txt', 'f[AB].txt']) await expect(card(name).getByText(/^(CI workflow|Docker|Lockfile|Migration|Deploy|Auth\/security)$/)).toHaveCount(0);
 
   // A rename in the index names where it came from and counts only the changed line.
   await expect(panel.getByRole('button', { name: 'Go to new.txt, +1 −0', exact: true })).toBeVisible();
@@ -77,9 +77,9 @@ test('renamed, binary, oversized, deleted, glob-named and risky files each read 
   await expect(card('new.txt').getByRole('button', { name: 'Open new.txt' })).toBeEnabled();
 
   // A tracked file named like a glob diffs itself alone.
-  await expect(card('f[ab].txt').getByRole('row', { name: /\+ more$/ })).toBeVisible();
-  await expect(card('f[ab].txt')).not.toContainText('more-a');
-  await expect(card('fa.txt').getByRole('row', { name: /\+ more-a$/ })).toBeVisible();
+  await expect(card('f[AB].txt').getByRole('row', { name: /\+ more$/ })).toBeVisible();
+  await expect(card('f[AB].txt')).not.toContainText('more-a');
+  await expect(card('fA.txt').getByRole('row', { name: /\+ more-a$/ })).toBeVisible();
 });
 
 test('a card reverts one hunk, keeps Viewed and comments over a reload, loads its diff when unfolded, and the panel rereads and resizes', async ({ page, project, model, workdir }) => {
