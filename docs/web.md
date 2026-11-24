@@ -827,7 +827,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `/compact` or it compacts on its own as the context fills, the Thread says
   so: the status line above the message box (and, during a turn, the line
   at the foot of the conversation) reads "Compacting the conversation…",
-  the Thread's row reads "Compacting…", and the Thread sits
+  the Thread's row reads Working, and the Thread sits
   under Working in the list (a request waiting for you still wins). When it
   ends a quiet notice stays in the conversation, "Compacted the conversation
   · freed 2,332 tokens." (the count only when Copilot reports one), or
@@ -1877,7 +1877,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in safe mode. You can pick yolo when you create a Thread or switch it at any
   time, even during a turn. Switching to yolo also allows the request the Thread
   is waiting on; switching back to safe makes the next request ask again. Every
-  request yolo allowed stays in the conversation, marked "allowed (yolo)".
+  request yolo allowed stays in the conversation, marked "auto" (its tip
+  reads "allowed (yolo)").
 
   > **Warning:** in yolo mode the agent can run any command and change any
   > file your Linux account can reach, with your credentials, and nobody is
@@ -2078,7 +2079,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Default; a changed model starts with default effort and context size. The
   source remains intact, and the new Thread links back to it. Its title is the
   source's name or title followed by "(branch)", and until its first message
-  its state reads **Not started** rather than Closed. The copied prompts'
+  its state reads **Idle** rather than Closed. The copied prompts'
   attachments and the tools' images come with it as its own stored copies, so
   they show as chips and thumbnails as in the source, also after the source is
   deleted. Both Threads use the
@@ -2711,8 +2712,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   makes the ring static when the OS requests reduced motion.
 - **Sidebar**: all unsettled Threads across every Project share one flat list
   without group headings. Each row's status line says whether it needs
-  an answer or a permission, finished unread, is running, or is idle. Threads are listed in
-  creation order, newest first, whatever their state. A collapsible
+  an answer or a permission, finished unread, is running, or is idle. Threads are listed by
+  latest activity, newest first, whatever their state. A collapsible
   "Settled" section sits at the foot of the sidebar, under the Thread list,
   which scrolls on its own; archived Threads are listed in Settings →
   Archived. Open, its rows scroll on their own within 40% of the screen
@@ -2724,18 +2725,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Thread is read only while the page is visible: what it does while the tab is
   in the background stays unread until you come back. Marks of deleted
   Threads are dropped.
-  A row first shows the Project badge, Project name, the folder's unsaved
-  git work, and a short status with an icon. Unsaved work is a pen glyph
-  with the number of changed tracked files not committed (untracked files
-  left out) and an up-arrow with the number of commits on no remote
-  ("✎4 ↑3"); a kind at zero is left out, and a repository without a remote
-  counts no unpushed commits. It belongs to the repository holding the
-  Thread's directory, so every Thread there shows the same counts; the tip
-  and screen readers say it in words ("4 not committed · 3 not pushed").
-  It is the folder's indicator: in a shared folder, Settle and Archive
-  check only the Thread's own changes (see **Settle, archive, and
-  delete**).
-  The service reads it once per repository along with the Projects'
+  A row first shows the Project badge, Project name, the files this Thread
+  changed, and a short status with an icon. The files are a pen glyph with
+  the count from the Thread's own changes (`diff.files` on the summary),
+  left out at zero; screen readers hear "4 files changed by this thread".
+  It is the Thread's own count, never the folder's git counts.
+  The folder's unsaved git work (changed tracked files not committed,
+  untracked files left out, and commits on no remote; a repository without
+  a remote counts no unpushed commits) is read once per repository along with the Projects'
   branches (when a turn ends, after Commit, Pull and Set up git, and when a
   page loads), and after Push; the summary carries it as
   `git_pending {uncommitted, unpushed}`. The status is one of "Needs answer", "Needs permission", "Starting",
