@@ -51,5 +51,7 @@ test('LR and RL read left to right; other diagrams and unreadable sources are no
 
 test('labels lose tags and emphasis but keep their line breaks', () => {
   assert.equal(plainLabel('<b>Load</b> <i>cached</i><br>data'), 'Load cached\ndata');
+  assert.doesNotMatch(plainLabel('<scr<script>ipt>alert(1)</scr</script>ipt> x < 5'), /<[^>]*>/);
+  assert.equal(plainLabel('x < 5'), 'x < 5');
   assert.equal(plainLabel('`code` and __under__ and *em*'), 'code and under and em');
 });

@@ -30,9 +30,13 @@ const KINDS: Record<string, FlowKind> = {
 
 /** A label as plain text: line breaks kept, tags and Markdown emphasis dropped. */
 export function plainLabel(text: string): string {
-  return text
-    .replaceAll(/<br\s*\/?>/gi, '\n')
-    .replaceAll(/<[^>]*>/g, '')
+  let out = text.replaceAll(/<br\s*\/?>/gi, '\n');
+  // Repeated until nothing changes, so no removal can join the rest into a tag (labels render as text anyway).
+  for (let prev = ''; prev !== out; ) {
+    prev = out;
+    out = out.replaceAll(/<[^>]*>/g, '');
+  }
+  return out
     .replaceAll(/(\*\*|__|\*|_|`)(\S(?:.*?\S)?)\1/g, '$2')
     .replaceAll('&nbsp;', ' ')
     .trim();
