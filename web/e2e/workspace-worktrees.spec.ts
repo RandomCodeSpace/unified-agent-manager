@@ -2,20 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Page } from '@playwright/test';
-import { conversation, expect, newThread, openHome, send, test, threadState, type Project } from './harness';
+import { conversation, expect, send, test, threadState } from './harness';
 import { openSettings } from './settings-helpers';
-import { allowEach, bash, commit, git, worktrees } from './workspace-helpers';
-
-/** Starts a Thread in a new worktree of `project` with `prompt`, and returns the worktree git made. */
-async function startWorktreeThread(page: Page, project: Project, prompt: string) {
-  await openHome(page);
-  await newThread(page, project);
-  await page.getByRole('radiogroup', { name: 'Where this Thread runs' }).getByRole('radio', { name: 'New worktree' }).click();
-  await send(page, prompt);
-  await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
-  await expect.poll(() => worktrees(project.dir).length).toBe(1);
-  return worktrees(project.dir)[0];
-}
+import { allowEach, bash, commit, git, startWorktreeThread, worktrees } from './workspace-helpers';
 
 /** Settles the open Thread from its header menu. */
 async function settle(page: Page) {
@@ -137,4 +126,108 @@ test('settling keeps a worktree that holds an ignored file, and Settings counts 
   await expect(confirm).toContainText('1 file is not committed and will be lost.');
   await confirm.getByRole('button', { name: 'Cancel' }).click();
   expect(fs.existsSync(path.join(tree.path, 'out/report.csv'))).toBe(true);
+});
+
+test("a new worktree starts where the repository's worktreeBaseRef says and goes where the user's worktreePathTemplate says", async ({ page, uam, project, model, workdir }) => {
+  // origin's default branch is main; the Project folder works on topic, a commit ahead.
+  const origin = `${workdir}-origin.git`;
+  git(path.dirname(workdir), 'clone', '-q', '--bare', workdir, origin);
+  git(workdir, 'remote', 'add', 'origin', origin);
+  git(workdir, 'fetch', '-q', 'origin');
+  git(workdir, 'remote', 'set-head', 'origin', 'main');
+  git(workdir, 'switch', '-q', '-c', 'topic');
+  fs.mkdirSync(path.join(workdir, '.github', 'copilot'), { recursive: true });
+  // A repository cannot choose where it is checked out: its template is not used.
+  fs.writeFileSync(path.join(workdir, '.github', 'copilot', 'settings.json'), JSON.stringify({ worktreeBaseRef: 'defaultBranch', worktreePathTemplate: `${workdir}-repo-says/{branchSlug}` }));
+  fs.writeFileSync(path.join(workdir, 'topic.txt'), 'topic\n');
+  git(workdir, 'add', '.github/copilot/settings.json', 'topic.txt');
+  git(workdir, 'commit', '-q', '-m', 'topic');
+  const main = git(workdir, 'rev-parse', 'origin/main');
+
+  const user = path.join(uam.home, '.copilot', 'settings.json');
+  const before = fs.existsSync(user) ? fs.readFileSync(user, 'utf8') : null;
+  const template = `${uam.home}/trees/{repo}/{branchSlug}`;
+  fs.mkdirSync(path.dirname(user), { recursive: true });
+  fs.writeFileSync(user, JSON.stringify({ ...(before ? JSON.parse(before) : {}), worktreePathTemplate: template }));
+  try {
+    model.reply('start from the default branch', 'Started from the default branch.');
+    const tree = await startWorktreeThread(page, project, 'start from the default branch');
+    await expect(conversation(page).getByText('Started from the default branch.')).toBeVisible();
+    expect(tree.path).toBe(`${uam.home}/trees/${path.basename(workdir)}/${tree.branch.replaceAll('/', '-')}`);
+    expect(fs.existsSync(`${workdir}-repo-says`)).toBe(false);
+    expect(git(tree.path, 'rev-parse', 'HEAD')).toBe(main);
+    expect(fs.existsSync(path.join(tree.path, 'topic.txt'))).toBe(false);
+    const system = JSON.stringify(model.served()[0].request.messages.filter((m) => m.role === 'system'));
+    expect(system).toContain(`on the branch ${tree.branch}, started from main`);
+    expect(git(workdir, 'branch', '--show-current')).toBe('topic');
+  } finally {
+    if (before === null) fs.rmSync(user, { force: true });
+    else fs.writeFileSync(user, before);
+  }
+});
+
+test('Branch from here on a worktree Thread makes a new worktree on a new branch at its commit, with its uncommitted files', async ({ page, project, model, workdir }) => {
+  fs.writeFileSync(path.join(workdir, '.gitignore'), '*.log\n');
+  git(workdir, 'add', '.gitignore');
+  git(workdir, 'commit', '-q', '-m', 'ignore logs');
+  model.toolRound('work to branch from', [bash('call_work', `echo c > c.txt && ${commit('feat: c', 'c.txt')} && echo dirty >> README.md && echo u > u.txt && echo ignored > x.log`)], 'Work to branch from.');
+  const source = await startWorktreeThread(page, project, 'work to branch from', true);
+  const conv = conversation(page);
+  await expect(conv.getByText('Work to branch from.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  const head = git(source.path, 'rev-parse', 'HEAD');
+  const status = git(source.path, 'status', '--porcelain');
+  const url = page.url();
+
+  await conv.getByRole('button', { name: 'Turn actions' }).first().click();
+  await page.getByRole('menuitem', { name: 'Branch from here' }).click();
+  const fork = page.getByRole('dialog', { name: 'Branch from here' });
+  await fork.getByRole('button', { name: 'Branch thread' }).click();
+  await expect(page).not.toHaveURL(url);
+  await expect.poll(() => worktrees(project.dir).length).toBe(2);
+  const branched = worktrees(project.dir).find((w) => w.path !== source.path)!;
+
+  expect(branched.branch).toMatch(/^uam\//);
+  expect(branched.branch).not.toBe(source.branch);
+  expect(git(branched.path, 'rev-parse', 'HEAD')).toBe(head);
+  expect(fs.readFileSync(path.join(branched.path, 'README.md'), 'utf8')).toBe('# Fixture\ndirty\n');
+  expect(fs.readFileSync(path.join(branched.path, 'u.txt'), 'utf8')).toBe('u\n');
+  expect(fs.existsSync(path.join(branched.path, 'x.log'))).toBe(false);
+  await expect(page.getByRole('button', { name: `Worktree, branch ${branched.branch}`, exact: true })).toBeVisible();
+  // The source is as it was.
+  expect(git(source.path, 'rev-parse', 'HEAD')).toBe(head);
+  expect(git(source.path, 'status', '--porcelain')).toBe(status);
+  expect(fs.readFileSync(path.join(source.path, 'x.log'), 'utf8')).toBe('ignored\n');
+});
+
+test('Settings lists the worktrees biggest first, with each Thread, its stage and what is not saved', async ({ page, project, model }) => {
+  model.title('make a big tree', 'Big tree');
+  model.title('make a small tree', 'Small tree');
+  model.toolRound('make a big tree', [bash('call_big', 'head -c 3000000 /dev/zero > big.bin')], 'Big tree made.');
+  model.toolRound('make a small tree', [bash('call_small', 'echo s >> README.md')], 'Small tree made.');
+  const big = await startWorktreeThread(page, project, 'make a big tree', true);
+  await expect(conversation(page).getByText('Big tree made.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  const small = await startWorktreeThread(page, project, 'make a small tree', true);
+  await expect(conversation(page).getByText('Small tree made.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  await settle(page);
+  await page.getByRole('alertdialog', { name: 'Settle with unsaved work?' }).getByRole('button', { name: 'Settle anyway' }).click();
+  await expect(threadState(page, 'Settled')).toBeVisible();
+
+  await openSettings(page, 'Projects & worktrees');
+  const rows = page.getByRole('list', { name: 'Worktrees' }).getByRole('listitem');
+  const bigRow = rows.filter({ hasText: big.branch });
+  const smallRow = rows.filter({ hasText: small.branch });
+  await expect(bigRow).toContainText('Big tree');
+  await expect(bigRow).toContainText('1 not committed');
+  await expect(bigRow).toContainText('3 MB');
+  await expect(bigRow).not.toContainText('Settled');
+  await expect(smallRow).toContainText('Small tree');
+  await expect(smallRow).toContainText('Settled');
+  await expect(smallRow).toContainText('1 not committed');
+  // Other tests of this worker may have left worktrees; these two keep their order among them.
+  const order = await rows.evaluateAll((items, branches) => branches.map((b) => items.findIndex((li) => li.textContent?.includes(b))), [big.branch, small.branch]);
+  expect(order[0]).toBeGreaterThanOrEqual(0);
+  expect(order[0]).toBeLessThan(order[1]);
 });

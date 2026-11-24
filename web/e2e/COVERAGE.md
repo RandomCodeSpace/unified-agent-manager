@@ -201,59 +201,59 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-46 | A subagent whose Utility name says what its own name says shows the name once | none | spec: activity-agents.spec.ts |
 | ACT-47 | Choice rows of a question (and a uam_surface list picker bound to nothing) look disabled and stop reacting to the pointer while an answer is on its way | interactions-card.test.tsx, surface.test.tsx | not feasible (the send window is a local request too short to observe) |
 | WSP-01 | The Thread header's Changes button and the sidebar row show the number of files the Thread changed | changes.test.mjs | spec: changes.spec.ts |
-| WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | planned |
+| WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | spec: workspace-changes-files.spec.ts |
 | WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | spec: workspace-changes.spec.ts |
 | WSP-04 | Edits the Thread then committed stay in Changes | none | spec: workspace-changes.spec.ts |
-| WSP-05 | Unfolding a file card loads its diff | changes.test.mjs | planned |
-| WSP-06 | A file renamed in the index (`git mv`) names its old path ("from old") and counts only the changed lines | none | planned |
-| WSP-07 | A binary file, untracked included, reads `binary` in the list and "Binary file: no textual diff is available." in… | changes.test.mjs | planned |
-| WSP-08 | A diff over 1 MiB (`maxDiffBytes`) shows "The diff exceeded its size limit and is unavailable." At most 1000 files… | changes.test.mjs | planned |
-| WSP-09 | A deleted file shows the deleted status, its Open button is disabled, and its diff shows the removed lines | none in tsx/mjs (Go test covers deletion | planned |
-| WSP-10 | The diff of a tracked file whose name contains glob characters (`*`, `[ab]`) shows only that file | none | planned |
-| WSP-11 | **Revert** on a hunk reverts that hunk on disk | changes.test.mjs | planned |
-| WSP-12 | **Viewed** marks and line comments are kept per Thread in this browser and survive a reload | changes.test.mjs | planned |
-| WSP-13 | Files that deserve a closer look (CI workflows, lockfiles, Dockerfiles, migrations, secrets code) come first with a… | none | planned |
-| WSP-14 | The panel's inner edge can be dragged to resize it (arrow keys work, double-click resets) and the width is kept per… | none | planned |
+| WSP-05 | Unfolding a file card loads its diff | changes.test.mjs | spec: workspace-changes-files.spec.ts |
+| WSP-06 | A file renamed in the index (`git mv`) names its old path ("from old") and counts only the changed lines | none | spec: workspace-changes-files.spec.ts |
+| WSP-07 | A binary file, untracked included, reads `binary` in the list and "Binary file: no textual diff is available." in… | changes.test.mjs | spec: workspace-changes-files.spec.ts |
+| WSP-08 | A diff over 1 MiB (`maxDiffBytes`) shows "The diff exceeded its size limit and is unavailable." At most 1000 files… | changes.test.mjs | spec: workspace-changes-files.spec.ts |
+| WSP-09 | A deleted file counts its removed lines (`+0 −N`), its Open button is disabled, and its diff shows the removed lines | none in tsx/mjs (Go test covers deletion | spec: workspace-changes-files.spec.ts |
+| WSP-10 | The diff of a tracked file whose name contains glob characters (`*`, `[ab]`) shows only that file | none | spec: workspace-changes-files.spec.ts |
+| WSP-11 | **Revert** on a hunk reverts that hunk on disk | changes.test.mjs | spec: workspace-changes-files.spec.ts |
+| WSP-12 | **Viewed** marks and line comments are kept per Thread in this browser and survive a reload | changes.test.mjs | spec: workspace-changes-files.spec.ts |
+| WSP-13 | Files that deserve a closer look (CI workflows, lockfiles, Dockerfiles, migrations, secrets code) come first with a… | none | spec: workspace-changes-files.spec.ts |
+| WSP-14 | The panel's inner edge can be dragged to resize it (arrow keys work, double-click resets) and the width is kept per… | none | spec: workspace-changes-files.spec.ts |
 | WSP-15 | A turn's **Changed N files** chip and the reply menu's "This turn's changes" open a read-only reader with that… | none | spec: workspace-changes.spec.ts |
-| WSP-16 | Inline edit-tool diffs in the transcript (edit-diff-cache) render at most 400 rows until **Show all**, and a… | none | planned |
+| WSP-16 | Inline edit-tool diffs in the transcript (edit-diff-cache) render at most 400 rows until **Show all**, and a… | none | spec: workspace-changes-files.spec.ts |
 | WSP-17 | The rewind preview (reply menu "Rewind to before this prompt…") names how many prompts go and, under **Conversation… | none | spec: workspace-rewind.spec.ts |
 | WSP-18 | Confirming **Conversation and files** restores the files on disk, removes the prompt and later turns from the… | none | spec: workspace-rewind.spec.ts |
-| WSP-19 | **Conversation only** shortens the conversation and leaves every file as it is | none | planned |
+| WSP-19 | **Conversation only** shortens the conversation and leaves every file as it is | none | spec: workspace-rewind.spec.ts |
 | WSP-20 | A file edited outside after the preview makes the preview stale: it is read again and needs a new confirmation | none | spec: workspace-rewind.spec.ts |
-| WSP-21 | Rewind is offered only while the Thread is idle, with nothing queued, waiting or running in the background | none | planned |
-| WSP-22 | A lost rewind result holds the Thread ("Reread conversation", then "Release thread" after a failed reread) and… | dom/rewind (4 tests) | planned (needs fault injection) |
-| WSP-23 | **Edit and resend** rewinds to before the prompt, then sends the edited text once | none | planned |
+| WSP-21 | Rewind is offered only while the Thread is idle, with nothing queued, waiting or running in the background | none | spec: workspace-rewind.spec.ts |
+| WSP-22 | A lost rewind result holds the Thread ("Reread conversation", then "Release thread" after a failed reread) and… | dom/rewind (4 tests) | planned (needs fault injection: a rewind whose result is lost between Copilot and uam) |
+| WSP-23 | **Edit and resend** rewinds to before the prompt, then sends the edited text once | none | spec: workspace-rewind.spec.ts |
 | WSP-24 | A new Thread placed in **New worktree** gets `git worktree add -b uam/<slug>` at `<repo>.worktrees/<branch slug>` | routines.test.mjs | spec: workspace-worktrees.spec.ts |
-| WSP-25 | `worktreeBaseRef` (repository `.github/copilot/settings*.json`, then the user's) and `worktreePathTemplate` (user… | none | planned |
-| WSP-26 | **New branch** (`uam/<8 hex>`) and **Switch** in the Project folder | none | planned |
+| WSP-25 | `worktreeBaseRef` (repository `.github/copilot/settings*.json`, then the user's) and `worktreePathTemplate` (user… | none | spec: workspace-worktrees.spec.ts |
+| WSP-26 | **New branch** (`uam/<8 hex>`) and **Switch** in the Project folder | none | spec: workspace-git-place.spec.ts |
 | WSP-27 | Settle or Archive of a Thread with its own unsaved git work asks first ("Settle…", counts, first 3 files, **Open… | none | spec: workspace-worktrees.spec.ts |
 | WSP-28 | Using a settled worktree Thread again (Reopen + message, or Run again) brings the worktree back from its branch,… | none | spec: workspace-worktrees.spec.ts |
-| WSP-29 | Branch from here on a worktree Thread makes a new worktree on a new branch at the source's commit, carrying its… | none | planned |
-| WSP-30 | A worktree Thread whose branch landed on origin's default branch settles itself (`settled_by: merged`) and its… | none | planned (needs a clock or sweep trigger) |
-| WSP-31 | Settings → Projects & worktrees lists worktrees biggest first with Thread, stage and unsaved state | none | planned |
-| WSP-32 | Below 10% free disk, the Worktrees rail row and the Settings gear carry a warning dot | none | planned (needs a full disk) |
-| WSP-33 | Settings: **Commit messages** and **Pull and merge requests** prompts (Save, Reset to default), and the… | dom/git-settings (1 test) | planned |
-| WSP-34 | The commit rules reach Threads opened afterwards in their system message: no attribution by default, otherwise a… | none | planned |
+| WSP-29 | Branch from here on a worktree Thread makes a new worktree on a new branch at the source's commit, carrying its… | none | spec: workspace-worktrees.spec.ts |
+| WSP-30 | A worktree Thread whose branch landed on origin's default branch settles itself (`settled_by: merged`) and its… | none | planned (needs a sweep trigger or a clock: the merged-work sweep runs hourly, not at start) |
+| WSP-31 | Settings → Projects & worktrees lists worktrees biggest first with Thread, stage and unsaved state | none | spec: workspace-worktrees.spec.ts |
+| WSP-32 | Below 10% free disk, the Worktrees rail row and the Settings gear carry a warning dot | none | not feasible (needs a filesystem under 10% free; the pack runs on the host disk without root) |
+| WSP-33 | Settings: **Commit messages** and **Pull and merge requests** prompts (Save, Reset to default), and the… | dom/git-settings (1 test) | spec: workspace-git-place.spec.ts |
+| WSP-34 | The commit rules reach Threads opened afterwards in their system message: no attribution by default, otherwise a… | none | spec: workspace-git-place.spec.ts |
 | WSP-35 | For a project folder that is no git repository, the header shows "Not a Git repository" in place of Changes and Files | dom/panels ("a project without Git offer | spec: workspace-git-setup.spec.ts |
-| WSP-36 | When git is not installed, the warning reads "Git not installed" with no Set up action | none | planned (needs PATH without git) |
+| WSP-36 | When git is not installed, the warning reads "Git not installed" with no Set up action | none | not feasible (uam finds git in fixed system folders, not on PATH; the pack cannot remove /usr/bin/git) |
 | WSP-37 | Terminal access gate: Settings → Server → UAM and access → Access → **Terminal** is off by default and the header… | none | spec: workspace-terminal.spec.ts |
 | WSP-38 | Opening the terminal slides up a dock reading "Connecting…" and "Starting a shell…", then "Connected" | none | spec: workspace-terminal.spec.ts |
 | WSP-39 | Shell lifetime: × or Restart on a connected shell asks first ("Close the terminal?" / "Restart the terminal?") | terminal.test.mjs | spec: workspace-terminal.spec.ts |
-| WSP-40 | A terminal opened from a worktree Thread runs in the worktree | none | planned |
-| WSP-41 | Dragging the dock's top edge (or using the keyboard) resizes it, and the PTY receives the new cols and rows | none | planned |
-| WSP-42 | Clipboard: releasing a selection copies it ("Copied"), right- or middle-click pastes, Ctrl+Shift+C/V work, and a… | dom/terminal-clipboard (8 tests) | planned |
-| WSP-43 | With focus in the terminal, keys (Esc included) go to the shell and not to uam shortcuts or the composer | none | planned |
-| WSP-44 | At most 8 terminals | none | planned |
-| WSP-45 | Without WebGL the dock says "The terminal needs WebGL, which this browser has turned off." | none | planned |
-| WSP-46 | Settings → Accounts → GitLab shows the glab account, the instance, and the selected Project's origin, role and token… | none | planned (needs a fake glab) |
-| WSP-47 | A reply ending a turn that touched GitLab items carries one chip per item in its outcome bar (`!2` draft, `Pipeline… | gitlab-refs.test.mjs | planned (needs a fake glab) |
-| WSP-48 | Pressing a chip opens the GitLab side panel: MR (discussions as Markdown, head pipeline), pipeline (jobs by stage,… | none | planned (needs a fake glab) |
-| WSP-49 | A failed job chip names the failure kind (**Tests failed · 2 tests**, **Runner failure · not your change**…) | none | planned (needs a fake glab) |
-| WSP-50 | Running items are reread every 20 s and open MRs every minute | none | planned (needs a fake glab) |
-| WSP-51 | MR review actions on the Thread's own MR: reply, resolve, draft reply, Investigate, Fix | none | planned (needs a fake glab) |
-| WSP-52 | Shell rules for agent glab calls: `glab api` and `search` are refused with a replacement, lists get `-P 10`, and… | glab_hooks_test.go | planned (needs a fake glab) |
-| WSP-53 | Before `git push`, committed CI changes get `glab ci lint` | none | planned (needs a fake glab) |
-| WSP-54 | `glab mr create` without a description gets one from the Utility model through `--description-file` | none | planned (needs a fake glab) |
+| WSP-40 | A terminal opened from a worktree Thread runs in the worktree | none | spec: workspace-terminal.spec.ts |
+| WSP-41 | Dragging the dock's top edge (or using the keyboard) resizes it, and the PTY receives the new cols and rows | none | spec: workspace-terminal.spec.ts |
+| WSP-42 | Clipboard: releasing a selection copies it ("Copied"), right- or middle-click pastes, Ctrl+Shift+C/V work, and a… | dom/terminal-clipboard (8 tests) | spec: workspace-terminal.spec.ts |
+| WSP-43 | With focus in the terminal, keys (Esc included) go to the shell and not to uam shortcuts or the composer | none | spec: workspace-terminal.spec.ts |
+| WSP-44 | At most 8 terminals | none | spec: workspace-terminal.spec.ts |
+| WSP-45 | Without WebGL the dock says "The terminal needs WebGL, which this browser has turned off." | none | spec: workspace-terminal.spec.ts |
+| WSP-46 | Settings → Accounts → GitLab shows the glab instance, the signed-in account, the token scopes and expiry; **Check access** reads again | none | spec: workspace-gitlab.spec.ts |
+| WSP-47 | A reply ending a turn that touched GitLab items carries one chip per item in its outcome bar (`!2` draft, `Pipeline… | gitlab-refs.test.mjs | spec: workspace-gitlab.spec.ts |
+| WSP-48 | Pressing a chip opens the GitLab side panel: MR (discussions as Markdown, head pipeline), pipeline (jobs by stage,… | none | spec: workspace-gitlab.spec.ts |
+| WSP-49 | A failed job chip names the failure kind (**Tests failed · 2 tests**, **Runner failure · not your change**…) | none | spec: workspace-gitlab.spec.ts |
+| WSP-50 | Running items are reread every 20 s and open MRs every minute | none | planned (needs a clock: rereads come 20 s and a minute apart) |
+| WSP-51 | MR review actions on the Thread's own MR: reply, resolve, draft reply, Investigate, Fix | none | planned (needs a fake GitLab that maps the Thread's own commit to its merge request and takes discussion writes) |
+| WSP-52 | Shell rules for agent glab calls: `glab api` and `search` are refused with a replacement, lists get `-P 10`, and… | glab_hooks_test.go | spec: workspace-gitlab.spec.ts |
+| WSP-53 | Before `git push`, committed CI changes get `glab ci lint` | none | spec: workspace-gitlab.spec.ts |
+| WSP-54 | `glab mr create` without a description gets one from the Utility model through `--description-file` | none | spec: workspace-gitlab.spec.ts |
 | WSP-55 | Settling keeps a worktree holding git-ignored files outside regenerable folders; Settings counts them as not committed and Remove asks first | worktree_cleanup_test.go | spec: workspace-worktrees.spec.ts |
 | SET-01 | The sidebar gear opens Settings over the main pane with `#settings` in the URL; × or Esc closes it and the Thread… | settings.test.tsx | spec: settings-view.spec.ts |
 | SET-02 | The rail lists the pages by group; Find a setting filters pages by words and Enter opens the first; a page mounts on… | settings.test.tsx, settings-groups.test.tsx | planned |
