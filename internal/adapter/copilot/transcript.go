@@ -222,6 +222,9 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		return t.planItem(ev)
 	case *rpc.UserMessageData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
+		if strings.TrimSpace(it.Text) == "" {
+			it.Text = "" // the space an attachment-only Send carries
+		}
 		if d.MessageID != nil && *d.MessageID != "" {
 			it.ID = *d.MessageID
 		}

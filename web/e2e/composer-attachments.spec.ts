@@ -1,5 +1,5 @@
 // Attachments beyond the paper clip: what is refused, paste, drop, and putting a past prompt back.
-// A message of only attachments has no case: its turn sometimes never starts (COVERAGE.md, CMP-24).
+// A message of only attachments is in composer-attachment-only.spec.ts.
 import type { ChatCompletionRequest } from '@copilotkit/aimock';
 import type { Locator, Page } from '@playwright/test';
 import { attach, PNG, useVisionMock, type Upload } from './composer-helpers';

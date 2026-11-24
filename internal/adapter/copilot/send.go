@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -27,9 +28,11 @@ type steer struct {
 // idle, background shells or not. An explicit "enqueue", and any prompt sent
 // during a turn, is held until session.idle, which the CLI withholds while a
 // background shell runs. Referenced files go as file and directory
-// attachments with their absolute paths.
+// attachments with their absolute paths. A message of only attachments goes
+// with a one-space prompt: the CLI (1.0.115) sometimes queues an empty one and
+// drops it, starting no turn. It keeps the space out of what the model reads.
 func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
-	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
+	return c.send(ctx, copilot.MessageOptions{Prompt: cmp.Or(prompt.Text, " "), Attachments: attachments(prompt)})
 }
 
 func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) error {
