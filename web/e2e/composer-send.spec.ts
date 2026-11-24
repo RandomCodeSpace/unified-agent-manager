@@ -1,8 +1,10 @@
 // Sending while idle and while a turn runs: Enter, Shift+Enter, After this turn, Send now and Stop.
 import fs from 'node:fs';
 import path from 'node:path';
-import { conversation, expect, lastUserText, startThread, test, threadState } from './harness';
+import { sidebarRow } from './composer-helpers';
+import { conversation, expect, lastUserText, send, startThread, test, threadState } from './harness';
 import { ownService } from './shell-helpers';
+import { capturedTurn } from './workspace-helpers';
 
 const slow = (word: string, lines: number) => Array.from({ length: lines }, (_, i) => `${word} line ${i + 1}`).join('\n\n');
 
@@ -186,4 +188,115 @@ test('a message queued while the service cannot save stays in the box and queues
     fs.chmodSync(config, 0o700);
     await own.stop();
   }
+});
+
+test('a queue left by a service restart is Paused; Resume sends the next and Clear, once confirmed, drops the rest', async ({ browser, uam, workdir, model }) => {
+  const hold = (id: string) => [{ id, name: 'create', arguments: { path: path.join(workdir, `${id}.txt`), file_text: 'held\n' } }];
+  model.toolRound('hold before the restart', hold('call_before'), 'Never said: the restart cuts this turn.');
+  // The first waiting message also stops at a permission request, so the others are still waiting when Clear is pressed.
+  model.toolRound('waiting one', hold('call_one'), 'Waiting one done.');
+  const own = await ownService(browser, uam.mock.url, workdir);
+  try {
+    const { page } = own;
+    await startThread(page, own.project, 'hold before the restart');
+    await expect(conversation(page).getByRole('button', { name: 'Allow once' })).toBeVisible();
+    const box = page.getByRole('textbox', { name: 'Message' });
+    for (const q of ['waiting one', 'waiting two', 'waiting three']) {
+      await box.fill(q);
+      await box.press('Control+Enter');
+      await expect(box).toHaveValue('');
+    }
+    await expect(page.getByText('3 waiting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sent after this turn', { exact: true })).toBeVisible();
+
+    await own.restart();
+    await expect(threadState(page, 'Interrupted')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('3 waiting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Paused', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sent after this turn', { exact: true })).toHaveCount(0);
+    // Paused: the restart sent none of the waiting messages. (The cut turn's CLI may still report its refused tool call as it stops.)
+    const sent = () => model.served().map((s) => s.fixture).filter((f) => f !== 'result of call_before');
+    expect(sent()).toEqual(['tools for hold before the restart']);
+
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    const allow = conversation(page).getByRole('button', { name: 'Allow once' });
+    await expect(allow).toBeVisible();
+    await expect(conversation(page).getByText('waiting one', { exact: true })).toBeVisible();
+    await expect(page.getByText('2 waiting', { exact: true })).toBeVisible();
+    await expect(page.getByText('Paused', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
+
+    const clear = page.getByRole('button', { name: 'Clear', exact: true });
+    const confirm = page.getByRole('alertdialog', { name: 'Clear 2 waiting messages?' });
+    await clear.click();
+    await expect(confirm).toContainText('Their text is not kept; nothing else changes.');
+    await confirm.getByRole('button', { name: 'Keep' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText('2 waiting', { exact: true })).toBeVisible();
+    await clear.click();
+    await confirm.getByRole('button', { name: 'Clear all' }).click();
+    await expect(page.getByText(/\d+ waiting/)).toHaveCount(0);
+
+    await allow.click();
+    await expect(conversation(page).getByText('Waiting one done.')).toBeVisible();
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    await expect(conversation(page).getByText('waiting two')).toHaveCount(0);
+    expect(sent()).toEqual(['tools for hold before the restart', 'tools for waiting one', 'result of call_one']);
+  } finally {
+    await own.stop();
+  }
+});
+
+test('Branch from here copies the conversation through that reply into a new Thread, named "(branch)" and Idle, and sends nothing', async ({ page, project, model, workdir }) => {
+  model.reply('first of the source', 'First source answer.').title('first of the source', 'Source row');
+  // The last turn writes a file, so its Changed chip can tell when uam is done with it (below).
+  model.toolRound('second of the source', [{ id: 'call_source', name: 'create', arguments: { path: path.join(workdir, 'source.txt'), file_text: 'source\n' } }], 'Second source answer.');
+  model.reply('continue on the branch', 'Branch answer.');
+  await startThread(page, project, 'first of the source');
+  await expect(conversation(page).getByText('First source answer.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  await send(page, 'second of the source');
+  await conversation(page).getByRole('button', { name: 'Allow once' }).click();
+  await expect(conversation(page).getByText('Second source answer.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  // uam refuses a branch while the Thread still changes ("the thread changed while reading its record; choose the
+  // turn again"), and a turn that reads Finished is not yet at rest: its captures are read once the CLI is idle.
+  await capturedTurn(page, 0);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Source row');
+  const source = page.url();
+  const calls = model.served().length;
+
+  await conversation(page).getByRole('button', { name: 'Turn actions' }).first().click();
+  await page.getByRole('menuitem', { name: 'Branch from here' }).click();
+  const picker = page.getByRole('dialog', { name: 'Branch from here' });
+  await expect(picker).toContainText('Copies the conversation through this reply into a new thread.');
+  await expect(picker.getByRole('combobox', { name: 'Branch model' })).toHaveText('Mock');
+  await picker.getByRole('button', { name: 'Branch thread' }).click();
+
+  await expect(page).not.toHaveURL(source);
+  await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Source row (branch)');
+  // A new branch is Idle, never Closed, in its header and its row.
+  await expect(threadState(page, 'Idle')).toBeVisible();
+  await expect(sidebarRow(page, 'Source row (branch)')).toContainText('Idle');
+  const conv = conversation(page);
+  await expect(conv.getByText('Branched from')).toBeVisible();
+  await expect(conv.getByText('first of the source', { exact: true })).toBeVisible();
+  await expect(conv.getByText('First source answer.')).toBeVisible();
+  await expect(conv.getByText('Second source answer.')).toHaveCount(0);
+  await expect(conv.getByText('second of the source')).toHaveCount(0);
+  await expect(sidebarRow(page, 'Source row (branch)')).toBeVisible();
+  expect(model.served()).toHaveLength(calls);
+
+  // The branch goes on from the copied reply; the source keeps both of its turns.
+  await send(page, 'continue on the branch');
+  await expect(conv.getByText('Branch answer.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  const sent = JSON.stringify(model.served().at(-1)!.request.messages);
+  expect(sent).toContain('First source answer.');
+  expect(sent).not.toContain('Second source answer.');
+  await page.goto(source);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Source row');
+  await expect(conv.getByText('Second source answer.')).toBeVisible();
+  await expect(conv.getByText('Branch answer.')).toHaveCount(0);
 });
