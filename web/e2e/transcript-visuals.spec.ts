@@ -1,8 +1,10 @@
 // Visuals in replies: Mermaid diagrams, editable drawings, uam_chart cards, and what a reload brings back.
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { conversation, expect, send, startThread, test, threadState } from './harness';
-import { expectPinned, pageErrors } from './transcript-helpers';
+import { conversation, expect, lastUserText, send, startThread, test, threadState, toolResult } from './harness';
+import { expectPinned, pageErrors, yolo } from './transcript-helpers';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
@@ -178,4 +180,139 @@ test('a reload restores a finished rich conversation: table, diagram, code, char
   await expect(conv.getByRole('button', { name: /^Took \S+\. Show this turn's waybill$/ }).last()).toBeVisible();
   for (const prompt of ['rich turn one', 'rich turn two']) await expect(conv.getByText(prompt, { exact: true })).toHaveCount(1);
   await expectPinned(page);
+});
+
+test('a chart command runs in the Thread folder only in Yolo mode, and one printing over 1 MiB is refused', async ({ page, project, model, uam, workdir }) => {
+  const chart = (id: string, title: string, command: string) => ({ id, name: 'uam_chart', arguments: { title, kind: 'bar', x: 'day', y: ['commits'], format: 'csv', command } });
+  const rows = "printf 'day,commits\\nMon,3\\nTue,5\\n'";
+  model.toolRound('chart in safe mode', [chart('call_safe', 'Safe commits', `touch ran-in-safe; ${rows}`)], 'Safe mode refused it.');
+  model.toolRound('chart in yolo mode', [chart('call_yolo', 'Yolo commits', `touch ran-in-yolo; ${rows}`)], 'Yolo drew it.');
+  model.toolRound('chart too much', [chart('call_big', 'Too much', 'head -c 1100000 /dev/zero | tr "\\0" a')], 'Too much output.');
+  await startThread(page, project, 'chart in safe mode');
+  const conv = conversation(page);
+  await expect(conv.getByText('Safe mode refused it.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  // Safe: uam runs nothing, and tells the agent to run the command with its shell tool.
+  expect(toolResult(model, 'call_safe')).toContain('Safe mode, so uam does not run commands for it');
+  expect(fs.existsSync(path.join(workdir, 'ran-in-safe'))).toBe(false);
+  await expect(conv.getByRole('figure', { name: 'Chart: Safe commits' })).toHaveCount(0);
+
+  await yolo(page, uam.api);
+  await send(page, 'chart in yolo mode');
+  await expect(conv.getByText('Yolo drew it.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  // Yolo: it ran in the Thread folder, and the card holds what it printed.
+  expect(fs.existsSync(path.join(workdir, 'ran-in-yolo'))).toBe(true);
+  const card = conv.getByRole('figure', { name: 'Chart: Yolo commits' });
+  await expect(card.locator('canvas, svg').first()).toBeVisible();
+  await card.getByRole('button', { name: 'Chart tools' }).click();
+  await page.getByRole('button', { name: 'Table', exact: true }).click();
+  const table = card.getByRole('region', { name: 'Rows of Yolo commits' });
+  await expect(table.getByRole('row', { name: /Mon\s*3/ })).toBeVisible();
+  await expect(table.getByRole('row', { name: /Tue\s*5/ })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await send(page, 'chart too much');
+  await expect(conv.getByText('Too much output.')).toBeVisible();
+  expect(toolResult(model, 'call_big')).toContain('the command printed more than 1024 KiB');
+  await expect(conv.getByRole('figure', { name: 'Chart: Too much' })).toHaveCount(0);
+});
+
+test('Use selection in message sends the shapes selected on the drawing with the next message', async ({ page, project, model, workdir }) => {
+  model.reply('draw for selecting', 'Edit me:\n\n```mermaid\ngraph TD; A[Alpha]-->B[Beta]\n```\n');
+  model.reply('make this red', 'Made it red.');
+  await startThread(page, project, 'draw for selecting');
+  const conv = conversation(page);
+  await expect(conv.getByRole('img', { name: 'Diagram' })).toBeVisible({ timeout: 30_000 });
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  await conv.getByRole('button', { name: 'Edit as drawing' }).click();
+  await page.getByRole('alertdialog', { name: 'Create an editable drawing?' }).getByRole('button', { name: 'Create drawing' }).click();
+  const docs = path.join(workdir, 'docs');
+  await expect.poll(() => (fs.existsSync(docs) ? fs.readdirSync(docs) : [])).toHaveLength(1);
+  const [file] = fs.readdirSync(docs);
+  const editor = page.getByRole('dialog', { name: `Edit ${file}` });
+  const canvas = editor.locator('canvas').last();
+  await expect(canvas).toBeVisible({ timeout: 30_000 });
+  const use = editor.getByRole('button', { name: 'Use selection in message' });
+  await expect(use).toBeDisabled();
+
+  // Select every shape and arrow on the canvas.
+  await canvas.click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('ControlOrMeta+a');
+  await use.click();
+  await expect(editor).toHaveCount(0);
+  // The composer's chip counts them; its × would take them back.
+  const chip = page.getByText('· 3 selected', { exact: true });
+  await expect(chip).toBeVisible();
+  await expect(page.getByRole('button', { name: `Remove the selection in ${file}` })).toBeVisible();
+
+  await send(page, 'make this red');
+  await expect(conv.getByText('Made it red.')).toBeVisible();
+  const sent = lastUserText(model.served().find((s) => s.fixture === 'reply make this red')!.request);
+  expect(sent).toContain(`The user selected in docs/${file}: "Alpha", "Beta", edge "Alpha" → "Beta"`);
+  await expect(chip).toHaveCount(0);
+});
+
+/**
+ * A stand-in for a draw.io page on loopback: it speaks the embed protocol uam uses (init, load,
+ * export as PNG or as the selection's JSON) and, on its one button, autosaves the loaded file with
+ * Alpha renamed to Gamma, as an edit in draw.io would.
+ */
+const DRAWIO_STAND_IN = `<!doctype html><title>draw.io stand-in</title><button id="save">Rename Alpha</button><script>
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+let xml = '';
+const post = (m) => parent.postMessage(JSON.stringify(m), '*');
+addEventListener('message', (e) => {
+  const m = JSON.parse(e.data);
+  if (m.action === 'load') { xml = m.xml; post({ event: 'load' }); }
+  if (m.action === 'export' && m.format === 'png') post({ event: 'export', format: 'png', data: PNG });
+  if (m.action === 'export' && m.format === 'json') post({ event: 'export', format: 'json', data: { pages: [{ cells: [] }] } });
+});
+document.getElementById('save').onclick = () => post({ event: 'autosave', xml: xml.replaceAll('Alpha', 'Gamma') });
+post({ event: 'init' });
+</script>`;
+
+test('Settings → Diagram editor checks and enables a draw.io origin, and a drawing then opens and saves in draw.io there', async ({ page, project, model, uam, workdir }) => {
+  const server = http.createServer((_, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end(DRAWIO_STAND_IN));
+  server.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  model.reply('draw for draw.io', 'Edit me:\n\n```mermaid\ngraph TD; A[Alpha]-->B[Beta]\n```\n');
+  try {
+    await page.goto('/#settings');
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Conversation', exact: true }).click();
+    const section = page.getByRole('region', { name: 'Diagram editor' }).or(page.locator('section', { has: page.getByRole('heading', { name: 'Diagram editor' }) }));
+    await section.getByRole('radio', { name: 'draw.io' }).click();
+    const enable = section.getByRole('switch', { name: 'Enable draw.io' });
+    await section.getByRole('textbox', { name: 'Origin' }).fill(origin);
+    await expect(enable).toBeDisabled();
+    await section.getByRole('button', { name: 'Check' }).click();
+    await expect(section.getByRole('status').filter({ hasText: 'Self-hosted' })).toHaveText(/Self-hosted · No CORS · Framing allowed/);
+    await enable.click();
+    await expect(enable).toBeChecked();
+    expect(await uam.api('GET', '/api/settings')).toMatchObject({ drawio: { origin, enabled: true } });
+
+    // The page admits the origin's frame from its next load.
+    await startThread(page, project, 'draw for draw.io');
+    const conv = conversation(page);
+    await expect(conv.getByRole('img', { name: 'Diagram' })).toBeVisible({ timeout: 30_000 });
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    await conv.getByRole('button', { name: 'Edit as drawing' }).click();
+    await page.getByRole('alertdialog', { name: 'Create an editable drawing?' }).getByRole('button', { name: 'Create drawing' }).click();
+    const docs = path.join(workdir, 'docs');
+    await expect.poll(() => (fs.existsSync(docs) ? fs.readdirSync(docs) : [])).toHaveLength(1);
+    const [file] = fs.readdirSync(docs);
+    expect(file).toMatch(/\.drawio$/);
+    expect(fs.readFileSync(path.join(docs, file), 'utf8')).toContain('Alpha');
+
+    const editor = page.getByRole('dialog', { name: `Edit ${file}` });
+    const frame = editor.locator(`iframe[src^="${origin}/?embed=1&proto=json"]`);
+    await expect(frame).toBeVisible();
+    await editor.frameLocator(`iframe[src^="${origin}/"]`).getByRole('button', { name: 'Rename Alpha' }).click();
+    await expect.poll(() => fs.readFileSync(path.join(docs, file), 'utf8')).toContain('Gamma');
+    expect(fs.readFileSync(path.join(docs, file), 'utf8')).not.toContain('Alpha');
+  } finally {
+    await uam.api('PATCH', '/api/settings', { drawio: { origin, enabled: false } });
+    server.close();
+  }
 });

@@ -3,7 +3,10 @@
 // of about 16 KiB each make a history of four or more pages without sixty scripted turns; each
 // reply's bulk is one code block, which the page caps at 480 px, so the history stays a few screens tall.
 import type { Browser, Page, Route } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { conversation, expect, send, startThread, test, threadState, type Model, type Project } from './harness';
+import { ownService } from './shell-helpers';
 import { expectPinned, frames, line, lines, offsetOf, perLine, settledScrollTop, topItem } from './transcript-helpers';
 
 const TURNS = 12;
@@ -11,11 +14,11 @@ const ask = (n: number) => `history turn ${String(n).padStart(2, '0')}`;
 const answer = (n: number) => `Reply ${n} of the history`;
 const bulk = (n: number) => Array.from({ length: 10 }, (_, k) => `${n}.${k} ${'x'.repeat(1600)}`).join('\n');
 
-/** Twelve finished turns in one Thread; returns its URL. */
-async function history(page: Page, project: Project, model: Model) {
-  for (let n = 1; n <= TURNS; n++) model.reply(ask(n), `${answer(n)}\n\n\`\`\`text\n${bulk(n)}\n\`\`\`\n`, { chunkSize: 8000 });
+/** `turns` finished turns (twelve by default) in one Thread; returns its URL. */
+async function history(page: Page, project: Project, model: Model, turns = TURNS) {
+  for (let n = 1; n <= turns; n++) model.reply(ask(n), `${answer(n)}\n\n\`\`\`text\n${bulk(n)}\n\`\`\`\n`, { chunkSize: 8000 });
   const url = await startThread(page, project, ask(1));
-  for (let n = 1; n <= TURNS; n++) {
+  for (let n = 1; n <= turns; n++) {
     if (n > 1) await send(page, ask(n));
     await expect(conversation(page).getByText(answer(n), { exact: true })).toBeAttached();
     await expect(threadState(page, 'Finished')).toBeVisible();
@@ -144,4 +147,40 @@ test('reading old history while a new turn streams holds still, and Jump to bott
   const counts = await replyCounts(reader);
   expect(Object.entries(counts).filter(([, c]) => c > 1)).toEqual([]);
   await reader.context().close();
+});
+
+test('after a service restart the conversation is read back from Copilot\'s record, to its first message', async ({ browser, uam, workdir, model }) => {
+  test.setTimeout(90_000);
+  const turns = 6;
+  const own = await ownService(browser, uam.mock.url, workdir);
+  try {
+    const url = await history(own.page, own.project, model, turns);
+    await own.restart();
+    // uam keeps no transcript of its own: what the reader sees next can only come from Copilot's record.
+    const sessionState = path.join(own.root, 'home', '.copilot', 'session-state');
+    const record = fs.readdirSync(sessionState).map((d) => path.join(sessionState, d, 'events.jsonl')).filter((f) => fs.existsSync(f));
+    expect(record.some((f) => fs.readFileSync(f, 'utf8').includes(answer(1)))).toBe(true);
+    for (const dir of ['config', 'run', 'cache']) {
+      for (const f of fs.readdirSync(path.join(own.root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())) {
+        expect(fs.readFileSync(path.join(f.parentPath, f.name), 'latin1'), `${dir}/${f.name}`).not.toContain(answer(1));
+      }
+    }
+
+    const token = fs.readFileSync(path.join(own.root, 'config', 'web-token'), 'utf8').trim();
+    const reader = await freshReader(browser, url, token);
+    await reader.goto(url);
+    const conv = conversation(reader);
+    await expect(conv.getByText(answer(turns), { exact: true })).toBeVisible();
+    const first = conv.getByText(ask(1), { exact: true });
+    for (let i = 0; i < 40 && !(await first.count()); i++) {
+      await wheelUp(reader, 1500);
+      await expect(conv.getByText('Loading earlier messages…')).toHaveCount(0);
+    }
+    await expect(first).toBeAttached();
+    for (let n = 1; n <= turns; n++) await expect(conv.getByText(answer(n), { exact: true })).toHaveCount(1);
+    await expect(conv.getByText('Earlier history was truncated', { exact: false })).toHaveCount(0);
+    await reader.context().close();
+  } finally {
+    await own.stop();
+  }
 });

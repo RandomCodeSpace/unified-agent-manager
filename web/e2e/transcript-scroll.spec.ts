@@ -1,4 +1,5 @@
-// Reading while a reply streams: holding still when scrolled up, following again, reloading mid-stream.
+// Reading while a reply streams: holding still when scrolled up, following again, reloading mid-stream, a dropped event stream.
+import type { WebSocketRoute } from '@playwright/test';
 import { conversation, expect, startThread, test, threadState } from './harness';
 import { expectPinned, line, lines, occurrences, perLine, settledScrollTop } from './transcript-helpers';
 
@@ -65,4 +66,38 @@ test('reloading mid-stream shows the text so far, and the reply ends whole and o
   await expect(conv.locator('[data-reply]')).toHaveCount(1);
   await expect(conv.getByText('stream then reload', { exact: true })).toHaveCount(1);
   await expectPinned(page);
+});
+
+test('a dropped event stream reconnects on its own, and the streaming reply ends whole and once', async ({ page, project, model }) => {
+  // On plain HTTP the page reads its event streams over the service's event socket; each passes through here, so the case can drop it.
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/api\/events\/socket/, (ws) => {
+    ws.connectToServer();
+    sockets.push(ws);
+  });
+  model.reply('stream through a drop', lines(200), perLine(60));
+  await startThread(page, project, 'stream through a drop');
+  const conv = conversation(page);
+  await expect(conv.getByText(line(30), { exact: true })).toBeAttached();
+  await expect(page.getByRole('status').filter({ hasText: /^Connected$/ })).toBeAttached();
+
+  const lost = page.getByRole('status').filter({ hasText: 'Connection lost, reconnecting. Work continues on the server.' });
+  const dropped = sockets.splice(0);
+  expect(dropped.length).toBeGreaterThan(0);
+  for (const ws of dropped) await ws.close({ code: 1006, reason: 'dropped by the case' }).catch(() => ws.close());
+  await expect(lost).toBeAttached();
+  await expect(lost).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: /^Connected$/ })).toBeAttached();
+  expect(sockets.length, 'the page opened its streams again').toBeGreaterThan(0);
+  // Back while the reply still streams: the rest arrives over the new stream.
+  await expect(threadState(page, 'Working')).toBeVisible();
+
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  const counts = await occurrences(conv, /stream line \d{3}/);
+  expect(Object.keys(counts)).toHaveLength(200);
+  expect(Object.entries(counts).filter(([, n]) => n !== 1)).toEqual([]);
+  await expect(conv.locator('[data-reply]')).toHaveCount(1);
+  await expectPinned(page);
+  // Reconnecting resent nothing: the prompt went to the model once.
+  expect(model.served().filter((s) => s.fixture === 'reply stream through a drop')).toHaveLength(1);
 });

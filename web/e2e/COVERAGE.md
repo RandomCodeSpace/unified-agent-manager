@@ -113,37 +113,37 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-02 | Scrolling up while text arrives leaves the view where the reader put it | none | spec: transcript-scroll.spec.ts |
 | TRN-03 | Replies render as Markdown while streaming (headings, lists, emphasis, blockquote, inline code) | markdown.test.mjs | spec: transcript.spec.ts, transcript-markdown.spec.ts |
 | TRN-04 | Fenced code blocks show a language header, syntax highlighting (a lazy chunk that is skipped over 100k chars) and a… | none | spec: transcript.spec.ts, transcript-markdown.spec.ts |
-| TRN-05 | `Copy message` on a message or sign-off copies the Markdown as written and confirms with `Copied` | none | planned |
-| TRN-06 | Links open outside the app | none | planned |
+| TRN-05 | `Copy message` on a message or sign-off copies the Markdown as written and confirms with `Copied` | none | spec: transcript-messages.spec.ts |
+| TRN-06 | Links open outside the app | none | spec: transcript-messages.spec.ts |
 | TRN-07 | Unsafe model output is neutralised: raw HTML shows as text, HTML comments are hidden, and `javascript:` URLs are… | none | spec: transcript-markdown.spec.ts |
 | TRN-08 | Markdown tables fill the width | table-visual.test.mjs | spec: transcript.spec.ts, transcript-markdown.spec.ts |
-| TRN-09 | Rich replies: exact Markdown shapes (alerts/callouts, label grids, stat tiles, step lists, task lists, status lists,… | none | planned |
+| TRN-09 | Rich replies: exact Markdown shapes (alerts/callouts, label grids, stat tiles, step lists, task lists, status lists,… | none | spec: transcript-messages.spec.ts |
 | TRN-10 | A ```mermaid fence renders as a diagram (a `data:` SVG `img alt="Diagram"` drawn in a hidden `iframe… | diagram.test.mjs | spec: transcript-visuals.spec.ts |
 | TRN-11 | `Edit as drawing` on a flowchart asks `Create an editable drawing?`: `Create drawing` writes `docs/*.excalidraw` and… | none | spec: transcript-visuals.spec.ts |
-| TRN-12 | `Use selection in message` sends the selected shapes with the next message | none | planned |
-| TRN-13 | The draw.io editor (Settings → Conversation → Diagram editor) at a named origin | none | planned (needs a local draw.io stand-in) |
+| TRN-12 | `Use selection in message` sends the selected shapes with the next message | none | spec: transcript-visuals.spec.ts |
+| TRN-13 | The draw.io editor (Settings → Conversation → Diagram editor) at a named origin | none | spec: transcript-visuals.spec.ts (a loopback draw.io stand-in that speaks the embed protocol) |
 | TRN-14 | A `uam_chart` call shows a chart card (`Chart: <title>`) with Table, Copy CSV and Pin to project | chart.test.mjs, chart-table.test.mjs | spec: transcript-visuals.spec.ts (Pin to project not covered) |
-| TRN-15 | A chart with `command` runs it in the Thread folder only in Yolo mode (30 s, 1 MiB) | unsure: none found in UI tests (Go tests | planned |
+| TRN-15 | A chart with `command` runs it in the Thread folder only in Yolo mode (30 s, 1 MiB) | unsure: none found in UI tests (Go tests | spec: transcript-visuals.spec.ts (the 30 s limit not covered: it needs a 30 s wait) |
 | TRN-16 | Scrolling up loads older pages until the first recorded message | history-paging (7), history-window (14), | spec: transcript-history.spec.ts |
 | TRN-17 | After reading old pages while new turns arrive, `Jump to bottom` drops the old window (`history_after`) and lands on… | none | spec: transcript-history.spec.ts (window never drops its newest rows: that needs more than 150 rows) |
-| TRN-18 | History older than the service's in-memory part, or read after a service restart, comes from Copilot's record | none in UI (no test for the truncated no | planned (needs a service restart) |
-| TRN-19 | Read pages are cached in IndexedDB (64 MiB, 16 MiB per Thread, 14 days), so re-reading them after a reload needs no… | historyCache.test.mjs | planned |
+| TRN-18 | History older than the service's in-memory part, or read after a service restart, comes from Copilot's record | none in UI (no test for the truncated no | spec: transcript-history.spec.ts (after a restart; history past the in-memory part needs 2,000 items or 16 MiB of record) |
+| TRN-19 | Read pages are cached in IndexedDB (64 MiB, 16 MiB per Thread, 14 days), so re-reading them after a reload needs no… | historyCache.test.mjs | planned (only archive pages are cached: it needs history past the 16 MiB the service reads back from the record or past 2,000 retained items, too slow to build in the pack) |
 | TRN-20 | Reloading the page restores the conversation: messages, the finished turn's sign-off, charts, tables, diagrams and… | none | spec: transcript.spec.ts, transcript-visuals.spec.ts |
 | TRN-21 | Reloading while a reply streams shows the text so far, which then continues to the end with no duplicated or lost text | history-paging.test.mjs | spec: transcript-scroll.spec.ts |
-| TRN-22 | A dropped or silent event stream reopens on its own ("reconnecting" state), and the streaming reply completes… | event-stream.test.mjs | planned (the browser offline switch only pauses an open loopback stream; a reconnect needs 20 s or more of silence or a proxy) |
+| TRN-22 | A dropped or silent event stream reopens on its own ("reconnecting" state), and the streaming reply completes… | event-stream.test.mjs | spec: transcript-scroll.spec.ts (a dropped stream; a silent one needs 37.5 s of silence) |
 | TRN-23 | The turn sign-off follows the reply's last words: `Took Ns · N command ›`, outcome chips, and copy plus the turn… | dom/transcript (≈10 tests), dom/turn-way | spec: transcript-turn.spec.ts |
 | TRN-24 | Receipts: under the last reply of an ended turn, claims that the turn's tool calls contradict are stamped… | receipts.test.mjs | spec: transcript-turn.spec.ts |
-| TRN-25 | Finish evidence: the Changes panel opens with `Finished — check the evidence` (Passed/Failed/Not verified), and the… | none | planned |
-| TRN-26 | The Since you left line under the header summarises what happened while away | none | planned |
+| TRN-25 | Finish evidence: the Changes panel opens with `Finished — check the evidence` (Passed/Failed/Not verified), and the… | none | spec: transcript-turn.spec.ts |
+| TRN-26 | The Since you left line under the header summarises what happened while away | none | spec: transcript-away.spec.ts |
 | TRN-27 | File references become tags with an icon (path, `path:line`, a bare name once a tool touched it, a unique partial path) | file-references.test.mjs, preview.test.mjs, markdown.test.mjs | spec: transcript-turn.spec.ts (fixme: on-screen references sometimes never resolve) |
-| TRN-28 | The open preview reloads in place when a tool in the Thread edits the file (`Reload` covers other changes) | preview.test.mjs | planned |
-| TRN-29 | A Markdown file preview renders the Markdown, and `Show the file as` toggles to source | none | planned |
-| TRN-30 | Tool call lines: each call is one line with a status mark, a click opens full input and output (details load as you… | none | planned |
+| TRN-28 | The open preview reloads in place when a tool in the Thread edits the file (`Reload` covers other changes) | preview.test.mjs | spec: transcript-preview.spec.ts |
+| TRN-29 | A Markdown file preview renders the Markdown, and `Show the file as` toggles to source | none | spec: transcript-preview.spec.ts |
+| TRN-30 | Tool calls are steps in the turn's timeline (the sign-off's counts open it): one line per call with its result (`ok`, `exit 2`); a click opens its input and output, three lines until `Show all N lines` | none | spec: transcript-messages.spec.ts |
 | TRN-31 | Long command output opens in a `Command output` side panel that jumps to the latest output and has `Close command… | none | spec: transcript-turn.spec.ts |
 | TRN-32 | A visual that throws (chart option the library rejects, a bad diagram) shows its reason in place (`The chart could… | none | spec: transcript-visuals.spec.ts (charts; a bad diagram in TRN-10) |
-| TRN-33 | A message too long to keep whole shows its start and `Show full message` (plain text) | none | planned |
-| TRN-34 | Reasoning shows inline in grey, three lines at a time with `Show more`, and `Thought for Ns` once done | none | planned |
-| TRN-35 | Closing Settings (or Routines) brings the Thread back at the same scroll position with open rows | none | planned |
+| TRN-33 | A message too long to keep whole shows its start and `Show full message` (plain text) | none | spec: transcript-messages.spec.ts |
+| TRN-34 | Reasoning is metadata: the turn line counts it (`2 thoughts`), each thought is a `Thought` step that opens onto its text with `Copy thinking`, and none of it stands in the reply | none | spec: transcript-messages.spec.ts |
+| TRN-35 | Closing Settings (or Routines) brings the Thread back at the same scroll position with open rows | none | spec: transcript-away.spec.ts |
 | TRN-36 | iOS WebKit paging and anchoring workarounds: a page lands only after the touch ends and 150 ms without scroll, and… | none | not feasible: iOS WebKit only |
 | TRN-37 | A Copilot Fusion turn shows its route on the working head (a Standard turn, the model it picked and why), a row per phase at the conversation's foot, and "Critic reviewing" on the strip | fusion-route.test.tsx, fusion.test.mjs | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
 | TRN-38 | The strip's "Agents and commands" list holds Fusion's recorded phases and the background commands with the subagents, under their message, with kind chips; a phase opens its reader with the verdict and Show in conversation | fusion-list.test.tsx, subagents.test.mjs, fusion_test.go | not feasible (Fusion routes on GitHub's side; aimock serves one model) |
