@@ -1,4 +1,5 @@
 // Helpers of the settings cases (settings-*.spec.ts).
+import http from 'node:http';
 import { expect, type Page } from '@playwright/test';
 
 type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
@@ -57,6 +58,30 @@ export async function quietBackground(uam: Api): Promise<() => Promise<void>> {
   return restore;
 }
 
+/** A short random tag: a case names its own models and providers, since the worker's service is shared. */
+export const tag = () => Math.random().toString(36).slice(2, 8);
+
+/**
+ * Adds models to the mock's provider (they share its endpoint and saved key),
+ * beside the custom models already there. A case that calls it puts
+ * `custom_models` back with keepSettings.
+ */
+export async function addMockModels(uam: Api, models: { model_id: string; display_name: string }[]) {
+  const saved = (await readSettings(uam)).custom_models!;
+  const mock = saved.find((m) => m.model_id === 'mock-1')!;
+  await uam.api('PATCH', '/api/settings', {
+    custom_models: [...saved.map(({ key_present: _, ...m }) => m), ...models.map((m) => ({ name: mock.name, base_url: mock.base_url, api_key_env: '', ...m }))],
+  });
+}
+
+/** Picks `item` of the composer's model menu, under the provider group `provider` when given. */
+export async function pickModel(page: Page, item: string, provider?: string) {
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  const menu = page.getByRole('menu');
+  await (provider ? menu.getByRole('group', { name: provider }) : menu).getByRole('menuitemradio', { name: item }).click();
+  await expect(page.getByRole('button', { name: `Model: ${item}` })).toBeVisible();
+}
+
 /** Opens Settings on the page named `label` in its rail. */
 export async function openSettings(page: Page, label: string) {
   if (!page.url().endsWith('#settings')) await page.goto('/#settings');
@@ -72,3 +97,30 @@ export const threadId = (page: Page) => {
   expect(id).toMatch(/^[0-9a-f-]{36}$/);
   return id;
 };
+
+/**
+ * A remote MCP server on loopback that offers `tools` (streamable HTTP, JSON
+ * answers), for a Copilot user configuration to name. It serves until `close`.
+ */
+export async function mockMcpServer(tools: { name: string; description: string }[]): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+    req.on('end', () => {
+      if (req.method !== 'POST') return res.writeHead(405).end();
+      const call = JSON.parse(body) as { id?: number; method: string };
+      // A notification has no id and gets no answer.
+      if (call.id === undefined) return res.writeHead(202).end();
+      let result: unknown = {};
+      if (call.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'pack', version: '1' } };
+      if (call.method === 'tools/list') result = { tools: tools.map((t) => ({ ...t, inputSchema: { type: 'object', properties: {} } })) };
+      return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: call.id, result }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
+  };
+}

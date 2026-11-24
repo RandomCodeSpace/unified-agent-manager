@@ -1,0 +1,228 @@
+// Settings about the server itself: the Copilot CLI card, the UAM version, session stats, connected instances, and the
+// draw.io origin check.
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { binary, conversation, expect, startService, startThread, stopService, test, threadState } from './harness';
+import { openSettings, quietBackground, readSettings, threadId } from './settings-helpers';
+
+type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
+
+test('the Copilot CLI card shows the installed version, then a newer release with its update, or why the check failed', async ({ page, uam }) => {
+  const real = (await uam.api('GET', '/api/providers/copilot/cli')) as { installed: string };
+  expect(real.installed).toMatch(/^\d+\.\d+\.\d+/);
+  await openSettings(page, 'GitHub Copilot');
+  const card = page.getByRole('group', { name: 'Copilot CLI' });
+  await expect(card.getByText(real.installed, { exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Check again' })).toBeEnabled();
+
+  // What the release check answers depends on the network: the next two reads are answered here.
+  const checked_at = new Date().toISOString();
+  let cli: Record<string, unknown> = { installed: real.installed, latest: '9.9.9', update_available: true, state: 'idle', checked_at };
+  await page.route(/\/api\/providers\/copilot\/cli(\?|$)/, (route) => route.fulfill({ json: cli }));
+  await card.getByRole('button', { name: 'Check again' }).click();
+  await expect(card.getByRole('status').first()).toHaveText(/^9\.9\.9 available · Checked /);
+  await expect(card.getByText(real.installed, { exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Update to 9.9.9' })).toBeVisible();
+
+  cli = { installed: real.installed, latest: real.installed, update_available: false, state: 'idle', checked_at, check_error: 'the registry answered 503 Service Unavailable' };
+  await card.getByRole('button', { name: 'Check again' }).click();
+  await expect(card.getByText('Could not check for a newer release: the registry answered 503 Service Unavailable', { exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: /^Update to/ })).toHaveCount(0);
+  await expect(card.getByRole('alert')).toHaveCount(0);
+});
+
+test('UAM shows the running version; an installed binary that cannot be read gives the reason and no Restart; another version installed there is named, and Restart runs it in place', async ({ browser }) => {
+  // A service of the test's own, started from a copy of the binary so the copy can be replaced, on a port it gets
+  // again after its restart.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uam-e2e-bin-'));
+  const bin = path.join(root, 'uam');
+  fs.copyFileSync(binary(), bin);
+  fs.chmodSync(bin, 0o755);
+  const running = execFileSync(bin, ['version'], { encoding: 'utf8' }).trim();
+  // Installs a program at the binary's path the way an installer does: a new file renamed over it.
+  const install = (script: string) => {
+    fs.writeFileSync(`${bin}.new`, script, { mode: 0o755 });
+    fs.renameSync(`${bin}.new`, bin);
+  };
+  const port = await new Promise<number>((resolve) => {
+    const probe = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as net.AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+  const { proc, url } = await startService(bin, root, `127.0.0.1:${port}`);
+  const context = await browser.newContext({ baseURL: url, viewport: { width: 1280, height: 900 } });
+  try {
+    const token = fs.readFileSync(path.join(root, 'config', 'web-token'), 'utf8').trim();
+    expect((await context.request.post(`${url}/api/login`, { data: { token } })).status()).toBe(204);
+    const page = await context.newPage();
+    const rail = page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'UAM and access', exact: true });
+    const gear = page.getByRole('complementary').getByRole('button', { name: 'Settings', exact: true });
+    // The service looks at the file when Settings reads the status, at most every 5 s, and runs its `version`.
+    const status = async () => (await context.request.get(`${url}/api/service`)).json() as Promise<{ installed: string; restart: string; error?: string }>;
+
+    await openSettings(page, 'UAM and access');
+    const card = page.getByRole('region', { name: 'UAM', exact: true }).getByRole('group', { name: 'Version' });
+    await expect(card.getByText(running, { exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Restart' })).toHaveCount(0);
+    await expect(card.getByText(/is installed/)).toHaveCount(0);
+    await expect(rail).toHaveAccessibleDescription('');
+
+    install('#!/bin/sh\nexit 3\n');
+    await expect.poll(async () => (await status()).error).toBeTruthy();
+    await page.reload();
+    await openSettings(page, 'UAM and access');
+    await expect(card.getByText(/^Could not read the installed UAM: /)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Restart' })).toHaveCount(0);
+    await expect(card.getByText(/is installed/)).toHaveCount(0);
+    await expect(card.getByText(running, { exact: true })).toBeVisible();
+
+    // The other version: it reports its own version and is otherwise the same program.
+    fs.copyFileSync(binary(), `${bin}.next`);
+    fs.chmodSync(`${bin}.next`, 0o755);
+    install(`#!/bin/sh\nif [ "$1" = version ]; then echo v9.9.9-pack; exit 0; fi\nexec "${bin}.next" "$@"\n`);
+    await expect.poll(async () => (await status()).installed).toBe('v9.9.9-pack');
+    await page.reload();
+    await openSettings(page, 'UAM and access');
+    await expect(card.getByText(`UAM v9.9.9-pack is installed (running ${running}).`, { exact: true })).toBeVisible();
+    await expect(card.getByText(running, { exact: true })).toBeVisible();
+    await expect(rail).toHaveAccessibleDescription('Restart available');
+    await expect(gear).toHaveAccessibleDescription(/UAM v9\.9\.9-pack installed; restart to run it/);
+    expect(await status()).toEqual({ running, installed: 'v9.9.9-pack', restart: 'available' });
+
+    // No Thread works or waits, so Restart runs the installed file at once, in the same process.
+    await card.getByRole('button', { name: 'Restart' }).click();
+    const log = () => fs.readFileSync(path.join(root, 'cache', 'uam.log'), 'utf8');
+    await expect.poll(log).toContain('uam web restarting');
+    await expect.poll(async () => (await context.request.get(`${url}/api/service`).catch(() => null))?.status() ?? 0, { timeout: 30_000 }).toBe(200);
+    expect(proc.exitCode).toBeNull();
+    // The page is still signed in and reads the restarted service: it runs what is installed, nothing is left to restart.
+    await page.reload();
+    await openSettings(page, 'UAM and access');
+    await expect(card.getByText(running, { exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Restart' })).toHaveCount(0);
+    await expect(card.getByText(/is installed/)).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Sign in to UAM' })).toBeHidden();
+    expect((await status()).restart).toBe('none');
+  } finally {
+    await context.close();
+    await stopService(proc);
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test.describe('session stats', () => {
+  test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
+
+  const prompts = async (uam: Api) => Number(((await uam.api('GET', '/api/session-stats')) as { stats: { key: string; value: string }[] }).stats.find((s) => s.key === 'work.prompts')!.value);
+
+  test('Session stats counts the journals by group, writes the counts to its file, counts again on Scan again and copies the lines', async ({ page, uam, project, model }) => {
+    const quiet = await quietBackground(uam);
+    try {
+      model.reply('first counted prompt', 'Counted once.');
+      model.reply('second counted prompt', 'Counted twice.');
+      const before = await prompts(uam);
+      await startThread(page, project, 'first counted prompt');
+      await expect(conversation(page).getByText('Counted once.')).toBeVisible();
+      await expect(threadState(page, 'Finished')).toBeVisible();
+      const thread = threadId(page);
+      await expect.poll(() => prompts(uam)).toBe(before + 1);
+
+      await openSettings(page, 'Session stats');
+      const section = page.getByRole('region', { name: 'Session stats', exact: true });
+      const file = path.join(uam.home, '..', 'config', 'session-stats.txt');
+      await expect(section.getByText(path.resolve(file), { exact: true })).toBeVisible();
+      await section.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: 'Every counter' }).click();
+      // One section per key prefix; a count is the value beside its name.
+      for (const group of ['sessions', 'work', 'friction', 'approvals', 'turns', 'tokens']) await expect(section.getByRole('region', { name: group, exact: true })).toBeVisible();
+      const counted = section.getByRole('region', { name: 'work', exact: true }).getByText('prompts', { exact: true }).locator('xpath=following-sibling::*[1]');
+      await expect(counted).toHaveText(String(before + 1));
+      expect(fs.readFileSync(file, 'utf8')).toContain(`\nwork.prompts=${before + 1}\n`);
+
+      // Another prompt is counted only once the page scans again.
+      await uam.api('POST', `/api/sessions/${thread}/prompt`, { text: 'second counted prompt', request_id: crypto.randomUUID() });
+      await expect.poll(() => prompts(uam)).toBe(before + 2);
+      await expect(counted).toHaveText(String(before + 1));
+      await section.getByRole('button', { name: 'Scan again' }).click();
+      await expect(counted).toHaveText(String(before + 2));
+      expect(fs.readFileSync(file, 'utf8')).toContain(`\nwork.prompts=${before + 2}\n`);
+
+      await section.getByRole('button', { name: 'Copy', exact: true }).click();
+      await expect(section.getByRole('button', { name: 'Copied' })).toBeVisible();
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      expect(copied).toMatch(/^scan\.at=\d{4}-\d{2}-\d{2}T/);
+      expect(copied).toContain(`\nwork.prompts=${before + 2}\n`);
+      expect(copied).toContain('\nsessions.total=');
+    } finally {
+      await quiet();
+    }
+  });
+});
+
+test('Connected instances: a pairing that fails says why, clears the access key and saves nothing; a private address needs its switch', async ({ page, uam }) => {
+  const listed = async () => ((await uam.api('GET', '/api/connections')) as { connections: unknown[] }).connections;
+  expect(await listed()).toEqual([]);
+  await openSettings(page, 'Connected instances');
+  const section = page.getByRole('region', { name: 'Connected instances', exact: true });
+  await expect(section.getByText('No connected instances yet. Your local threads are available as usual.')).toBeVisible();
+  await section.getByRole('button', { name: 'Add instance' }).click();
+  const form = section.getByRole('form', { name: 'Add an instance' });
+  const connect = form.getByRole('button', { name: 'Connect instance' });
+  const key = form.getByRole('textbox', { name: 'Access key' });
+  const failure = section.getByRole('alert').filter({ hasText: 'Could not update connected instances:' });
+  await expect(connect).toBeDisabled();
+  await form.getByRole('textbox', { name: 'Name' }).fill('Pack peer');
+  // Nothing listens there.
+  await form.getByRole('textbox', { name: 'Web URL' }).fill('https://127.0.0.1:1');
+  await key.fill(uam.token);
+  await expect(form.getByRole('switch', { name: 'Allow a private network address' })).not.toBeChecked();
+  await connect.click();
+  // A loopback or private address is dialled only once the switch allows it.
+  await expect(failure).toHaveText('Could not update connected instances: this instance uses a private address; explicitly allow this destination');
+  await expect(key).toHaveValue('');
+  await expect(form.getByRole('textbox', { name: 'Name' })).toHaveValue('Pack peer');
+  await expect(form.getByRole('textbox', { name: 'Web URL' })).toHaveValue('https://127.0.0.1:1');
+  expect(await listed()).toEqual([]);
+
+  await form.getByRole('switch', { name: 'Allow a private network address' }).click();
+  await key.fill(uam.token);
+  await connect.click();
+  await expect(failure).toHaveText('Could not update connected instances: could not securely connect to the target instance');
+  await expect(connect).toBeDisabled();
+  await expect(key).toHaveValue('');
+  expect(await listed()).toEqual([]);
+  await form.getByRole('button', { name: 'Cancel' }).click();
+  await expect(form).toHaveCount(0);
+  await page.reload();
+  await openSettings(page, 'Connected instances');
+  await expect(section.getByText('No connected instances yet. Your local threads are available as usual.')).toBeVisible();
+});
+
+test('draw.io: an origin that fails the server\'s check shows why, and Enable stays off', async ({ page, uam }) => {
+  await openSettings(page, 'Conversation');
+  const section = page.getByRole('region', { name: 'Diagram editor' });
+  const editor = section.getByRole('radiogroup', { name: 'Editor' });
+  await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
+  await expect(section.getByRole('switch', { name: 'Enable draw.io' })).toHaveCount(0);
+  await editor.getByRole('radio', { name: 'draw.io' }).click();
+  const enable = section.getByRole('switch', { name: 'Enable draw.io' });
+  await expect(enable).toBeDisabled();
+  await expect(enable).toHaveAccessibleDescription('Check the origin first; Enable waits for a check that passed.');
+  await expect(section.getByRole('button', { name: 'Check' })).toBeDisabled();
+
+  // Nothing listens at this origin.
+  await section.getByRole('textbox', { name: 'Origin' }).fill('https://127.0.0.1:1');
+  await section.getByRole('button', { name: 'Check' }).click();
+  await expect(section.getByRole('alert')).toHaveText('the origin could not be reached');
+  await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing blocked');
+  await expect(enable).toBeDisabled();
+  await expect(enable).not.toBeChecked();
+  expect(await readSettings(uam)).not.toHaveProperty('drawio');
+  // The rail's summary still names the built-in editor.
+  await page.reload();
+  await openSettings(page, 'Conversation');
+  await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
+});
