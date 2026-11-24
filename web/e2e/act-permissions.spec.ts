@@ -30,6 +30,9 @@ test('a file write asks with its diff and the path once; a long reason is cut', 
   expect(text).not.toContain('END-OF-REASON');
   expect(text.length).toBeGreaterThan(250);
   expect(text.length).toBeLessThanOrEqual(310);
+  // Grey: muted against the card's own text.
+  const color = (el: Element) => getComputedStyle(el).color;
+  expect(await shown.evaluate(color)).not.toBe(await shell.evaluate(color));
   await shell.getByRole('button', { name: 'Allow once' }).click();
   await expect(conversation(page).getByText('Wrote and ran.')).toBeVisible();
   expect(fs.readFileSync(path.join(workdir, 'proposed.txt'), 'utf8')).toBe('first proposed line\nsecond proposed line\n');

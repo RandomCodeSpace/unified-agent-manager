@@ -186,7 +186,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-31 | Stop: "Stopping…" at once, then Stopped with the reason, conversation stays open, focus back in the composer, queue… | composer (Stop… tests), interrupted-card | spec: activity.spec.ts |
 | ACT-32 | A uam restart while a call waits on permission: the call reads as never run with "Ask again", which sends once | none | spec: act-restart.spec.ts |
 | ACT-33 | A turn whose model calls fail (HTTP 500/429 exhausted) ends Failed with the cause first; the last prompt can be put… | none | spec: activity.spec.ts (429) |
-| ACT-34 | A main-agent model request with no answer is cancelled and retried with the transcript note "No answer from the… | Go adapter tests only; no web test names | planned (needs a clock: the stall bound is never under 60 s) |
+| ACT-34 | A main-agent model request with no answer is cancelled and retried with the transcript note "No answer from the… | Go adapter tests only; no web test names | spec: act-stall.spec.ts (retried once; the second stall that ends the turn is Go only) |
 | ACT-35 | Send now (steer) during a turn: bold italic when accepted, normal when delivered; Not delivered with a notice when… | none | spec: act-queue.spec.ts |
 | ACT-36 | After this turn (queue) and the paused queue: Resume / Clear after a stop or failure | none | spec: act-queue.spec.ts |
 | ACT-37 | A uam restart mid-turn leaves the Thread Interrupted; a call it cut off offers Ask again / Run again | none | spec: act-restart.spec.ts |
