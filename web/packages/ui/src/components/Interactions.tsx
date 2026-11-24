@@ -18,11 +18,12 @@ const COARSE = '(pointer: coarse)';
 
 const InlinePatch = lazy(() => import('./Changes').then((m) => ({ default: m.InlinePatch })));
 
-/** A write request's detail is the path, a blank line and the CLI's git patch: those two parts, or null for any other detail. */
+/** A write request's detail is the path, a blank line and the CLI's git patch (CLI 1.0.113 starts it with a blank line of its own): those two parts, or null for any other detail. */
 function writePatch(detail?: string): { path: string; patch: string } | null {
   const cut = detail?.indexOf('\n\n') ?? -1;
-  if (!detail || cut < 0 || !detail.startsWith('diff --git ', cut + 2)) return null;
-  return { path: detail.slice(0, cut), patch: detail.slice(cut + 2) };
+  const patch = !detail || cut < 0 ? '' : detail.slice(cut + 2).replace(/^\n+/, '');
+  if (!detail || !patch.startsWith('diff --git ')) return null;
+  return { path: detail.slice(0, cut), patch };
 }
 
 /**

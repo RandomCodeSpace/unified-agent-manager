@@ -141,3 +141,28 @@ test('a dropped live connection shows the reconnect notice, and the reply comple
   for (const p of parts) await expect(conv.getByText(p, { exact: true })).toHaveCount(1);
   expect(model.served().filter((s) => s.fixture === 'reply long reply')).toHaveLength(1);
 });
+
+test('a draft typed before a question comes back once it is answered, and a pasted file is refused while it waits', async ({ page, project, model }) => {
+  // The question takes 3 s to arrive: time to type a draft into the message box.
+  model.toolRound('ask after a while', [{ id: 'call_late', name: 'ask_user', arguments: { question: 'Which port?', choices: ['8080 (Recommended)', '9090'] } }], 'Port noted.', { latency: 3000, chunkSize: 100_000 });
+  await startThread(page, project, 'ask after a while');
+  await expect(threadState(page, 'Working')).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message' }).fill('my kept draft');
+  const answer = page.getByRole('textbox', { name: 'Your answer' });
+  await expect(answer).toBeVisible();
+  await expect(answer).toHaveValue('');
+  await expect(threadState(page, 'Needs answer')).toBeVisible();
+
+  await answer.evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File(['pasted'], 'pasted.txt', { type: 'text/plain' }));
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('Answer the question first.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Answer', exact: true }).click();
+  await expect(conversation(page).getByText('Port noted.')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue('my kept draft');
+  expect(toolResult(model, 'call_late')).toContain('8080');
+  expect(toolResult(model, 'call_late')).not.toContain('my kept draft');
+});

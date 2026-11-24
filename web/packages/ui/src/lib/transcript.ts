@@ -167,8 +167,9 @@ export function interruptedCall(items: readonly Item[], stoppedAt?: string): Int
     if (it.kind === 'user') return null;
     const tool = it.tool;
     // uam's stop closed the client mid-prompt, so the CLI denied it unasked: it never ran. Only when it ended after that
-    // stop began; any other unasked denial was a real one.
-    const unasked = tool?.status === 'failed' && !!tool.unasked && !!it.ended_at && Date.parse(it.ended_at) >= stop;
+    // stop began; any other unasked denial was a real one. The CLI can also die between recording that denial and the
+    // call's failure: the record then keeps it running, and it never ran either.
+    const unasked = !!tool?.unasked && (tool.status === 'running' || (tool.status === 'failed' && !!it.ended_at && Date.parse(it.ended_at) >= stop));
     if (it.kind !== 'tool' || !tool || (tool.status !== 'running' && tool.status !== 'pending' && !unasked)) continue;
     const shell = toolKind(tool.name) === 'command' ? '' : shellOf(tool);
     let starter: Item | undefined;
