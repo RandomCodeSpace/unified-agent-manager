@@ -2,11 +2,13 @@
 // draw.io origin check.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { binary, conversation, expect, startService, startThread, stopService, test, threadState } from './harness';
-import { openSettings, quietBackground, readSettings, threadId } from './settings-helpers';
+import { binaryWith, openSettings, quietBackground, readSettings, threadId, tlsFront } from './settings-helpers';
+import { ownService } from './shell-helpers';
 
 type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
 
@@ -201,28 +203,121 @@ test('Connected instances: a pairing that fails says why, clears the access key 
   await expect(section.getByText('No connected instances yet. Your local threads are available as usual.')).toBeVisible();
 });
 
-test('draw.io: an origin that fails the server\'s check shows why, and Enable stays off', async ({ page, uam }) => {
-  await openSettings(page, 'Conversation');
-  const section = page.getByRole('region', { name: 'Diagram editor' });
-  const editor = section.getByRole('radiogroup', { name: 'Editor' });
-  await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
-  await expect(section.getByRole('switch', { name: 'Enable draw.io' })).toHaveCount(0);
-  await editor.getByRole('radio', { name: 'draw.io' }).click();
-  const enable = section.getByRole('switch', { name: 'Enable draw.io' });
-  await expect(enable).toBeDisabled();
-  await expect(enable).toHaveAccessibleDescription('Check the origin first; Enable waits for a check that passed.');
-  await expect(section.getByRole('button', { name: 'Check' })).toBeDisabled();
+test('Connected instances: a pairing over HTTPS lists the instance as Connected; it is disabled, enabled, renamed and removed', async ({ browser, uam, workdir }) => {
+  // This instance trusts the certificate of an HTTPS front on the worker's service, which it pairs with.
+  const front = await tlsFront(uam.url);
+  const wrapped = binaryWith({ SSL_CERT_FILE: front.cert });
+  const own = await ownService(browser, uam.mock.url, workdir, wrapped.bin);
+  try {
+    const { page } = own;
+    const listed = async () => ((await (await own.context.request.get(`${own.url}/api/connections`)).json()) as { connections: Record<string, unknown>[] }).connections;
+    await openSettings(page, 'Connected instances');
+    const section = page.getByRole('region', { name: 'Connected instances', exact: true });
+    await section.getByRole('button', { name: 'Add instance' }).click();
+    const form = section.getByRole('form', { name: 'Add an instance' });
+    await form.getByRole('textbox', { name: 'Name' }).fill('Pack peer');
+    await form.getByRole('textbox', { name: 'Web URL' }).fill(front.url);
+    await form.getByRole('textbox', { name: 'Access key' }).fill(uam.token);
+    await form.getByRole('switch', { name: 'Allow a private network address' }).click();
+    await form.getByRole('button', { name: 'Connect instance' }).click();
+    await expect(form).toHaveCount(0);
+    const card = section.getByRole('region', { name: 'Pack peer', exact: true });
+    await expect(card.getByText(front.url, { exact: true })).toBeVisible();
+    await expect(card.getByRole('status')).toHaveText('Connected');
+    const peer = card.getByRole('switch', { name: 'Enable Pack peer' });
+    await expect(peer).toBeChecked();
+    expect(await listed()).toMatchObject([{ label: 'Pack peer', base_url: front.url, enabled: true, allow_private: true }]);
+    // The access key was spent on the pairing: the saved record holds none.
+    expect(JSON.stringify(await listed())).not.toContain(uam.token);
 
-  // Nothing listens at this origin.
-  await section.getByRole('textbox', { name: 'Origin' }).fill('https://127.0.0.1:1');
-  await section.getByRole('button', { name: 'Check' }).click();
-  await expect(section.getByRole('alert')).toHaveText('the origin could not be reached');
-  await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing blocked');
-  await expect(enable).toBeDisabled();
-  await expect(enable).not.toBeChecked();
+    await peer.click();
+    await expect(peer).not.toBeChecked();
+    await expect(card.getByRole('status')).toHaveText('Disabled');
+    await expect.poll(async () => (await listed())[0].enabled).toBe(false);
+    await peer.click();
+    await expect(peer).toBeChecked();
+    await expect(card.getByRole('status')).toHaveText('Connected');
+    await expect.poll(async () => (await listed())[0].enabled).toBe(true);
+
+    await card.getByRole('button', { name: 'Edit connection' }).click();
+    const edit = section.getByRole('form', { name: 'Edit Pack peer' });
+    await expect(edit.getByRole('textbox', { name: 'Web URL' })).toHaveValue(front.url);
+    await expect(edit.getByRole('textbox', { name: 'New access key (optional)' })).toHaveValue('');
+    await edit.getByRole('textbox', { name: 'Name' }).fill('Pack peer renamed');
+    await edit.getByRole('button', { name: 'Save connection' }).click();
+    const renamed = section.getByRole('region', { name: 'Pack peer renamed', exact: true });
+    await expect(renamed.getByRole('status')).toHaveText('Connected');
+    await expect(card).toHaveCount(0);
+    expect(await listed()).toMatchObject([{ label: 'Pack peer renamed', base_url: front.url, enabled: true }]);
+    await page.reload();
+    await openSettings(page, 'Connected instances');
+    await expect(renamed.getByRole('status')).toHaveText('Connected');
+
+    await renamed.getByRole('button', { name: 'Remove connection' }).click();
+    const confirm = page.getByRole('alertdialog', { name: 'Remove Pack peer renamed?' });
+    await expect(confirm).toContainText('Threads and files on the other instance are not deleted.');
+    await confirm.getByRole('button', { name: 'Remove connection' }).click();
+    await expect(renamed).toHaveCount(0);
+    await expect(section.getByText('No connected instances yet. Your local threads are available as usual.')).toBeVisible();
+    expect(await listed()).toEqual([]);
+  } finally {
+    await own.stop();
+    wrapped.remove();
+    await front.close();
+  }
+});
+
+test('draw.io: an origin that fails the server\'s check shows why and Enable stays off; one that passes lets Enable save it and asks for a reload', async ({ page, uam }) => {
+  // A self-hosted draw.io page on loopback: what the check looks for is a draw.io marker and no framing refusal.
+  const drawio = http.createServer((_, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>draw.io</title><div class="geApp"></div>'));
+  await new Promise<void>((resolve) => drawio.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(drawio.address() as net.AddressInfo).port}`;
+  try {
+    await openSettings(page, 'Conversation');
+    const section = page.getByRole('region', { name: 'Diagram editor' });
+    const editor = section.getByRole('radiogroup', { name: 'Editor' });
+    await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
+    await expect(section.getByRole('switch', { name: 'Enable draw.io' })).toHaveCount(0);
+    await editor.getByRole('radio', { name: 'draw.io' }).click();
+    const enable = section.getByRole('switch', { name: 'Enable draw.io' });
+    await expect(enable).toBeDisabled();
+    await expect(enable).toHaveAccessibleDescription('Check the origin first; Enable waits for a check that passed.');
+    await expect(section.getByRole('button', { name: 'Check' })).toBeDisabled();
+
+    // Nothing listens at this origin.
+    await section.getByRole('textbox', { name: 'Origin' }).fill('https://127.0.0.1:1');
+    await section.getByRole('button', { name: 'Check' }).click();
+    await expect(section.getByRole('alert')).toHaveText('the origin could not be reached');
+    await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing blocked');
+    await expect(enable).toBeDisabled();
+    await expect(enable).not.toBeChecked();
+    expect(await readSettings(uam)).not.toHaveProperty('drawio');
+    // The rail's summary still names the built-in editor.
+    await page.reload();
+    await openSettings(page, 'Conversation');
+    await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
+
+    await editor.getByRole('radio', { name: 'draw.io' }).click();
+    await section.getByRole('textbox', { name: 'Origin' }).fill(`${origin}/`);
+    await section.getByRole('button', { name: 'Check' }).click();
+    await expect(section.getByRole('status')).toHaveText('Self-hosted · No CORS · Framing allowed');
+    await expect(section.getByRole('alert')).toHaveCount(0);
+    await expect(section.getByText('the origin sends no Access-Control-Allow-Origin; the editor runs with allow-same-origin on its own origin only')).toBeVisible();
+    await expect(enable).toBeEnabled();
+    await expect(enable).toHaveAccessibleDescription('Drawings open in draw.io at this origin.');
+    await enable.click();
+    await expect(enable).toBeChecked();
+    await expect.poll(async () => (await readSettings(uam)).drawio).toEqual({ origin, enabled: true });
+    await expect(section.getByText('Reload the page to open drawings in draw.io: the page admits the origin from its next load.')).toBeVisible();
+    await section.getByRole('button', { name: 'Reload' }).click();
+    await openSettings(page, 'Conversation');
+    await expect(editor.getByRole('radio', { name: 'draw.io' })).toBeChecked();
+    await expect(section.getByRole('textbox', { name: 'Origin' })).toHaveValue(origin);
+    await expect(enable).toBeChecked();
+    await expect(section.getByText(/^Reload the page/)).toHaveCount(0);
+  } finally {
+    await uam.api('PATCH', '/api/settings', { drawio: { origin: '', enabled: false } });
+    drawio.close();
+  }
   expect(await readSettings(uam)).not.toHaveProperty('drawio');
-  // The rail's summary still names the built-in editor.
-  await page.reload();
-  await openSettings(page, 'Conversation');
-  await expect(editor.getByRole('radio', { name: 'Excalidraw' })).toBeChecked();
 });

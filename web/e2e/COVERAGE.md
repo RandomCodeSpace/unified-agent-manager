@@ -265,7 +265,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-08 | Conversation: the Enter-while-running default (Send now / After this turn), Suggest replies and Threads-can-message… | settings.test.tsx, settings-help.test.tsx, federation.test.tsx | spec: settings-saving.spec.ts |
 | SET-09 | Custom providers: Add provider with name, base URL and API key, Load models lists what the endpoint serves (`POST… | settings.test.tsx | spec: settings.spec.ts |
 | SET-10 | A saved API key is never shown again; leaving the edit form's key blank keeps it | settings.test.tsx | spec: settings-saving.spec.ts |
-| SET-11 | Environment-variable key source: the name must start `UAM_BYOM_`; an unset variable shows "<VAR> is not set in the… | settings.test.tsx | spec: settings-providers.spec.ts (a variable that is set: planned, needs a service started with it) |
+| SET-11 | Environment-variable key source: the name must start `UAM_BYOM_`; an unset variable shows "<VAR> is not set in the… | settings.test.tsx | spec: settings-providers.spec.ts |
 | SET-12 | Load models failure (endpoint down, 401) shows "Could not load the models: <upstream status line>"; more than 500… | none found (no test text "Could not load | spec: settings-saving.spec.ts (the 500-model cap: planned) |
 | SET-13 | Edit keeps the saved models selected; unchecking models asks "Remove models from this provider?"; Remove provider /… | settings.test.tsx | spec: settings-providers.spec.ts |
 | SET-14 | Vision toggle: "Enable vision for <id>" is enabled only for checked models and saves `vision: true`; an image sent… | settings.test.tsx | spec: settings-providers.spec.ts |
@@ -295,8 +295,8 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-38 | Per-Thread usage (Tools → Usage tab): this Thread's tokens and model calls, subagent rows, Refresh; a closed Thread… | task-usage.test.tsx | spec: settings-usage.spec.ts (after a service restart: planned) |
 | SET-39 | Account quota and AI credits (allowance in Usage and the composer chip, budget in AI credits or quota %) | usage.test.tsx, usage-ai.test.tsx, task-usage.test.tsx | not feasible: custom models use no quota |
 | SET-40 | Session stats: scans every journal under `COPILOT_HOME/session-state`, shows counts grouped by prefix, writes… | session-stats-settings.test.tsx | spec: settings-server.spec.ts |
-| SET-41 | Connected instances: Add instance (label, address, access key, private-address switch), a refused pairing clears the… | connected-instances-settings.test.tsx | spec: settings-server.spec.ts (a pairing that fails; a pairing that succeeds: planned, needs a second instance over HTTPS) |
-| SET-42 | draw.io: Enable waits for a server check of the origin, a failed check shows the error and keeps Enable off; enabled… | drawio-settings.test.tsx | spec: settings-server.spec.ts (a failed check; an origin that passes: planned, needs a draw.io page over HTTPS) |
+| SET-41 | Connected instances: Add instance (label, address, access key, private-address switch), a refused pairing clears the… | connected-instances-settings.test.tsx | spec: settings-server.spec.ts |
+| SET-42 | draw.io: Enable waits for a server check of the origin, a failed check shows the error and keeps Enable off; enabled… | drawio-settings.test.tsx | spec: settings-server.spec.ts |
 | SET-43 | This browser: Theme Light / Dark / Match system and Motion are kept per browser (`localStorage` `uam.theme`) and… | settings-groups.test.tsx, theme.test.mjs | spec: settings-nav.spec.ts |
 | SET-44 | Notify me when a Thread needs me or finishes (push notifications) | settings.test.tsx | not feasible: needs OS push |
 | SET-45 | Log out in UAM and access ends the session and returns to sign-in | settings.test.tsx | spec: settings-nav.spec.ts |

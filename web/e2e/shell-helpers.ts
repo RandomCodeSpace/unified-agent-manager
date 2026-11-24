@@ -11,11 +11,11 @@ import { binary, expect, MOCK_MODEL, startService, stopService, type Project } f
  * is shared by every test of the worker. It uses the worker's aimock, so the
  * test's `model` scripts answer it; `dir` is registered as its Project. `root`
  * holds its HOME, config (sessions.json), session and cache directories.
+ * `bin` is the program it starts, the built binary unless a case wraps it.
  */
 export type OwnService = { url: string; root: string; context: BrowserContext; page: Page; project: Project; restart: () => Promise<void>; stop: () => Promise<void> };
 
-export async function ownService(browser: Browser, mockURL: string, dir: string): Promise<OwnService> {
-  const bin = binary();
+export async function ownService(browser: Browser, mockURL: string, dir: string, bin = binary()): Promise<OwnService> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uam-e2e-own-'));
   let proc: ChildProcess | undefined;
   let context: BrowserContext | undefined;

@@ -1,7 +1,10 @@
 // Settings → Custom providers: the environment-variable key source, editing and removing, and the vision mark.
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { type Page } from '@playwright/test';
 import { conversation, expect, newThread, openHome, send, test, threadState } from './harness';
-import { keepSettings, openSettings, pickModel, readSettings, tag } from './settings-helpers';
+import { binaryWith, keepSettings, openSettings, pickModel, readSettings, tag } from './settings-helpers';
+import { ownService } from './shell-helpers';
 
 type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
 
@@ -79,6 +82,62 @@ test('a key from an environment variable: the service refuses a name outside UAM
     await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue('run without the key');
   } finally {
     await restore();
+  }
+});
+
+test('a key from an environment variable that is set: the provider says where its key comes from, and a turn sends it', async ({ browser, uam, workdir, model }) => {
+  const variable = `UAM_BYOM_PACK_${tag().toUpperCase()}`;
+  const secret = `env-key-${tag()}`;
+  // The service is started with the variable in its environment, as its user would export it.
+  const wrapped = binaryWith({ [variable]: secret });
+  const own = await ownService(browser, uam.mock.url, workdir, wrapped.bin);
+  // aimock's journal redacts keys: the provider's endpoint is a pass-through to aimock that notes them.
+  const keys: string[] = [];
+  const endpoint = http.createServer((req, res) => {
+    keys.push(req.headers.authorization ?? '');
+    req.pipe(http.request(uam.mock.url + req.url, { method: req.method, headers: req.headers }, (up) => {
+      res.writeHead(up.statusCode!, up.headers);
+      up.pipe(res);
+    }));
+  });
+  await new Promise<void>((resolve) => endpoint.listen(0, '127.0.0.1', resolve));
+  try {
+    const { page } = own;
+    const name = `envset${tag()}`;
+    model.on({ userMessage: 'use the variable key', model: 'envset-1' }, { content: 'Answered with the variable key.' });
+    await openSettings(page, 'Custom providers');
+    await providers(page).getByRole('button', { name: 'Add provider' }).click();
+    const form = providers(page).getByRole('form', { name: 'Add a provider' });
+    await form.getByRole('textbox', { name: 'Provider name' }).fill(name);
+    await form.getByRole('textbox', { name: 'Base URL' }).fill(`http://127.0.0.1:${(endpoint.address() as AddressInfo).port}/v1`);
+    await form.getByRole('radiogroup', { name: 'API key source' }).getByRole('radio', { name: 'Environment variable' }).click();
+    await form.getByRole('textbox', { name: 'API key variable' }).fill(variable);
+    await addId(page, 'envset-1');
+    await form.getByRole('button', { name: 'Save provider' }).click();
+    await expect(form).toBeHidden();
+    const saved = providers(page).getByRole('region', { name: `${name} models` });
+    await expect(saved.getByText(`Key from ${variable}`, { exact: true })).toBeVisible();
+    await expect(saved.getByText(/is not set in the service's environment/)).toHaveCount(0);
+    await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Custom providers', exact: true })).not.toHaveAccessibleDescription(/API key missing/);
+    const stored = ((await (await own.context.request.get(`${own.url}/api/settings`)).json()) as { custom_models: Record<string, unknown>[] }).custom_models.filter((m) => m.name === name);
+    expect(stored).toMatchObject([{ model_id: 'envset-1', api_key_env: variable, key_present: true }]);
+    // The value lives only in the environment: Settings never holds it.
+    expect(JSON.stringify(stored)).not.toContain(secret);
+
+    await page.goto('/');
+    await newThread(page, own.project);
+    await pickModel(page, 'envset-1', name);
+    await send(page, 'use the variable key');
+    await expect(conversation(page).getByText('Answered with the variable key.')).toBeVisible();
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    expect(model.served().map((s) => s.request.model)).toEqual(['envset-1']);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(new Set(keys)).toEqual(new Set([`Bearer ${secret}`]));
+  } finally {
+    await own.stop();
+    wrapped.remove();
+    endpoint.closeAllConnections();
+    endpoint.close();
   }
 });
 

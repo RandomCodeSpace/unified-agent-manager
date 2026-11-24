@@ -1,6 +1,13 @@
 // Helpers of the settings cases (settings-*.spec.ts).
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import tls from 'node:tls';
 import { expect, type Page } from '@playwright/test';
+import { binary } from './harness';
 
 type Api = { api: (method: string, route: string, body?: unknown) => Promise<unknown> };
 
@@ -122,5 +129,48 @@ export async function mockMcpServer(tools: { name: string; description: string }
   return {
     url: `http://127.0.0.1:${port}/mcp`,
     close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
+  };
+}
+
+/**
+ * A program that starts the built uam with `env` added to the fixed environment
+ * startService gives it, for ownService. `remove` deletes it.
+ */
+export function binaryWith(env: Record<string, string>): { bin: string; remove: () => void } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uam-e2e-env-'));
+  const bin = path.join(dir, 'uam');
+  const exports = Object.entries(env).map(([k, v]) => `export ${k}='${v}'\n`).join('');
+  fs.writeFileSync(bin, `#!/bin/sh\n${exports}exec '${binary()}' "$@"\n`, { mode: 0o755 });
+  return { bin, remove: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+/**
+ * HTTPS on loopback in front of the plain-HTTP service at `target`, with a
+ * self-signed certificate for 127.0.0.1 at `cert` (a service trusts it through
+ * SSL_CERT_FILE). It serves until `close`.
+ */
+export async function tlsFront(target: string): Promise<{ url: string; cert: string; close: () => Promise<void> }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uam-e2e-tls-'));
+  const [key, cert] = [path.join(dir, 'key.pem'), path.join(dir, 'cert.pem')];
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', key, '-out', cert], { stdio: 'ignore' });
+  const { hostname, port } = new URL(target);
+  const sockets = new Set<net.Socket>();
+  const server = tls.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (front) => {
+    const back = net.connect(Number(port), hostname);
+    for (const s of [front, back]) {
+      sockets.add(s);
+      s.on('error', () => { front.destroy(); back.destroy(); });
+      s.on('close', () => sockets.delete(s));
+    }
+    front.pipe(back).pipe(front);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: `https://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    cert,
+    close: () => new Promise((resolve) => {
+      for (const s of sockets) s.destroy();
+      server.close(() => { fs.rmSync(dir, { recursive: true, force: true }); resolve(); });
+    }),
   };
 }
