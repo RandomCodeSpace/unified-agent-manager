@@ -1,24 +1,66 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useApi } from '../ApiContext';
+import type { ApiClient } from '../api';
 import { cn } from '../lib/cn';
 import { DiagramError, errorReason, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
 import { usePreview } from '../lib/previewContext';
 import { useScheme } from '../lib/theme';
 import { Lightbox } from './Attachments';
-import { CodeBlock, Note, Spinner } from './common';
+import { CodeBlock, Note, SessionContext, Spinner } from './common';
 import { Button } from './ui/button';
 import type { ReactNode } from 'react';
+import type { FlowGraph } from '../lib/flowGraph';
 
-type View = 'diagram' | 'code';
+const FlowDiagram = lazy(() => import('./FlowDiagram'));
+
+type View = 'flow' | 'mermaid' | 'code';
+const VIEW_LABELS: Record<View, string> = { flow: 'React Flow', mermaid: 'Mermaid', code: 'Code' };
+
+/** A diagram's header, after any front matter, directives and comments. */
+const header = (types: string) => new RegExp(String.raw`^(?:\s*---\n[\s\S]*?\n---\s*\n)?(?:\s*%%.*\n|\s*\n)*\s*(?:${types})\b`);
+/** A flowchart: the React Flow view reads it itself. */
+const FLOWCHART = header('flowchart|graph');
+/** A box-and-arrow diagram: the Utility model can turn one the view cannot read into its graph. */
+const GRAPH = header('flowchart|graph|stateDiagram|classDiagram|erDiagram|mindmap|block|architecture|requirementDiagram|C4\\w*');
+
+/** Why the React Flow view could not draw the source: Pele cannot read it, it is too big, or the model's conversion failed. */
+export type FlowMiss = 'unreadable' | 'too-big' | { error: string };
+
+// One conversion per source; a failed one is forgotten so the next click asks again.
+const converted = new Map<string, Promise<FlowGraph>>();
+function convertGraph(api: ApiClient, sessionId: string, source: string): Promise<FlowGraph> {
+  let graph = converted.get(source);
+  if (!graph) {
+    graph = api.diagramGraph(sessionId, source);
+    converted.set(source, graph);
+    graph.catch(() => converted.delete(source));
+  }
+  return graph;
+}
 
 /**
- * A fenced `mermaid` block: the code-block chrome with a Diagram / Code toggle. The diagram is
- * rendered in the sandboxed frame and shown only as a `data:` image, never as inline markup;
- * clicking it opens the lightbox. Until the fence has closed (`ready`), and whenever the source
- * does not parse, the code shows instead, the latter with a quiet note.
+ * A fenced `mermaid` block: the code-block chrome with a React Flow / Mermaid / Code toggle. A
+ * flowchart opens in the React Flow view (FlowDiagram.tsx); any other diagram, or a flowchart that
+ * view cannot read, opens in the Mermaid view. A box-and-arrow diagram it cannot read keeps the
+ * React Flow tab in a Thread: choosing it asks the Utility model for the graph. The Mermaid view is rendered in the sandboxed frame and shown only as a `data:` image, never as inline markup, which opens the lightbox on a click. Mermaid renders
+ * only once its view is shown. Until the fence has closed (`ready`), and whenever Mermaid cannot
+ * parse the source in its view, the code shows instead, the latter with a quiet note.
  */
 export function DiagramCard({ source, ready, children }: Readonly<{ source: string; ready: boolean; children: ReactNode }>) {
   const preview = usePreview();
-  const [view, setView] = useState<View>('diagram');
+  const api = useApi();
+  const sessionId = useContext(SessionContext);
+  const [miss, setMiss] = useState<FlowMiss | null>(null);
+  const readable = FLOWCHART.test(source) && miss === null;
+  const flowable = readable || (GRAPH.test(source) && !!sessionId && miss !== 'too-big');
+  const [chosen, setView] = useState<View | null>(null);
+  const view: View = chosen === 'flow' && !flowable ? 'mermaid' : (chosen ?? (readable ? 'flow' : 'mermaid'));
+  const unavailable = useCallback((why: FlowMiss) => {
+    setMiss(why);
+    if (typeof why === 'object') setView(null);
+  }, []);
+  // Only a click on React Flow may spend a Utility call.
+  const convert = useMemo(() => (chosen === 'flow' && sessionId ? () => convertGraph(api, sessionId, source) : undefined), [chosen, sessionId, api, source]);
   const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
@@ -26,7 +68,7 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
   const scheme = useScheme();
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || view !== 'mermaid') return;
     let on = true;
     renderDiagram(source).then(
       (rendered) => on && setResult({ source, rendered }),
@@ -35,14 +77,14 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
     return () => {
       on = false;
     };
-  }, [source, ready, scheme]);
+  }, [source, ready, scheme, view]);
 
   const rendered = result?.source === source ? result.rendered : undefined;
   const error = result?.source === source ? result.error : undefined;
-  const pending = ready && !rendered && !error;
+  const pending = ready && view === 'mermaid' && !rendered && !error;
   const url = rendered ? svgDataUrl(rendered.svg) : '';
 
-  const image = rendered && view === 'diagram' && (
+  const image = rendered && view === 'mermaid' && (
     <button
       type="button"
       className="block w-full cursor-zoom-in px-3 py-3 outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 animate-fade-in"
@@ -59,11 +101,17 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
       <img src={url} width={rendered.width} height={rendered.height} alt="Diagram" decoding="async" className="mx-auto block h-auto max-h-[480px] w-auto max-w-full object-contain" />
     </button>
   );
-  const toggle = rendered && (
+  const flow = ready && view === 'flow' && (
+    <Suspense fallback={<div className="h-[120px]" />}>
+      <FlowDiagram source={source} onUnavailable={unavailable} convert={convert} />
+    </Suspense>
+  );
+  const views: View[] = flowable ? ['flow', 'mermaid', 'code'] : ['mermaid', 'code'];
+  const toggle = ready && (
     <div role="group" aria-label="View" className="flex items-center gap-0.5">
-      {(['diagram', 'code'] as const).map((v) => (
+      {views.map((v) => (
         <Button key={v} size="sm" className="h-5 px-1.5 text-code-sm font-normal text-muted" aria-pressed={view === v} onClick={() => setView(v)}>
-          {v === 'diagram' ? 'Diagram' : 'Code'}
+          {VIEW_LABELS[v]}
         </Button>
       ))}
     </div>
@@ -80,8 +128,15 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
             {toggle}
           </>
         }
-        body={image || undefined}
-        foot={error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {errorReason(error)}</Note>}
+        body={flow || image || undefined}
+        foot={
+          view === 'mermaid' && (error || typeof miss === 'object') && (
+            <>
+              {error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {errorReason(error)}</Note>}
+              {miss && typeof miss === 'object' && <Note className={cn('px-3 py-1.5')}>React Flow view unavailable: {miss.error}</Note>}
+            </>
+          )
+        }
       >
         {children}
       </CodeBlock>

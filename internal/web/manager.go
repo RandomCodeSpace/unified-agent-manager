@@ -262,9 +262,10 @@ type Manager struct {
 	health             modelHealth           // each model's recent calls (model_health.go)
 	fetchFuses         map[string]*fetchFuse // guarded by mu; saved beside the store (fuses.go)
 	suggestPauseLogged atomic.Bool
-	tokens             tokenLedger   // guarded by mu; persisted by the existing flush loop
-	harness            *harnessUsage // optional local harness collector; snapshots guarded by mu
-	usageHome          string        // set by RunDaemon before Start; empty disables local discovery
+	diagramGraphs      diagramGraphCache // guarded by mu (diagram_graph.go)
+	tokens             tokenLedger       // guarded by mu; persisted by the existing flush loop
+	harness            *harnessUsage     // optional local harness collector; snapshots guarded by mu
+	usageHome          string            // set by RunDaemon before Start; empty disables local discovery
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).

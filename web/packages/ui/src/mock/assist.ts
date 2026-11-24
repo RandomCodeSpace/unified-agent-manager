@@ -65,6 +65,28 @@ export function assistMock(host: AssistHost) {
       const on = host.settings().suggest_replies !== false && t.state === 'completed' && last?.kind === 'assistant';
       return json(200, on ? { item_id: last.id, replies: LONG_REPLIES[t.id] ?? REPLIES } : { item_id: '', replies: [] });
     }
+    if ((r = path.match(/^\/api\/sessions\/([^/]+)\/diagram-graph$/)) && method === 'POST') {
+      if (!host.task(decodeURIComponent(r[1]))) return fail(404, 'session not found');
+      if (!String(body.source ?? '').startsWith('stateDiagram')) return fail(502, 'the model could not turn this diagram into a graph');
+      return json(200, {
+        direction: 'TB',
+        groups: [],
+        nodes: [
+          { id: 'start', label: 'Start', kind: 'terminal' },
+          { id: 'Working', label: 'Working', kind: 'step' },
+          { id: 'NeedsAnswer', label: 'Needs answer', kind: 'decision' },
+          { id: 'Finished', label: 'Finished', kind: 'step' },
+          { id: 'end', label: 'End', kind: 'terminal' },
+        ],
+        edges: [
+          { from: 'start', to: 'Working', dashed: false, thick: false, head: 'end' },
+          { from: 'Working', to: 'NeedsAnswer', label: 'asks', dashed: false, thick: false, head: 'end' },
+          { from: 'NeedsAnswer', to: 'Working', label: 'answered', dashed: false, thick: false, head: 'end' },
+          { from: 'Working', to: 'Finished', dashed: false, thick: false, head: 'end' },
+          { from: 'Finished', to: 'end', dashed: false, thick: false, head: 'end' },
+        ],
+      });
+    }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/evidence$/)) && method === 'GET') {
       const t = host.task(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');

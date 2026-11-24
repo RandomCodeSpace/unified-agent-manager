@@ -1,0 +1,212 @@
+/* The React Flow view of a mermaid flowchart (FlowDiagram.tsx), in the page's tokens. */
+
+.flow-diagram {
+  --flow-wash: 11%;
+  position: relative;
+  width: 100%;
+  font-family: var(--font-sans);
+}
+:root[data-theme='dark'] .flow-diagram {
+  --flow-wash: 18%;
+}
+
+.flow-diagram .react-flow {
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: var(--color-hairline-strong);
+  --xy-node-boxshadow-selected: none;
+  --xy-controls-button-background-color: var(--color-float);
+  --xy-controls-button-background-color-hover: var(--color-surface);
+  --xy-controls-button-color: var(--color-body);
+  --xy-controls-button-color-hover: var(--color-ink);
+  --xy-controls-button-border-color: var(--color-hairline);
+  --xy-controls-box-shadow: var(--elevation-float);
+}
+.flow-diagram .react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.flow-diagram .react-flow__controls-button svg {
+  fill: currentColor;
+}
+/* The zoom buttons show while the pointer or focus is on the diagram, so they never cover a node at rest; touch has none. */
+.flow-controls {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.flow-diagram:hover .flow-controls,
+.flow-diagram:focus-within .flow-controls {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .flow-controls {
+    display: none;
+  }
+}
+/* Each edge is its own svg; a label sits above the line it interrupts. */
+.flow-diagram .react-flow__edgelabel-renderer {
+  z-index: 1100;
+}
+.flow-dots {
+  opacity: 0.5;
+}
+
+.flow-step,
+.flow-terminal {
+  --tone: var(--color-badge-blue);
+}
+.flow-store {
+  --tone: var(--color-badge-teal);
+}
+.flow-decision {
+  --tone: var(--color-badge-orange);
+}
+
+.flow-diagram .react-flow__node:focus-visible {
+  outline: none;
+}
+.flow-diagram .react-flow__node:focus-visible .flow-node,
+.flow-diagram .react-flow__node:focus-visible .flow-decision svg {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.flow-anchor {
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.flow-node {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--color-raised);
+  box-shadow: var(--elevation-raised);
+}
+.flow-terminal {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--tone) var(--flow-wash), var(--color-raised));
+}
+.flow-node.is-selected {
+  box-shadow: 0 0 0 1.5px var(--tone);
+}
+.flow-icon {
+  flex: none;
+  fill: none;
+  stroke: var(--tone);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.flow-label {
+  position: relative;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 17px;
+  color: var(--color-ink);
+  text-align: center;
+  white-space: pre;
+}
+
+.flow-decision {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.flow-decision svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.flow-decision path {
+  fill: color-mix(in oklab, var(--tone) var(--flow-wash), var(--color-raised));
+  stroke: color-mix(in oklab, var(--tone) 55%, transparent);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+.flow-decision.is-selected path {
+  stroke: var(--tone);
+  stroke-width: 2;
+}
+
+.flow-diagram .react-flow__node-group {
+  background: none;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.flow-group {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--color-fill-hover);
+  box-shadow: inset 0 0 0 1px var(--color-hairline);
+}
+.flow-group-title {
+  position: absolute;
+  top: 11px;
+  left: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.flow-edge-line {
+  fill: none;
+  stroke: var(--color-track);
+  stroke-width: 1.35;
+}
+.flow-edge-head {
+  fill: var(--color-track);
+}
+.flow-edge.is-dashed .flow-edge-line {
+  stroke-dasharray: 5 4;
+}
+.flow-edge.is-thick .flow-edge-line {
+  stroke-width: 2.4;
+}
+.flow-edge.is-hot .flow-edge-line {
+  stroke: var(--color-accent);
+}
+.flow-edge.is-hot .flow-edge-head {
+  fill: var(--color-accent);
+}
+.flow-edge.is-dim {
+  opacity: 0.25;
+}
+.flow-edge-label {
+  position: absolute;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  white-space: pre;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--color-muted);
+  background: var(--color-code-bg);
+  box-shadow: 0 0 0 1px var(--color-hairline);
+}
+.flow-edge-label.is-hot {
+  color: var(--color-accent);
+}
+.flow-edge-label.is-dim {
+  opacity: 0.3;
+}
