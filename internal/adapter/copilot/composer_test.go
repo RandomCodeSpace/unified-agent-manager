@@ -167,9 +167,11 @@ func TestWebSendAttachesReferencedFiles(t *testing.T) {
 	}
 }
 
-// A message of only an upload or a file goes with an empty prompt: nothing is
-// added, and a steer the turn did not use is reported without an empty quote.
-func TestWebAttachmentOnlyMessageSendsAnEmptyPrompt(t *testing.T) {
+// A message of only an upload or a file starts its turn with a one-space
+// prompt, which the CLI does not drop, and shows no text; a steer goes with an
+// empty one, and a steer the turn did not use is reported without an empty
+// quote.
+func TestWebAttachmentOnlyMessageSendsABlankPrompt(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
 	data := "png"
@@ -186,9 +188,13 @@ func TestWebAttachmentOnlyMessageSendsAnEmptyPrompt(t *testing.T) {
 		t.Fatalf("sent %d messages, want %d: %+v", len(h.fs.msgs), len(want), h.fs.msgs)
 	}
 	for i, msg := range h.fs.msgs {
-		if msg.Prompt != "" || msg.DisplayPrompt != "" || !reflect.DeepEqual(msg.Attachments, want[i]) {
+		if msg.Prompt != []string{" ", ""}[i] || msg.DisplayPrompt != "" || !reflect.DeepEqual(msg.Attachments, want[i]) {
 			t.Fatalf("message %d sent %+v", i, msg)
 		}
+	}
+	h.fs.onEvent(ev("u1", &rpc.UserMessageData{Content: " "}))
+	if last := h.sink.last(); last.Kind != agentapi.EventItem || last.Item.Kind != agentapi.ItemUser || last.Item.Text != "" {
+		t.Fatalf("user item = %+v", last)
 	}
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
 	if got := notices(h.sink.all()); len(got) != 1 || got[0] != "steer-undelivered:msg-2|Steer not delivered: the turn was stopped" {

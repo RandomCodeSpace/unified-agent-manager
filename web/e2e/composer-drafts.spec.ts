@@ -1,19 +1,6 @@
 // What the composer holds before it is sent: drafts and attached files.
-import type { Page } from '@playwright/test';
-import { useVisionMock } from './composer-helpers';
+import { attach, PNG, sidebarRow as row, useVisionMock } from './composer-helpers';
 import { conversation, expect, lastUserText, newThread, send, startThread, test, threadState } from './harness';
-
-// A 2×2 PNG.
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==', 'base64');
-
-/** Chooses `files` with the composer's Attach files button. */
-async function attach(page: Page, files: { name: string; mimeType: string; buffer: Buffer }[]) {
-  const chooser = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: /^Attach files/ }).click();
-  await (await chooser).setFiles(files);
-}
-
-const row = (page: Page, title: string) => page.getByRole('list', { name: 'Unsettled threads' }).getByRole('button').filter({ hasText: title });
 
 test('a Thread\'s unsent draft and its attached file survive a switch to another Thread and a reload', async ({ page, project, model }) => {
   model.reply('draft thread A', 'Reply in A.').title('draft thread A', 'Draft A');
