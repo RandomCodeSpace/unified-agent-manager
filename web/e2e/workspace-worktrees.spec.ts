@@ -4,7 +4,7 @@ import path from 'node:path';
 import { type Page } from '@playwright/test';
 import { conversation, expect, send, test, threadState } from './harness';
 import { openSettings } from './settings-helpers';
-import { allowEach, bash, commit, git, startWorktreeThread, worktrees } from './workspace-helpers';
+import { allowEach, bash, capturedTurn, commit, git, startWorktreeThread, worktrees } from './workspace-helpers';
 
 /** Settles the open Thread from its header menu. */
 async function settle(page: Page) {
@@ -178,6 +178,8 @@ test('Branch from here on a worktree Thread makes a new worktree on a new branch
   const head = git(source.path, 'rev-parse', 'HEAD');
   const status = git(source.path, 'status', '--porcelain');
   const url = page.url();
+  // Branching while uam still reads the finished turn is refused ("the thread changed while reading its record").
+  await capturedTurn(page, 0);
 
   await conv.getByRole('button', { name: 'Turn actions' }).first().click();
   await page.getByRole('menuitem', { name: 'Branch from here' }).click();
