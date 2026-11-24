@@ -162,10 +162,11 @@ test('the dock resizes by its top edge and by keyboard, and the shell gets the n
   try {
     await openThread(page, project, model, 'resize the terminal');
     const dock = await openTerminal(page);
-    // The shell itself reports the terminal's size five times a second, so nothing is typed while the dock resizes.
+    // The shell reports the terminal's size when asked, after a resize has finished: nothing is typed while the dock resizes.
     const file = path.join(workdir, 'size.txt');
-    await run(dock, `(while :; do stty size > size.tmp && mv size.tmp ${file}; sleep 0.2; done) &`);
     const size = async () => {
+      fs.rmSync(file, { force: true });
+      await run(dock, `stty size > size.tmp && mv size.tmp ${file}`);
       const [rows, cols] = (await written(file)).split(' ').map(Number);
       return { rows, cols };
     };
