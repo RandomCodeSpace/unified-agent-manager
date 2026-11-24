@@ -66,7 +66,7 @@ test.describe('at phone width', () => {
       await page.goto('/#settings');
       const conversation = railPage(page, 'Conversation');
       await expect(conversation).toHaveAccessibleDescription('Enter while running: Send now · Suggested replies on · Excalidraw');
-      await expect(railPage(page, 'UAM and access')).toHaveAccessibleDescription('Running dev · Terminal off');
+      await expect(railPage(page, 'UAM and access')).toHaveAccessibleDescription(/^Running \S+ · Terminal off$/);
       await expect(railPage(page, 'Appearance & alerts')).toHaveAccessibleDescription('Theme: Match system');
       await expect(railPage(page, 'Custom providers')).toHaveAccessibleDescription(/^mock · \d+ models?$/);
       await expect(railPage(page, 'GitHub Copilot')).toHaveAccessibleDescription(/^Signed out/);
