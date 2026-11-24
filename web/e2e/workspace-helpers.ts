@@ -1,7 +1,34 @@
 // Helpers for the workspace specs (changes, rewind, worktrees, git, terminal).
 import { execFileSync } from 'node:child_process';
 import { expect, type ElementHandle, type Page } from '@playwright/test';
-import { conversation, type Model } from './harness';
+import { pickMode } from './activity-helpers';
+import { conversation, newThread, openHome, send, type Model, type Project } from './harness';
+
+/** Starts a Thread in Yolo mode, so a shell round asks for no permission, and returns its URL. */
+export async function startYoloThread(page: Page, project: Project, prompt: string) {
+  await openHome(page);
+  await newThread(page, project);
+  await pickMode(page, 'Yolo');
+  await send(page, prompt);
+  await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
+  return page.url();
+}
+
+/**
+ * Starts a Thread in a new worktree of `project` with `prompt` (in Yolo mode with `yolo`), and returns the
+ * worktree git made: the newest one, when `project` already has some.
+ */
+export async function startWorktreeThread(page: Page, project: Project, prompt: string, yolo = false) {
+  const before = worktrees(project.dir).map((w) => w.path);
+  await openHome(page);
+  await newThread(page, project);
+  await page.getByRole('radiogroup', { name: 'Where this Thread runs' }).getByRole('radio', { name: 'New worktree' }).click();
+  if (yolo) await pickMode(page, 'Yolo');
+  await send(page, prompt);
+  await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
+  await expect.poll(() => worktrees(project.dir).length).toBe(before.length + 1);
+  return worktrees(project.dir).find((w) => !before.includes(w.path))!;
+}
 
 /** Runs git in `dir` and returns its trimmed output. */
 export const git = (dir: string, ...args: string[]) =>

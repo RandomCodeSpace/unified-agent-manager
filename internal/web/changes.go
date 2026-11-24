@@ -408,7 +408,7 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	if code != 0 && code != 1 {
 		return agentapi.FileDiff{}, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
 	}
-	diff := agentapi.FileDiff{Path: entry.path, Status: entry.status, OldPath: entry.orig, Patch: clampText(string(patch), maxDiffBytes)}
+	diff := agentapi.FileDiff{Path: entry.path, Status: entry.status, OldPath: entry.orig, Patch: clampText(string(patch), maxDiffBytes), Truncated: len(patch) > maxDiffBytes}
 	diff.Additions, diff.Deletions = countPatch(diff.Patch)
 	// Without --binary, git names a binary change in one line and no hunk.
 	diff.Binary = binaryPatch(diff.Patch)

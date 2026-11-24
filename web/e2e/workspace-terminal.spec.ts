@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Page } from '@playwright/test';
 import { conversation, expect, startThread, test, threadState, type Project, type Model } from './harness';
+import { startWorktreeThread } from './workspace-helpers';
 
 /** Opens a finished Thread in `project` to hang the terminal on. */
 async function openThread(page: Page, project: Project, model: Model, prompt: string) {
@@ -134,6 +135,191 @@ test('Close and Restart ask first, a reload ends the shell, and exit shows its c
     await dock.getByRole('button', { name: 'Close terminal' }).click();
     await expect(dock).toHaveCount(0);
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  } finally {
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('a terminal opened from a worktree Thread runs in the worktree', async ({ page, uam, project, model, workdir }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  try {
+    model.reply('a worktree to open a shell in', 'Ready in the worktree.');
+    const tree = await startWorktreeThread(page, project, 'a worktree to open a shell in');
+    await expect(conversation(page).getByText('Ready in the worktree.')).toBeVisible();
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const dock = await openTerminal(page);
+    await expect(dock).toContainText(tree.path);
+    await run(dock, '(pwd; git branch --show-current) > pwd.tmp && mv pwd.tmp shell-pwd.txt');
+    expect(await written(path.join(tree.path, 'shell-pwd.txt'))).toBe(`${tree.path}\n${tree.branch}`);
+    expect(fs.existsSync(path.join(workdir, 'shell-pwd.txt'))).toBe(false);
+  } finally {
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('the dock resizes by its top edge and by keyboard, and the shell gets the new size', async ({ page, uam, project, model, workdir }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  try {
+    await openThread(page, project, model, 'resize the terminal');
+    const dock = await openTerminal(page);
+    // The shell reports the terminal's size when asked, after a resize has finished: nothing is typed while the dock resizes.
+    const file = path.join(workdir, 'size.txt');
+    const size = async () => {
+      fs.rmSync(file, { force: true });
+      await run(dock, `stty size > size.tmp && mv size.tmp ${file}`);
+      const [rows, cols] = (await written(file)).split(' ').map(Number);
+      return { rows, cols };
+    };
+    await expect.poll(async () => (await size()).rows).toBeGreaterThan(0);
+    const first = await size();
+    const handle = dock.getByRole('separator', { name: 'Resize panel' });
+    const height = Number(await handle.getAttribute('aria-valuenow'));
+    await handle.focus();
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowUp');
+    await expect(handle).toHaveAttribute('aria-valuenow', String(height + 64));
+    await expect.poll(async () => (await size()).rows).toBeGreaterThan(first.rows);
+    const taller = await size();
+    expect(taller.cols).toBe(first.cols);
+
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 4 });
+    await page.mouse.up();
+    await expect(handle).toHaveAttribute('aria-valuenow', String(height + 64 - 120));
+    await expect.poll(async () => (await size()).rows).toBeLessThan(first.rows);
+    expect((await size()).cols).toBe(first.cols);
+  } finally {
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('keys typed in the terminal, Esc and uam shortcuts included, go to the shell', async ({ page, uam, project, model, workdir }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  try {
+    await openThread(page, project, model, 'keys in the terminal');
+    const url = page.url();
+    const dock = await openTerminal(page);
+    const file = path.join(workdir, 'keys.txt');
+    await run(dock, `cat -v > ${file}`);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+n');
+    await page.keyboard.type('end');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+d');
+    // cat -v writes Esc as ^[; Alt+N reaches the shell as Esc n, not as uam's New thread.
+    expect(await written(file)).toBe('^[^[nend');
+    await expect(dock.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(url);
+    await expect(page.getByRole('dialog', { name: 'New thread' })).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  } finally {
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('the mouse and Ctrl+Shift+C/V work the clipboard, and a refused clipboard says so', async ({ page, context, uam, project, model, workdir }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  try {
+    await openThread(page, project, model, 'clipboard in the terminal');
+    const dock = await openTerminal(page);
+    const box = (await dock.boundingBox())!;
+    // The screen starts under the 36 px header, 8 px in; a row is 17.5 px.
+    const at = (col: number, row: number) => ({ x: box.x + 8 + col * 8.4 + 4, y: box.y + 36 + row * 17.5 + 8 });
+
+    // Without the browser's leave to read the clipboard, a right-click says so.
+    await page.mouse.click(at(2, 2).x, at(2, 2).y, { button: 'right' });
+    await expect(dock.getByText('Clipboard blocked. Use Ctrl+Shift+V to paste.', { exact: true })).toBeVisible();
+
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: uam.url });
+    const clip = (text: string) => page.evaluate((t) => navigator.clipboard.writeText(t), text);
+    // A click pastes once the clipboard read resolves; Enter must come after the text.
+    await page.evaluate(() => {
+      const w = window as Window & { pastes?: number };
+      const read = navigator.clipboard.readText.bind(navigator.clipboard);
+      w.pastes = 0;
+      navigator.clipboard.readText = async () => {
+        const text = await read();
+        setTimeout(() => { w.pastes!++; }, 0);
+        return text;
+      };
+    });
+    const pastes = () => page.evaluate(() => (window as Window & { pastes?: number }).pastes);
+    const pasted = async (how: () => Promise<void>, name: string, clicked = true) => {
+      await clip(`echo ${name} > ${name}.txt`);
+      const before = await pastes();
+      await how();
+      if (clicked) await expect.poll(pastes).toBe(before! + 1);
+      await page.keyboard.press('Enter');
+      expect(await written(path.join(workdir, `${name}.txt`))).toBe(name);
+    };
+    await pasted(() => page.mouse.click(at(2, 2).x, at(2, 2).y, { button: 'right' }), 'right');
+    await pasted(() => page.mouse.click(at(2, 2).x, at(2, 2).y, { button: 'middle' }), 'middle');
+    await pasted(async () => {
+      await dock.getByRole('textbox').focus();
+      await page.keyboard.press('Control+Shift+V');
+    }, 'keyed', false);
+
+    // Releasing a selection copies it.
+    await run(dock, "printf '\\033[2J\\033[HCOPYME'");
+    await clip('');
+    await page.mouse.move(at(0, 0).x - 3, at(0, 0).y);
+    await page.mouse.down();
+    await page.mouse.move(at(5, 0).x + 3, at(5, 0).y, { steps: 4 });
+    await page.mouse.up();
+    await expect(dock.getByText('Copied', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('COPYME');
+    await clip('');
+    await dock.getByRole('textbox').focus();
+    await page.keyboard.press('Control+Shift+C');
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('COPYME');
+  } finally {
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('at most eight terminals run at once; the ninth says so and opens once one closes', async ({ page, context, uam, project, model }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  const pages = [page];
+  try {
+    await openThread(page, project, model, 'eight terminals');
+    const url = page.url();
+    for (let i = 0; i < 8; i++) pages.push(await context.newPage());
+    for (const p of pages.slice(1)) await p.goto(url);
+    for (const p of pages.slice(0, 8)) {
+      await expect(threadState(p, 'Finished')).toBeVisible();
+      await openTerminal(p);
+    }
+    const ninth = pages[8];
+    await expect(threadState(ninth, 'Finished')).toBeVisible();
+    await ninth.getByRole('button', { name: 'Terminal', exact: true }).click();
+    const refused = ninth.getByRole('region', { name: 'Terminal', exact: true }).getByRole('alert');
+    await expect(refused).toContainText('Could not open a terminal.');
+
+    await pages[0].close();
+    await refused.getByRole('button', { name: 'Retry' }).click();
+    await expect(ninth.getByRole('region', { name: 'Terminal', exact: true }).getByText('Connected', { exact: true })).toBeVisible();
+  } finally {
+    for (const p of pages.slice(1)) await p.close();
+    await uam.api('PATCH', '/api/settings', { terminal: false });
+  }
+});
+
+test('without WebGL the dock says the terminal needs it', async ({ page, uam, project, model }) => {
+  await uam.api('PATCH', '/api/settings', { terminal: true });
+  try {
+    // As a browser with WebGL turned off answers.
+    await page.addInitScript(() => {
+      const get = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, id: string, options?: unknown) {
+        return id === 'webgl2' || id === 'webgl' ? null : get.call(this, id, options as never);
+      } as typeof get;
+    });
+    await openThread(page, project, model, 'no webgl here');
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    const dock = page.getByRole('region', { name: 'Terminal', exact: true });
+    await expect(dock.getByRole('alert')).toHaveText('The terminal needs WebGL, which this browser has turned off.');
+    await expect(dock.getByText('Connected', { exact: true })).toHaveCount(0);
   } finally {
     await uam.api('PATCH', '/api/settings', { terminal: false });
   }
