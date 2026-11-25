@@ -118,9 +118,17 @@ func TestParseDiagramGraphEdgeless(t *testing.T) {
 			t.Errorf("%q: err = %v, want valid %v", source, err, valid)
 		}
 	}
+	// One node is no answer for a diagram that links several (seen: a whole mindmap as its root).
 	one := `{"direction":"TB","groups":[],"nodes":[{"id":"a","label":"A","kind":"step","group":""}],"edges":[]}`
-	if _, err := parseDiagramGraph(one, "flowchart TD\n  a --> a"); err != nil {
-		t.Errorf("one node needs no edge: %v", err)
+	for source, valid := range map[string]bool{
+		"mindmap\n  root((A))":               true,
+		"flowchart TD\n  a[A]":               true,
+		"mindmap\n  root((A))\n    B\n    C": false,
+		"flowchart TD\n  a --> b":            false,
+	} {
+		if _, err := parseDiagramGraph(one, source); (err == nil) != valid {
+			t.Errorf("one node for %q: err = %v, want valid %v", source, err, valid)
+		}
 	}
 }
 

@@ -183,7 +183,7 @@ var diagramLinkRE = regexp.MustCompile(`--|->|==>|===|-\.-|\.\.[>|]|[<|]\.\.|[|o
 
 // diagramHasLinks reports whether mermaid source draws a connection, so an
 // answer without edges can be told from a diagram without any. A mindmap
-// links by indentation, so it always has some.
+// links by indentation, so it has some once its root has a child.
 // shortcut: a text match outside front matter and comments, so "--" or "->"
 // inside a label counts as a link; parse the source if that ever rejects a
 // real diagram.
@@ -194,13 +194,20 @@ func diagramHasLinks(source string) bool {
 			source = after // front matter
 		}
 	}
-	first := true
+	first, mindmap, nodes := true, false, 0
 	for line := range strings.SplitSeq(source, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "%%") {
 			continue
 		}
-		if first && strings.HasPrefix(line, "mindmap") || diagramLinkRE.MatchString(line) {
+		switch {
+		case first && strings.HasPrefix(line, "mindmap"):
+			mindmap = true
+		case mindmap:
+			if nodes++; nodes > 1 {
+				return true
+			}
+		case diagramLinkRE.MatchString(line):
 			return true
 		}
 		first = false
@@ -310,7 +317,7 @@ func parseDiagramGraph(reply, source string) (DiagramGraph, error) {
 		return DiagramGraph{}, errInvalidDiagramGraph
 	}
 	g, err := checkDiagramGraph(g)
-	if err == nil && len(g.Nodes) > 1 && len(g.Edges) == 0 && diagramHasLinks(source) {
+	if err == nil && len(g.Edges) == 0 && diagramHasLinks(source) {
 		return DiagramGraph{}, fmt.Errorf("%w: %d nodes and no edges for a diagram with connections", errInvalidDiagramGraph, len(g.Nodes))
 	}
 	return g, err
