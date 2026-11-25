@@ -70,10 +70,18 @@ type DiagramEdge struct {
 	Head   string `json:"head"`
 }
 
-// diagramGraphCache keeps the latest answers by source digest, oldest dropped first.
+type diagramGraphFlight struct {
+	done  chan struct{}
+	graph DiagramGraph
+	err   error
+}
+
+// diagramGraphCache keeps the latest answers by source digest, oldest dropped first,
+// and tracks in-flight calls by digest so concurrent requests share one call.
 type diagramGraphCache struct {
-	graphs map[string]DiagramGraph
-	order  []string
+	graphs   map[string]DiagramGraph
+	order    []string
+	inflight map[string]*diagramGraphFlight
 }
 
 func (c *diagramGraphCache) get(key string) (DiagramGraph, bool) {
@@ -250,8 +258,10 @@ func parseDiagramGraph(reply string) (DiagramGraph, error) {
 
 // DiagramGraph returns mermaid source as a graph for Task id's React Flow
 // view: from the cache, else by one Utility call (the Thread's own model when
-// no Utility model is set). An answer that breaks the contract is an error;
-// nothing is cached for it.
+// no Utility model is set). Concurrent requests for the same source share one
+// call, and the call runs detached from the caller's context so a reload still
+// fills the cache. An answer that breaks the contract is an error; nothing is
+// cached for it.
 func (m *Manager) DiagramGraph(ctx context.Context, id, source string) (DiagramGraph, error) {
 	source = strings.TrimSpace(source)
 	switch {
@@ -272,13 +282,59 @@ func (m *Manager) DiagramGraph(ctx context.Context, id, source string) (DiagramG
 		m.mu.Unlock()
 		return g, nil
 	}
-	runner, model, err := m.startUtilityLocked(s)
-	call := UtilityCall{Purpose: purposeDiagramGraph, Provider: model.Provider, Model: model.Model, TaskID: s.id, ProjectID: s.projectID}
-	m.mu.Unlock()
-	if err != nil {
+	if flight := m.diagramGraphs.inflight[key]; flight != nil {
+		m.mu.Unlock()
+		return waitDiagramGraph(ctx, flight)
+	}
+	if err := ctx.Err(); err != nil {
+		m.mu.Unlock()
 		return DiagramGraph{}, err
 	}
+	runner, model, err := m.startUtilityLocked(s)
+	if err != nil {
+		m.mu.Unlock()
+		return DiagramGraph{}, err
+	}
+	call := UtilityCall{Purpose: purposeDiagramGraph, Provider: model.Provider, Model: model.Model, TaskID: s.id, ProjectID: s.projectID}
+	flight := &diagramGraphFlight{done: make(chan struct{})}
+	if m.diagramGraphs.inflight == nil {
+		m.diagramGraphs.inflight = map[string]*diagramGraphFlight{}
+	}
+	m.diagramGraphs.inflight[key] = flight
+	m.mu.Unlock()
+
+	go m.runDiagramGraph(context.WithoutCancel(ctx), id, key, source, runner, model, call, flight)
+	return waitDiagramGraph(ctx, flight)
+}
+
+func waitDiagramGraph(ctx context.Context, flight *diagramGraphFlight) (DiagramGraph, error) {
+	select {
+	case <-flight.done:
+		return flight.graph, flight.err
+	default:
+	}
+	select {
+	case <-flight.done:
+		return flight.graph, flight.err
+	case <-ctx.Done():
+		return DiagramGraph{}, ctx.Err()
+	}
+}
+
+func (m *Manager) runDiagramGraph(ctx context.Context, id, key, source string, runner agentapi.UtilityRunner, model UtilityModel, call UtilityCall, flight *diagramGraphFlight) {
 	defer m.titles.Done()
+	g, err := m.fetchDiagramGraph(ctx, id, source, runner, model, call)
+	m.mu.Lock()
+	if err == nil {
+		m.diagramGraphs.put(key, g)
+	}
+	delete(m.diagramGraphs.inflight, key)
+	m.mu.Unlock()
+	flight.graph, flight.err = g, err
+	close(flight.done)
+}
+
+func (m *Manager) fetchDiagramGraph(ctx context.Context, id, source string, runner agentapi.UtilityRunner, model UtilityModel, call UtilityCall) (DiagramGraph, error) {
 	ctx, stop := m.bound(ctx)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, diagramGraphTimeout)
@@ -292,7 +348,7 @@ func (m *Manager) DiagramGraph(ctx context.Context, id, source string) (DiagramG
 	prompt := "<diagram>\n" + source + "\n</diagram>"
 	req := agentapi.UtilityRequest{Model: model.Model, Purpose: purposeDiagramGraph, System: diagramGraphSystem, Prompt: prompt, Timeout: diagramGraphTimeout, ResponseSchema: diagramGraphSchema}
 	var g DiagramGraph
-	_, err = m.runUtilityChecked(ctx, call, req.System+req.Prompt, func(ctx context.Context, usage func(agentapi.UtilityUsage)) (string, error) {
+	_, err := m.runUtilityChecked(ctx, call, req.System+req.Prompt, func(ctx context.Context, usage func(agentapi.UtilityUsage)) (string, error) {
 		req.OnUsage = usage
 		reply, err := runner.RunUtility(ctx, req)
 		if err == nil {
@@ -313,9 +369,6 @@ func (m *Manager) DiagramGraph(ctx context.Context, id, source string) (DiagramG
 		}
 		return DiagramGraph{}, utilityFailed("drawing the diagram", err)
 	}
-	m.mu.Lock()
-	m.diagramGraphs.put(key, g)
-	m.mu.Unlock()
 	return g, nil
 }
 
@@ -328,7 +381,9 @@ func (s *Server) handleDiagramGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.m.DiagramGraph(r.Context(), r.PathValue("id"), req.Source)
 	if err != nil {
-		writeFailure(w, err)
+		if r.Context().Err() == nil {
+			writeFailure(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, out)

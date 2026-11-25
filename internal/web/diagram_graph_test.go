@@ -6,7 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
@@ -122,5 +125,128 @@ func TestDiagramGraphCacheDropsOldest(t *testing.T) {
 	}
 	if g, ok := c.get("kk"); !ok || g.Direction != "LR" {
 		t.Fatalf("replaced graph = %+v, %v", g, ok)
+	}
+}
+
+// Cancelling a caller's context mid-call stops only that caller's wait; the
+// Utility call finishes and caches the graph so a second request makes no new
+// model call.
+func TestDiagramGraphCancelStillCaches(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	reply := `{"direction":"TB","groups":[],"nodes":[{"id":"a","label":"A","kind":"step","group":""}],"edges":[]}`
+	prov.SetUtilityHook(func(ctx context.Context, _ agentapi.UtilityRequest) (string, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+			return reply, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := m.DiagramGraph(ctx, sum.ID, "graph TD; a")
+		firstErr <- err
+	}()
+	<-started
+	cancel()
+	if err := <-firstErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first call err = %v, want context.Canceled", err)
+	}
+	close(release)
+	m.titles.Wait()
+
+	g, err := m.DiagramGraph(context.Background(), sum.ID, "graph TD; a")
+	if err != nil || len(g.Nodes) != 1 || g.Nodes[0].Label != "A" {
+		t.Fatalf("second call = %+v, %v", g, err)
+	}
+	if n := utilityCalls(prov, purposeDiagramGraph); n != 1 {
+		t.Fatalf("calls = %d, want 1", n)
+	}
+	if len(m.titleSlots) != 0 {
+		t.Fatalf("titleSlots held = %d, want 0", len(m.titleSlots))
+	}
+}
+
+// Concurrent requests for the same source share one Utility call, a failing
+// call is not cached and clears the in-flight entry for later callers.
+func TestDiagramGraphSingleFlight(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	reply := `{"direction":"TB","groups":[],"nodes":[{"id":"a","label":"A","kind":"step","group":""}],"edges":[]}`
+	prov.SetUtilityHook(func(ctx context.Context, _ agentapi.UtilityRequest) (string, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		return reply, nil
+	})
+
+	type result struct {
+		g   DiagramGraph
+		err error
+	}
+	res1, res2 := make(chan result, 1), make(chan result, 1)
+	go func() {
+		g, err := m.DiagramGraph(context.Background(), sum.ID, "graph TD; a")
+		res1 <- result{g, err}
+	}()
+	<-started
+	go func() {
+		g, err := m.DiagramGraph(context.Background(), sum.ID, "  graph TD; a  ")
+		res2 <- result{g, err}
+	}()
+	// Let the second caller attach to the in-flight entry before releasing.
+	time.Sleep(15 * time.Millisecond)
+	close(release)
+
+	for i, ch := range []chan result{res1, res2} {
+		r := <-ch
+		if r.err != nil || len(r.g.Nodes) != 1 || r.g.Nodes[0].Label != "A" {
+			t.Fatalf("caller %d = %+v, %v", i+1, r.g, r.err)
+		}
+	}
+	if n := utilityCalls(prov, purposeDiagramGraph); n != 1 {
+		t.Fatalf("calls = %d, want 1", n)
+	}
+
+	// An error is not cached and removes the in-flight entry so the next call retries.
+	var failCalls atomic.Int32
+	prov.SetUtilityHook(func(_ context.Context, _ agentapi.UtilityRequest) (string, error) {
+		if failCalls.Add(1) == 1 {
+			return "not json", nil
+		}
+		return reply, nil
+	})
+	if _, err := m.DiagramGraph(context.Background(), sum.ID, "graph TD; b"); err == nil {
+		t.Fatal("first call on bad reply succeeded, want error")
+	}
+	g, err := m.DiagramGraph(context.Background(), sum.ID, "graph TD; b")
+	if err != nil || len(g.Nodes) != 1 || g.Nodes[0].Label != "A" {
+		t.Fatalf("retry after error = %+v, %v", g, err)
+	}
+	if failCalls.Load() != 2 {
+		t.Fatalf("retry calls = %d, want 2", failCalls.Load())
 	}
 }
