@@ -776,10 +776,14 @@ func TestEmitReturnsWhileToolImagesStore(t *testing.T) {
 }
 
 func TestToolImagesStopAtTheTaskCap(t *testing.T) {
-	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	m, prov, sum, conv, dirs := uploadTask(t, "docs")
 	img := pngBytes(t)
+	const keep = 50
+	// The budget holds exactly `keep` images of this size.
+	defer func(was int64) { maxToolImageTotal = was }(maxToolImageTotal)
+	maxToolImageTotal = int64(keep * (len(img) + 1))
 	var first []agentapi.Image
-	for i := range maxToolImages {
+	for i := range keep {
 		first = append(first, toolImage("", append(append([]byte{}, img...), byte(i))))
 	}
 	conv.EmitItem(toolItem("t1", "", first...))
@@ -787,14 +791,21 @@ func TestToolImagesStopAtTheTaskCap(t *testing.T) {
 	conv.EmitItem(toolItem("t2", "", toolImage("", extra), first[7]))
 	m.imageWG.Wait()
 	items := detail(t, m, sum.ID).Items
-	if len(items[0].Images) != maxToolImages || items[0].ImagesNote != "" {
+	if len(items[0].Images) != keep || items[0].ImagesNote != "" {
 		t.Fatalf("first item kept %d images, note %q", len(items[0].Images), items[0].ImagesNote)
 	}
-	if got := items[1]; len(got.Images) != 1 || got.Images[0].ID != items[0].Images[7].ID || got.ImagesNote != "1 image not kept: a thread keeps at most 50 images" {
+	if got := items[1]; len(got.Images) != 1 || got.Images[0].ID != items[0].Images[7].ID || got.ImagesNote != fmt.Sprintf("1 image not kept: a thread keeps at most %d MiB of images", maxToolImageTotal>>20) {
 		t.Fatalf("item past the cap = %+v", got)
 	}
-	if files, _ := os.ReadDir(dirs.task(sum.ID)); len(files) != 2*maxToolImages {
-		t.Fatalf("stored %d files, want %d", len(files), 2*maxToolImages)
+	if files, _ := os.ReadDir(dirs.task(sum.ID)); len(files) != 2*keep {
+		t.Fatalf("stored %d files, want %d", len(files), 2*keep)
+	}
+	// A subagent's images have their own budget, so the main agent's full one does not stop them.
+	prov.Last().EmitSubagent(agentapi.Subagent{ID: "sub-1", Name: "helper", Status: agentapi.SubagentRunning})
+	conv.EmitItem(toolItem("t3", "sub-1", toolImage("", append(append([]byte{}, img...), 0xfe, 0xfe))))
+	m.imageWG.Wait()
+	if files, _ := os.ReadDir(dirs.task(sum.ID)); len(files) != 2*keep+2 {
+		t.Fatalf("after a subagent's image stored %d files, want %d", len(files), 2*keep+2)
 	}
 	// Uploads do not count against the cap, and the cap does not stop them.
 	mustUpload(t, m, sum.ID, "note.txt", []byte("note"))

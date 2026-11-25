@@ -61,7 +61,7 @@ func (m *Manager) storeImages(job imageJob) {
 	if m.storeImageHook != nil {
 		m.storeImageHook()
 	}
-	it := agentapi.Item{Images: job.images}
+	it := agentapi.Item{AgentID: job.agentID, Images: job.images}
 	m.keepImages(job.s, &it)
 	m.applyImages(job, it.Images, it.ImagesNote)
 }

@@ -42,8 +42,12 @@ const (
 	mimeText      = "text/plain"
 	// Limits for the images tools return, kept beside the uploads.
 	maxToolImageBytes = 5 << 20
-	maxToolImages     = 50
 )
+
+// maxToolImageTotal bounds the disk the tool images of one agent take, the
+// Task's main agent or each subagent, however many there are; a variable so a
+// test can lower it.
+var maxToolImageTotal int64 = 500 << 20
 
 var imageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
 
@@ -62,6 +66,9 @@ type upload struct {
 	// Tool marks an image a tool's result returned rather than an upload.
 	// It lives as long as its Task and is never a prompt attachment.
 	Tool bool `json:"tool,omitempty"`
+	// Agent is the subagent whose tool returned it, "" for the main agent;
+	// each has its own maxToolImageTotal.
+	Agent string `json:"agent,omitempty"`
 }
 
 func (u *upload) info() agentapi.Attachment {
@@ -608,7 +615,7 @@ func (m *Manager) keepImages(s *webSession, it *agentapi.Item) {
 	var reasons []string
 	dropped := 0
 	for _, img := range it.Images {
-		u, reason := m.keepImage(s, img)
+		u, reason := m.keepImage(s, img, it.AgentID)
 		if u == nil {
 			dropped++
 			if !slices.Contains(reasons, reason) {
@@ -637,7 +644,7 @@ func imagesNote(dropped int, why string) string {
 
 // keepImage returns the stored copy of one tool image, storing it when the
 // Task has none, or the reason it is not kept.
-func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string) {
+func (m *Manager) keepImage(s *webSession, img agentapi.Image, agent string) (*upload, string) {
 	digest, mime := strings.ToLower(img.SHA256), ""
 	if len(img.Data) > 0 {
 		if len(img.Data) > maxToolImageBytes {
@@ -650,7 +657,7 @@ func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string)
 		digest = hex.EncodeToString(sum[:])
 	}
 	m.mu.Lock()
-	stored, count := s.toolImageLocked(digest)
+	stored, used := s.toolImageLocked(digest, agent)
 	removed := s.removed
 	m.mu.Unlock()
 	switch {
@@ -660,14 +667,18 @@ func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string)
 		return stored, ""
 	case len(img.Data) == 0:
 		return nil, "the provider did not record its bytes"
-	case count >= maxToolImages:
-		return nil, fmt.Sprintf("a thread keeps at most %d images", maxToolImages)
+	case used+int64(len(img.Data)) > maxToolImageTotal:
+		who := "a thread"
+		if agent != "" {
+			who = "a subagent"
+		}
+		return nil, fmt.Sprintf("%s keeps at most %d MiB of images", who, maxToolImageTotal>>20)
 	}
 	id, err := newUUID()
 	if err != nil {
 		return nil, "could not be stored"
 	}
-	u := &upload{ID: id, MIME: mime, Size: int64(len(img.Data)), SHA256: digest, CreatedAt: m.now(), Tool: true}
+	u := &upload{ID: id, MIME: mime, Size: int64(len(img.Data)), SHA256: digest, CreatedAt: m.now(), Tool: true, Agent: agent}
 	if img.Name != "" {
 		u.Name = cleanUploadName(img.Name)
 	}
@@ -682,20 +693,22 @@ func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string)
 }
 
 // toolImageLocked returns the Task's stored tool image with this digest, if
-// any, and how many tool images it keeps.
-func (s *webSession) toolImageLocked(digest string) (*upload, int) {
+// any, and how many bytes of tool images the agent (main or a subagent) keeps.
+func (s *webSession) toolImageLocked(digest, agent string) (*upload, int64) {
 	var match *upload
-	count := 0
+	var used int64
 	for _, u := range s.uploads {
 		if !u.Tool {
 			continue
 		}
-		count++
+		if u.Agent == agent {
+			used += u.Size
+		}
 		if digest != "" && u.SHA256 == digest {
 			match = u
 		}
 	}
-	return match, count
+	return match, used
 }
 
 // Attachment returns one stored upload of a Task and its bytes.
