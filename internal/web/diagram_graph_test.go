@@ -15,9 +15,9 @@ import (
 )
 
 func TestParseDiagramGraph(t *testing.T) {
-	g, err := parseDiagramGraph("```json\n" + `{"direction":"LR","groups":[{"id":"g","label":"Back <b>end</b>","group":""}],
+	g, err := parseDiagramGraph("```json\n"+`{"direction":"LR","groups":[{"id":"g","label":"Back <b>end</b>","group":""}],
 	"nodes":[{"id":"a","label":"Start","kind":"terminal","group":""},{"id":"b","label":"Is it\nok?","kind":"decision","group":"g"}],
-	"edges":[{"from":"a","to":"b","label":"","dashed":true,"thick":false,"head":"sideways"},{"from":"b","to":"g","label":"yes","dashed":false,"thick":true,"head":"both"}]}` + "\n```")
+	"edges":[{"from":"a","to":"b","label":"","dashed":true,"thick":false,"head":"sideways"},{"from":"b","to":"g","label":"yes","dashed":false,"thick":true,"head":"both"}]}`+"\n```", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,9 +55,72 @@ func TestParseDiagramGraphRejects(t *testing.T) {
 		"second object":  graph("", node("a", "step", ""), "") + `{}`,
 		"not json":       "I cannot draw that.",
 	} {
-		if _, err := parseDiagramGraph(reply); !errors.Is(err, errInvalidDiagramGraph) {
+		if _, err := parseDiagramGraph(reply, ""); !errors.Is(err, errInvalidDiagramGraph) {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+}
+
+// A node's label keeps its lines (a class's members), each bounded, within a
+// larger budget than a group's or an edge's.
+func TestDiagramNodeLabel(t *testing.T) {
+	class := "Customer\n+String id\n+String name\n+String email\n+Address billing\n+updateEmail(email) void\n+payments() List~Payment~"
+	long := strings.Repeat("x", maxDiagramLabel+5)
+	lines := strings.TrimSuffix(strings.Repeat("m\n", maxDiagramLines+3), "\n")
+	for name, tc := range map[string]struct{ label, want string }{
+		"class members": {class, class},
+		"long line":     {"Order\n" + long + "\n+id", "Order\n" + long[:maxDiagramLabel] + "…\n+id"},
+		"many lines":    {lines, strings.Repeat("m\n", maxDiagramLines) + "…"},
+		"blank lines":   {"A  b\r\n\n  c  ", "A b\nc"},
+	} {
+		g, err := checkDiagramGraph(DiagramGraph{
+			Groups: []DiagramGroup{{ID: "g", Label: long}},
+			Nodes:  []DiagramNode{{ID: "a", Label: tc.label, Kind: "step"}},
+			Edges:  []DiagramEdge{{From: "a", To: "a", Label: long}},
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := g.Nodes[0].Label; got != tc.want {
+			t.Errorf("%s: label = %q, want %q", name, got, tc.want)
+		}
+		if g.Groups[0].Label != long[:maxDiagramLabel]+"…" || g.Edges[0].Label != long[:maxDiagramLabel]+"…" {
+			t.Errorf("%s: group and edge labels keep their limit: %q, %q", name, g.Groups[0].Label, g.Edges[0].Label)
+		}
+	}
+	g, err := checkDiagramGraph(DiagramGraph{Nodes: []DiagramNode{{ID: "a", Kind: "step", Label: strings.TrimSuffix(strings.Repeat(long[:maxDiagramLabel]+"\n", maxDiagramLines), "\n")}}})
+	if n := len([]rune(g.Nodes[0].Label)); err != nil || n != maxDiagramNodeLabel+1 {
+		t.Errorf("the whole label is bounded: %d runes, %v", n, err)
+	}
+}
+
+// Nodes without an edge are an invalid answer only when the source draws
+// connections.
+func TestParseDiagramGraphEdgeless(t *testing.T) {
+	const reply = `{"direction":"TB","groups":[],"nodes":[{"id":"a","label":"A","kind":"step","group":""},{"id":"b","label":"B","kind":"step","group":""}],"edges":[]}`
+	for source, valid := range map[string]bool{
+		"flowchart TD\n  a[A]\n  b[B]":                                  true,
+		"---\ntitle: a -- b\n---\nflowchart TD\n  %% a --> b\n  a\n  b": true,
+		"classDiagram\n  class A\n  class B":                            true,
+		"flowchart TD\n  a --> b":                                       false,
+		"flowchart LR\n  a -.-> b":                                      false,
+		"flowchart LR\n  a ==> b":                                       false,
+		"classDiagram\n  A <|-- B":                                      false,
+		"classDiagram\n  A ..> B":                                       false,
+		"erDiagram\n  CUSTOMER ||--o{ ORDER : places":                   false,
+		"erDiagram\n  CUSTOMER }o..o{ ORDER : sees":                     false,
+		"stateDiagram-v2\n  [*] --> a":                                  false,
+		"architecture-beta\n  service a(server)[A]\n  a:R -- L:b":       false,
+		"C4Context\n  Person(a, \"A\")\n  Rel(a, b, \"uses\")":          false,
+		"%%{init: {}}%%\nmindmap\n  root((A))\n    B":                   false,
+	} {
+		if _, err := parseDiagramGraph(reply, source); (err == nil) != valid || err != nil && !errors.Is(err, errInvalidDiagramGraph) {
+			t.Errorf("%q: err = %v, want valid %v", source, err, valid)
+		}
+	}
+	one := `{"direction":"TB","groups":[],"nodes":[{"id":"a","label":"A","kind":"step","group":""}],"edges":[]}`
+	if _, err := parseDiagramGraph(one, "flowchart TD\n  a --> a"); err != nil {
+		t.Errorf("one node needs no edge: %v", err)
 	}
 }
 

@@ -829,7 +829,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `direction` (`LR` or `TB`), `groups` (`id`, `label`, `group`), `nodes`
   (`id`, `label`, `kind`: `step`, `store`, `decision` or `terminal`, `group`)
   and `edges` (`from`, `to`, `label`, `dashed`, `thick`, `head`: `end`,
-  `both` or `none`); at most 60 nodes, 30 groups and 150 edges.
+  `both` or `none`); at most 60 nodes, 30 groups and 150 edges. A label is
+  at most 80 characters; a node's may span up to 12 such lines, 600
+  characters in all. An answer with two or more nodes and no edges, for a
+  source that draws connections, fails like any other invalid answer (502).
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Thread says
   so: the status line above the message box (and, during a turn, the line
