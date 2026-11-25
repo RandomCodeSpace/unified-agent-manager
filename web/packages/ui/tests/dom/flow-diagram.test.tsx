@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ApiClient } from '../../src/api';
@@ -6,11 +6,17 @@ import { ApiContext } from '../../src/ApiContext';
 import { SessionContext } from '../../src/components/common';
 import { DiagramCard } from '../../src/components/Diagram';
 import type { FlowGraph } from '../../src/lib/flowGraph';
+import { layoutFlow } from '../../src/lib/flowLayout';
 
 // ELK lays out in this thread here: happy-dom has no Worker for its worker script.
 vi.mock('elkjs/lib/elk-api.js', async () => {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
   return { default: class { layout = (graph: object) => new ELK().layout(graph) } };
+});
+// Watched so a test can tell which directions a chart was laid out in.
+vi.mock('../../src/lib/flowLayout', async (real) => {
+  const m = await real<typeof import('../../src/lib/flowLayout')>();
+  return { ...m, layoutFlow: vi.fn(m.layoutFlow) };
 });
 // The Mermaid view's frame does not draw here; these tests are about the React Flow view.
 vi.mock('../../src/lib/diagram', async (real) => ({ ...(await real<object>()), renderDiagram: () => new Promise(() => {}) }));
@@ -101,6 +107,28 @@ describe('React Flow view', () => {
     fireEvent.mouseUp(window, { ...at, clientX: 60, clientY: 40 });
     fireEvent.click(await within(figure).findByRole('button', { name: 'Reset layout' }));
     await waitFor(() => expect(within(figure).queryByRole('button', { name: 'Reset layout' })).toBeNull());
+  });
+
+  test('a chart too wide to read top to bottom is laid out left to right; a small one is laid out once', async () => {
+    vi.mocked(layoutFlow).mockClear();
+    // A mindmap's shape: a root, 5 branches and 15 leaves, all leaves in one row top to bottom.
+    const branches = [1, 2, 3, 4, 5].map((b) => `  r --> b${b}\n` + [1, 2, 3].map((l) => `  b${b} --> l${b}${l}\n`).join('')).join('');
+    card(`flowchart TB\n${branches}`);
+    let figure = await screen.findByRole('figure', { name: 'Diagram' });
+    await waitFor(() => expect(figure.querySelector('.react-flow__node')).toBeTruthy());
+    expect(vi.mocked(layoutFlow).mock.calls.map(([, dir]) => dir)).toEqual(['TB', 'LR']);
+    expect(figure.querySelector('.react-flow__handle-left')).toBeTruthy();
+    expect(figure.querySelector('.react-flow__handle-top')).toBeNull();
+    // The card grows toward its tallest for the taller layout.
+    expect(Number.parseFloat(figure.style.height)).toBe(560);
+    cleanup();
+
+    vi.mocked(layoutFlow).mockClear();
+    card('flowchart TB\n  a --> b\n  a --> c');
+    figure = await screen.findByRole('figure', { name: 'Diagram' });
+    await waitFor(() => expect(figure.querySelector('.react-flow__node')).toBeTruthy());
+    expect(vi.mocked(layoutFlow).mock.calls.map(([, dir]) => dir)).toEqual(['TB']);
+    expect(figure.querySelector('.react-flow__handle-top')).toBeTruthy();
   });
 
   test('another diagram opens in Mermaid, with no React Flow tab outside a Thread', () => {

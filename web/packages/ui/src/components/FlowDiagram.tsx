@@ -16,6 +16,11 @@ import { layoutFlow, type FlowEdgeData, type FlowLayout, type FlowNodeData, type
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 560;
 const PAD = 24;
+/** Below this zoom a chart's text is too small to read, so the other direction is tried. */
+const READABLE = 0.75;
+
+/** The zoom the card draws `layout` at: fitted to the card's width and its tallest height, never above 1. */
+const fit = (layout: FlowLayout, width: number) => Math.min(1, (width - PAD) / layout.width, (MAX_HEIGHT - PAD) / layout.height);
 
 // Edges are drawn from ELK's points; the handles exist only because React Flow anchors every edge end.
 function Anchors({ dir }: Readonly<{ dir: 'LR' | 'TB' }>) {
@@ -197,8 +202,8 @@ function Flow({ layout }: Readonly<{ layout: FlowLayout }>) {
 }
 
 /**
- * The diagram in `source`, laid out for the card's width: a left-to-right chart far wider than
- * the card is laid out top to bottom instead. A source Pele cannot read is converted by
+ * The diagram in `source`, laid out for the card: a chart that would shrink too far to read is
+ * laid out in the other direction when that draws it larger. A source Pele cannot read is converted by
  * `convert` when given (in a Thread), else reported. `onUnavailable` says why the
  * view cannot draw it, so the card shows the Mermaid view.
  */
@@ -220,11 +225,12 @@ export default function FlowDiagram({ source, onUnavailable, convert }: Readonly
     (async () => {
       const graph = read ?? (await fallback!());
       let layout = await layoutFlow(graph, graph.direction);
-      if (graph.direction === 'LR' && layout.width * 0.75 > width) {
-        const tall = await layoutFlow(graph, 'TB');
-        if (tall.width < layout.width) layout = tall;
+      // A wide chart is often tall the other way, and the card can grow to MAX_HEIGHT.
+      if (fit(layout, width) < READABLE) {
+        const other = await layoutFlow(graph, graph.direction === 'LR' ? 'TB' : 'LR');
+        if (fit(other, width) > fit(layout, width)) layout = other;
       }
-      const scale = Math.min(1, (width - PAD) / layout.width);
+      const scale = fit(layout, width);
       if (on) setLaid({ layout, height: Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, layout.height * scale + PAD))) });
     })().catch((err: unknown) => on && onUnavailable(read === null ? { error: err instanceof Error ? err.message : 'Conversion failed' } : 'unreadable'));
     return () => {
