@@ -36,11 +36,22 @@ const Box = memo(function Box({ data, selected }: NodeProps<Node<FlowNodeData>>)
           <path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8" />
         </svg>
       )}
-      <span className="flow-label">{data.label}</span>
+      <Label text={data.label} />
       <Anchors dir={data.dir} />
     </div>
   );
 });
+
+/** A label's first line is the node's name; in a converted graph the lines under it are its details (an entity's columns, a class's members). */
+function Label({ text }: Readonly<{ text: string }>) {
+  const [name, ...rest] = text.split('\n');
+  return (
+    <span className="flow-label">
+      {name}
+      {rest.length > 0 && <span className="flow-detail">{rest.join('\n')}</span>}
+    </span>
+  );
+}
 
 const Decision = memo(function Decision({ data, selected, width = 140, height = 72 }: NodeProps<Node<FlowNodeData>>) {
   return (
@@ -188,7 +199,7 @@ function Flow({ layout }: Readonly<{ layout: FlowLayout }>) {
 /**
  * The diagram in `source`, laid out for the card's width: a left-to-right chart far wider than
  * the card is laid out top to bottom instead. A source Pele cannot read is converted by
- * `convert` when given (the owner chose this view), else reported. `onUnavailable` says why the
+ * `convert` when given (in a Thread), else reported. `onUnavailable` says why the
  * view cannot draw it, so the card shows the Mermaid view.
  */
 export default function FlowDiagram({ source, onUnavailable, convert }: Readonly<{ source: string; onUnavailable: (why: FlowMiss) => void; convert?: () => Promise<FlowGraph> }>) {
@@ -222,7 +233,8 @@ export default function FlowDiagram({ source, onUnavailable, convert }: Readonly
   }, [read, fallback, onUnavailable]);
 
   return (
-    <div ref={box} role="figure" aria-label="Diagram" aria-busy={converting} className="flow-diagram" style={{ height: laid?.height ?? MIN_HEIGHT }}>
+    // Pele's line breaks only wrap a label; the model's put details under a name.
+    <div ref={box} role="figure" aria-label="Diagram" aria-busy={converting} className={read === null ? 'flow-diagram flow-details' : 'flow-diagram'} style={{ height: laid?.height ?? MIN_HEIGHT }}>
       {laid && <Flow layout={laid.layout} />}
       {converting && (
         <p className="flex h-full items-center justify-center gap-2 text-caption text-muted">

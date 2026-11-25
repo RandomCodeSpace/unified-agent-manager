@@ -26,7 +26,7 @@ const GRAPH = header('flowchart|graph|stateDiagram|classDiagram|erDiagram|mindma
 /** Why the React Flow view could not draw the source: Pele cannot read it, it is too big, or the model's conversion failed. */
 export type FlowMiss = 'unreadable' | 'too-big' | { error: string };
 
-// One conversion per source; a failed one is forgotten so the next click asks again.
+// One conversion per source; a failed one is forgotten so the next look asks again.
 const converted = new Map<string, Promise<FlowGraph>>();
 function convertGraph(api: ApiClient, sessionId: string, source: string): Promise<FlowGraph> {
   let graph = converted.get(source);
@@ -40,9 +40,10 @@ function convertGraph(api: ApiClient, sessionId: string, source: string): Promis
 
 /**
  * A fenced `mermaid` block: the code-block chrome with a React Flow / Mermaid / Code toggle. A
- * flowchart opens in the React Flow view (FlowDiagram.tsx); any other diagram, or a flowchart that
- * view cannot read, opens in the Mermaid view. A box-and-arrow diagram it cannot read keeps the
- * React Flow tab in a Thread: choosing it asks the Utility model for the graph. The Mermaid view is rendered in the sandboxed frame and shown only as a `data:` image, never as inline markup, which opens the lightbox on a click. Mermaid renders
+ * box-and-arrow diagram opens in the React Flow view (FlowDiagram.tsx): Pele reads a flowchart, and
+ * in a Thread the Utility model converts any other one, or a flowchart Pele cannot read. When neither
+ * can, or the conversion fails, the card falls back to the Mermaid view, which also takes every other
+ * diagram. The Mermaid view is rendered in the sandboxed frame and shown only as a `data:` image, never as inline markup, which opens the lightbox on a click. Mermaid renders
  * only once its view is shown. Until the fence has closed (`ready`), and whenever Mermaid cannot
  * parse the source in its view, the code shows instead, the latter with a quiet note.
  */
@@ -52,15 +53,15 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
   const sessionId = useContext(SessionContext);
   const [miss, setMiss] = useState<FlowMiss | null>(null);
   const readable = FLOWCHART.test(source) && miss === null;
+  const failed = miss !== null && typeof miss === 'object';
   const flowable = readable || (GRAPH.test(source) && !!sessionId && miss !== 'too-big');
   const [chosen, setView] = useState<View | null>(null);
-  const view: View = chosen === 'flow' && !flowable ? 'mermaid' : (chosen ?? (readable ? 'flow' : 'mermaid'));
+  const view: View = chosen === 'flow' && !flowable ? 'mermaid' : (chosen ?? (flowable && !failed ? 'flow' : 'mermaid'));
   const unavailable = useCallback((why: FlowMiss) => {
     setMiss(why);
     if (typeof why === 'object') setView(null);
   }, []);
-  // Only a click on React Flow may spend a Utility call.
-  const convert = useMemo(() => (chosen === 'flow' && sessionId ? () => convertGraph(api, sessionId, source) : undefined), [chosen, sessionId, api, source]);
+  const convert = useMemo(() => (sessionId ? () => convertGraph(api, sessionId, source) : undefined), [sessionId, api, source]);
   const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
@@ -130,10 +131,10 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
         }
         body={flow || image || undefined}
         foot={
-          view === 'mermaid' && (error || typeof miss === 'object') && (
+          view === 'mermaid' && (error || failed) && (
             <>
               {error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {errorReason(error)}</Note>}
-              {miss && typeof miss === 'object' && <Note className={cn('px-3 py-1.5')}>React Flow view unavailable: {miss.error}</Note>}
+              {failed && <Note className={cn('px-3 py-1.5')}>React Flow view unavailable: {miss.error}</Note>}
             </>
           )
         }

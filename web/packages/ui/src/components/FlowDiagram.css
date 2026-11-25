@@ -1,4 +1,4 @@
-/* The React Flow view of a mermaid flowchart (FlowDiagram.tsx), in the page's tokens. */
+/* The React Flow view of a mermaid diagram (FlowDiagram.tsx), in the page's tokens. */
 
 .flow-diagram {
   --flow-wash: 11%;
@@ -47,11 +47,11 @@
   z-index: 1100;
 }
 .flow-dots {
-  opacity: 0.5;
+  opacity: 0.7;
 }
 
-.flow-step,
-.flow-terminal {
+/* Each kind has a tone: a step's accent bar, a store's icon, a decision's diamond, a terminal's pill. */
+.flow-step {
   --tone: var(--color-badge-blue);
 }
 .flow-store {
@@ -59,6 +59,9 @@
 }
 .flow-decision {
   --tone: var(--color-badge-orange);
+}
+.flow-terminal {
+  --tone: var(--color-badge-green);
 }
 
 .flow-diagram .react-flow__node:focus-visible {
@@ -81,6 +84,9 @@
 }
 
 .flow-node {
+  --ring: color-mix(in oklab, var(--tone) 26%, var(--color-hairline));
+  position: relative;
+  overflow: hidden;
   box-sizing: border-box;
   width: 100%;
   height: 100%;
@@ -89,16 +95,44 @@
   justify-content: center;
   gap: 8px;
   padding: 0 14px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--color-raised);
-  box-shadow: var(--elevation-raised);
+  box-shadow:
+    0 0 0 1px var(--ring),
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 6px 16px -10px rgb(0 0 0 / 0.25);
+  transition: box-shadow 120ms ease-out;
+}
+/* A step's or store's accent: a straight bar on its leading edge, clipped by the corners. */
+.flow-node:not(.flow-terminal)::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--tone);
+}
+.flow-diagram .react-flow__node:hover .flow-node {
+  --ring: color-mix(in oklab, var(--tone) 55%, var(--color-hairline));
 }
 .flow-terminal {
   border-radius: 999px;
   background: color-mix(in oklab, var(--tone) var(--flow-wash), var(--color-raised));
+  box-shadow:
+    0 0 0 1px var(--ring),
+    0 1px 2px rgb(0 0 0 / 0.05);
+}
+.flow-terminal .flow-label {
+  color: color-mix(in oklab, var(--tone) 65%, var(--color-ink));
+  font-weight: 600;
 }
 .flow-node.is-selected {
-  box-shadow: 0 0 0 1.5px var(--tone);
+  --ring: var(--tone);
+  box-shadow:
+    0 0 0 2px var(--tone),
+    0 8px 20px -10px color-mix(in oklab, var(--tone) 60%, transparent);
+}
+.flow-terminal.is-selected {
+  box-shadow: 0 0 0 2px var(--tone);
 }
 .flow-icon {
   flex: none;
@@ -111,11 +145,24 @@
 .flow-label {
   position: relative;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 17px;
   color: var(--color-ink);
   text-align: center;
   white-space: pre;
+}
+.flow-detail {
+  display: block;
+}
+/* In a converted graph, an entity's columns or a class's members under its name: quieter, left-aligned, below a rule (flowLayout.ts DETAIL_RULE). */
+.flow-details .flow-detail {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--color-hairline);
+  font-size: 12px;
+  font-weight: 450;
+  color: var(--color-muted);
+  text-align: left;
 }
 
 .flow-decision {
@@ -132,8 +179,8 @@
 }
 .flow-decision path {
   fill: color-mix(in oklab, var(--tone) var(--flow-wash), var(--color-raised));
-  stroke: color-mix(in oklab, var(--tone) 55%, transparent);
-  stroke-width: 1.25;
+  stroke: color-mix(in oklab, var(--tone) 60%, transparent);
+  stroke-width: 1.5;
   stroke-linejoin: round;
 }
 .flow-decision.is-selected path {
@@ -152,9 +199,9 @@
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  border-radius: 12px;
-  background: var(--color-fill-hover);
-  box-shadow: inset 0 0 0 1px var(--color-hairline);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--color-badge-blue) 5%, transparent);
+  border: 1px dashed color-mix(in oklab, var(--color-badge-blue) 35%, var(--color-hairline));
 }
 .flow-group-title {
   position: absolute;
@@ -164,16 +211,19 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-muted);
+  color: color-mix(in oklab, var(--color-badge-blue) 70%, var(--color-muted));
 }
 
+.flow-edge {
+  --edge: color-mix(in oklab, var(--color-track) 85%, var(--color-ink));
+}
 .flow-edge-line {
   fill: none;
-  stroke: var(--color-track);
-  stroke-width: 1.35;
+  stroke: var(--edge);
+  stroke-width: 1.5;
 }
 .flow-edge-head {
-  fill: var(--color-track);
+  fill: var(--edge);
 }
 .flow-edge.is-dashed .flow-edge-line {
   stroke-dasharray: 5 4;
@@ -181,11 +231,11 @@
 .flow-edge.is-thick .flow-edge-line {
   stroke-width: 2.4;
 }
-.flow-edge.is-hot .flow-edge-line {
-  stroke: var(--color-accent);
+.flow-edge.is-hot {
+  --edge: var(--color-accent);
 }
-.flow-edge.is-hot .flow-edge-head {
-  fill: var(--color-accent);
+.flow-edge.is-hot .flow-edge-line {
+  stroke-width: 2;
 }
 .flow-edge.is-dim {
   opacity: 0.25;
@@ -198,11 +248,11 @@
   font-weight: 500;
   white-space: pre;
   text-align: center;
-  padding: 2px 6px;
-  border-radius: 5px;
-  color: var(--color-muted);
-  background: var(--color-code-bg);
-  box-shadow: 0 0 0 1px var(--color-hairline);
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--color-body);
+  background: var(--color-float);
+  box-shadow: var(--elevation-raised);
 }
 .flow-edge-label.is-hot {
   color: var(--color-accent);

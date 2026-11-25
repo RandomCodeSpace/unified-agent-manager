@@ -71,7 +71,7 @@ const pressed = () => screen.getAllByRole('button', { pressed: true }).map((b) =
 
 describe('React Flow view', () => {
   test('a flowchart opens in React Flow, laid out with its kinds, groups and labels', async () => {
-    card('flowchart LR\n  a([Start]) -->|go| b{Ok?}\n  subgraph s[Store]\n    c[(Orders)]\n  end\n  b -.-> c\n  b <==> a');
+    card('flowchart LR\n  a([Start]) -->|go| b{Ok?}\n  subgraph s[Store]\n    c[(Orders)]\n  end\n  b -.-> c\n  b <==> a\n  u["User<br>id PK<br>name"]');
     expect(pressed()).toEqual(['React Flow']);
     const figure = await screen.findByRole('figure', { name: 'Diagram' });
     await waitFor(() => expect(within(figure).getByText('Orders')).toBeTruthy());
@@ -79,6 +79,9 @@ describe('React Flow view', () => {
     expect(figure.querySelector('.flow-decision')?.textContent).toBe('Ok?');
     expect(figure.querySelector('.flow-store .flow-icon')).toBeTruthy();
     expect(figure.querySelector('.flow-group-title')?.textContent).toBe('Store');
+    // Pele's line breaks only wrap a label.
+    expect(figure.querySelector('.flow-step .flow-detail')?.textContent).toBe('id PK\nname');
+    expect(figure.classList.contains('flow-details')).toBe(false);
     // Edges follow ELK's route, dashed and thick as the source says, with arrow heads and labels.
     await waitFor(() => expect(figure.querySelectorAll('.flow-edge')).toHaveLength(3));
     expect(figure.querySelector('.flow-edge.is-dashed')).toBeTruthy();
@@ -106,12 +109,12 @@ describe('React Flow view', () => {
     expect(screen.getAllByRole('group', { name: 'View' }).map((g) => g.textContent)).toEqual(['MermaidCode', 'MermaidCode']);
   });
 
-  test('in a Thread, React Flow asks the Utility model once per source and draws its graph', async () => {
+  test('in a Thread, another box-and-arrow diagram opens in React Flow: the Utility model draws it, once per source', async () => {
     const graph: FlowGraph = {
       direction: 'TB',
       groups: [],
       nodes: [
-        { id: 'idle', label: 'Idle', kind: 'step' },
+        { id: 'idle', label: 'Idle\nwaits for a prompt', kind: 'step' },
         { id: 'busy', label: 'Busy', kind: 'step' },
       ],
       edges: [{ from: 'idle', to: 'busy', label: 'start', dashed: false, thick: false, head: 'end' }],
@@ -119,11 +122,12 @@ describe('React Flow view', () => {
     const diagramGraph = vi.fn(async () => graph);
     const user = userEvent.setup();
     card('stateDiagram-v2\n  Idle --> Busy: start', { diagramGraph }, 'thread-1');
-    expect(pressed()).toEqual(['Mermaid']);
-    expect(diagramGraph).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'React Flow' }));
+    expect(pressed()).toEqual(['React Flow']);
     const figure = await screen.findByRole('figure', { name: 'Diagram' });
     await waitFor(() => expect(within(figure).getByText('Busy')).toBeTruthy());
+    // The model's further lines are details under the name.
+    expect(figure.classList.contains('flow-details')).toBe(true);
+    expect(figure.querySelector('.flow-detail')?.textContent).toBe('waits for a prompt');
     expect(diagramGraph).toHaveBeenCalledWith('thread-1', 'stateDiagram-v2\n  Idle --> Busy: start');
     await user.click(screen.getByRole('button', { name: 'Code' }));
     await user.click(screen.getByRole('button', { name: 'React Flow' }));
@@ -137,8 +141,10 @@ describe('React Flow view', () => {
     });
     const user = userEvent.setup();
     card('classDiagram\n  Animal <|-- Duck', { diagramGraph }, 'thread-2');
-    await user.click(screen.getByRole('button', { name: 'React Flow' }));
     expect(await screen.findByText('React Flow view unavailable: the model could not turn this diagram into a graph')).toBeTruthy();
     expect(pressed()).toEqual(['Mermaid']);
+    // React Flow stays a click away, and asks again.
+    await user.click(screen.getByRole('button', { name: 'React Flow' }));
+    await waitFor(() => expect(diagramGraph).toHaveBeenCalledTimes(2));
   });
 });

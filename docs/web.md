@@ -1251,13 +1251,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   links, and a node can be dragged (its links follow; **Reset layout** among
   the zoom buttons puts every node back; nothing is saved). Shapes fold into
   four kinds (step, store, decision, start/end); Mermaid styles and classes
-  show only in the Mermaid view. A flowchart the React Flow view cannot read
-  opens in Mermaid. In a Thread, such a flowchart, and a state, class, ER,
-  mindmap, block, architecture, requirement or C4 diagram, keeps the React
-  Flow tab: choosing it asks the Utility model (the Thread's model when none
-  is set) to turn the diagram into a graph, logged as `diagram-graph`. The
-  answer is checked, then kept per source until the service restarts; one
-  that fails leaves the Mermaid view with a note, and the tab tries again.
+  show only in the Mermaid view. In a Thread, a
+  flowchart the page cannot read, and a state, class, ER, mindmap, block,
+  architecture, requirement or C4 diagram, opens in React Flow too: the
+  Utility model (the Thread's model when none is set) turns the diagram into
+  a graph as soon as the block shows, logged as `diagram-graph`; a node's
+  further lines there (an entity's columns, a class's members) show under
+  its name, quieter. The answer
+  is checked, then kept per source until the service restarts; one that
+  fails falls back to the Mermaid view with a note, and the React Flow tab
+  tries again. Outside a Thread such a diagram opens in Mermaid, as does
+  every other diagram type.
   A block Mermaid cannot parse shows the code with a note that says where
   and what is wrong. Code blocks with a language are
   highlighted (Go, TypeScript, JavaScript, shell, JSON, YAML, Python, Rust,
@@ -3348,8 +3352,10 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
 - **Diagrams.** Only fenced ` ```mermaid ` blocks render; other diagram
-  languages stay code. The React Flow view takes flowcharts only, up to 60
-  nodes; larger ones and other Mermaid types show as the Mermaid image. Mermaid draws with the interface font (Figtree, embedded
+  languages stay code. The React Flow view takes box-and-arrow diagrams of
+  up to 60 nodes; larger ones and other Mermaid types (sequence, Gantt, pie
+  and the like) show as the Mermaid image. Each diagram the page cannot read
+  itself costs one Utility-model call per source, again after a restart. Mermaid draws with the interface font (Figtree, embedded
   in each diagram), and a diagram wider than the pane is scaled down; open it
   for full size. The first diagram on a page fetches a 3.4 MB script, once.
 - **Late steers (Copilot).** A steer that arrives while Copilot writes the

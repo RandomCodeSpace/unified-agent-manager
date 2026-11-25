@@ -911,6 +911,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'd2', kind: 'assistant', time: ago(9), text: 'The request path, browser to model:\n\n```mermaid\nflowchart LR\n  A[Browser] -->|HTTPS| B[Sign-in proxy] --> C[uam web]\n  C --> D[(Session state)]\n  C -.-> E{Copilot CLI}\n```' },
         { id: 'd3', kind: 'assistant', time: ago(9), text: 'And the release timeline:\n\n```mermaid\ngantt\n  title Release\n  dateFormat YYYY-MM-DD\n  section Build\n  Web bundle :a1, 2026-10-01, 3d\n  Go binary :a2, after a1, 2d\n```' },
         { id: 'd3s', kind: 'assistant', time: ago(9), text: 'A Thread\'s states:\n\n```mermaid\nstateDiagram-v2\n  [*] --> Working\n  Working --> NeedsAnswer: asks\n  NeedsAnswer --> Working: answered\n  Working --> Finished\n  Finished --> [*]\n```' },
+        { id: 'd3e', kind: 'assistant', time: ago(9), text: 'What a Thread keeps:\n\n```mermaid\nerDiagram\n  PROJECT ||--o{ THREAD : holds\n  THREAD ||--o{ ITEM : records\n  THREAD {\n    string id PK\n    string project_id FK\n    string state\n  }\n```' },
         { id: 'd4', kind: 'assistant', time: ago(8), text: 'Here is the request flow with the state store.\n\n```mermaid\nflowchart LR\n  browser[Browser] -->|HTTPS| proxy[Sign-in proxy] --> web[uam web Go]\n  web -->|SDK stdio| cli[Copilot CLI] --> model[Model API]\n  web -->|reads| disk[Session state]\n  cli -->|writes| disk\n```' },
       ],
     }),
