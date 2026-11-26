@@ -1,9 +1,9 @@
 import { useRef } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from 'vitest';
 import type { Item } from '../../src/api';
 import { FileReferencesProvider } from '../../src/components/FileReferences';
-import { PlainText, SessionContext, WorkdirContext } from '../../src/components/common';
+import { Markdown, PlainText, SessionContext, WorkdirContext } from '../../src/components/common';
 import { FilePreview, useFilePreview } from '../../src/components/FilePreview';
 import { Transcript } from '../../src/components/Transcript';
 import { PreviewContext } from '../../src/lib/previewContext';
@@ -16,12 +16,12 @@ const items: Item[] = [
 const text = '# Code review\n\nThe report contents are available.';
 const openPanel = () => {};
 
-function Conversation({ entries = items }: { entries?: Item[] }) {
+function Conversation({ entries = items, working = false }: { entries?: Item[]; working?: boolean }) {
   const fallback = useRef<HTMLDivElement>(null);
   const preview = useFilePreview('task', 'history', true, openPanel, fallback);
   return <FileReferencesProvider sessionId="task" workdir="/repo" generation="history" active items={entries}>
     <PreviewContext.Provider value={preview.open}>
-      <Transcript sessionId="task" workdir="/repo" items={entries} interactions={[]} subagents={[]} live={false} working={false} />
+      <Transcript sessionId="task" workdir="/repo" items={entries} interactions={[]} subagents={[]} live={working} working={working} />
       {preview.selection && <FilePreview selection={preview.selection} open sessionId="task" workdir="/repo" inline onClose={preview.close} onClosed={() => {}} onReload={preview.reload} />}
     </PreviewContext.Provider>
   </FileReferencesProvider>;
@@ -168,4 +168,37 @@ test('a whole message too large for Markdown still links its files', async () =>
   </FileReferencesProvider>);
   await waitFor(() => expect(screen.getAllByRole('link', { name: `Open ${path}` })).toHaveLength(2));
   expect(screen.getByText(/Long text naming/)).toBeTruthy();
+});
+
+test('a reply that stops streaming with its text unchanged still asks for its references', async () => {
+  const code = 'src/app.go';
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    if (String(input).endsWith('/files/resolve')) return Response.json({ files: [{ path: code, exists: true, kind: 'file' }] });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  // The last delta and the end of streaming arrive in separate renders: only the second shows references.
+  const reply = (streaming: boolean) => <FileReferencesProvider sessionId="task" workdir="/repo" generation="history" active items={[]}>
+    <SessionContext.Provider value="task"><WorkdirContext.Provider value="/repo"><Markdown text={`See \`${code}\`.`} streaming={streaming} /></WorkdirContext.Provider></SessionContext.Provider>
+  </FileReferencesProvider>;
+  const view = render(reply(true));
+  expect(screen.getByText(code).tagName).toBe('CODE');
+  // The lookup's first scan, while streaming, finds nothing to ask.
+  await act(() => new Promise(resolve => setTimeout(resolve, 20)));
+  view.rerender(reply(false));
+  expect(await screen.findByRole('link', { name: `Open ${code}` })).toBeTruthy();
+});
+
+test('a cited line range links the file and marks its first line', async () => {
+  const code = 'src/a.go';
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/files/resolve')) return Response.json({ files: [{ path: code, exists: true, kind: 'file' }] });
+    return new Response(init?.method === 'HEAD' ? null : 'package a\n\nfunc A() {}\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': '26' } });
+  });
+  render(<Conversation entries={[{ ...items[1], text: `See \`${code}:2-3\` and [the range](${code}#L2-L3).` }]} />);
+  const links = await screen.findAllByRole('link', { name: `Open ${code} at line 2` });
+  expect(links).toHaveLength(2);
+  fireEvent.click(links[1]);
+  await screen.findByRole('button', { name: 'Close preview' });
+  await waitFor(() => expect(document.querySelector('li[data-marked]')?.textContent).toBe('2'));
 });

@@ -132,7 +132,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-24 | Receipts: under the last reply of an ended turn, claims that the turn's tool calls contradict are stamped… | receipts.test.mjs | spec: transcript-turn.spec.ts |
 | TRN-25 | Finish evidence: the Changes panel opens with `Finished — check the evidence` (Passed/Failed/Not verified), and the… | none | spec: transcript-turn.spec.ts |
 | TRN-26 | The Since you left line under the header summarises what happened while away | none | spec: transcript-away.spec.ts |
-| TRN-27 | File references become tags with an icon (path, `path:line`, a bare name once a tool touched it, a unique partial path) | file-references.test.mjs, preview.test.mjs, markdown.test.mjs | spec: transcript-turn.spec.ts (fixme: on-screen references sometimes never resolve) |
+| TRN-27 | File references become tags with an icon (path, `path:line`, `path:12-20`, `name.ext#L10`, route names like `app/[id]/page.tsx`, a bare name once a tool touched it, a unique partial path) | file-references.test.mjs, preview.test.mjs, markdown.test.mjs, dom/file-references | spec: transcript-turn.spec.ts |
 | TRN-28 | The open preview reloads in place when a tool in the Thread edits the file (`Reload` covers other changes) | preview.test.mjs | spec: transcript-preview.spec.ts |
 | TRN-29 | A Markdown file preview renders the Markdown, and `Show the file as` toggles to source | none | spec: transcript-preview.spec.ts |
 | TRN-30 | Tool calls are steps in the turn's timeline (the sign-off's counts open it): one line per call with its result (`ok`, `exit 2`); a click opens its input and output, three lines until `Show all N lines` | none | spec: transcript-messages.spec.ts |

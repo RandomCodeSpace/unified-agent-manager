@@ -192,7 +192,7 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
   else if (!file) body = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</output>;
   else if (file.kind === 'text') {
     // The same code view as Go to file: line numbers, highlighting, and the cited line marked.
-    const line = Number(/#L(\d+)$/.exec(target.url ?? '')?.[1]) || undefined;
+    const line = Number(/#L(\d+)(?:-L?\d+)?$/.exec(target.url ?? '')?.[1]) || undefined;
     const source = file.text
       ? <div className="min-h-64 flex-1 overflow-x-auto rounded-sm bg-canvas"><CodeView path={target.path ?? target.name} text={file.text} line={line} changes={lens?.changes} focus={at >= 0 ? at : undefined} onFocus={setFocus} /></div>
       : <Note>This file is empty.</Note>;

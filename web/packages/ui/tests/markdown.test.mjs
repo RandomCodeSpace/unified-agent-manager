@@ -123,6 +123,22 @@ test('inline code names a file of the Task folder only when it is inside it', ()
   assert.deepEqual(codeFile('src/a#b.txt', dir), { path: 'src/a#b.txt', hash: '' });
   assert.deepEqual(codeFile('src/main.go:3', dir), { path: 'src/main.go', hash: '#L3' });
   assert.deepEqual(codeFile('main.go:3:1', dir), { path: 'main.go', hash: '#L3' });
+  // Each way a place in a file is cited links the file at its first line.
+  for (const [text, path, hash] of [
+    ['src/a.go:12-20', 'src/a.go', '#L12'],
+    ['src/a.test.tsx:12:5:', 'src/a.test.tsx', '#L12'],
+    ['src/a.go:12:', 'src/a.go', '#L12'],
+    ['src/a.go:', 'src/a.go', ''],
+    ['a.go#L10', 'a.go', '#L10'],
+    ['src/a.go#L10-L20', 'src/a.go', '#L10-L20'],
+    ['README.md#install', 'README.md', '#install'],
+    ['app/[id]/page.tsx', 'app/[id]/page.tsx', ''],
+    ['src/(app)/layout.tsx:4', 'src/(app)/layout.tsx', '#L4'],
+    ['app/routes/$id.tsx', 'app/routes/$id.tsx', ''],
+  ]) assert.deepEqual(codeFile(text, dir), { path, hash }, text);
+  assert.deepEqual(taskFile('main.go:12-20', dir), { path: 'main.go', hash: '#L12' });
+  assert.equal(localPath('main.go:12-20'), 'main.go:12-20');
+  for (const other of ['foo(a/b)', 'useState()', 'a[0]', '$id.tsx', '$HOME/bin/x.sh', 'tel:', 'a.go#L1#L2']) assert.equal(codeFile(other, dir), null, other);
   for (const outside of ['/etc/passwd', '/home/dev/project2/a.html', '../x.html', 'out/../../x.md', '~/a.md', 'useState', 'foo()']) {
     assert.equal(codeFile(outside, dir), null, outside);
   }
