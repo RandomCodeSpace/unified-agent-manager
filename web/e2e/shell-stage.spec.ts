@@ -172,6 +172,6 @@ test('an archived Thread is found in Settings, unarchives as Finished without a 
   const confirm = page.getByRole('alertdialog', { name: /Delete “Zeta thread”\?/ });
   await confirm.getByRole('button', { name: 'Delete' }).click();
   await expect(list.getByRole('listitem').filter({ hasText: 'Zeta thread' })).toHaveCount(0);
-  const sessions = await (await page.request.get('/api/sessions')).text();
-  expect(sessions).not.toContain(id);
+  // The row can leave before the DELETE answers, so wait for the service to drop it.
+  await expect.poll(async () => (await page.request.get('/api/sessions')).text()).not.toContain(id);
 });
