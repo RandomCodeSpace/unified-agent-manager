@@ -119,3 +119,26 @@ test('stopping a subagent ends its running tool call, and the Thread goes on', a
   await expect(threadState(page, 'Finished')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Subagents at work' })).toHaveCount(0);
 });
+
+test('a subagent named in a reply wraps with the words around it and opens the subagent', async ({ page, project, model }) => {
+  const name = 'reviewer of every accessibility linter finding in the templates folder';
+  script(model, { userMessage: 'delegate the review' }, [task('call_review', name, 'Review the findings'), `Done. The subagent **${name}** reported nothing worth fixing in any template.`], {}, 'main');
+  model.on(subagentAsked('Review the findings'), { content: 'Nothing to fix.' }, {}, 'reviewer');
+  await openHome(page);
+  await newThread(page, project);
+  await pickMode(page, 'Yolo');
+  await send(page, 'delegate the review');
+  await page.setViewportSize({ width: 420, height: 900 });
+  const tag = conversation(page).getByRole('button', { name: `Open subagent ${name}` });
+  await expect(tag).toBeVisible();
+  // An inline box: the long name breaks across lines and starts on the line of the words before it.
+  const rects = await tag.evaluate((el) => {
+    const line = el.closest('p')!.getBoundingClientRect();
+    const boxes = [...el.getClientRects()];
+    return { count: boxes.length, startsInLine: boxes[0].left > line.left + 1 };
+  });
+  expect(rects.count).toBeGreaterThan(1);
+  expect(rects.startsInLine).toBe(true);
+  await tag.click();
+  await expect(page).toHaveURL(/&agent=/);
+});

@@ -114,7 +114,7 @@ function subagentLinker(subagents: readonly Subagent[]) {
   if (!linker) {
     linker = (text, code) => {
       const s = namedSubagent(text, subagents, code);
-      return s ? <SubagentTag id={s.id} name={s.name}>{code ? <code>{text}</code> : <strong>{text}</strong>}</SubagentTag> : null;
+      return s ? <SubagentTag id={s.id} name={s.name} prose>{code ? <code>{text}</code> : <strong>{text}</strong>}</SubagentTag> : null;
     };
     linkers.set(subagents, linker);
   }

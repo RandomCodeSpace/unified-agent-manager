@@ -98,7 +98,15 @@ test('a reply\'s whole bold name or inline-code id of one of its subagents opens
   // The reply's own emphasis stays inside: bold as bold, code as code.
   expect(links[0].querySelector('strong')?.textContent).toBe('Run the accessibility linter');
   expect(links[1].querySelector('code')?.textContent).toBe('a4');
-  await user.click(links[0]);
+  // In prose the tag is an inline span acting as a button (a <button> is one box that cannot wrap).
+  for (const link of links) {
+    expect(link.tagName).toBe('SPAN');
+    expect(link.className).not.toMatch(/\binline-flex\b/);
+    expect(link.tabIndex).toBe(0);
+  }
+  // It opens from the keyboard as a button does.
+  links[0].focus();
+  await user.keyboard('{Enter}');
   await waitFor(() => expect(window.location.hash).toBe('#task=t8&agent=a3'));
 });
 
