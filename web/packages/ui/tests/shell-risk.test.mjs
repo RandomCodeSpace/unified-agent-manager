@@ -7,7 +7,7 @@ const roots = ['/work/project'];
 test('a destructive command outside the project says why, most telling reasons first', () => {
   assert.equal(shellRisk('chmod 0644 ~/.config/zsh/aliases.zsh && rm -f ~/.zcompdump*', roots), 'Outside the project · Deletes files · Changes file permissions');
   assert.equal(shellRisk('sudo apt-get install jq', roots), 'Runs as root');
-  assert.equal(shellRisk('git push --force origin main', roots), 'Rewrites git history · Forces the change');
+  assert.equal(shellRisk('git push --force origin main', roots), 'Rewrites git history');
   assert.equal(shellRisk('git reset --hard HEAD~1', roots), 'Rewrites git history');
   assert.equal(shellRisk('printf one > one.txt', roots), 'Writes to a file');
   assert.equal(shellRisk('cat /etc/passwd', roots), 'Outside the project');
@@ -19,6 +19,6 @@ test('the CLI warning and sandbox escape come first, and their text is not match
 });
 
 test('a harmless or unrecognised command gets no line, never a safe verdict', () => {
-  for (const command of ['go test ./...', 'ls -la /work/project/src', 'npm test 2>&1 | tail -5', 'grep -r foo . > /dev/null', 'node -e "[1].map(x => x)"', 'git status'])
+  for (const command of ['go test ./...', 'ls -la /work/project/src', 'npm test 2>&1 | tail -5', 'grep -r foo . > /dev/null', 'node -e "[1].map(x => x)"', 'git status', 'tail -f server.log', 'grep -f patterns.txt notes.md'])
     assert.equal(shellRisk(command, roots), '', command);
 });

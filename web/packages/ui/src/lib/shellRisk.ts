@@ -9,7 +9,6 @@ const SHELL_RISKS: ReadonlyArray<[RegExp, string]> = [
   [/(?:^|[\s;&|(])(?:chmod|chown|chgrp)\s/, 'Changes file permissions'],
   [/(?:^|[\s;&|(])mv\s/, 'Moves or replaces files'],
   [/\bgit\s+push\b[^;&|]*\s(?:--force(?:-with-lease)?|-f)\b|\bgit\s+reset\s[^;&|]*--hard\b/, 'Rewrites git history'],
-  [/(?:^|\s)(?:-f|--force)(?=\s|$)/, 'Forces the change'],
   // A redirect into a file; `2>&1` and `> /dev/null` write nothing.
   [/(?<![<>&=\d-])\d?>>?(?!&)\s*(?!\/dev\/null\b)[^\s>&]/, 'Writes to a file'],
 ];
