@@ -376,9 +376,20 @@ export const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pi
  * name (`children`, else `name`). Where the Thread can show it, a button that opens it in the
  * Conversation pane; `still` inside another control, never a button.
  */
-export function SubagentTag({ id, name, still = false, className, children }: Readonly<{ id: string; name: string; still?: boolean; className?: string; children?: ReactNode }>) {
+export function SubagentTag({ id, name, still = false, prose = false, className, children }: Readonly<{ id: string; name: string; still?: boolean; /** In running text: an inline box that wraps like the words around it. */ prose?: boolean; className?: string; children?: ReactNode }>) {
   const tone = useSubagentReplies()?.tones.get(id);
   const show = useActions()?.show;
+  // A button is one unbreakable box; in prose the tag is an inline span acting as one, so a long name wraps.
+  if (prose && show && !still) {
+    return (
+      <span role="button" tabIndex={0} aria-label={`Open subagent ${name}`} onClick={() => show(id)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(id); } }}
+        className={cn('cursor-pointer rounded-sm [box-decoration-break:clone] hover:bg-fill-hover active:bg-fill-strong pointer-coarse:py-3', className)}>
+        <span aria-hidden="true" className={cn('mr-1 inline-block size-1.5 rounded-full align-middle', tone ? DOT[tone] : 'bg-faint')} />
+        {children ?? name}
+      </span>
+    );
+  }
   const body = (
     <>
       <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', tone ? DOT[tone] : 'bg-faint')} />

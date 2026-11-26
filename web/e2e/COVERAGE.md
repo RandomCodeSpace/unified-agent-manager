@@ -197,6 +197,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-45 | A transcript row that throws renders as one muted line; the rest stays | none | not feasible (no input makes a row throw in the built app; the component test replaces the renderer) |
 | ACT-46 | A subagent whose Utility name says what its own name says shows the name once | none | spec: activity-agents.spec.ts |
 | ACT-47 | Choice rows of a question (and a uam_surface list picker bound to nothing) look disabled and stop reacting to the pointer while an answer is on its way | interactions-card.test.tsx, surface.test.tsx | not feasible (the send window is a local request too short to observe) |
+| ACT-48 | A subagent named in a reply (bold name or inline-code id) is an inline text button: a long name wraps with the words around it, Enter or a click opens the subagent | subagent-view.test.tsx | spec: act-subagents.spec.ts |
 | WSP-01 | The Thread header's Changes button and the sidebar row show the number of files the Thread changed | changes.test.mjs | spec: changes.spec.ts |
 | WSP-02 | While open on the active Thread, the panel rereads every 5 s and when the tab becomes visible again | changes.test.mjs | spec: workspace-changes-files.spec.ts |
 | WSP-03 | Files only Copilot's session tracking lists (shell writes) show a **Session tracking** label and have Revert disabled | none | spec: workspace-changes.spec.ts |
