@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -343,7 +344,28 @@ func readGitLabJobTrace(ctx context.Context, gate glabGate, projectID, jobID int
 	if !out.parsed || out.err != nil {
 		return GitLabJobTrace{}, errors.New("GitLab returned invalid job log headers")
 	}
-	return GitLabJobTrace{Text: displaytext.SanitizeText(out.tail.String()), Truncated: out.bytes > gitLabTraceLimit}, nil
+	return GitLabJobTrace{Text: redactTraceCredentials(displaytext.SanitizeText(out.tail.String())), Truncated: out.bytes > gitLabTraceLimit}, nil
+}
+
+// traceCredentialPatterns remove credentials a job script printed. GitLab
+// masks only masked variables, and every trace reader shows the text or
+// sends it to the Utility model. A match keeps groups 1 and 2 and replaces
+// the text between them. A key after "/" is URL userinfo, handled last.
+var traceCredentialPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`),
+	regexp.MustCompile(`(?i)(\b(?:proxy-)?authorization[ \t]*[:=][ \t]*)(?:(?:bearer|basic|token)[ \t]+)?\S+`),
+	regexp.MustCompile(`(?i)(\b(?:bearer|basic)[ \t]+)[A-Za-z0-9._~+/-]{8,}=*`),
+	regexp.MustCompile(`(?im)((?:^|[^A-Za-z0-9_./-])[A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|access[_-]?key|credential)[A-Za-z0-9_.-]*["']?[ \t]*[:=][ \t]*)(?:"[^"\n]*"|'[^'\n]*'|\S+)`),
+	regexp.MustCompile(`()\b(?:glpat|glptt|gldt|glrt|glrtr|glcbt|glimt|glagent|gloas|glsoat|glffct|glft|glwt)-[0-9A-Za-z_.-]{8,}`),
+	regexp.MustCompile(`()\bGR1348941[0-9A-Za-z_-]{8,}`),
+	regexp.MustCompile(`(\b[a-z][a-z0-9+.-]*://[^/\s:@]+:)[^/\s@]+(@)`),
+}
+
+func redactTraceCredentials(text string) string {
+	for _, pattern := range traceCredentialPatterns {
+		text = pattern.ReplaceAllString(text, "${1}"+redactedValue+"${2}")
+	}
+	return text
 }
 
 type gitLabTraceOutput struct {

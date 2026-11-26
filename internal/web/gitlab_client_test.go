@@ -302,6 +302,40 @@ func TestGitLabClientTraceTail(t *testing.T) {
 	}
 }
 
+func TestGitLabClientTraceRedactsCredentials(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"export GITLAB_TOKEN=abc123def", "export GITLAB_TOKEN=[redacted]"},
+		{"DB_PASSWORD: 'two words'", "DB_PASSWORD: [redacted]"},
+		{`{"client_secret": "s3cr3t value"}`, `{"client_secret": [redacted]}`},
+		{"--api-key=xyz --verbose", "--api-key=[redacted] --verbose"},
+		{"AWS_SECRET_ACCESS_KEY=AbCd/123", "AWS_SECRET_ACCESS_KEY=[redacted]"},
+		{"PRIVATE-TOKEN: abcdefgh12345", "PRIVATE-TOKEN: [redacted]"},
+		{"CI_JOB_TOKEN=zxcvbnmasdfghjkl", "CI_JOB_TOKEN=[redacted]"},
+		{"Authorization: Bearer eyJhbGciOi.payload.sig", "Authorization: [redacted]"},
+		{"curl -H 'authorization: Basic dXNlcjpwYXNz'", "curl -H 'authorization: [redacted]"},
+		{"using Bearer abcdefgh123456 now", "using Bearer [redacted] now"},
+		{"cloning with glpat-AbCdEf1234567890xyz done", "cloning with [redacted] done"},
+		{"tokens glptt-0123456789abcdef gldt-0123456789abcdef glrt-0123456789abcdef glcbt-64_0123456789abcdef", "tokens [redacted] [redacted] [redacted] [redacted]"},
+		{"register GR1348941AbCdEf123456", "register [redacted]"},
+		{"git clone https://gitlab-ci-token:abc123@gitlab.example.com/g/p.git", "git clone https://gitlab-ci-token:[redacted]@gitlab.example.com/g/p.git"},
+		{"a\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\nxyz\n-----END RSA PRIVATE KEY-----\nb", "a\n-----BEGIN RSA PRIVATE KEY-----[redacted]\nb"},
+		{"-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl", "-----BEGIN OPENSSH PRIVATE KEY-----[redacted]"},
+		{"password:\nnext line kept", "password:\nnext line kept"},
+		{"$ go test ./...\nok  example.com/pkg  0.2s\nFAIL: expected 2 got 3", "$ go test ./...\nok  example.com/pkg  0.2s\nFAIL: expected 2 got 3"},
+	} {
+		if got := redactTraceCredentials(tc.in); got != tc.want {
+			t.Errorf("redactTraceCredentials(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	gate := gitLabClientFake(t, map[string]gitLabFixtureResponse{
+		"projects/42/jobs/3/trace": {body: "\x1b[31mexport DEPLOY_TOKEN=hunter2\x1b[0m\n"},
+	})
+	got, err := readGitLabJobTrace(t.Context(), gate, 42, 3)
+	if err != nil || strings.Contains(got.Text, "hunter2") || !strings.Contains(got.Text, "DEPLOY_TOKEN=[redacted]") {
+		t.Fatalf("trace not redacted: %q err=%v", got.Text, err)
+	}
+}
+
 func TestGitLabClientTraceFailuresDoNotExposeOutput(t *testing.T) {
 	gate := gitLabClientFake(t, map[string]gitLabFixtureResponse{
 		"projects/42/jobs/3/trace": {status: 403, body: "credential-secret-never-display"},
