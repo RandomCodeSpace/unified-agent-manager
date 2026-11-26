@@ -14,7 +14,9 @@ describe('Home', () => {
     const base = { ...tasks[0], state: 'completed', subagents_running: 0, pending: 0, budget: undefined } satisfies SessionSummary;
     const sessions: SessionSummary[] = [
       { ...base, id: 'quiet', name: 'Quiet thread', updated_at: '2026-10-09T00:00:00Z' },
-      { ...base, id: 'asks', name: 'Asks a question', state: 'awaiting_answer', pending: 1, updated_at: '2026-10-08T00:00:00Z' },
+      { ...base, id: 'asks', name: 'Asks a question', state: 'awaiting_answer', pending: 1, updated_at: '2026-10-08T00:00:00Z', ask: { id: 'q', kind: 'question', title: 'Ship **today** or `later`?' } },
+      { ...base, id: 'plan', name: 'Has a plan', state: 'awaiting_answer', pending: 1, updated_at: '2026-10-07T00:00:00Z', ask: { id: 'r', kind: 'plan_review', title: 'Plan ready' } },
+      { ...base, id: 'allow', name: 'Wants a shell', state: 'awaiting_permission', pending: 1, updated_at: '2026-10-08T12:00:00Z', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } },
       { ...base, id: 'settled-asks', name: 'Settled asker', stage: 'settled', state: 'awaiting_answer', pending: 1 },
       { ...base, id: 'spends', name: 'Spends credits', budget: { credits: 25_000, spent: 12_345 } },
       { ...base, id: 'reached', name: 'Out of budget', budget: { credits: 20, spent: 20.4, reached: true } },
@@ -25,9 +27,21 @@ describe('Home', () => {
 
     expect(screen.queryByRole('region', { name: 'Recent threads' })).toBeNull();
     expect(screen.queryByText('Quiet thread')).toBeNull();
+    // No hero: the page opens on the count, with New thread in its header.
+    expect(screen.getByRole('heading', { level: 1, name: 'Needs you 3' })).toBeTruthy();
+    expect(screen.queryByText('What are you working on?')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New thread' })).toBeTruthy();
     const needs = within(screen.getByRole('region', { name: 'Needs you' }));
-    expect(needs.getAllByRole('button')).toHaveLength(1);
+    expect(needs.getAllByRole('button')).toHaveLength(3);
     expect(needs.queryByText('Settled asker')).toBeNull();
+    // Grouped by what you owe: the heading names the kind, each row only the request; a plan review is an answer.
+    expect(needs.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Answers 2', 'Permissions 1']);
+    const answers = within(needs.getByRole('region', { name: 'Answers' })).getAllByRole('button');
+    expect(answers.map((row) => /Asks a question|Has a plan/.exec(row.textContent)?.[0])).toEqual(['Asks a question', 'Has a plan']);
+    expect(within(answers[0]).getByText('Ship today or later?')).toBeTruthy();
+    expect(within(answers[1]).getByText('Plan ready')).toBeTruthy();
+    expect(within(needs.getByRole('region', { name: 'Permissions' })).getByRole('button', { name: /Wants a shell/ }).textContent).toContain('Run a shell command');
+    expect(needs.queryByText(/Needs answer|Needs permission/)).toBeNull();
     await user.click(needs.getByRole('button', { name: /Asks a question/ }));
     expect(onSelect).toHaveBeenCalledWith('asks');
 
@@ -46,6 +60,9 @@ describe('Home', () => {
       machines={[machine('here', []), machine('peer', [asks])] as never} />);
     const needs = within(screen.getByRole('region', { name: 'Needs you' }));
     expect(needs.getByRole('button', { name: /Waiting on the peer.*peer/ })).toBeTruthy();
+    // A group with no rows is not shown.
+    expect(needs.getByRole('heading', { name: 'Permissions 1' })).toBeTruthy();
+    expect(needs.queryByRole('region', { name: 'Answers' })).toBeNull();
   });
 
   test('New task opens the project picker and composer without creating a task', async () => {
@@ -81,8 +98,9 @@ describe('Home', () => {
     vi.spyOn(api, 'meta').mockReturnValue(new Promise((resolve) => { loadMeta = resolve; }));
     const create = vi.spyOn(api, 'createSession');
     const { user } = renderApp();
-    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Needs you' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
+    expect(main.getByText('Start your first thread in this project.')).toBeTruthy();
     expect(main.queryByRole('region', { name: 'Needs you' })).toBeNull();
     expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(true);
     await act(async () => loadMeta(state.meta));

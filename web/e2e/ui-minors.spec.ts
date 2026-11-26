@@ -2,7 +2,7 @@ import { expect, startThread, test, threadState } from './harness';
 
 const MOCK_MODEL_ID = 'mock/mock-1';
 
-test('Home Needs you strips inline Markdown from question previews', async ({ page, project, model }) => {
+test('Home Needs you lists a question under Answers with inline Markdown stripped', async ({ page, project, model }) => {
   model.title('ask with markdown', 'Release matrix').toolRound(
     'ask with markdown',
     [{
@@ -19,8 +19,13 @@ test('Home Needs you strips inline Markdown from question previews', async ({ pa
   await expect(threadState(page, 'Needs answer')).toBeVisible();
 
   await page.goto('/');
-  const row = page.getByRole('region', { name: 'Needs you' }).getByRole('button', { name: /Release matrix|ask with markdown/ });
+  const needs = page.getByRole('region', { name: 'Needs you' });
+  await expect(needs.getByRole('heading', { level: 2, name: 'Answers 1' })).toBeVisible();
+  await expect(needs.getByText('The agent asked you something')).toBeVisible();
+  await expect(needs.getByRole('region', { name: 'Permissions' })).toHaveCount(0);
+  const row = needs.getByRole('region', { name: 'Answers' }).getByRole('button', { name: /Release matrix|ask with markdown/ });
   await expect(row).toBeVisible();
+  await expect(row).not.toContainText('Needs answer');
   await expect(row).toContainText('Pick darwin if signing is not ready — see the docs.');
   await expect(row).not.toContainText('**');
   await expect(row).not.toContainText('__');

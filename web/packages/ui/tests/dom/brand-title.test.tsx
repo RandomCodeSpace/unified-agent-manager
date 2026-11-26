@@ -5,15 +5,15 @@ import { Login } from '../../src/components/Login';
 import { renderApp, sidebar } from './render';
 
 describe('the UAM wordmark', () => {
-  test('the sidebar toggle and Home show the mark with UAM; the collapsed rail shows the mark alone', async () => {
+  test('the sidebar toggle shows the mark with UAM; Home, without a hero, repeats neither; the collapsed rail shows the mark alone', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     const hide = side.getByRole('button', { name: /^Hide sidebar/ });
     expect(hide.querySelector('svg')).toBeTruthy();
     expect(within(hide).getByText('UAM')).toBeTruthy();
     const home = within(await screen.findByRole('region', { name: 'Home' }));
-    const brand = home.getByText('UAM');
-    expect(brand.parentElement!.querySelector('svg')).toBeTruthy();
+    expect(home.getByRole('heading', { level: 1, name: /^Needs you/ })).toBeTruthy();
+    expect(home.queryByText('UAM')).toBeNull();
     await user.click(hide);
     const rail = within(await screen.findByRole('navigation', { name: 'Sidebar' }));
     const show = rail.getByRole('button', { name: /^Show sidebar/ });

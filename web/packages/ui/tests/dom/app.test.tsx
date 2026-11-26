@@ -25,7 +25,7 @@ describe('app shell', () => {
   test('lists the projects and tasks, with the Home launcher in the main pane', async () => {
     renderApp();
     const side = await sidebar();
-    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /^Needs you/ })).toBeTruthy();
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
     // Archived Tasks are in Settings → Archived, not on a shelf.
     expect(side.queryByRole('button', { name: /^Archived/ })).toBeNull();
@@ -37,7 +37,7 @@ describe('app shell', () => {
   test('a link to an unknown view lands on the home view', async () => {
     renderApp('#unknown=p1');
     await sidebar();
-    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /^Needs you/ })).toBeTruthy();
     await waitFor(() => expect(window.location.hash).toBe(''));
   });
 
@@ -463,7 +463,7 @@ describe('task lifecycle', () => {
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Delete' }));
     const del = await screen.findByRole('alertdialog', { name: /Delete “Bump dependencies”\?/ });
     await user.click(within(del).getByRole('button', { name: 'Delete thread' }));
-    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /^Needs you/ })).toBeTruthy();
     expect(window.location.hash).toBe('');
     expect(screen.queryByRole('button', { name: /Bump dependencies/ })).toBeNull();
   });
@@ -541,7 +541,7 @@ describe('phone drawer', () => {
     vi.spyOn(data, 'seed').mockReturnValue(state);
     onTestFinished(() => { vi.restoreAllMocks(); });
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'What are you working on?' });
+    await screen.findByRole('heading', { level: 1, name: /^Needs you/ });
     const toggle = screen.getByRole('button', { name: /^Show sidebar/ });
     // Once the page is idle the closed drawer mounts the rows that fill it, so the first opening only slides it in;
     // the rest wait for it to open, or the opening would style and lay them all out at once.
@@ -574,7 +574,7 @@ describe('phone drawer', () => {
     onTestFinished(() => { window.innerWidth = width; });
     window.innerWidth = 390;
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'What are you working on?' });
+    await screen.findByRole('heading', { level: 1, name: /^Needs you/ });
     const toggle = screen.getByRole('button', { name: /^Show sidebar/ });
     for (let i = 0; i < 3; i++) {
       await user.click(toggle);
