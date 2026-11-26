@@ -57,7 +57,12 @@ func (s *Server) redirectConnectedArtifact(w http.ResponseWriter, r, local *http
 		writeError(w, http.StatusBadRequest, "invalid connected artifact path")
 		return
 	}
-	if !s.connectedArtifactCommitted(r.Context(), target, task, artifact, n) {
+	committed, err := s.connectedArtifactCommitted(r.Context(), target, task, artifact, n)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	if !committed {
 		writeError(w, http.StatusNotFound, "artifact version not found")
 		return
 	}
@@ -77,33 +82,45 @@ func (s *Server) redirectConnectedArtifact(w http.ResponseWriter, r, local *http
 
 // connectedArtifactCommitted reports whether the connected instance lists
 // version of its Thread task's artifact, so a key is signed only for a
-// snapshot it committed.
-func (s *Server) connectedArtifactCommitted(ctx context.Context, target connectionTarget, task, artifact string, version int) bool {
+// snapshot it committed. It is false only when the instance answered that it
+// has no such Thread or version; any other failure is an error.
+func (s *Server) connectedArtifactCommitted(ctx context.Context, target connectionTarget, task, artifact string, version int) (bool, error) {
 	transport, err := s.proxyTransport(target)
 	if err != nil {
-		return false
+		return false, err
 	}
+	// The deadline covers the headers and the body.
+	ctx, cancel := context.WithTimeout(ctx, fleetCheckTimeout)
+	defer cancel()
+	unavailable := newError(http.StatusBadGateway, "remote instance is unavailable")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.BaseURL+federationWorkloadPrefix+"api/sessions/"+task+"/artifacts", nil)
 	if err != nil {
-		return false
+		return false, unavailable
 	}
 	req.Header.Set("Authorization", "Bearer "+target.Credential)
 	req.Header.Set(headerUAMInstance, target.InstanceID)
 	response, err := transport.RoundTrip(req)
 	if err != nil {
-		return false
+		return false, unavailable
 	}
 	defer func() { _ = response.Body.Close() }()
+	switch response.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, unavailable
+	}
 	var got struct {
 		Artifacts []Artifact `json:"artifacts"`
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode != http.StatusOK || err != nil || json.Unmarshal(raw, &got) != nil {
-		return false
+	if err != nil || json.Unmarshal(raw, &got) != nil {
+		return false, unavailable
 	}
 	return slices.ContainsFunc(got.Artifacts, func(a Artifact) bool {
 		return a.ID == artifact && slices.ContainsFunc(a.Versions, func(v ArtifactVersion) bool { return v.Version == version })
-	})
+	}), nil
 }
 
 func (s *Server) handleConnectedArtifactKey(w http.ResponseWriter, r *http.Request) {

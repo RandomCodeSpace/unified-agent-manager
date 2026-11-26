@@ -56,6 +56,9 @@ const (
 // and its scripts, styles, images, fonts and frames come only from this
 // host (in a sandboxed document 'self' is the response URL's origin), so the
 // page loads its own snapshot's files and nothing from other hosts.
+// Residual: 'self' admits any path on the uam origin, and popups and
+// top-level navigation stay unrestricted; a path-scoped source would need
+// the browser's host, which a Host-rewriting proxy hides from r.Host.
 const artifactSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'"
 
 // artifactPolicy is viewPolicy for a published version's file.
@@ -457,9 +460,13 @@ func (m *Manager) publish(ctx context.Context, taskID string, call agentapi.Host
 	}
 	// The metadata commits the version; old versions go only after it.
 	if err := writePrivateJSON(m.uploadRoot(), filepath.Join(root, a.ID, artifactMetaFile), a); err != nil {
-		if stored, rerr := readArtifact(root, a.ID); rerr != nil || !slices.ContainsFunc(stored.Versions, func(v ArtifactVersion) bool { return v.Version == version }) {
+		// Only metadata read back without the version proves it uncommitted;
+		// an unreadable one is left for reconcileArtifacts.
+		if stored, rerr := readArtifact(root, a.ID); rerr == nil && !slices.ContainsFunc(stored.Versions, func(v ArtifactVersion) bool { return v.Version == version }) {
 			_ = os.RemoveAll(dir)
 		}
+		// The rename may have committed it before a later sync failed.
+		m.artifactsChanged(taskID, len(readArtifacts(root)))
 		log.Warn("store an artifact failed", "session", taskID, "error", err)
 		return "", errors.New("uam could not store the artifact; try again")
 	}
@@ -567,11 +574,12 @@ func (m *Manager) DeleteArtifact(taskID, id string, version int) error {
 			err = os.RemoveAll(artifactVersionDir(root, id, version))
 		}
 	}
+	// Also on failure: the metadata may have changed before a later step failed.
+	m.artifactsChanged(taskID, len(readArtifacts(root)))
 	if err != nil {
 		log.Warn("delete an artifact failed", "session", taskID, "error", err)
 		return newError(http.StatusInternalServerError, "uam could not delete the artifact")
 	}
-	m.artifactsChanged(taskID, len(readArtifacts(root)))
 	return nil
 }
 

@@ -71,3 +71,14 @@ test('a card reads the list again when the Thread\'s artifacts change, a version
   view.rerender(<ArtifactsRevisionContext.Provider value={2}><ArtifactCard sessionId="task" callId="call-1" /></ArtifactsRevisionContext.Provider>);
   await waitFor(() => expect(screen.getByRole('region', { name: 'Published: Demo site' }).textContent).not.toContain('of 2'));
 });
+
+test('the cards and the panel of one Thread share one list request per revision', async () => {
+  render(<ArtifactsRevisionContext.Provider value={7}>
+    <ArtifactCard sessionId="task" callId="call-1" />
+    <ArtifactCard sessionId="task" callId="call-2" />
+    <ArtifactsPanel sessionId="task" revision={7} inline open onClose={() => {}} onClosed={() => {}} onOpen={() => {}} />
+  </ArtifactsRevisionContext.Provider>);
+  expect(await screen.findAllByRole('region', { name: 'Published: Demo site' })).toHaveLength(2);
+  await screen.findByRole('list', { name: 'Versions of Demo site' });
+  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith('/artifacts'))).toHaveLength(1);
+});

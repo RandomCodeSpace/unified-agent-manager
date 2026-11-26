@@ -22,17 +22,31 @@ function versionTarget(api: ApiClient, sessionId: string, artifact: Artifact, v:
 
 const facts = (v: ArtifactVersion) => `${v.files} ${v.files === 1 ? 'file' : 'files'} · ${formatSize(v.bytes)} · ${timeAgo(v.at)}`;
 
+// One list request per Thread and revision while it is in flight, shared by the Thread's cards and panel.
+const reading = new Map<string, Promise<Artifact[]>>();
+function readArtifacts(api: ApiClient, sessionId: string, revision: number): Promise<Artifact[]> {
+  const key = `${sessionId}\n${revision}`;
+  let list = reading.get(key);
+  if (!list) {
+    list = api.artifacts(sessionId);
+    reading.set(key, list);
+    const forget = () => { reading.delete(key); };
+    list.then(forget, forget);
+  }
+  return list;
+}
+
 function useArtifacts(sessionId: string, revision: number) {
   const api = useApi();
   const [list, setList] = useState<Artifact[] | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    const controller = new AbortController();
-    api.artifacts(sessionId, controller.signal).then(
-      (next) => { setList(next); setError(''); },
-      (err: unknown) => { if (!controller.signal.aborted) setError(describeError(err)); },
+    let live = true;
+    readArtifacts(api, sessionId, revision).then(
+      (next) => { if (live) { setList(next); setError(''); } },
+      (err: unknown) => { if (live) setError(describeError(err)); },
     );
-    return () => controller.abort();
+    return () => { live = false; };
   }, [api, sessionId, revision]);
   return { list, setList, error };
 }

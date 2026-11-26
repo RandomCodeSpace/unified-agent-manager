@@ -372,7 +372,11 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 		delete(cfg.WebForks, fork.Lineage.RequestID)
 		return nil
 	}
+	// Held from before the branch is visible until its inherited artifacts
+	// are copied and counted, so a publish or delete in the branch waits.
+	s.artifactMu.Lock()
 	if err := m.register(s, nil, rec, check); err != nil {
+		s.artifactMu.Unlock()
 		if errors.Is(err, errForkRegistered) {
 			return m.Summary(fork.ID)
 		}
@@ -381,6 +385,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	if source != nil {
 		m.copyUploads(source, s)
 	}
+	s.artifactMu.Unlock()
 	return m.Summary(s.id)
 }
 
@@ -400,7 +405,7 @@ func branchTitle(source string) string {
 // prompts carried and the images its tools returned, so the copied history
 // shows them as chips and thumbnails as the source does, and its
 // threadFiles and committed artifact versions, so its cards and lists show
-// too. Each upload keeps its ID
+// too. The caller holds branch's artifactMu. Each upload keeps its ID
 // and record; the bytes are linked where the file system allows, else
 // copied. A file that cannot be copied shows by name only, as before.
 func (m *Manager) copyUploads(source, branch *webSession) {
@@ -444,7 +449,10 @@ func (m *Manager) copyUploads(source, branch *webSession) {
 			branch.uploads = map[string]*upload{}
 		}
 		maps.Copy(branch.uploads, copied)
+		before := m.summaryLocked(branch)
 		branch.artifacts = artifacts
+		branch.artifactsRevision++
+		m.changedLocked(branch, before)
 	}
 	m.mu.Unlock()
 	if removed {

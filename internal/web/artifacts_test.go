@@ -225,6 +225,33 @@ func TestPublishVersionsLatestAndDelete(t *testing.T) {
 	}
 }
 
+// A delete whose metadata committed but whose files could not all be
+// removed still tells open lists to read the artifacts again.
+func TestDeleteArtifactFailureAfterCommitBumpsTheRevision(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes files from read-only folders")
+	}
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"report.html": "v1"})
+	id := artifactIDText.FindStringSubmatch(publishCall(t, conv, "c1", `{"path":"report.html","title":"Report"}`).Text)[1]
+	publishCall(t, conv, "c2", `{"path":"report.html","title":"Report"}`)
+	v1 := artifactVersionDir(ts.m.artifactRoot(sum.ID), id, 1)
+	if err := os.Chmod(v1, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(v1, 0o700) })
+	before, _ := ts.m.Summary(sum.ID)
+	if err := ts.m.DeleteArtifact(sum.ID, id, 1); err == nil {
+		t.Fatal("delete succeeded with an unremovable version folder")
+	}
+	after, _ := ts.m.Summary(sum.ID)
+	list, _ := ts.m.Artifacts(sum.ID)
+	if after.ArtifactsRevision <= before.ArtifactsRevision || len(list) != 1 || len(list[0].Versions) != 1 || list[0].Versions[0].Version != 2 {
+		t.Fatalf("revision %d -> %d, list %+v", before.ArtifactsRevision, after.ArtifactsRevision, list)
+	}
+}
+
 func summaryArtifacts(m *Manager, id string) int {
 	got, _ := m.Summary(id)
 	return got.Artifacts

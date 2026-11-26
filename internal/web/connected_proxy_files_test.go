@@ -421,3 +421,41 @@ func TestConnectedArtifactUsesHomeKeyScopedToItsVersion(t *testing.T) {
 		t.Fatalf("another version under this key=%d", response.StatusCode)
 	}
 }
+
+// The connected key check answers 404 only when the other instance says the
+// version is absent; a failed, stalled or malformed answer is a gateway
+// error, and a stalled body cannot hold the request past the deadline.
+func TestConnectedArtifactCheckSeparatesAbsenceFromFailure(t *testing.T) {
+	for name, tc := range map[string]struct {
+		upstream func(http.ResponseWriter, *http.Request)
+		want     int
+	}{
+		"absent": {func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "session not found") }, http.StatusNotFound},
+		"5xx":    {func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusServiceUnavailable, "down") }, http.StatusBadGateway},
+		"stalled": {func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"artifacts":[`))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}, http.StatusBadGateway},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newConnectedProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/artifacts") {
+					http.NotFound(w, r)
+					return
+				}
+				tc.upstream(w, r)
+			})
+			f.client.Timeout = fleetCheckTimeout + 5*time.Second
+			start := time.Now()
+			got := f.request(t, "GET", "/api/sessions/"+mustUUID(t)+"/artifacts/0123456789abcdef/v/1/", "", nil)
+			if got.StatusCode != tc.want || got.Header.Get("Location") != "" || len(got.Cookies()) != 0 {
+				t.Fatalf("status = %d, location %q", got.StatusCode, got.Header.Get("Location"))
+			}
+			if elapsed := time.Since(start); elapsed > fleetCheckTimeout+5*time.Second {
+				t.Fatalf("took %v", elapsed)
+			}
+		})
+	}
+}
