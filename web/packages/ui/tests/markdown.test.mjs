@@ -103,10 +103,10 @@ test('a link in a rendered Markdown file resolves from that file\'s folder', () 
 });
 
 test('inline code looks like a path when it has a slash or a file extension, and is no call, glob, flag or version', () => {
-  for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a.ts:42', 'src/a.go:12:5', 'a'.repeat(295) + '.html']) {
+  for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a.ts:42', 'src/a.go:12:5', 'out/', 'internal/web/', 'a'.repeat(295) + '.html']) {
     assert.equal(looksLikePath(path), true, path);
   }
-  for (const other of ['useState', 'Makefile', 'foo()', 'a.b.c()', '--flag', '-v', '*.ts', 'src/**/*.ts', 'v1.2.3', '1.2', '~/notes.md', '~', 'out/', 'https://example.com/a.html', 'file:///home/dev/proj/a.html', 'mailto:a@b.co', 'npm run build', 'a b.md', 'x.', '.x-y', 'Map<string>', '$HOME/a.md', '{a,b}.md', 'a[0].b', 'a'.repeat(296) + '.html', '']) {
+  for (const other of ['useState', 'Makefile', 'foo()', 'a.b.c()', '--flag', '-v', '*.ts', 'src/**/*.ts', 'v1.2.3', '1.2', '~/notes.md', '~', '~/x/', '/', 'a//', 'https://example.com/a.html', 'file:///home/dev/proj/a.html', 'mailto:a@b.co', 'npm run build', 'a b.md', 'x.', '.x-y', 'Map<string>', '$HOME/a.md', '{a,b}.md', 'a[0].b', 'a'.repeat(296) + '.html', '']) {
     assert.equal(looksLikePath(other), false, other);
   }
 });
@@ -135,6 +135,8 @@ test('inline code names a file of the Task folder only when it is inside it', ()
     ['app/[id]/page.tsx', 'app/[id]/page.tsx', ''],
     ['src/(app)/layout.tsx:4', 'src/(app)/layout.tsx', '#L4'],
     ['app/routes/$id.tsx', 'app/routes/$id.tsx', ''],
+    ['src/', 'src', ''],
+    ['./internal/web/', 'internal/web', ''],
   ]) assert.deepEqual(codeFile(text, dir), { path, hash }, text);
   assert.deepEqual(taskFile('main.go:12-20', dir), { path: 'main.go', hash: '#L12' });
   assert.equal(localPath('main.go:12-20'), 'main.go:12-20');

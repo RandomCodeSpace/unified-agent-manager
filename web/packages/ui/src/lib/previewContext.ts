@@ -16,8 +16,10 @@ interface PreviewDetails {
 
 export type PreviewTarget = PreviewDetails & (
   /** Already displayed images and sandbox-rendered diagrams need no metadata request. */
-  { url: string; image?: boolean; tempPath?: never; hash?: never }
-  | { tempPath: string; hash?: string; url?: never; image?: never }
+  { url: string; image?: boolean; tempPath?: never; hash?: never; folder?: never }
+  | { tempPath: string; hash?: string; url?: never; image?: never; folder?: never }
+  /** A folder of the Task's folder ("" is its top), listed by the tree route. */
+  | { folder: string; url?: never; image?: never; tempPath?: never; hash?: never }
 );
 
 export type OpenPreview = (target: PreviewTarget, opener: HTMLElement) => void;

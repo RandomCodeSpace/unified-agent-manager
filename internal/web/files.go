@@ -308,7 +308,7 @@ func (m *Manager) Tree(ctx context.Context, id, dir string) (FileList, error) {
 
 func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 	out := FileList{Files: []FileEntry{}}
-	if dir != "" && (len(dir) > 4096 || !utf8.ValidString(dir) || strings.ContainsRune(dir, 0) || !filepath.IsLocal(dir) || path.Clean(dir) != dir) {
+	if dir != "" && !validFolderPath(dir) {
 		return out, newError(http.StatusBadRequest, "dir must be a relative folder path")
 	}
 	repo, reason, err := openRepo(ctx, workdir)
@@ -324,11 +324,8 @@ func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 		return out, newError(http.StatusBadGateway, "could not open the project directory: %s", shortError(err))
 	}
 	defer func() { _ = root.Close() }()
-	// Every component must be a real folder: git refuses paths beyond a link.
-	for p := dir; p != "" && p != "."; p = path.Dir(p) {
-		if info, err := root.Lstat(p); err != nil || !info.IsDir() {
-			return out, newError(http.StatusNotFound, "folder not found")
-		}
+	if !realFolder(root, dir) {
+		return out, newError(http.StatusNotFound, "folder not found")
 	}
 	args := []string{literalPathspecs, "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
 	prefix := ""
@@ -389,6 +386,36 @@ func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 		return a.Path < b.Path
 	})
 	return out, nil
+}
+
+// validFolderPath reports whether dir is a clean relative path that stays inside its root.
+func validFolderPath(dir string) bool {
+	return len(dir) <= 4096 && utf8.ValidString(dir) && !strings.ContainsRune(dir, 0) && filepath.IsLocal(dir) && path.Clean(dir) == dir
+}
+
+// realFolder reports whether every component of dir is a real folder of root:
+// git refuses paths beyond a link, and so does a folder reference.
+func realFolder(root *os.Root, dir string) bool {
+	for p := dir; p != "" && p != "."; p = path.Dir(p) {
+		if info, err := root.Lstat(p); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+// taskFolder reports whether p, relative to workdir, names a folder the tree
+// route lists: inside workdir, and reached through no link.
+func taskFolder(workdir, p string) bool {
+	if p == "" || p == "." || !validFolderPath(p) {
+		return false
+	}
+	root, err := os.OpenRoot(workdir)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	return realFolder(root, p)
 }
 
 // childStatus maps each name directly in dir to its git status: a file's own,

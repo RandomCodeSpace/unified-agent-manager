@@ -83,3 +83,38 @@ test('a page built from several files runs in the preview, reloads when its styl
   await expect(tab.getByText('ran by app.js')).toBeVisible();
   await tab.close();
 });
+
+test('a folder reference lists the folder in the preview; a file in it opens, ignored files and folders outside the Thread\'s folder do not', async ({ page, project, model, workdir }) => {
+  fs.mkdirSync(path.join(workdir, 'src', 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(workdir, '.gitignore'), '*.log\n');
+  fs.writeFileSync(path.join(workdir, 'src', 'app.go'), 'package app\n');
+  fs.writeFileSync(path.join(workdir, 'src', 'debug.log'), 'ignored\n');
+  fs.writeFileSync(path.join(workdir, 'src', 'lib', 'util.go'), 'package lib\n');
+  const outside = fs.mkdtempSync(path.join(path.dirname(workdir), 'outside-'));
+  fs.symlinkSync(outside, path.join(workdir, 'linked'));
+  model.reply('cite a folder', 'See `src/`, [the library](src/lib/), `linked/`, `/etc/` and [elsewhere](../outside/).');
+  await startThread(page, project, 'cite a folder');
+  const conv = conversation(page);
+  await expect(threadState(page, 'Finished')).toBeVisible();
+
+  const chip = conv.getByRole('button', { name: 'Open folder src', exact: true });
+  await expect(chip).toHaveText('src/');
+  await expect(conv.getByRole('button', { name: 'Open folder src/lib' })).toHaveText('the library');
+  // A link out of the folder, a path through a link and a host folder stay text.
+  for (const text of ['linked/', '/etc/']) await expect(conv.locator('code', { hasText: text })).toBeVisible();
+  await expect(conv.getByText('elsewhere')).toBeVisible();
+  await expect(conv.getByRole('button', { name: /^Open folder (linked|\/etc|\.\.)/ })).toHaveCount(0);
+  await expect(conv.getByRole('link', { name: 'elsewhere' })).toHaveCount(0);
+
+  await chip.click();
+  const preview = page.getByRole('complementary', { name: 'Preview src' });
+  const list = preview.getByRole('list', { name: 'Files in src' });
+  await expect(list.getByRole('button')).toHaveText([/^lib\//, /^app\.go/]);
+  await expect(list).not.toContainText('debug.log');
+  await list.getByRole('button', { name: /^lib\// }).click();
+  await expect(page.getByRole('complementary', { name: 'Preview lib' }).getByRole('list', { name: 'Files in src/lib' })).toContainText('util.go');
+  await page.getByRole('button', { name: 'Up to src' }).click();
+  await preview.getByRole('list', { name: 'Files in src' }).getByRole('button', { name: /^app\.go/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Preview app.go' })).toContainText('package app');
+  fs.rmSync(outside, { recursive: true, force: true });
+});

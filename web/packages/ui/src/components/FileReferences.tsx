@@ -39,7 +39,7 @@ export function useFileHintItems(source: string, items: readonly Item[], open: b
 const INELIGIBLE = '\0';
 const UNKNOWN = '\0?';
 
-/** Whether `path` may name a file, whether it is known to, and the file it names: itself, or the one file a bare name means. */
+/** Whether `path` may name a file, whether it is known to, the file it names (itself, or the one file a bare name means), and whether that is a folder. */
 export function useFileReference(path: string | undefined, inlineText?: string) {
   const owner = useContext(Files);
   const lookup = path ? owner : null;
@@ -61,7 +61,7 @@ export function useFileReference(path: string | undefined, inlineText?: string) 
     return lookup.subscribe(update);
   }, [lookup, snapshot]);
   const exists = state !== INELIGIBLE && state !== UNKNOWN;
-  return { eligible: state !== INELIGIBLE, exists, file: exists ? state : undefined };
+  return { eligible: state !== INELIGIBLE, exists, file: exists ? state : undefined, folder: exists && !!lookup?.cache.folder(path!) };
 }
 
 /**

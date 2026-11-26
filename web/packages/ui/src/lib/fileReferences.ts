@@ -33,10 +33,10 @@ export function localHints(item: Item, workdir: string): string[] {
  * stays readable until a fresh answer replaces it, so a link never drops back to plain code
  * while it is rechecked; an expired "missing" answer reads as unknown, which renders the same.
  * A name that is not itself a file but means exactly one (`gen.py` for `tools/gen.py`)
- * exists with that file as its target.
+ * exists with that file as its target; a folder (`src/`) exists as a folder.
  */
 export class FileCache {
-  private readonly entries = new Map<string, { exists: boolean; until: number; bytes: number; stale?: boolean; target?: string }>();
+  private readonly entries = new Map<string, { exists: boolean; until: number; bytes: number; stale?: boolean; target?: string; folder?: boolean }>();
   expired?: (path: string) => void;
   constructor(expired?: (path: string) => void) { this.expired = expired; }
   bytes = 0;
@@ -54,17 +54,19 @@ export class FileCache {
   }
   /** The file `path` means when it is not itself one, as last answered. */
   target(path: string): string | undefined { return this.entries.get(path)?.target; }
+  /** Whether `path` was last answered as a folder. */
+  folder(path: string): boolean { return !!this.entries.get(path)?.folder; }
   /** Whether the answer for `path` needs no recheck yet. */
   fresh(path: string, now = Date.now()): boolean {
     const entry = this.entries.get(path);
     return !!entry && entry.until > now;
   }
-  set(path: string, exists: boolean, now = Date.now(), target?: string) {
+  set(path: string, exists: boolean, now = Date.now(), target?: string, folder = false) {
     this.delete(path);
     // Count UTF-16 retained strings as well as fixed entry data, conservatively.
     const bytes = (path.length + (target?.length ?? 0)) * 2 + 64;
     if (bytes > FILE_CACHE_BYTES) return;
-    this.entries.set(path, { exists, until: now + (exists ? 30_000 : 5_000), bytes, ...(target ? { target } : {}) });
+    this.entries.set(path, { exists, until: now + (exists ? 30_000 : 5_000), bytes, ...(target ? { target } : {}), ...(folder ? { folder } : {}) });
     this.bytes += bytes;
     while (this.size > FILE_CACHE_ENTRIES || this.bytes > FILE_CACHE_BYTES) this.delete(this.entries.keys().next().value!);
   }
@@ -79,7 +81,7 @@ export function fitsFileBatch(paths: string[], path: string): boolean {
   return paths.length < FILE_BATCH_PATHS && !!path && !path.includes('\0') && encoder.encode(path).length <= 4096 && encoder.encode(JSON.stringify({ paths: [...paths, path] })).length <= FILE_BODY_BYTES;
 }
 
-type Resolve = (paths: string[], signal: AbortSignal) => Promise<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable'; target?: string }[] }>;
+type Resolve = (paths: string[], signal: AbortSignal) => Promise<{ files: { path: string; exists: boolean; kind: 'file' | 'directory' | 'unavailable'; target?: string }[] }>;
 interface Root { visible: boolean }
 
 const MAX_TASK_CACHES = 32;
@@ -306,6 +308,7 @@ export class FileReferences {
         if (!included.has(file.path)) continue;
         if (file.exists === true && file.kind === 'file') this.cache.set(file.path, true);
         else if (file.exists === false && file.kind === 'file' && file.target) this.cache.set(file.path, true, undefined, file.target);
+        else if (file.exists === false && file.kind === 'directory') this.cache.set(file.path, true, undefined, undefined, true);
         else if (file.exists === false && file.kind === 'unavailable') this.cache.set(file.path, false);
       }
       this.retryDelay = RETRY_MS;

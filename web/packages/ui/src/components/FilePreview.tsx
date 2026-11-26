@@ -1,14 +1,14 @@
 import { useApi } from '../ApiContext';
-import { ArrowLeft, ChevronDown, ChevronUp, Download, ExternalLink, MessageSquarePlus, RotateCw, Undo2, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ChevronDown, ChevronUp, Download, ExternalLink, MessageSquarePlus, RotateCw, Undo2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { describeError, subscribeAuthLoss, type Changes } from '../api';
+import { describeError, subscribeAuthLoss, type Changes, type FileList } from '../api';
 import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type TextPreview } from '../lib/preview';
-import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
+import { usePreview, type OpenPreview, type PreviewTarget } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
-import { FileMedia, Note, Spinner } from './common';
+import { FileMedia, IMAGE_FILE, Note, Spinner } from './common';
 import { CodeView } from './CodeView';
 import { FileIcon } from './FileIcon';
 import { lensChanges, runText, type Hunk, type LensChange } from '../lib/lens';
@@ -16,7 +16,7 @@ import { turnFile } from '../lib/review';
 import { useFileVersion } from './FileReferences';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
-import { Button, buttonVariants } from './ui/button';
+import { Button, buttonVariants, rowClass } from './ui/button';
 import { Segmented } from './ui/segmented';
 
 interface Selection {
@@ -62,7 +62,7 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
     onOpen();
     let next: Selection = { owner, target };
     setSelection(next);
-    if (target.image) return;
+    if (target.image || target.folder !== undefined) return;
     const load = async () => {
       let metadata: PreviewMetadata | undefined;
       if (target.tempPath !== undefined) {
@@ -118,6 +118,45 @@ function useLens(sessionId: string, path: string | undefined, changes: Changes |
   return key && lens?.path === changed ? lens : null;
 }
 
+/**
+ * One folder of the Thread's folder as the tree route lists it (git decides what is in it, so ignored files are
+ * left out): a file opens in this preview, a folder lists in its place.
+ */
+function FolderList({ sessionId, dir, onFolder }: Readonly<{ sessionId: string; dir: string; onFolder: (dir: string) => void }>) {
+  const api = useApi();
+  const preview = usePreview();
+  const [list, setList] = useState<{ dir: string; files?: FileList; error?: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    api.tree(sessionId, dir, controller.signal).then(
+      files => { if (!controller.signal.aborted) setList({ dir, files }); },
+      error => { if (!controller.signal.aborted) setList({ dir, error: describeError(error) }); },
+    );
+    return () => controller.abort();
+  }, [api, sessionId, dir]);
+  if (list?.dir !== dir) return <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Listing folder…</output>;
+  if (list.error || !list.files) return <Note tone="error">{list.error}</Note>;
+  const { files, reason } = list.files;
+  return <>
+    {reason && <Note>{reason.charAt(0).toUpperCase() + reason.slice(1)}.</Note>}
+    {files.length > 0 && <ul aria-label={`Files in ${dir || 'this folder'}`} className="flex flex-col">
+      {files.map(f => {
+        const name = f.path.split('/').pop() || f.path;
+        const folder = f.type === 'directory';
+        return <li key={f.path}><button type="button" className={cn(rowClass, 'pointer-coarse:min-h-11')} title={f.path} onClick={event => {
+          if (folder) onFolder(f.path);
+          else preview?.({ url: api.viewFileUrl(sessionId, f.path), name, description: f.path, path: f.path, frameable: true, image: IMAGE_FILE.test(f.path) }, event.currentTarget);
+        }}>
+          <FileIcon path={f.path} folder={folder} />
+          <span className="min-w-0 flex-1 truncate">{name}{folder && '/'}</span>
+          {f.status && <span className="shrink-0 text-caption text-muted">{f.status}</span>}
+        </button></li>;
+      })}
+    </ul>}
+    {!files.length && !reason && <Note>Nothing is listed in this folder.</Note>}
+  </>;
+}
+
 export function FilePreview({ selection, open, sessionId, workdir, inline, onClose, onClosed, onReload, changes, readOnly = false, onChanges, onComment, onReverted }: Readonly<{
   selection: Selection;
   /** False while it leaves; `onClosed` follows, and the owner unmounts it. */
@@ -160,7 +199,13 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
     if (opened.current.target !== target) opened.current = { target, version };
     else if (opened.current.version !== version) { opened.current.version = version; onReload?.(); }
   }, [target, version, onReload]);
-  useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
+  // A folder lists in place: the folder shown, until another target opens.
+  const [browse, setBrowse] = useState<{ target: PreviewTarget; dir: string } | null>(null);
+  const dir = target.folder === undefined ? undefined : browse?.target === target ? browse.dir : target.folder;
+  const parent = dir ? dir.split('/').slice(0, -1).join('/') : undefined;
+  const top = workdir.split('/').filter(Boolean).pop() || workdir;
+  const name = dir === undefined ? target.name : (dir.split('/').pop() || top);
+  useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target, dir]);
   // A page shows rendered or as its source, at the panel's width or a phone's.
   const [view, setView] = useState('preview');
   const [viewport, setViewport] = useState('desktop');
@@ -206,7 +251,8 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
   }
   // The body: the failure, the wait, the text (or that there is none), the page in its frame, or the way out.
   let body: ReactNode;
-  if (error) body = <Note tone="error">{error}</Note>;
+  if (dir !== undefined) body = <FolderList sessionId={sessionId} dir={dir} onFolder={next => setBrowse({ target, dir: next })} />;
+  else if (error) body = <Note tone="error">{error}</Note>;
   else if (!file) body = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</output>;
   else if (file.kind === 'text') {
     // The same code view as Go to file: line numbers, highlighting, and the cited line marked.
@@ -247,16 +293,17 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
     body = <FileMedia key={`${target.url}#${selection.revision ?? 0}`} kind={file.kind} url={target.url} name={target.name} />;
   } else body = <Note>Not shown here. Open it in a new tab or download it.</Note>;
   return (
-    <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${target.name}`} preferWidth={framed && view === 'preview' && viewport === 'desktop' ? 760 : 0}>
+    <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${name}`} preferWidth={framed && view === 'preview' && viewport === 'desktop' ? 760 : 0}>
       <PanelHeader>
         {lens && onChanges && <Button size="icon" className="text-muted" aria-label="Back to Changes" onClick={onChanges}><ArrowLeft /></Button>}
-        {target.path && <FileIcon path={target.path} />}
-        <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={target.name}>{target.name}</h2>
+        {parent !== undefined && <Button size="icon" className="text-muted" aria-label={`Up to ${parent || top}`} onClick={() => setBrowse({ target, dir: parent })}><ArrowUp /></Button>}
+        {dir !== undefined ? <FileIcon path={dir} folder /> : target.path && <FileIcon path={target.path} />}
+        <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={name}>{name}</h2>
         <Button ref={closeButton} size="icon" className="text-muted" aria-label="Close preview" onClick={onClose}><X /></Button>
       </PanelHeader>
       {/* On a phone a page runs edge to edge, its frame the only scroller. */}
       <div className={cn('flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden', framed && !inline ? 'overflow-y-hidden pt-3' : 'overflow-y-auto p-3')}>
-        <p className={cn('break-all text-caption text-muted', framed && !inline && 'px-3')}>{target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
+        <p className={cn('break-all text-caption text-muted', framed && !inline && 'px-3')}>{dir !== undefined ? dir || workdir : target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
         {temporary && <Note>{limitation}</Note>}
         {body}
       </div>

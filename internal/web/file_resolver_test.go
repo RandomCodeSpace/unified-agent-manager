@@ -118,6 +118,37 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 	}
 }
 
+func TestResolveFilesAnswersFoldersOnlyInsideTheWorkdir(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, realDir, outside := rawImageTask(t, ts)
+	if err := os.MkdirAll(filepath.Join(realDir, "shots", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(outside, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(realDir, "shots"), filepath.Join(realDir, "shots-link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path, kind string
+	}{
+		{"shots", "directory"}, {"shots/deep", "directory"},
+		// A link to a folder, a path through one, a way out and a path that is not clean are never folders.
+		{"shots-link", "unavailable"}, {"shots-link/deep", "unavailable"},
+		{"outside-dir", "unavailable"}, {"outside-dir/sub", "unavailable"},
+		{"..", "unavailable"}, {"../outside", "unavailable"}, {"shots/../../outside", "unavailable"},
+		{"./shots", "unavailable"}, {"shots/", "unavailable"}, {".", "unavailable"},
+		{outside, "unavailable"}, {realDir, "unavailable"}, {filepath.Join(realDir, "shots"), "unavailable"},
+		{"notes.txt", "file"}, {"missing", "unavailable"},
+	} {
+		got, err := ts.m.resolveFiles(context.Background(), sum.ID, []string{tc.path})
+		if err != nil || len(got) != 1 || got[0].Kind != tc.kind || got[0].Target != "" || got[0].Exists != (tc.kind == "file") {
+			t.Errorf("path %q: %+v, %v; want kind %s", tc.path, got, err, tc.kind)
+		}
+	}
+}
+
 func TestResolveFilesTargetsTheOneFileABareNameMeans(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	sum, realDir, _ := rawImageTask(t, ts)
@@ -139,9 +170,9 @@ func TestResolveFilesTargetsTheOneFileABareNameMeans(t *testing.T) {
 	}
 	for _, tc := range []struct{ path, target string }{
 		{"gen.py", "tools/gen.py"}, {"survey.csv", "tmp/survey.csv"},
-		// Several files of that name, a directory, ignored folders and a
-		// partial path whose first segment is cut name no file.
-		{"dup.txt", ""}, {"tmp", ""}, {"vendored.js", ""}, {"hidden.cfg", ""},
+		// Several files of that name, ignored folders and a partial path
+		// whose first segment is cut name no file (a directory is its own kind).
+		{"dup.txt", ""}, {"vendored.js", ""}, {"hidden.cfg", ""},
 		{"ools/gen.py", ""}, {"other/gen.py", ""}, {filepath.Join(t.TempDir(), "gen.py"), ""},
 	} {
 		got := resolve(tc.path)
