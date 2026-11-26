@@ -151,7 +151,7 @@ test('disabling the selected owner falls back to this instance with the sidebar 
   await screen.findByRole('region', { name: 'Conversation' });
   replaceRegistry([{ ...records[0], enabled: false, generation: 2 }]);
   // Home, not a blank page or a full-screen notice; the Task list stays, without the disabled machine's rows.
-  await screen.findByRole('heading', { name: 'What are you working on?', level: 1 });
+  await screen.findByRole('heading', { name: /^Needs you/, level: 1 });
   expect(screen.queryByText(/This connection is disabled|This connection is unavailable/)).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
   expect(window.location.hash).toBe('');

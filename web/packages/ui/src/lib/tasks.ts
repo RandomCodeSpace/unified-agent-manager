@@ -105,18 +105,26 @@ function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
   return { label: 'Finished', text: s.outcome && s.outcome !== 'Answered' ? `Finished · ${s.outcome}` : 'Finished', tone: 'muted' };
 }
 
+/**
+ * What a Task that waits on you asks, without the "Needs …" words (Home's groups say the kind once): `text` is the
+ * request, '' when the service named none. Null when nothing waits. Plan reviews are answers.
+ */
+export function taskNeed(s: SessionSummary): { kind: 'answer' | 'permission'; text: string } | null {
+  const ask = s.ask;
+  if (ask?.kind === 'permission') return { kind: 'permission', text: PERMISSION_WORDS[ask.title] ?? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) };
+  if (ask?.kind === 'question') return { kind: 'answer', text: stripInlineMarkdown(ask.title) };
+  if (ask?.kind === 'plan_review') return { kind: 'answer', text: 'plan ready' };
+  if (s.state === 'awaiting_permission') return { kind: 'permission', text: '' };
+  if (s.state === 'awaiting_answer' || hasPending(s)) return { kind: 'answer', text: '' };
+  return null;
+}
+
 /** The status of a Task that waits on you, or null when nothing does. */
 function inputStatus(s: SessionSummary): TaskStatus | null {
-  const ask = s.ask;
-  if (ask?.kind === 'permission') {
-    const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
-    return { label: 'Needs permission', text: `Needs permission to ${what}`, tone: 'attention' };
-  }
-  if (ask?.kind === 'question') return { label: 'Needs answer', text: `Needs answer: ${stripInlineMarkdown(ask.title)}`, tone: 'attention' };
-  if (ask?.kind === 'plan_review') return { label: 'Needs answer', text: 'Needs answer: plan ready', tone: 'attention' };
-  if (s.state === 'awaiting_permission') return { label: 'Needs permission', text: 'Needs permission to continue', tone: 'attention' };
-  if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Needs answer', text: 'Needs answer', tone: 'attention' };
-  return null;
+  const need = taskNeed(s);
+  if (!need) return null;
+  if (need.kind === 'permission') return { label: 'Needs permission', text: `Needs permission to ${need.text || 'continue'}`, tone: 'attention' };
+  return { label: 'Needs answer', text: need.text ? `Needs answer: ${need.text}` : 'Needs answer', tone: 'attention' };
 }
 
 /**

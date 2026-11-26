@@ -179,7 +179,7 @@ test('the Task list puts the latest activity first whatever the state, newest fi
 });
 
 test('a Task row says in plain words what it needs or how it stands', async () => {
-  const { taskStatus } = await import('../src/lib/tasks.ts');
+  const { taskNeed, taskStatus } = await import('../src/lib/tasks.ts');
   const now = Date.parse('2026-10-01T12:00:00Z');
   const at = (min) => new Date(now - min * 60000).toISOString();
   const status = (extra, unread = false) => taskStatus(s('t', 'p1', at(60), extra), unread, now).text;
@@ -193,6 +193,13 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'awaiting_permission' }), 'Needs permission to continue');
   assert.equal(status({ state: 'awaiting_answer' }), 'Needs answer');
   assert.equal(status({ state: 'awaiting_answer', ask: { id: 'r', kind: 'plan_review', title: 'Plan ready' } }), 'Needs answer: plan ready');
+  // Home groups rows by kind and shows the request alone.
+  const need = (over) => taskNeed(s('t', 'p1', '2026-10-01T12:00:00Z', over));
+  assert.deepEqual(need({ state: 'awaiting_answer', ask: { id: 'q', kind: 'question', title: 'Pick `darwin` or **linux**' } }), { kind: 'answer', text: 'Pick darwin or linux' });
+  assert.deepEqual(need({ state: 'awaiting_answer', ask: { id: 'r', kind: 'plan_review', title: 'Plan ready' } }), { kind: 'answer', text: 'plan ready' });
+  assert.deepEqual(need({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } }), { kind: 'permission', text: 'run a shell command' });
+  assert.deepEqual(need({ state: 'awaiting_permission' }), { kind: 'permission', text: '' });
+  assert.equal(need({ state: 'failed' }), null);
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(12) }), 'Working · quiet 12m');
   assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(1) }), 'Working');
   assert.equal(status({ state: 'working', updated_at: at(90) }), 'Working · quiet 1h');
