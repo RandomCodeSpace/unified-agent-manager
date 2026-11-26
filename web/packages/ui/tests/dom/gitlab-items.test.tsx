@@ -120,6 +120,51 @@ test('the project\'s exact path in a reply links to the project with GitLab\'s m
   expect(open).not.toHaveBeenCalled();
 });
 
+test('a reply links "issue #N", "job #N", the project\'s "!N", a full SHA and a short one after "commit"; a bare "#N", a short SHA alone and code stay text', async () => {
+  const full = 'b'.repeat(40);
+  const items: Item[] = [
+    { id: 'owner', kind: 'user', text: 'what?', time: at },
+    { id: 'reply', kind: 'assistant', text: `Fixed issue #14 in job #7 and group/repo!5 at ${full}, after commit abc1234f. Not #14, abc1234f, other/repo!5 or \`issue #3\`.`, time: at },
+  ];
+  const user = userEvent.setup();
+  const open = vi.fn();
+  render(<ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context(open)}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const reply = screen.getByText(/^Fixed/).closest('p')!;
+  const links = [...reply.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'), a.hasAttribute('data-gitlab-link')]);
+  expect(links).toEqual([
+    ['issue #14', `${P}/issues/14`, true],
+    ['job #7', `${P}/jobs/7`, true],
+    ['group/repo!5', `${P}/merge_requests/5`, true],
+    [full, `${P}/commit/${full}`, true],
+    ['commit abc1234f', `${P}/commit/abc1234f`, true],
+  ]);
+  // Items open in the panel; a commit is no item and opens GitLab.
+  await user.click(within(reply).getByRole('link', { name: 'job #7' }));
+  expect(open).toHaveBeenLastCalledWith([{ kind: 'job', id: 7 }], { kind: 'job', id: 7 });
+  const commit = within(reply).getByRole('link', { name: 'commit abc1234f' });
+  commit.addEventListener('click', (e) => e.preventDefault());
+  await user.click(commit);
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+test('merge requests and pipelines a reply names in prose get chips, one per item with its links\' chips', async () => {
+  onScreen();
+  mockItems();
+  const timing: TurnTiming = { id: 't', user_item_id: 'owner', started_at: at, ended_at: '2026-10-12T10:00:05Z', state: 'completed' };
+  const items: Item[] = [
+    { id: 'owner', kind: 'user', text: 'status?', time: at },
+    { id: 'reply', kind: 'assistant', text: `MR !2 is open: ${P}/merge_requests/2. It runs pipeline #91; issue #14 is the cause.`, time: at },
+  ];
+  render(<ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context()}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const strip = await screen.findByRole('group', { name: 'GitLab items in this turn' });
+  // The link and the prose name one merge request: one chip. An issue named in prose gets none.
+  await waitFor(() => expect(within(strip).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([`${P}/merge_requests/2`, `${P}/pipelines/91`]));
+});
+
 test('the panel links a merge request\'s branches and their compare, and a pipeline\'s ref and commit, to GitLab', async () => {
   mockItems();
   vi.spyOn(api, 'gitlabReview').mockResolvedValue({ ...review, merge_request: { ...review.merge_request, source_branch: 'feat/a#1' } });

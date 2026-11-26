@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gitLabCandidates, gitLabCommitUrl, gitLabCompareUrl, gitLabMarkdown, gitLabProjectUrl, gitLabTreeUrl, isGitLabProjectUrl, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
+import { gitLabCandidates, gitLabCommitUrl, isGitLabCommitUrl, gitLabCompareUrl, gitLabMarkdown, gitLabProjectUrl, gitLabTreeUrl, isGitLabProjectUrl, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
 
 const origin = { host: 'gitlab.com', path: 'aksops/demo' };
 const P = 'https://gitlab.com/aksops/demo/-';
@@ -91,4 +91,14 @@ test('project places: branches keep their slashes with each segment escaped; onl
   assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops/demo?x=1', origin), false);
   assert.equal(isGitLabProjectUrl('http://gitlab.com/aksops/demo', origin), false);
   assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops', origin), false);
+});
+
+test('a reply\'s prose names merge requests and pipelines for the bar, after its links; issues, jobs, code and other projects do not count', () => {
+  const r = reply(`Opened aksops/demo!7 and MR !2 (pipeline #91). See ${P}/issues/14, issue #15 and job #16. Code: \`!3\` and\n\n\`\`\`\npipeline #4\n\`\`\`\nother/demo!9`);
+  assert.deepEqual(keys([r]), ['issue:14', 'mr:7', 'mr:2', 'pipeline:91']);
+  const prose = reply('Merged MR !5.');
+  assert.deepEqual(gitLabCandidates([prose, reply('Took 5 minutes.')], origin).map((i) => i.id), [prose.id]);
+  assert.equal(isGitLabCommitUrl(`${P}/commit/${'a'.repeat(40)}`, origin), true);
+  assert.equal(isGitLabCommitUrl(`${P}/commit/main`, origin), false);
+  assert.equal(isGitLabCommitUrl(`https://gitlab.com/other/demo/-/commit/${'a'.repeat(40)}`, origin), false);
 });
