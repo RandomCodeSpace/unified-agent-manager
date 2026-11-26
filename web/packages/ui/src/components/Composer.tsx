@@ -329,6 +329,8 @@ export type Answering = ({ kind: 'question'; question: Question } | { kind: 'pla
 const NO_CHOICES: string[] = [];
 /** Why files cannot be added while a question waits: an answer is an option or typed text, nothing else. */
 const ANSWER_FIRST = 'Answer the question first.';
+/** Why other files are left out of an answer whose question takes images. */
+const IMAGES_ONLY = 'An answer takes images only.';
 
 interface ComposerProps {
   session: SessionDetail;
@@ -409,6 +411,8 @@ const SPAWNED = 'Set when the Thread spawned it; a subagent cannot change it.';
 function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null, subagent, onThread, seed = null, project }: Readonly<ComposerProps>) {
   const api = useApi();
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
+  // A question whose provider takes images lets its answer carry them; any other answer carries no files.
+  const answerImages = answering?.kind === 'question' ? answering.question.images : undefined;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
   const budgetWarning = useBudgetWarning(session);
   // A send the service refused at the budget before this client saw it reached; it holds until the budget changes.
@@ -719,14 +723,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** `text` is the paste a chip of a long paste holds, for Keep as text. */
   function addFiles(list: File[], text?: string) {
     if (locked || !list.length) return;
-    // An answer carries no files: a drop or paste while answering is refused with the Attach button's reason.
-    if (answering) {
+    // An answer carries no files unless its question takes images: a drop or paste is refused with the Attach button's reason.
+    if (answering && !answerImages) {
       setNotice(answerFirst);
       return;
     }
+    const picked = answerImages ? list.filter((f) => answerImages.mime_types.includes(f.type)) : list;
+    if (picked.length < list.length) setNotice(IMAGES_ONLY);
     const kinds: Kind[] = [...activeKinds];
     const next: Pending[] = [];
-    for (const file of list) {
+    for (const file of picked) {
       const key = newRequestId();
       const sniffed = fileKind(file);
       const kind: Kind = sniffed === 'image' || sniffed === 'pdf' ? sniffed : 'text';
@@ -786,7 +792,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   const uploadsFull = activeKinds.length >= LIMITS.count;
   const fullReason = uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
-  const attachReason = answering ? answerFirst : fullReason;
+  const attachReason = answering && !answerImages ? answerFirst : fullReason;
   const uploading = uploads.some((u) => u.status === 'uploading');
   const refused = uploads.some((u) => u.status === 'error');
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
@@ -959,7 +965,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn; Send now keeps the current turn’s settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
   // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
-  const empty = answering ? (answering.kind === 'plan' ? !(text.trim() || (!answering.plan.truncated && answering.plan.actions?.some((a) => staged.includes(a)))) : !canAnswer(answering.question, staged, text)) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
+  const empty = answering ? (answering.kind === 'plan' ? !(text.trim() || (!answering.plan.truncated && answering.plan.actions?.some((a) => staged.includes(a)))) : !canAnswer(answering.question, staged, text) && !(answerImages && attachmentIds.length)) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked || (!!editing && !shownPreview.preview);
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183); when a steer is impossible both queue.
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
@@ -1005,7 +1011,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (!answering || cannotSubmit) return;
     const answer = answering.kind === 'plan'
       ? { plan: text.trim() ? { feedback: text.trim() } : { action: answering.plan.actions?.find((a) => staged.includes(a)) } }
-      : { answers: answerFromComposer(answering.question, text, staged) ?? undefined };
+      : { answers: answerFromComposer(answering.question, text, staged) ?? (answerImages && attachmentIds.length ? [[]] : undefined), ...(answerImages && attachmentIds.length ? { attachments: attachmentIds } : {}) };
     if (!answer.plan && !answer.answers) return;
     refocus.current = true;
     setBusy('answer');
@@ -1546,7 +1552,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         addFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {dragging > 0 && !answering && <DropOverlay note={gateNote || LIMITS_TEXT} />}
+      {dragging > 0 && (!answering || answerImages) && <DropOverlay note={gateNote || LIMITS_TEXT} />}
       {asideCard && (
         <TaskAsideReader
           asides={asides}
@@ -1805,7 +1811,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               type="file"
               multiple
               hidden
-              accept={acceptFor(media)}
+              accept={answerImages ? answerImages.mime_types.join(',') : acceptFor(media)}
               onChange={(e) => {
                 addFiles(Array.from(e.target.files ?? []));
                 e.target.value = '';

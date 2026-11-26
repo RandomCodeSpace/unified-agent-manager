@@ -200,7 +200,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.CreateSession
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
+	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnAttributedUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -215,7 +215,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
+	s := &fakeSession{id: id, onEvent: cfg.Events.OnEvent, askUser: cfg.Interaction.OnAttributedUserInputRequest, elicit: cfg.Interaction.OnElicitationRequest, perm: cfg.Permissions.OnRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -242,7 +242,7 @@ type fakeSession struct {
 	id        string
 	workspace string
 	onEvent   copilot.SessionEventHandler
-	askUser   copilot.UserInputHandler
+	askUser   copilot.AttributedUserInputHandler
 	elicit    copilot.ElicitationHandler
 	perm      copilot.PermissionHandlerFunc
 
@@ -744,8 +744,8 @@ func TestWebOpenCreatesStreamingSessionWithoutApproveAll(t *testing.T) {
 	if h.conv.ID() != "s-1" || cfg.SessionID != "s-1" || cfg.WorkingDirectory != "/work" || cfg.Events.Streaming == nil || !*cfg.Events.Streaming {
 		t.Fatalf("create config = %+v, id %q", cfg, h.conv.ID())
 	}
-	if cfg.Model != "" || cfg.Interaction.OnUserInputRequest == nil {
-		t.Fatalf("model %q / question handler %v", cfg.Model, cfg.Interaction.OnUserInputRequest != nil)
+	if cfg.Model != "" || cfg.Interaction.OnAttributedUserInputRequest == nil {
+		t.Fatalf("model %q / question handler %v", cfg.Model, cfg.Interaction.OnAttributedUserInputRequest != nil)
 	}
 	d, err := cfg.Permissions.OnRequest(&rpc.PermissionRequestShell{FullCommandText: "rm -rf /"}, copilot.PermissionInvocation{})
 	if _, ok := d.(*rpc.PermissionDecisionNoResult); !ok || err != nil {
@@ -1761,7 +1761,7 @@ func TestWebQuestionAnswers(t *testing.T) {
 		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{tc.answer}}}); err != nil {
 			t.Fatalf("%s: Respond: %v", tc.name, err)
 		}
-		if r := <-done; r.err != nil || r.resp != tc.want {
+		if r := <-done; r.err != nil || r.resp.UserInputResponse != tc.want {
 			t.Fatalf("%s: handler got %+v %v, want %+v", tc.name, r.resp, r.err, tc.want)
 		}
 		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"red"}}}); !errors.Is(err, agentapi.ErrInteractionGone) {
@@ -2043,7 +2043,7 @@ func TestWebReopen(t *testing.T) {
 	if cfg.ContinuePendingWork == nil || *cfg.ContinuePendingWork {
 		t.Fatalf("ContinuePendingWork = %v, want explicit false", cfg.ContinuePendingWork)
 	}
-	if cfg.Permissions.OnRequest == nil || cfg.Interaction.OnUserInputRequest == nil || cfg.Events.OnEvent == nil {
+	if cfg.Permissions.OnRequest == nil || cfg.Interaction.OnAttributedUserInputRequest == nil || cfg.Events.OnEvent == nil {
 		t.Fatal("resume lost its handlers")
 	}
 }
@@ -3318,6 +3318,66 @@ func TestWebAskUserMultipleChoice(t *testing.T) {
 		t.Fatalf("Respond: %v", err)
 	}
 	if r := <-d; r.err != nil || r.resp.Answer != "b" || r.resp.WasFreeform {
+		t.Fatalf("reply = %+v, %v", r.resp, r.err)
+	}
+}
+
+// A question whose request advertises image constraints carries them to the
+// owner, and an answer's images reach the CLI as base64 attachments, with or
+// without text. A request without constraints (an older CLI) takes no images.
+func TestWebAskUserImages(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	question := func(text string) *agentapi.Interaction {
+		for _, e := range slices.Backward(h.sink.all()) {
+			if e.Kind == agentapi.EventInteraction && e.Interaction.Kind == agentapi.InteractionQuestion && e.Interaction.Questions[0].Text == text {
+				return e.Interaction
+			}
+		}
+		return nil
+	}
+	limits := &rpc.UserInputImageAttachmentConstraints{AllowedMIMETypes: []string{"image/png"}, MaxBytesPerImage: 3 << 20, MaxCount: 50}
+	png := agentapi.Blob{Name: "shot.png", MIME: "image/png", Data: []byte("png")}
+
+	d := askAsync(h.fs, copilot.UserInputRequest{Question: "Show me?", ImageAttachmentConstraints: limits})
+	waitFor(t, "image question", func() bool { return question("Show me?") != nil })
+	q := question("Show me?")
+	if got := q.Questions[0].Images; got == nil || !slices.Equal(got.MIMETypes, []string{"image/png"}) || got.MaxBytes != 3<<20 || got.MaxCount != 50 {
+		t.Fatalf("images = %+v", got)
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{}}, Images: []agentapi.Blob{png}}); err != nil {
+		t.Fatalf("Respond image only: %v", err)
+	}
+	r := <-d
+	if r.err != nil || r.resp.Answer != "" || !r.resp.WasFreeform || len(r.resp.Attachments) != 1 {
+		t.Fatalf("reply = %+v, %v", r.resp, r.err)
+	}
+	if a := r.resp.Attachments[0]; a.Type != rpc.UserInputImageAttachmentTypeImage || a.MIMEType != "image/png" || a.Data != "cG5n" || a.DisplayName == nil || *a.DisplayName != "shot.png" {
+		t.Fatalf("attachment = %+v", a)
+	}
+
+	d = askAsync(h.fs, copilot.UserInputRequest{Question: "And this?", ImageAttachmentConstraints: limits})
+	waitFor(t, "second image question", func() bool { return question("And this?") != nil })
+	if err := h.conv.Respond(ctx, question("And this?").ID, agentapi.Answer{Answers: [][]string{{"see"}}, Images: []agentapi.Blob{png}}); err != nil {
+		t.Fatalf("Respond text and image: %v", err)
+	}
+	if r := <-d; r.err != nil || r.resp.Answer != "see" || len(r.resp.Attachments) != 1 {
+		t.Fatalf("reply = %+v, %v", r.resp, r.err)
+	}
+
+	d = askAsync(h.fs, copilot.UserInputRequest{Question: "Old CLI?"})
+	waitFor(t, "text question", func() bool { return question("Old CLI?") != nil })
+	q = question("Old CLI?")
+	if q.Questions[0].Images != nil {
+		t.Fatalf("images = %+v", q.Questions[0].Images)
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"yes"}}, Images: []agentapi.Blob{png}}); err == nil {
+		t.Fatal("an image answer to a question without constraints was accepted")
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"yes"}}}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if r := <-d; r.err != nil || r.resp.Answer != "yes" || r.resp.Attachments != nil {
 		t.Fatalf("reply = %+v, %v", r.resp, r.err)
 	}
 }

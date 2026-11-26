@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -33,6 +35,11 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 		m.mu.Unlock()
 		return agentapi.Interaction{}, err
 	}
+	images, err := answerImagesLocked(s, ix.Interaction, answer.Attachments)
+	if err != nil {
+		m.mu.Unlock()
+		return agentapi.Interaction{}, err
+	}
 	if ix.reply != nil {
 		defer m.mu.Unlock()
 		return m.answerOwnLocked(s, ix, answer), nil
@@ -47,7 +54,45 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 	}
 	ix.answering = true
 	m.mu.Unlock()
+	if len(images) > 0 {
+		if answer.Images, err = m.readBlobs(s.id, images); err != nil {
+			m.mu.Lock()
+			ix.answering = false
+			m.mu.Unlock()
+			return agentapi.Interaction{}, err
+		}
+		m.markUsed(s, images)
+	}
 	return m.respond(s, ix, conv, interactionID, answer)
+}
+
+// answerImagesLocked resolves an answer's image uploads against the limits
+// the question advertised: each an upload of this Thread, of an allowed type
+// and size, and no more of them than the question and a prompt take.
+func answerImagesLocked(s *webSession, ix agentapi.Interaction, ids []string) ([]*upload, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	limits := ix.Questions[0].Images // validateAnswer checked it is set
+	if n := min(limits.MaxCount, maxAttachments); len(ids) > n {
+		return nil, newError(http.StatusBadRequest, "an answer can carry at most %d images", n)
+	}
+	out := make([]*upload, 0, len(ids))
+	for _, id := range ids {
+		u := s.uploads[id]
+		switch {
+		case u == nil || u.Tool:
+			return nil, newError(http.StatusBadRequest, "attachment %q is not an upload of this thread", clipRunes(displaytext.Sanitize(id), maxDetailRunes))
+		case slices.Contains(out, u):
+			return nil, newError(http.StatusBadRequest, "attachment %s is listed twice", u.Name)
+		case !slices.Contains(limits.MIMETypes, u.MIME):
+			return nil, newError(http.StatusBadRequest, "this question does not take %s files", u.MIME)
+		case u.Size > limits.MaxBytes:
+			return nil, newError(http.StatusBadRequest, "%s is larger than this question takes (%d bytes)", u.Name, limits.MaxBytes)
+		}
+		out = append(out, u)
+	}
+	return out, nil
 }
 
 // respond sends answer to an interaction the caller claimed by setting

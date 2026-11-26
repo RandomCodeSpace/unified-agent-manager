@@ -1355,3 +1355,55 @@ func TestTaskUploadDirStaysInsideTheUploadRoot(t *testing.T) {
 		}
 	}
 }
+
+// An answer carries images only for a question that advertised image limits,
+// and each image is checked against them before the provider sees it. A
+// question without limits (an older CLI) refuses images and answers as text.
+func TestAnswerImagesFollowTheQuestionLimits(t *testing.T) {
+	m, _, sum, conv, _ := uploadTask(t, "auto")
+	img := mustUpload(t, m, sum.ID, "shot.png", pngBytes(t))
+	anim := mustUpload(t, m, sum.ID, "anim.gif", encoded(t, func(b *bytes.Buffer, i image.Image) error { return gif.Encode(b, i, nil) }))
+	limits := &agentapi.ImageLimits{MIMETypes: []string{"image/png"}, MaxBytes: 3 << 20, MaxCount: 1}
+	ask := func(id string, images *agentapi.ImageLimits) {
+		q := question(id)
+		q.Questions[0].Images = images
+		conv.EmitInteraction(q)
+	}
+
+	ask("text", nil)
+	if _, err := m.Answer(sum.ID, "text", agentapi.Answer{Answers: [][]string{{"red"}}, Attachments: []string{img.ID}}); statusOf(err) != http.StatusBadRequest || !strings.Contains(err.Error(), "does not take images") {
+		t.Fatalf("image answer to a text question = %v, want 400", err)
+	}
+	ask("img", limits)
+	for name, bad := range map[string]agentapi.Answer{
+		"unknown upload": {Answers: [][]string{{}}, Attachments: []string{"nope"}},
+		"wrong type":     {Answers: [][]string{{}}, Attachments: []string{anim.ID}},
+		"too many":       {Answers: [][]string{{}}, Attachments: []string{img.ID, anim.ID}},
+		"declined":       {Reject: true, Attachments: []string{img.ID}},
+		"no answer":      {Answers: [][]string{{}}},
+	} {
+		if _, err := m.Answer(sum.ID, "img", bad); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("%s = %v, want 400", name, err)
+		}
+	}
+	small := *limits
+	small.MaxBytes = 10
+	ask("small", &small)
+	if _, err := m.Answer(sum.ID, "small", agentapi.Answer{Answers: [][]string{{}}, Attachments: []string{img.ID}}); statusOf(err) != http.StatusBadRequest || !strings.Contains(err.Error(), "larger") {
+		t.Fatalf("oversized image = %v, want 400", err)
+	}
+	if n := len(conv.Responds()); n != 0 {
+		t.Fatalf("invalid answers reached the provider %d times", n)
+	}
+
+	if _, err := m.Answer(sum.ID, "img", agentapi.Answer{Answers: [][]string{{}}, Attachments: []string{img.ID}}); err != nil {
+		t.Fatalf("image-only answer: %v", err)
+	}
+	if _, err := m.Answer(sum.ID, "text", agentapi.Answer{Answers: [][]string{{"red"}}}); err != nil {
+		t.Fatalf("text answer: %v", err)
+	}
+	got := conv.Responds()
+	if len(got) != 2 || len(got[0].Answer.Images) != 1 || got[0].Answer.Images[0].MIME != "image/png" || !bytes.Equal(got[0].Answer.Images[0].Data, pngBytes(t)) || got[1].Answer.Images != nil {
+		t.Fatalf("responds = %+v", got)
+	}
+}

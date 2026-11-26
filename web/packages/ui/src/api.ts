@@ -1337,6 +1337,8 @@ export interface Question {
   custom: boolean;
   /** The typed form field this question asks for, on an elicitation form only. */
   field?: FormField;
+  /** The images an answer may carry, as the provider advertised them; absent means text only. */
+  images?: { mime_types: string[]; max_bytes: number; max_count: number };
 }
 
 /** One form field; the service checks every bound again before the provider sees the answer. */
@@ -1409,6 +1411,8 @@ export interface Answer {
   plan?: { action?: PlanAction; feedback?: string };
   /** Dismisses an elicitation without declining it. */
   cancel?: boolean;
+  /** Upload IDs of images that go with a question's answer, when the question takes images. */
+  attachments?: string[];
 }
 
 export type PromptMode = 'send' | 'steer' | 'queue';

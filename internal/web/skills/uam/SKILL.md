@@ -79,6 +79,8 @@ with buttons, use `uam_form` instead (see its reference file).
   options, and you get the chosen labels joined by ", ".
 - The owner may type their own answer instead of an option, even when you
   pass `allowFreeform: false`.
+- The owner may also attach images (a screenshot) to the answer, with or
+  without text, where the Copilot CLI accepts them.
 - A declined question fails with "the user declined to answer". Continue on
   your best judgement, or end the turn saying what you need.
 

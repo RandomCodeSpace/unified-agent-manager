@@ -1040,6 +1040,9 @@ func (s *webSession) trimSubagents() {
 // validateAnswer checks an answer against what the provider offered, so an
 // invalid answer never reaches the provider.
 func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
+	if len(a.Attachments) > 0 && (ix.Kind != agentapi.InteractionQuestion || len(ix.Questions) != 1 || ix.Questions[0].Images == nil || a.Reject || a.Cancel) {
+		return newError(http.StatusBadRequest, "this request does not take images")
+	}
 	switch ix.Kind {
 	case agentapi.InteractionPermission:
 		if a.Reject || a.Cancel || len(a.Answers) > 0 || a.Plan != nil {
@@ -1085,6 +1088,9 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 					return err
 				}
 				continue
+			}
+			if len(a.Attachments) > 0 && len(a.Answers[i]) == 0 {
+				continue // images alone answer it
 			}
 			if err := validateQuestionAnswer(i, q, a.Answers[i]); err != nil {
 				return err
