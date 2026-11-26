@@ -12,10 +12,9 @@ const COMMITS = {
   data: [{ day: 'Mon', commits: 3 }, { day: 'Tue', commits: 5 }, { day: 'Wed', commits: 2 }],
 };
 
-test('a Mermaid flowchart opens in the React Flow view, toggles to the Mermaid image and its code, opens large, and a broken one says why', async ({ page, project, model }) => {
+test('a Mermaid flowchart opens in the React Flow view, toggles to the Mermaid image and its code, and opens large', async ({ page, project, model }) => {
   const errors = pageErrors(page);
   model.reply('draw a flow', 'A flow:\n\n```mermaid\ngraph TD; A[Start]-->|go| B{Ready?}\nB --> C[(Store)]\n```\n');
-  model.reply('draw a broken flow', 'Broken:\n\n```mermaid\ngraph TD; A-->\n```\n');
   await startThread(page, project, 'draw a flow');
   const conv = conversation(page);
   const view = conv.getByRole('group', { name: 'View' });
@@ -53,19 +52,10 @@ test('a Mermaid flowchart opens in the React Flow view, toggles to the Mermaid i
   await expect(large.getByRole('img', { name: 'Diagram' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(large).toHaveCount(0);
-
-  // A flowchart the React Flow view cannot read opens in Mermaid, which says why it cannot draw it either; React Flow stays a click away.
-  await send(page, 'draw a broken flow');
-  await expect(threadState(page, 'Finished')).toBeVisible();
-  await expect(conv.getByText(/^Diagram could not be rendered: \S/)).toBeVisible({ timeout: 30_000 });
-  await expect(conv.locator('pre', { hasText: 'graph TD; A-->' }).last()).toBeVisible();
-  await expect(view.last().getByRole('button')).toHaveText(['React Flow', 'Mermaid', 'Code']);
-  await expect(view.last().getByRole('button', { name: 'Mermaid' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(diagram).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
-test('a diagram the React Flow view cannot read opens in Mermaid, and its React Flow tab asks the Utility model for the graph once', async ({ page, project, model, uam }) => {
+test('a diagram Pele cannot read opens in React Flow through one Utility-model conversion, and one the model cannot convert falls back to Mermaid', async ({ page, project, model, uam }) => {
   const errors = pageErrors(page);
   const restore = await useMockUtility(uam);
   try {
@@ -80,19 +70,16 @@ test('a diagram the React Flow view cannot read opens in Mermaid, and its React 
       response: (req) => {
         asked++;
         uam.served.push({ fixture: 'diagram graph', request: req });
-        return { content: JSON.stringify(graph) };
+        return { content: JSON.stringify(req).includes('stateDiagram') ? JSON.stringify(graph) : 'There is no graph here.' };
       },
     });
     uam.apply();
     model.reply('draw the states', 'States:\n\n```mermaid\nstateDiagram-v2\n  Idle --> Busy: start\n```\n');
+    model.reply('draw a broken flow', 'Broken:\n\n```mermaid\ngraph TD; A-->\n```\n');
     await startThread(page, project, 'draw the states');
     const conv = conversation(page);
     const view = conv.getByRole('group', { name: 'View' });
-    await expect(view.getByRole('button', { name: 'Mermaid' })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
-    await expect(conv.getByRole('img', { name: 'Diagram' })).toBeVisible({ timeout: 30_000 });
-    expect(asked).toBe(0);
-
-    await view.getByRole('button', { name: 'React Flow' }).click();
+    await expect(view.getByRole('button', { name: 'React Flow' })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
     const flow = conv.getByRole('figure', { name: 'Diagram' });
     for (const label of ['Idle', 'Busy', 'start']) await expect(flow.getByText(label, { exact: true })).toBeVisible({ timeout: 60_000 });
     // Back and forth costs nothing more: the graph is kept per source.
@@ -100,8 +87,19 @@ test('a diagram the React Flow view cannot read opens in Mermaid, and its React 
     await view.getByRole('button', { name: 'React Flow' }).click();
     await expect(flow.getByText('Busy', { exact: true })).toBeVisible();
     expect(asked).toBe(1);
+
+    // A flowchart neither Pele nor the model can read falls back to Mermaid, which says why it cannot draw it either; React Flow stays a click away.
+    await send(page, 'draw a broken flow');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    await expect(conv.getByText(/^React Flow view unavailable: \S/)).toBeVisible({ timeout: 60_000 });
+    await expect(conv.getByText(/^Diagram could not be rendered: \S/)).toBeVisible({ timeout: 30_000 });
+    await expect(conv.locator('pre', { hasText: 'graph TD; A-->' }).last()).toBeVisible();
+    await expect(view.last().getByRole('button')).toHaveText(['React Flow', 'Mermaid', 'Code']);
+    await expect(view.last().getByRole('button', { name: 'Mermaid' })).toHaveAttribute('aria-pressed', 'true');
+    expect(asked).toBe(2);
     const log = (await uam.api('GET', '/api/utility')) as { calls: { purpose: string; valid?: boolean }[] };
-    expect(log.calls.filter((c) => c.purpose === 'diagram-graph').map((c) => c.valid)).toEqual([true]);
+    // Newest first: the broken flowchart's failed conversion, then the state diagram's.
+    expect(log.calls.filter((c) => c.purpose === 'diagram-graph').map((c) => c.valid)).toEqual([false, true]);
   } finally {
     await restore();
   }

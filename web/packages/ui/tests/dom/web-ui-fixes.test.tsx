@@ -149,6 +149,8 @@ describe('diagrams', () => {
     t3.items = [...t3.items, { id: 'i-diagram', kind: 'assistant', time: new Date().toISOString(), text: '```mermaid\ngraph TD; A[Start]-->B[Done]\n```' }];
     vi.spyOn(data, 'seed').mockReturnValue(state);
     const { user } = await openTask('t3');
+    // A flowchart opens in React Flow; the lightbox belongs to the Mermaid view.
+    await user.click(await log().findByRole('button', { name: 'Mermaid' }));
     await user.click(await log().findByRole('button', { name: 'Open diagram' }));
     const image = within(await screen.findByRole('dialog')).getByRole('img', { name: 'Diagram' });
     expect(image.style.getPropertyValue('--fit')).toBe('53.625dvh');

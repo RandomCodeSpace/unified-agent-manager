@@ -1954,14 +1954,15 @@ holds the backend part of the contract.
 - **Checks.** UAM sniffs the bytes: png, jpeg, gif and webp only, by
   `http.DetectContentType`, so SVG never passes. It takes the type from the
   bytes, never from the provider. An image may be at most 5 MiB, and a Task
-  keeps at most 50 tool images. An image this Task already keeps, by the
+  keeps at most 500 MiB of tool images, however many that is (until
+  2026-11-25 it was 50 images). An image this Task already keeps, by the
   SHA-256 of its bytes, is not stored again and gets the same ID, whichever
   tool call or agent returned it. An image the provider reports by digest
   alone is shown only when that copy exists.
 - **Dropped images.** An image that fails a check, is past the cap, or has
   no bytes and no stored copy is left out of `images`, and the tool item's
-  `images_note` says how many and why, for example "1 image not kept: a task
-  keeps at most 50 images". The tool item is published immediately without
+  `images_note` says how many and why, for example "1 image not kept: a
+  thread keeps at most 500 MiB of images". The tool item is published immediately without
   images. A worker stores images from a queue capped at 256 tool results,
   then publishes the item with their IDs. A full queue drops the images with
   a note. No stream frame carries an image without an ID, and image storage

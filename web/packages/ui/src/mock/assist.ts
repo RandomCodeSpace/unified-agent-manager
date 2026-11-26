@@ -67,7 +67,22 @@ export function assistMock(host: AssistHost) {
     }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/diagram-graph$/)) && method === 'POST') {
       if (!host.task(decodeURIComponent(r[1]))) return fail(404, 'session not found');
-      if (!String(body.source ?? '').startsWith('stateDiagram')) return fail(502, 'the model could not turn this diagram into a graph');
+      const source = String(body.source ?? '');
+      if (source.startsWith('erDiagram'))
+        return json(200, {
+          direction: 'LR',
+          groups: [],
+          nodes: [
+            { id: 'THREAD', label: 'THREAD\nid string PK\nproject_id string FK\nstate string', kind: 'step' },
+            { id: 'PROJECT', label: 'PROJECT\nid string PK\ndir string', kind: 'step' },
+            { id: 'ITEM', label: 'ITEM\nid string PK\nthread_id string FK\nkind string', kind: 'store' },
+          ],
+          edges: [
+            { from: 'PROJECT', to: 'THREAD', label: 'holds', dashed: false, thick: false, head: 'end' },
+            { from: 'THREAD', to: 'ITEM', label: 'records', dashed: false, thick: false, head: 'end' },
+          ],
+        });
+      if (!source.startsWith('stateDiagram')) return fail(502, 'the model could not turn this diagram into a graph');
       return json(200, {
         direction: 'TB',
         groups: [],

@@ -37,9 +37,11 @@ export interface FlowLayout {
   height: number;
 }
 
-const FONT = '500 13px "Figtree Variable", system-ui, sans-serif';
+const FONT = '600 13px "Figtree Variable", system-ui, sans-serif';
 const LABEL_FONT = '500 11px "Figtree Variable", system-ui, sans-serif';
 const LINE = 17;
+/** FlowDiagram.css: .flow-details .flow-detail's margin, padding and rule; a wrapped label just sits looser. */
+const DETAIL_RULE = 11;
 let measurer: CanvasRenderingContext2D | null | undefined;
 function measure(text: string, font: string): number {
   measurer ??= document.createElement('canvas').getContext('2d');
@@ -52,8 +54,8 @@ function nodeSize(n: FlowGraph['nodes'][number]) {
   const text = measure(n.label, FONT);
   const lines = n.label.split('\n').length;
   if (n.kind === 'decision') return { width: Math.max(140, Math.round(text * 1.6 + 48)), height: 72 + (lines - 1) * LINE };
-  // padding 14 + (store icon 22 + gap 8) + text + padding 14
-  return { width: Math.max(96, 28 + (n.kind === 'store' ? 30 : 0) + text), height: 26 + lines * LINE };
+  // padding 14 + (store icon 22 + gap 8) + text + padding 14; the rule under a name with details takes DETAIL_RULE.
+  return { width: Math.max(96, 28 + (n.kind === 'store' ? 30 : 0) + text), height: 26 + lines * LINE + (lines > 1 ? DETAIL_RULE : 0) };
 }
 
 /** The flowchart laid out in `dir`, as React Flow nodes and edges in ELK's coordinates. */

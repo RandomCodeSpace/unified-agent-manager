@@ -17,7 +17,10 @@
     points forward;
   - subgraphs become labelled groups; dotted (`-.->`) and thick (`==>`)
     links keep their look.
-- Other box-and-arrow diagrams (state, class, ER and the like) open as the
-  Mermaid image; the owner can still ask for the React Flow view, which
-  converts them with a model call.
+- Other box-and-arrow diagrams (state, class, ER and the like) open in the
+  React Flow view too, converted by a model call; if that fails, the Mermaid
+  image shows instead. In an ER or class node, the lines after the name
+  show as its columns or members.
+- Sequence, Gantt, pie and other non-graph diagrams show as the Mermaid
+  image.
 - For numbers, use `uam_chart` rather than a Mermaid chart.

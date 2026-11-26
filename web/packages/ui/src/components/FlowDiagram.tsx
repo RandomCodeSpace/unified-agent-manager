@@ -16,6 +16,11 @@ import { layoutFlow, type FlowEdgeData, type FlowLayout, type FlowNodeData, type
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 560;
 const PAD = 24;
+/** Below this zoom a chart's text is too small to read, so the other direction is tried. */
+const READABLE = 0.75;
+
+/** The zoom the card draws `layout` at: fitted to the card's width and its tallest height, never above 1. */
+const fit = (layout: FlowLayout, width: number) => Math.min(1, (width - PAD) / layout.width, (MAX_HEIGHT - PAD) / layout.height);
 
 // Edges are drawn from ELK's points; the handles exist only because React Flow anchors every edge end.
 function Anchors({ dir }: Readonly<{ dir: 'LR' | 'TB' }>) {
@@ -36,11 +41,22 @@ const Box = memo(function Box({ data, selected }: NodeProps<Node<FlowNodeData>>)
           <path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8" />
         </svg>
       )}
-      <span className="flow-label">{data.label}</span>
+      <Label text={data.label} />
       <Anchors dir={data.dir} />
     </div>
   );
 });
+
+/** A label's first line is the node's name; in a converted graph the lines under it are its details (an entity's columns, a class's members). */
+function Label({ text }: Readonly<{ text: string }>) {
+  const [name, ...rest] = text.split('\n');
+  return (
+    <span className="flow-label">
+      {name}
+      {rest.length > 0 && <span className="flow-detail">{rest.join('\n')}</span>}
+    </span>
+  );
+}
 
 const Decision = memo(function Decision({ data, selected, width = 140, height = 72 }: NodeProps<Node<FlowNodeData>>) {
   return (
@@ -186,9 +202,9 @@ function Flow({ layout }: Readonly<{ layout: FlowLayout }>) {
 }
 
 /**
- * The diagram in `source`, laid out for the card's width: a left-to-right chart far wider than
- * the card is laid out top to bottom instead. A source Pele cannot read is converted by
- * `convert` when given (the owner chose this view), else reported. `onUnavailable` says why the
+ * The diagram in `source`, laid out for the card: a chart that would shrink too far to read is
+ * laid out in the other direction when that draws it larger. A source Pele cannot read is converted by
+ * `convert` when given (in a Thread), else reported. `onUnavailable` says why the
  * view cannot draw it, so the card shows the Mermaid view.
  */
 export default function FlowDiagram({ source, onUnavailable, convert }: Readonly<{ source: string; onUnavailable: (why: FlowMiss) => void; convert?: () => Promise<FlowGraph> }>) {
@@ -209,11 +225,12 @@ export default function FlowDiagram({ source, onUnavailable, convert }: Readonly
     (async () => {
       const graph = read ?? (await fallback!());
       let layout = await layoutFlow(graph, graph.direction);
-      if (graph.direction === 'LR' && layout.width * 0.75 > width) {
-        const tall = await layoutFlow(graph, 'TB');
-        if (tall.width < layout.width) layout = tall;
+      // A wide chart is often tall the other way, and the card can grow to MAX_HEIGHT.
+      if (fit(layout, width) < READABLE) {
+        const other = await layoutFlow(graph, graph.direction === 'LR' ? 'TB' : 'LR');
+        if (fit(other, width) > fit(layout, width)) layout = other;
       }
-      const scale = Math.min(1, (width - PAD) / layout.width);
+      const scale = fit(layout, width);
       if (on) setLaid({ layout, height: Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, layout.height * scale + PAD))) });
     })().catch((err: unknown) => on && onUnavailable(read === null ? { error: err instanceof Error ? err.message : 'Conversion failed' } : 'unreadable'));
     return () => {
@@ -222,7 +239,8 @@ export default function FlowDiagram({ source, onUnavailable, convert }: Readonly
   }, [read, fallback, onUnavailable]);
 
   return (
-    <div ref={box} role="figure" aria-label="Diagram" aria-busy={converting} className="flow-diagram" style={{ height: laid?.height ?? MIN_HEIGHT }}>
+    // Pele's line breaks only wrap a label; the model's put details under a name.
+    <div ref={box} role="figure" aria-label="Diagram" aria-busy={converting} className={read === null ? 'flow-diagram flow-details' : 'flow-diagram'} style={{ height: laid?.height ?? MIN_HEIGHT }}>
       {laid && <Flow layout={laid.layout} />}
       {converting && (
         <p className="flex h-full items-center justify-center gap-2 text-caption text-muted">

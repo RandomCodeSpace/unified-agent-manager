@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ApiClient } from '../../src/api';
@@ -6,11 +6,17 @@ import { ApiContext } from '../../src/ApiContext';
 import { SessionContext } from '../../src/components/common';
 import { DiagramCard } from '../../src/components/Diagram';
 import type { FlowGraph } from '../../src/lib/flowGraph';
+import { layoutFlow } from '../../src/lib/flowLayout';
 
 // ELK lays out in this thread here: happy-dom has no Worker for its worker script.
 vi.mock('elkjs/lib/elk-api.js', async () => {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
   return { default: class { layout = (graph: object) => new ELK().layout(graph) } };
+});
+// Watched so a test can tell which directions a chart was laid out in.
+vi.mock('../../src/lib/flowLayout', async (real) => {
+  const m = await real<typeof import('../../src/lib/flowLayout')>();
+  return { ...m, layoutFlow: vi.fn(m.layoutFlow) };
 });
 // The Mermaid view's frame does not draw here; these tests are about the React Flow view.
 vi.mock('../../src/lib/diagram', async (real) => ({ ...(await real<object>()), renderDiagram: () => new Promise(() => {}) }));
@@ -71,7 +77,7 @@ const pressed = () => screen.getAllByRole('button', { pressed: true }).map((b) =
 
 describe('React Flow view', () => {
   test('a flowchart opens in React Flow, laid out with its kinds, groups and labels', async () => {
-    card('flowchart LR\n  a([Start]) -->|go| b{Ok?}\n  subgraph s[Store]\n    c[(Orders)]\n  end\n  b -.-> c\n  b <==> a');
+    card('flowchart LR\n  a([Start]) -->|go| b{Ok?}\n  subgraph s[Store]\n    c[(Orders)]\n  end\n  b -.-> c\n  b <==> a\n  u["User<br>id PK<br>name"]');
     expect(pressed()).toEqual(['React Flow']);
     const figure = await screen.findByRole('figure', { name: 'Diagram' });
     await waitFor(() => expect(within(figure).getByText('Orders')).toBeTruthy());
@@ -79,6 +85,9 @@ describe('React Flow view', () => {
     expect(figure.querySelector('.flow-decision')?.textContent).toBe('Ok?');
     expect(figure.querySelector('.flow-store .flow-icon')).toBeTruthy();
     expect(figure.querySelector('.flow-group-title')?.textContent).toBe('Store');
+    // Pele's line breaks only wrap a label.
+    expect(figure.querySelector('.flow-step .flow-detail')?.textContent).toBe('id PK\nname');
+    expect(figure.classList.contains('flow-details')).toBe(false);
     // Edges follow ELK's route, dashed and thick as the source says, with arrow heads and labels.
     await waitFor(() => expect(figure.querySelectorAll('.flow-edge')).toHaveLength(3));
     expect(figure.querySelector('.flow-edge.is-dashed')).toBeTruthy();
@@ -100,18 +109,40 @@ describe('React Flow view', () => {
     await waitFor(() => expect(within(figure).queryByRole('button', { name: 'Reset layout' })).toBeNull());
   });
 
+  test('a chart too wide to read top to bottom is laid out left to right; a small one is laid out once', async () => {
+    vi.mocked(layoutFlow).mockClear();
+    // A mindmap's shape: a root, 5 branches and 15 leaves, all leaves in one row top to bottom.
+    const branches = [1, 2, 3, 4, 5].map((b) => `  r --> b${b}\n` + [1, 2, 3].map((l) => `  b${b} --> l${b}${l}\n`).join('')).join('');
+    card(`flowchart TB\n${branches}`);
+    let figure = await screen.findByRole('figure', { name: 'Diagram' });
+    await waitFor(() => expect(figure.querySelector('.react-flow__node')).toBeTruthy());
+    expect(vi.mocked(layoutFlow).mock.calls.map(([, dir]) => dir)).toEqual(['TB', 'LR']);
+    expect(figure.querySelector('.react-flow__handle-left')).toBeTruthy();
+    expect(figure.querySelector('.react-flow__handle-top')).toBeNull();
+    // The card grows toward its tallest for the taller layout.
+    expect(Number.parseFloat(figure.style.height)).toBe(560);
+    cleanup();
+
+    vi.mocked(layoutFlow).mockClear();
+    card('flowchart TB\n  a --> b\n  a --> c');
+    figure = await screen.findByRole('figure', { name: 'Diagram' });
+    await waitFor(() => expect(figure.querySelector('.react-flow__node')).toBeTruthy());
+    expect(vi.mocked(layoutFlow).mock.calls.map(([, dir]) => dir)).toEqual(['TB']);
+    expect(figure.querySelector('.react-flow__handle-top')).toBeTruthy();
+  });
+
   test('another diagram opens in Mermaid, with no React Flow tab outside a Thread', () => {
     card('sequenceDiagram\n  A->>B: hi');
     card('stateDiagram-v2\n  [*] --> Idle');
     expect(screen.getAllByRole('group', { name: 'View' }).map((g) => g.textContent)).toEqual(['MermaidCode', 'MermaidCode']);
   });
 
-  test('in a Thread, React Flow asks the Utility model once per source and draws its graph', async () => {
+  test('in a Thread, another box-and-arrow diagram opens in React Flow: the Utility model draws it, once per source', async () => {
     const graph: FlowGraph = {
       direction: 'TB',
       groups: [],
       nodes: [
-        { id: 'idle', label: 'Idle', kind: 'step' },
+        { id: 'idle', label: 'Idle\nwaits for a prompt', kind: 'step' },
         { id: 'busy', label: 'Busy', kind: 'step' },
       ],
       edges: [{ from: 'idle', to: 'busy', label: 'start', dashed: false, thick: false, head: 'end' }],
@@ -119,11 +150,12 @@ describe('React Flow view', () => {
     const diagramGraph = vi.fn(async () => graph);
     const user = userEvent.setup();
     card('stateDiagram-v2\n  Idle --> Busy: start', { diagramGraph }, 'thread-1');
-    expect(pressed()).toEqual(['Mermaid']);
-    expect(diagramGraph).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'React Flow' }));
+    expect(pressed()).toEqual(['React Flow']);
     const figure = await screen.findByRole('figure', { name: 'Diagram' });
     await waitFor(() => expect(within(figure).getByText('Busy')).toBeTruthy());
+    // The model's further lines are details under the name.
+    expect(figure.classList.contains('flow-details')).toBe(true);
+    expect(figure.querySelector('.flow-detail')?.textContent).toBe('waits for a prompt');
     expect(diagramGraph).toHaveBeenCalledWith('thread-1', 'stateDiagram-v2\n  Idle --> Busy: start');
     await user.click(screen.getByRole('button', { name: 'Code' }));
     await user.click(screen.getByRole('button', { name: 'React Flow' }));
@@ -137,8 +169,10 @@ describe('React Flow view', () => {
     });
     const user = userEvent.setup();
     card('classDiagram\n  Animal <|-- Duck', { diagramGraph }, 'thread-2');
-    await user.click(screen.getByRole('button', { name: 'React Flow' }));
     expect(await screen.findByText('React Flow view unavailable: the model could not turn this diagram into a graph')).toBeTruthy();
     expect(pressed()).toEqual(['Mermaid']);
+    // React Flow stays a click away, and asks again.
+    await user.click(screen.getByRole('button', { name: 'React Flow' }));
+    await waitFor(() => expect(diagramGraph).toHaveBeenCalledTimes(2));
   });
 });
