@@ -55,7 +55,7 @@ export function Collapse({ open, appear = false, onClosed, className, inner, chi
   return (
     <div ref={box} data-state={fading ? 'closing' : settled} className={cn('grid', shown || fading ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', fading && 'motion-reduce:grid-rows-[0fr]', className)}>
 
-      <div className={cn('min-h-0 overflow-hidden', shown && 'transition-[opacity,translate] duration-240 ease-app', fading && 'opacity-0 transition-opacity duration-100 ease-app', !shown && !fading && '-translate-y-1 opacity-0', inner)} inert={!open} aria-hidden={!open}>
+      <div className={cn('min-h-0 min-w-0', shown && 'transition-[opacity,translate] duration-240 ease-app', fading && 'opacity-0 transition-opacity duration-100 ease-app motion-reduce:overflow-hidden', !shown && !fading && 'overflow-hidden -translate-y-1 opacity-0', inner)} inert={!open} aria-hidden={!open}>
         {children}
       </div>
     </div>

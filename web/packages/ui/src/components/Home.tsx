@@ -101,7 +101,7 @@ function Rows({ label, where, rows, named, onOpen, status }: Readonly<{ label: s
             <li key={named ? `${machine.id}\n${session.id}` : session.id}>
               <button
                 type="button"
-                className={cn(rowClass, 'grid grid-cols-[24px_minmax(0,1fr)_58px] gap-x-2.5 gap-y-1 px-1 py-4 focus-visible:-outline-offset-2 min-[960px]:grid-cols-[24px_minmax(0,1fr)_minmax(0,200px)_58px] min-[960px]:px-2.5')}
+                className={cn(rowClass, 'grid grid-cols-[24px_minmax(0,1fr)_58px] gap-x-2.5 gap-y-1 px-1 py-4 focus-visible:-outline-offset-2 min-[960px]:px-2.5')}
                 onClick={() => onOpen(machine, session.id)}
               >
                 <ProjectBadge badge={project.badge} className="size-6 text-[9px]" />
@@ -110,10 +110,10 @@ function Rows({ label, where, rows, named, onOpen, status }: Readonly<{ label: s
                   <Sep />
                   <span className="mt-1 flex min-w-0 items-center gap-1.5 text-meta text-muted"><span className="truncate">{project.name}</span>{named && <><Sep /><InstanceBadge id={machine.id} label={machine.short} /><span className="sr-only">{machine.short}</span></>}</span>
                 </span>
-                <span className={cn('col-span-2 col-start-2 row-start-2 min-w-0 break-words text-meta min-[960px]:col-span-1 min-[960px]:col-start-3 min-[960px]:row-start-1', TONE_TEXT[shown.tone])}>
+                <span className={cn('col-span-2 col-start-2 row-start-2 min-w-0 break-words text-meta', TONE_TEXT[shown.tone])}>
                   <Sep />{shown.text}
                 </span>
-                <time dateTime={session.updated_at} title={dateTime(session.updated_at)} className="col-start-3 row-start-1 text-right text-meta text-muted tabular-nums min-[960px]:col-start-4">
+                <time dateTime={session.updated_at} title={dateTime(session.updated_at)} className="col-start-3 row-start-1 text-right text-meta text-muted tabular-nums">
                   <Sep />{timeAgo(session.updated_at)}
                 </time>
               </button>

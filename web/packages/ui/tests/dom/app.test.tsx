@@ -176,9 +176,13 @@ describe('app shell', () => {
     const fold = within(section).getByRole('button', { expanded: false, name: /activity of this turn/ });
     await user.click(fold);
     await waitFor(() => expect(fold.getAttribute('aria-expanded')).toBe('true'));
-    await user.click((await sidebar()).getByRole('button', { name: 'Settings' }));
+    const side = await sidebar();
+    expect(document.querySelector('nav[aria-label="Threads"] [aria-current="true"]')?.textContent).toContain('Doctor: add terminal line');
+    await user.click(side.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(header().textContent).toBe('Settings'));
     expect(section.closest('[inert][aria-hidden="true"]')).not.toBeNull();
+    // While Settings is open, no Thread row stays highlighted as current.
+    expect(document.querySelectorAll('nav[aria-label="Threads"] [aria-current="true"]')).toHaveLength(0);
     await user.keyboard('{Alt>}p{/Alt}');
     await act(() => new Promise((r) => setTimeout(r, 200)));
     expect(screen.queryByRole('dialog', { name: 'Go to file' })).toBeNull();
@@ -186,6 +190,7 @@ describe('app shell', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
     expect(screen.getByRole('region', { name: 'Conversation' })).toBe(section);
     expect(fold.getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('nav[aria-label="Threads"] [aria-current="true"]')?.textContent).toContain('Doctor: add terminal line');
   });
 });
 
