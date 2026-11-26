@@ -326,6 +326,11 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		m.spawns = map[string]string{}
 	}
 	m.spawns[req.id] = taskID
+	if worktree {
+		call.ReportProgress("Creating the worktree and starting the thread")
+	} else {
+		call.ReportProgress("Starting the thread")
+	}
 	done := make(chan error, 1)
 	m.wg.Add(1)
 	m.mu.Unlock()

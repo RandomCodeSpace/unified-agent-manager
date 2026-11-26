@@ -780,6 +780,17 @@ type HostToolCall struct {
 	// Arguments is the model's JSON object as received, at most
 	// MaxHostToolArguments bytes.
 	Arguments json.RawMessage
+	// Progress, when the provider supports it, shows message as the running
+	// call's status (ToolCall.Progress). Call it through ReportProgress.
+	Progress func(message string)
+}
+
+// ReportProgress shows message as the running call's status; it does
+// nothing when the provider gives no Progress.
+func (c HostToolCall) ReportProgress(message string) {
+	if c.Progress != nil {
+		c.Progress(message)
+	}
 }
 
 // HostToolResult is what a host tool call returns. CallTool returns

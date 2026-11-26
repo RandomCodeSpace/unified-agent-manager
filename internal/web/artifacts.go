@@ -435,6 +435,7 @@ func (m *Manager) publish(ctx context.Context, taskID string, call agentapi.Host
 		return "", errors.New("uam could not store the artifact; try again")
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
+	call.ReportProgress("Copying the files")
 	snap := snapshotter{ctx: ctx}
 	entry, source, err := snap.snapshot(workdir, args.Path, staging)
 	if err != nil {

@@ -317,3 +317,21 @@ func TestChartReadsJSONOutput(t *testing.T) {
 		}
 	}
 }
+
+// A chart's command reports progress before it runs; inline rows report none.
+func TestChartCommandReportsProgress(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	_, conv, dir := chartTask(t, m, prov, "yolo")
+	writeFile(t, filepath.Join(dir, "rows.csv"), "k,v\na,1\n")
+	for i, c := range []struct{ args, want string }{
+		{`{"title":"t","kind":"bar","x":"k","y":"v","command":"cat rows.csv","format":"csv"}`, "Running the chart's command"},
+		{`{"title":"t","kind":"bar","x":"k","y":"v","data":[{"k":"a","v":1}]}`, ""},
+	} {
+		var got []string
+		res, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: chartToolName, CallID: fmt.Sprint("c", i), Arguments: json.RawMessage(c.args),
+			Progress: func(message string) { got = append(got, message) }})
+		if err != nil || res.Failed || strings.Join(got, "|") != c.want {
+			t.Fatalf("uam_chart %s = %+v, %v; progress %q", c.args, res, err, got)
+		}
+	}
+}
