@@ -307,3 +307,4 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-45 | Log out in UAM and access ends the session and returns to sign-in | settings.test.tsx | spec: settings-nav.spec.ts |
 | SET-46 | Help tips beside labels open on hover, focus and tap; disabled reasons stay inline | settings-help.test.tsx | spec: settings-nav.spec.ts |
 | SET-47 | A Copilot CLI older than the oldest release uam drives: the card says "Copilot CLI X is too old for this UAM. Update to Y or newer." and Update installs the newest | none | spec: settings-copilot.spec.ts |
+| SET-48 | An MCP server's Tool loading (Default, On demand, Always loaded) is saved as `defer_tools` in Copilot's config and shown again on edit | mcp.test.tsx, mcp_test.go | spec: settings-mcp.spec.ts (list and save stubbed; the service's write to the CLI: not feasible, the signed-out CLI reports no MCP management) |

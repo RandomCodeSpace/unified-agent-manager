@@ -39,6 +39,15 @@ func TestMCPEditKeepsFieldsUAMDoesNotEdit(t *testing.T) {
 	if base.URL != "https://old.example" {
 		t.Fatal("the stored entry was changed in place")
 	}
+	// Tool loading is written as given: a value, or nil for the runtime's choice.
+	never := rpc.MCPServerConfigDeferToolsNever
+	base.DeferTools = &never
+	if h := toRPCConfig(agentapi.MCPServerConfig{Type: agentapi.MCPHTTP, URL: "https://x", DeferTools: agentapi.MCPDeferAuto}, base).(*rpc.MCPServerConfigHTTP); h.DeferTools == nil || *h.DeferTools != rpc.MCPServerConfigDeferToolsAuto || h.Timeout == nil {
+		t.Fatalf("defer auto = %+v", h)
+	}
+	if h := toRPCConfig(agentapi.MCPServerConfig{Type: agentapi.MCPHTTP, URL: "https://x"}, base).(*rpc.MCPServerConfigHTTP); h.DeferTools != nil {
+		t.Fatalf("defer default = %v", *h.DeferTools)
+	}
 	// Another transport starts from a fresh entry with every tool.
 	s, ok := toRPCConfig(agentapi.MCPServerConfig{Type: agentapi.MCPStdio, Command: "node", Args: []string{"a.js"}, Cwd: "/srv"}, base).(*rpc.MCPServerConfigStdio)
 	if !ok || s.Command != "node" || !slices.Equal(s.Args, []string{"a.js"}) || s.Cwd == nil || *s.Cwd != "/srv" || !slices.Equal(s.Tools, []string{"*"}) || s.Timeout != nil {
@@ -63,8 +72,19 @@ func TestMCPConfigReadsBothTransports(t *testing.T) {
 	if got := fromRPCConfig("a", &rpc.MCPServerConfigHTTP{URL: "https://x"}); got.Type != agentapi.MCPHTTP {
 		t.Fatalf("untyped remote = %+v", got)
 	}
-	if got := fromRPCConfig("b", &rpc.MCPServerConfigStdio{Command: "c", Cwd: &cwd, Env: map[string]string{"E": "1"}}); got.Type != agentapi.MCPStdio || got.Cwd != "/w" || got.Env["E"] != "1" {
+	if got := fromRPCConfig("b", &rpc.MCPServerConfigStdio{Command: "c", Cwd: &cwd, Env: map[string]string{"E": "1"}}); got.Type != agentapi.MCPStdio || got.Cwd != "/w" || got.Env["E"] != "1" || got.DeferTools != "" {
 		t.Fatalf("stdio = %+v", got)
+	}
+	auto, never := rpc.MCPServerConfigDeferToolsAuto, rpc.MCPServerConfigDeferToolsNever
+	if got := fromRPCConfig("b", &rpc.MCPServerConfigStdio{Command: "c", DeferTools: &auto}); got.DeferTools != agentapi.MCPDeferAuto {
+		t.Fatalf("stdio defer = %+v", got)
+	}
+	if got := fromRPCConfig("a", &rpc.MCPServerConfigHTTP{URL: "https://x", DeferTools: &never}); got.DeferTools != agentapi.MCPDeferNever {
+		t.Fatalf("http defer = %+v", got)
+	}
+	s, ok := toRPCConfig(agentapi.MCPServerConfig{Type: agentapi.MCPStdio, Command: "c", DeferTools: agentapi.MCPDeferNever}, nil).(*rpc.MCPServerConfigStdio)
+	if !ok || s.DeferTools == nil || *s.DeferTools != never {
+		t.Fatalf("stdio write = %+v", s)
 	}
 }
 

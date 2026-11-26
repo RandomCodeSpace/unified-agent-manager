@@ -1999,6 +1999,8 @@ export interface McpSecret {
 }
 
 export type McpType = 'stdio' | 'http' | 'sse';
+/** How the runtime loads a server's tools: on demand behind tool search (`auto`), always (`never` deferred); none leaves it to the runtime. */
+export type McpDeferTools = '' | 'auto' | 'never';
 
 /** One server of the provider's user-wide MCP configuration (Settings → MCP servers). `source` other than `user` is read-only. */
 export interface McpServer {
@@ -2012,6 +2014,7 @@ export interface McpServer {
   headers: McpSecret[];
   enabled: boolean;
   source: string;
+  defer_tools?: McpDeferTools;
 }
 
 export interface McpServers {
@@ -2036,6 +2039,7 @@ export interface McpServerInput {
   url?: string;
   env?: McpSecretInput[];
   headers?: McpSecretInput[];
+  defer_tools?: McpDeferTools;
 }
 
 export interface McpTool {

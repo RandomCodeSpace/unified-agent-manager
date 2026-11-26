@@ -261,6 +261,25 @@ describe('MCP servers', () => {
     await waitFor(() => expect(document.activeElement).toBe(section.getByRole('button', { name: 'View MCP server docs-search' })));
   });
 
+  test('Tool loading is saved with the server and shown again on edit', async () => {
+    const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
+    const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
+    const edit = async () => {
+      await user.click(await section.findByRole('button', { name: 'View MCP server docs-search' }));
+      await user.click(within(await screen.findByRole('dialog', { name: 'MCP server docs-search' })).getByRole('button', { name: 'Edit', exact: true }));
+      return within(await section.findByRole('form', { name: 'Edit MCP server docs-search' }));
+    };
+    let form = await edit();
+    const loading = () => within(form.getByRole('radiogroup', { name: 'Tool loading' }));
+    expect(loading().getByRole('radio', { name: 'Default' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(loading().getByRole('radio', { name: 'On demand' }));
+    await user.click(form.getByRole('button', { name: 'Save server' }));
+    await waitFor(() => expect(section.queryByRole('form')).toBeNull());
+    form = await edit();
+    expect(loading().getByRole('radio', { name: 'On demand' }).getAttribute('aria-checked')).toBe('true');
+  });
+
   test('Remove in a server card\'s reader asks first, then removes the server', async () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));

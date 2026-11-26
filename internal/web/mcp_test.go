@@ -175,11 +175,17 @@ func TestMCPEditKeepsOrReplacesSecretValues(t *testing.T) {
 	if got := prov.server("local").Env; !maps.Equal(got, map[string]string{"API_KEY": "secret-env-value", "NEW": "n"}) {
 		t.Fatalf("env = %v", got)
 	}
-	if w := ts.do(http.MethodPut, "/api/mcp/servers/docs", `{"type":"http","url":"https://mcp.example/v2","headers":[{"key":"Authorization","value":"Bearer new"}]}`, auth); w.Code != http.StatusOK {
+	if w := ts.do(http.MethodPut, "/api/mcp/servers/docs", `{"type":"http","url":"https://mcp.example/v2","headers":[{"key":"Authorization","value":"Bearer new"}],"defer_tools":"never"}`, auth); w.Code != http.StatusOK {
 		t.Fatalf("header edit = %d", w.Code)
 	}
-	if got := prov.server("docs"); got.URL != "https://mcp.example/v2" || got.Headers["Authorization"] != "Bearer new" {
+	if got := prov.server("docs"); got.URL != "https://mcp.example/v2" || got.Headers["Authorization"] != "Bearer new" || got.DeferTools != agentapi.MCPDeferNever {
 		t.Fatalf("docs = %+v", got)
+	}
+	if docs := mcpList(t, ts.do(http.MethodGet, "/api/mcp", "", auth)).Servers[0]; docs.Name != "docs" || docs.DeferTools != agentapi.MCPDeferNever {
+		t.Fatalf("listed docs = %+v", docs)
+	}
+	if w := ts.do(http.MethodPut, "/api/mcp/servers/docs", `{"type":"http","url":"https://mcp.example/v2","defer_tools":"always"}`, auth); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad tool loading = %d", w.Code)
 	}
 	// A key with no value that is not stored yet is refused.
 	if w := ts.do(http.MethodPut, "/api/mcp/servers/docs", `{"type":"http","url":"https://mcp.example/v2","headers":[{"key":"X-Other"}]}`, auth); w.Code != http.StatusBadRequest {
@@ -207,9 +213,15 @@ func TestMCPInputValidation(t *testing.T) {
 		{Name: "a", Type: "http", URL: "https://x.example/\u009b"},
 		{Name: "a", Type: "stdio", Command: "sh", Cwd: "relative"},
 		{Name: "a", Type: "stdio", Command: "sh", Headers: []MCPSecretInput{{Key: "X"}}},
+		{Name: "a", Type: "http", URL: "https://x.example", DeferTools: "always"},
 	} {
 		if _, err := checkMCPInput(in); err == nil {
 			t.Errorf("accepted %+v", in)
+		}
+	}
+	for _, d := range []string{"", "auto", "never"} {
+		if cfg, err := checkMCPInput(MCPServerInput{Name: "a", Type: "http", URL: "https://x.example", DeferTools: d}); err != nil || cfg.DeferTools != d {
+			t.Errorf("tool loading %q = %+v, %v", d, cfg, err)
 		}
 	}
 	v := "x\ny"

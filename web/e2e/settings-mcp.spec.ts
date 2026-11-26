@@ -146,3 +146,49 @@ test('Add server offers HTTP and SSE only while Terminal is off, and a server th
     await restore();
   }
 });
+
+test('Tool loading is saved with a server and shown again when it is edited', async ({ page }) => {
+  // The signed-out CLI manages no MCP configuration: the list and the save are answered here, keeping what was saved.
+  const server = { name: 'docs', type: 'http', url: 'https://mcp.example/docs', env: [], headers: [], enabled: true, source: 'user' };
+  let servers: Record<string, unknown>[] = [server];
+  const saved: Record<string, unknown>[] = [];
+  const list = () => ({ json: { available: true, stdio_allowed: false, servers } });
+  await page.route(/\/api\/mcp$/, (route) => route.fulfill(list()));
+  await page.route(/\/api\/mcp\/servers\/docs$/, (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    saved.push(body);
+    servers = [{ ...server, url: body.url, defer_tools: body.defer_tools }];
+    return route.fulfill(list());
+  });
+  await openSettings(page, 'MCP servers');
+  const section = page.getByRole('region', { name: 'MCP servers' });
+  const edit = async () => {
+    await section.getByRole('button', { name: 'View MCP server docs' }).click();
+    await page.getByRole('dialog', { name: 'MCP server docs' }).getByRole('button', { name: 'Edit', exact: true }).click();
+    return section.getByRole('form', { name: 'Edit MCP server docs' }).getByRole('radiogroup', { name: 'Tool loading' });
+  };
+  const save = async () => {
+    await section.getByRole('form', { name: 'Edit MCP server docs' }).getByRole('button', { name: 'Save server' }).click();
+    await expect(section.getByRole('form')).toHaveCount(0);
+  };
+
+  let loading = await edit();
+  await expect(loading.getByRole('radio')).toHaveText(['Default', 'On demand', 'Always loaded']);
+  await expect(loading.getByRole('radio', { name: 'Default' })).toBeChecked();
+  await loading.getByRole('radio', { name: 'Always loaded' }).click();
+  await save();
+  expect(saved.at(-1)).toMatchObject({ type: 'http', url: 'https://mcp.example/docs', defer_tools: 'never' });
+
+  loading = await edit();
+  await expect(loading.getByRole('radio', { name: 'Always loaded' })).toBeChecked();
+  await loading.getByRole('radio', { name: 'On demand' }).click();
+  await save();
+  expect(saved.at(-1)).toMatchObject({ defer_tools: 'auto' });
+
+  loading = await edit();
+  await expect(loading.getByRole('radio', { name: 'On demand' })).toBeChecked();
+  await loading.getByRole('radio', { name: 'Default' }).click();
+  await save();
+  expect(saved.at(-1)).not.toHaveProperty('defer_tools');
+  await expect((await edit()).getByRole('radio', { name: 'Default' })).toBeChecked();
+});

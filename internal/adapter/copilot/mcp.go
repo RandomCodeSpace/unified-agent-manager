@@ -301,15 +301,30 @@ func sourceRank(source string) int {
 func fromRPCConfig(name string, cfg rpc.MCPSerializableServerConfig) agentapi.MCPServerConfig {
 	switch c := cfg.(type) {
 	case *rpc.MCPServerConfigStdio:
-		return agentapi.MCPServerConfig{Name: name, Type: agentapi.MCPStdio, Command: c.Command, Args: c.Args, Cwd: deref(c.Cwd), Env: c.Env}
+		return agentapi.MCPServerConfig{Name: name, Type: agentapi.MCPStdio, Command: c.Command, Args: c.Args, Cwd: deref(c.Cwd), Env: c.Env, DeferTools: derefDefer(c.DeferTools)}
 	case *rpc.MCPServerConfigHTTP:
 		kind := agentapi.MCPHTTP
 		if c.Type != nil && *c.Type == rpc.MCPServerConfigHTTPTypeSSE {
 			kind = agentapi.MCPSSE
 		}
-		return agentapi.MCPServerConfig{Name: name, Type: kind, URL: c.URL, Headers: c.Headers}
+		return agentapi.MCPServerConfig{Name: name, Type: kind, URL: c.URL, Headers: c.Headers, DeferTools: derefDefer(c.DeferTools)}
 	}
 	return agentapi.MCPServerConfig{Name: name}
+}
+
+func derefDefer(d *rpc.MCPServerConfigDeferTools) string {
+	if d == nil {
+		return ""
+	}
+	return string(*d)
+}
+
+func deferTools(v string) *rpc.MCPServerConfigDeferTools {
+	if v == "" {
+		return nil
+	}
+	d := rpc.MCPServerConfigDeferTools(v)
+	return &d
 }
 
 // toRPCConfig writes cfg's transport fields over base, the server's current
@@ -326,7 +341,7 @@ func toRPCConfig(cfg agentapi.MCPServerConfig, base rpc.MCPSerializableServerCon
 		if c.Type == nil {
 			c.Type = &kind
 		}
-		c.Command, c.Args, c.Env = cfg.Command, cfg.Args, cfg.Env
+		c.Command, c.Args, c.Env, c.DeferTools = cfg.Command, cfg.Args, cfg.Env, deferTools(cfg.DeferTools)
 		c.Cwd = nil
 		if cfg.Cwd != "" {
 			c.Cwd = &cfg.Cwd
@@ -342,7 +357,7 @@ func toRPCConfig(cfg agentapi.MCPServerConfig, base rpc.MCPSerializableServerCon
 	if cfg.Type == agentapi.MCPSSE {
 		kind = rpc.MCPServerConfigHTTPTypeSSE
 	}
-	c.Type, c.URL, c.Headers = &kind, cfg.URL, cfg.Headers
+	c.Type, c.URL, c.Headers, c.DeferTools = &kind, cfg.URL, cfg.Headers, deferTools(cfg.DeferTools)
 	c.ConfigWarnings, c.Source, c.SourcePath, c.SourcePlugin, c.SourcePluginSpec, c.SourcePluginVersion = nil, nil, nil, nil, nil, nil
 	return &c
 }
