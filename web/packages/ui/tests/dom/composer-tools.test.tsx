@@ -137,6 +137,38 @@ test('skills the Thread loaded show on the Agent tab, even without custom agents
   expect(both.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Agent', 'Skills']);
 });
 
+test('the Agent tab shows the sandbox only when it is on or turned off for the Thread', async () => {
+  const tree = (selected: SessionDetail) => <ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={selected} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>;
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as unknown as Awaited<ReturnType<typeof api.taskAgents>>);
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  const caps = { usage: true, custom_agents: true } as SessionDetail['capabilities'];
+  const tabs = async (sandbox: SessionDetail['sandbox']) => {
+    const view = render(tree({ ...session, context: undefined, capabilities: caps, sandbox }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
+    const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+    return { view, panel, names: panel.getAllByRole('tab').map((t) => t.textContent) };
+  };
+  // Unknown, never configured or plainly off: no Sandbox row, so no Agent tab here.
+  for (const sandbox of [undefined, { enabled: false, source: 'never_configured' }, { enabled: false, source: 'user_disabled' }]) {
+    const { view, names } = await tabs(sandbox);
+    expect(names).toEqual(['Usage']);
+    view.unmount();
+  }
+  for (const [sandbox, line] of [
+    [{ enabled: true, source: 'user_enabled' }, 'On · set in your Copilot settings'],
+    [{ enabled: true, source: 'repository_policy' }, 'On · set by the repository'],
+    [{ enabled: true, source: 'session_flag' }, 'On'],
+    [{ enabled: false, off_for_thread: true, source: 'session_disabled' }, 'Off for this Thread'],
+  ] as const) {
+    const { view, panel, names } = await tabs(sandbox);
+    expect(names).toEqual(['Usage', 'Agent']);
+    await userEvent.click(panel.getByRole('tab', { name: 'Agent' }));
+    expect(panel.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Sandbox']);
+    expect(panel.getByRole('region', { name: 'Sandbox' }).textContent).toBe(`Sandbox${line}`);
+    view.unmount();
+  }
+});
+
 test('/context opens Tools on its Context tab', async () => {
   vi.spyOn(api, 'commands').mockResolvedValue([{ name: 'context', description: 'Show context', kind: 'command', input_hint: '' }]);
   vi.spyOn(api, 'command').mockResolvedValue({ request_id: 'ctx', status: 'accepted', time: new Date().toISOString(), command_result: { kind: 'action', action: 'context' } });

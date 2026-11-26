@@ -10,7 +10,7 @@ import { duration } from '../lib/transcript';
 import { contextLabel, ContextReport, ContextRing, contextShown } from './ComposerUsage';
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
-import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
+import { AgentChoices, LoadedSkills, sandboxLine, useTaskAgents } from './TaskAgent';
 import { clockTime, Num, useApp } from './common';
 import { StyleChoices } from './OutputStyles';
 import { SkillChoices } from './SkillChoices';
@@ -31,8 +31,8 @@ const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent:
 /**
  * The composer's Tools: one button for the Task's context, usage and custom agent, opening one
  * anchored reader (a bottom sheet on phones) with a tab per tool. A tool the Task cannot show has no
- * tab (Agent shows only when the Project has a custom agent, the Task names one, or the Thread
- * loaded skills), and a Task with none has no button. The button carries the context ring, the one live value worth keeping on the
+ * tab (Agent shows only when the Project has a custom agent, the Task names one, the Thread
+ * loaded skills, or its sandbox is on or turned off for it), and a Task with none has no button. The button carries the context ring, the one live value worth keeping on the
  * toolbar. Each tab mounts its body only while shown, so a native read happens on open, again when
  * the Task's pushed counts change, and is aborted on close; a change of Task, conversation,
  * selection, stage or open state, or of the owning API, closes the panel. With `subagent` (one
@@ -65,6 +65,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   const { agents, error: agentsError } = useTaskAgents(session, !!session.capabilities.custom_agents, opens);
   const agentShown = !!(session.capabilities.custom_agents && (session.agent || agents?.length || agentsError));
   const skills = session.skills_loaded ?? [];
+  const sandbox = sandboxLine(session.sandbox);
   const { settings, meta } = useApp();
   const builtin = meta?.output_styles ?? [];
   // A new Thread picks from what is on offer; a started one only shows the style it pinned.
@@ -73,7 +74,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   const tools: Tool[] = subagent ? ['usage', 'agent'] : [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
-    ...(agentShown || skills.length ? ['agent' as const] : []),
+    ...(agentShown || skills.length || sandbox ? ['agent' as const] : []),
     ...(styleShown ? ['style' as const] : []),
     ...(skillsShown ? ['skills' as const] : []),
   ];
@@ -121,9 +122,10 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
         {subagent ? <SubagentTab subagent={subagent} tab={tab} onRun={close} /> : <>
         {tab === 'context' && <ContextTab session={session}><ContextReport session={session} model={model} /></ContextTab>}
         {tab === 'usage' && <UsageTab session={session} />}
-        {tab === 'agent' && (skills.length ? <>
+        {tab === 'agent' && (skills.length || sandbox ? <>
           {agentShown && <PanelSection label="Agent"><AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} /></PanelSection>}
-          <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>
+          {sandbox && <PanelSection label="Sandbox"><p className="text-ui text-ink">{sandbox}</p></PanelSection>}
+          {skills.length > 0 && <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>}
         </> : <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />)}
         {tab === 'style' && onStyle && <StyleChoices settings={settings} builtin={builtin} chosen={session.output_style ?? ''} reason={styleReason} onChange={onStyle} />}
         {tab === 'skills' && onSkills && <SkillChoices projectId={session.project_id} value={session.skills} thread reason={styleReason} onChange={onSkills} />}

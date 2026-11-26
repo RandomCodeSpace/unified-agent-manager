@@ -72,6 +72,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.autopilotStoppedLocked(d, ev.Timestamp)
 	}
 	switch d := ev.Data.(type) {
+	case *rpc.SessionSandboxStateChangedData:
+		c.publishSandboxLocked(d.Incarnation, d.Revision, sandboxState(d.Config, d.ConfigSource, d.DisabledForSession, d.SessionOverride))
+		return
 	case *rpc.SessionModelChangeData:
 		if agentID == "" {
 			c.standardPick, c.standardPickLive = nil, true

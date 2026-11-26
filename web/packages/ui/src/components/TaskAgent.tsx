@@ -73,6 +73,16 @@ export function AgentChoices({ session, agents, error, reason, onChange }: Reado
   );
 }
 
+const SANDBOX_SOURCE = new Map([['user_enabled', 'set in your Copilot settings'], ['repository_policy', 'set by the repository']]);
+
+/** The Thread's sandbox as one line, or '' when it is never configured, plainly off or unknown. */
+export function sandboxLine(sandbox: SessionSummary['sandbox']): string {
+  if (sandbox?.off_for_thread) return 'Off for this Thread';
+  if (!sandbox?.enabled) return '';
+  const from = SANDBOX_SOURCE.get(sandbox.source ?? '');
+  return from ? `On · ${from}` : 'On';
+}
+
 /**
  * The skills the Thread's agents loaded, first loaded first. Skill loads stay out of the conversation;
  * this list keeps their names reachable, with each SKILL.md description, the first load time and how

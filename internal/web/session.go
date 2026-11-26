@@ -164,6 +164,7 @@ type webSession struct {
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 	backgroundTasks  *agentapi.BackgroundTasks
 	execution        *agentapi.ExecutionState
+	sandbox          *agentapi.SandboxState
 	// schedules is the open conversation's native schedule display
 	// metadata; replaced whole, never persisted.
 	schedules   *agentapi.ScheduleSnapshot

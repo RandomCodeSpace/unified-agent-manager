@@ -1128,6 +1128,9 @@ const (
 	// EventSkill reports one skill load in Event.Skill. Skill loads are not
 	// transcript items.
 	EventSkill EventKind = "skill"
+	// EventSandbox replaces the open conversation's sandbox state with
+	// Event.Sandbox; nil when the provider could not report it.
+	EventSandbox EventKind = "sandbox"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -1171,6 +1174,17 @@ type Event struct {
 	ModelSelection *ModelSelection
 	MCPStatus      *MCPStatusSnapshot
 	Skill          *SkillLoad
+	Sandbox        *SandboxState
+}
+
+// SandboxState is the provider's sandbox for the open conversation.
+type SandboxState struct {
+	Enabled bool `json:"enabled"`
+	// OffForThread is set when this conversation turned the sandbox off.
+	OffForThread bool `json:"off_for_thread,omitempty"`
+	// Source is the provider's attribution of the choice, such as
+	// "user_enabled" or "repository_policy".
+	Source string `json:"source,omitempty"`
 }
 
 // SkillLoad is one load of a skill by the main agent or a subagent: its name

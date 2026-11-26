@@ -200,6 +200,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
 	c.checkSchedulesLocked()
+	if runtime, ok := sess.(sandboxSession); ok {
+		go c.readSandbox(runtime)
+	}
 	if req.ConversationID != "" || c.relist {
 		c.relist = false
 		c.checkTasksLocked()
