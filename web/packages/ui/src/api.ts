@@ -1329,6 +1329,8 @@ export interface Option {
   id: string;
   label: string;
   reject?: boolean;
+  /** What the decision covers beyond this request, when it does. */
+  hint?: string;
 }
 
 export interface Question {

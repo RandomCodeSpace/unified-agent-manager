@@ -1,9 +1,10 @@
 import { useApi } from '../ApiContext';
-import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
+import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type SubmitEvent , type ReactNode } from 'react';
 import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { fieldHint } from '../lib/answer';
+import { shellRisk } from '../lib/shellRisk';
 import { approvalMark } from '../lib/transcript';
 import { Markdown, Note } from './common';
 import { Button, rowClass } from './ui/button';
@@ -11,6 +12,7 @@ import { Checkbox, Radio, RadioGroup } from './ui/checkbox';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
+import { Tip } from './ui/tooltip';
 import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
 
 /** A touch screen, where focusing a field would raise the keyboard over the conversation. */
@@ -34,11 +36,11 @@ function writePatch(detail?: string): { path: string; patch: string } | null {
 /** The shield for a decided permission: crossed when denied, plain when it lapsed, checked otherwise. */
 export const APPROVAL_ICONS: Record<'ok' | 'denied' | 'gone', LucideIcon> = { ok: ShieldCheck, denied: ShieldX, gone: Shield };
 
-/** Reject reads as danger, the default option as the primary, the rest secondary. */
-function optionVariant(option: Option, primary: Option | undefined): 'danger' | 'primary' | 'secondary' {
-  if (option.reject) return 'danger';
-  return option === primary ? 'primary' : 'secondary';
+/** The default option reads as the primary, the rest (Deny included) secondary; a risky request has no primary. */
+function optionVariant(option: Option, primary: Option | undefined, risky: boolean): 'primary' | 'secondary' {
+  return option === primary && !risky ? 'primary' : 'secondary';
 }
+
 
 /** Why an assisted Task still asks: the reviewer's outcome, in words. */
 const REVIEW_TEXT: Record<string, string> = { approve: 'approved it', requireApproval: 'asks for your decision', excluded: 'did not review it', error: 'could not review it' };
@@ -109,6 +111,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
   const options = interaction.options ?? [];
   const primary = options.find((o) => !o.reject);
   const ordered = [...options.filter((o) => o.reject), ...options.filter((o) => !o.reject && o !== primary), ...(primary ? [primary] : [])];
+  const risk = permission && interaction.title === 'Run shell command' && interaction.detail ? shellRisk(interaction.detail, [session.workdir, session.real_workdir].filter((r): r is string => !!r)) : '';
 
   // Decided requests live in the transcript, on their tool row or as a quiet row of their own.
   if (!pending) return <DecidedRow interaction={interaction} />;
@@ -143,6 +146,12 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
         </pre>
       )}
       {permission && interaction.intention && <p className="mt-1 [overflow-wrap:anywhere] text-caption text-muted">{interaction.intention}</p>}
+      {risk && (
+        <p className="mt-1 flex items-center gap-1.5 text-caption text-warning">
+          <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+          {risk}
+        </p>
+      )}
       {link && (
         <div className="mt-2 text-ui">
           <a href={link} target="_blank" rel="noopener noreferrer" className="break-all text-accent underline underline-offset-2">
@@ -157,11 +166,14 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
           {!permitted && <Note className="mt-2">This agent does not take decisions from here.</Note>}
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
-              {ordered.map((o) => (
-                <Button key={o.id} variant={optionVariant(o, primary)} loading={busy === o.id} disabled={!!busy} onClick={() => respond({ decision: o.id }, o.id)}>
-                  {o.label}
-                </Button>
-              ))}
+              {ordered.map((o) => {
+                const button = (
+                  <Button key={o.id} variant={optionVariant(o, primary, !!risk)} loading={busy === o.id} disabled={!!busy} onClick={() => respond({ decision: o.id }, o.id)}>
+                    {o.label}
+                  </Button>
+                );
+                return o.hint ? <Tip key={o.id} label={o.hint}>{button}</Tip> : button;
+              })}
             </div>
           )}
         </>
