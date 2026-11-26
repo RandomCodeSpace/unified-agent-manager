@@ -186,7 +186,7 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
         : !session.open || inactive ? <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread{logged ? '; tokens are from the session log' : ''}.</p>
           : error && <p role="status" className="text-caption text-muted">{error}</p>)}
       {splitError && <p className="text-caption text-muted">{splitError}</p>}
-      {snapshot?.current_model && <p className="break-words text-caption text-muted">Current model: <span title={snapshot.current_model}>{ranModelName(meta, session.model, snapshot.current_model)}</span></p>}
+      {snapshot?.current_model && <p title={snapshot.current_model} className="break-words text-caption text-muted">Current model: {ranModelName(meta, session.model, snapshot.current_model)}</p>}
       {snapshot && <p className="text-caption text-muted">Native AI credits {units(snapshot.ai_units)} · Premium request cost {requestCost.format(snapshot.premium_request_cost)} · Model API time {duration(snapshot.api_duration_ms)}</p>}
       {snapshot?.truncated && <p className="text-caption text-muted">Some breakdown rows are not shown. Reported session counters are unchanged.</p>}
     </PanelSection>

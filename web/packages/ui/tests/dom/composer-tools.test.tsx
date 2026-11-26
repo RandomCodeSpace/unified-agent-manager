@@ -46,7 +46,7 @@ test('one Tools button carries the context ring and opens a tab per tool, switch
   // Usage: the Thread's figures (the recorded AI credits first) and the native metrics.
   await userEvent.keyboard('{ArrowRight}');
   expect(panel.getByRole('tab', { name: 'Usage' }).getAttribute('aria-selected')).toBe('true');
-  expect(await panel.findByText('Current model: native-current')).toBeTruthy();
+  expect(await panel.findByText('Current model: auto → native-current')).toBeTruthy();
   expect(panel.getByText('AI credits', { selector: 'p' }).parentElement!.textContent).toBe('AI credits9.01 request');
   expect(panel.getByRole('tabpanel')).toBe(body);
   // Agent: the Project's agents as radios; picking one changes the Task's agent.

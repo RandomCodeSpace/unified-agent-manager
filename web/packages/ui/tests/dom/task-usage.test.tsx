@@ -36,7 +36,8 @@ test('native usage reads on open, on pushed usage changes and on Refresh, preser
   expect(read).not.toHaveBeenCalled();
   await openUsage();
   expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
-  await screen.findByText('Current model: native-current');
+  // The chosen route, then the model it ran; the raw id stays in the tooltip.
+  expect((await screen.findByText('Current model: auto → native-current')).title).toBe('native-current');
   // The recorded figure is the tile; the native one stays apart in the caption, never added to it.
   expect(tile('AI credits')).toBe('AI credits9.01 request');
   expect(screen.getByText(/^Native AI credits 2\.0 · Premium request cost 0\.5 · Model API time 700 ms$/)).toBeTruthy();
@@ -52,7 +53,7 @@ test('native usage reads on open, on pushed usage changes and on Refresh, preser
   view.select({ ...session, usage: { ai_units: 10 }, context: { used: 60, limit: 200 } });
   expect(tile('AI credits')).toBe('AI credits101 request');
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-  expect(screen.getByText('Current model: native-current')).toBeTruthy();
+  expect(screen.getByText('Current model: auto → native-current')).toBeTruthy();
   vi.useFakeTimers();
   act(() => vi.advanceTimersByTime(60_000));
   expect(read).toHaveBeenCalledTimes(2);
@@ -60,13 +61,13 @@ test('native usage reads on open, on pushed usage changes and on Refresh, preser
   await userEvent.click(screen.getByText('By agent'));
   expect(read).toHaveBeenCalledTimes(2);
   await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   expect(read).toHaveBeenCalledTimes(3);
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  expect(screen.queryByText('Current model: native-current')).toBeNull();
+  expect(screen.queryByText('Current model: auto → native-current')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools/ })));
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   expect(read).toHaveBeenCalledTimes(4);
 });
 
@@ -76,7 +77,7 @@ test('the tab leads with the budget, then six figures for this Thread, then four
   vi.spyOn(api, 'taskTimeSplit').mockResolvedValue(split);
   draw({ ...session, state: 'working', budget: { credits: 20, spent: 12.4, quota_percent: 80, quota_used: 41 } } as SessionDetail);
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   const panel = screen.getByRole('tabpanel');
   expect([...panel.children].map((el) => el.getAttribute('aria-label'))).toEqual(['Budget', 'This Thread', null]);
   // The budget is a meter with its line, and the form waits behind Change.
@@ -185,10 +186,10 @@ test('Task selection and close abort native reads and ignore late snapshots', as
   view.select({ ...session, model: 'next' });
   expect(signal.aborted).toBe(true);
   await act(async () => deliver({ ...metrics, current_model: 'obsolete-snapshot' }));
-  expect(screen.queryByText('Current model: obsolete-snapshot')).toBeNull();
+  expect(screen.queryByText('Current model: next → obsolete-snapshot')).toBeNull();
   expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: next → native-current');
   const secondSignal = read.mock.calls[1][1]!;
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(secondSignal.aborted).toBe(true);
@@ -201,7 +202,7 @@ test('phone reader uses the owning API and returns focus after Escape', async ()
   draw(session, { ...api, taskUsageMetrics: remote });
   await openUsage();
   await screen.findByRole('dialog', { name: 'Tools' });
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   expect(remote).toHaveBeenCalledTimes(1);
   expect(local).not.toHaveBeenCalled();
   await userEvent.keyboard('{Escape}');
@@ -214,13 +215,13 @@ test('changing API owner disposes the reader before a new native read', async ()
   const remote = vi.fn(async () => ({ ...metrics, current_model: 'remote-model' }));
   const view = draw();
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   const signal = local.mock.calls[0][1]!;
   view.selectOwner({ ...api, taskUsageMetrics: remote });
   expect(signal.aborted).toBe(true);
   expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
   await openUsage();
-  await screen.findByText('Current model: remote-model');
+  await screen.findByText('Current model: auto → remote-model');
   expect(remote).toHaveBeenCalledTimes(1);
   expect(local).toHaveBeenCalledTimes(1);
 });
@@ -231,7 +232,7 @@ test('an active wire Task with omitted stage reads native metrics', async () => 
   expect(Object.hasOwn(session, 'stage')).toBe(false);
   draw();
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   expect(read).toHaveBeenCalledTimes(1);
 });
 
@@ -248,7 +249,7 @@ test('oversized connected errors are bounded and closing disposes the reader err
   expect(signal.aborted).toBe(true);
   expect(screen.queryByRole('status')).toBeNull();
   await openUsage();
-  await screen.findByText('Current model: native-current');
+  await screen.findByText('Current model: auto → native-current');
   expect(screen.queryByRole('status')).toBeNull();
 });
 

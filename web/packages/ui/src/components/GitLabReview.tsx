@@ -187,6 +187,8 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
   const reply = replies[key] ?? '';
   const stale = !!readError || loading;
   const locked = !!session && readOnly(session);
+  const usesModel = session?.model ? modelDisplayName(meta, session.model) : 'the thread’s selected model';
+  const queues = session && (LIVE.includes(session.state) || session.queued) ? ' · Queues after the current work' : '';
   const actionBlocked = !session || locked || !!session.rewind || session.state === 'starting';
   const updateReply = (text: string) => {
     revision.current[key] = (revision.current[key] ?? 0) + 1;
@@ -285,7 +287,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
           <Button size="sm" variant="primary" loading={busy === 'investigate'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('investigate')}><Search />Investigate</Button>
           <Button size="sm" variant="secondary" loading={busy === 'fix'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('fix')}><Wrench />Fix</Button>
         </div>
-        {session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model ? modelDisplayName(meta, session.model) : 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
+        {session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${usesModel}${queues}`}</p>}
       </section> : writable && <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
       {notice && notice.key === key && <Note role={notice.error ? 'alert' : 'status'} tone={notice.error ? 'error' : undefined}>{notice.text}</Note>}
       {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the discussion before trying again.</Note>}
