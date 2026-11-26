@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import type { AppContextValue } from '../../src/components/common';
@@ -13,11 +13,13 @@ function draw(compact_threshold?: number, open?: number) {
   return render(<AppContext.Provider value={app}><ComposerTools session={{ ...session, compact_threshold: open }} onAgent={() => {}} /></AppContext.Provider>);
 }
 
-test('the context ring marks where compaction starts', async () => {
+test('the context bar marks where compaction starts, with no ring', async () => {
   const view = draw(60);
-  // The tick sits at 60% of the way round (the ring starts at the top, the svg is turned a quarter back).
-  const mark = view.container.querySelector('[data-compact-mark]')!;
-  expect(Number(mark.getAttribute('x2'))).toBeCloseTo(8 + 7.75 * Math.cos(2 * Math.PI * 0.6));
+  // The tick sits 60% along the bar; the fill is the share used.
+  const mark = view.container.querySelector<HTMLElement>('[data-compact-mark]')!;
+  expect(mark.style.left).toBe('60%');
+  expect(mark.parentElement!.firstElementChild!.getAttribute('style')).toContain('width: 25%');
+  expect(view.container.querySelector('circle')).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect((await screen.findByText(/Compacts at/)).textContent).toBe('Compacts at 60% (120K tokens)');
   view.unmount();
@@ -31,4 +33,15 @@ test('an open conversation shows the threshold it opened with, not a later setti
   draw(50, 80);
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect((await screen.findByText(/Compacts at/)).textContent).toBe('Compacts at 80% (160K tokens)');
+});
+
+test.each([
+  [50_000, '25%', 'text-muted', 'bg-accent'],
+  [168_000, '84% context', 'text-attention', 'bg-attention'],
+  [192_000, '96% context', 'text-error', 'bg-error'],
+])('at %i tokens the Tools button reads "%s" in its tone', (used, text, tone, fill) => {
+  const view = render(<AppContext.Provider value={{ settings: {}, usage: null } as unknown as AppContextValue}><ComposerTools session={{ ...session, context: { used, limit: 200_000 } }} onAgent={() => {}} /></AppContext.Provider>);
+  const button = screen.getByRole('button', { name: /^Tools\. Context / });
+  expect(within(button).getByText(text).className).toContain(tone);
+  expect(view.container.querySelector('[data-compact-mark]')!.previousElementSibling!.className).toContain(fill);
 });

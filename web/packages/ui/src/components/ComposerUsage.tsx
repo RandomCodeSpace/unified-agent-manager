@@ -4,6 +4,7 @@ import { contextText, estimateTurnCost, formatCredits, ringFraction, ringTone } 
 import { Num, useApp } from './common';
 
 const tones = { accent: 'text-accent', attention: 'text-attention', danger: 'text-error', muted: 'text-muted' };
+const fills = { accent: 'bg-accent', attention: 'bg-attention', danger: 'bg-error', muted: 'bg-muted' };
 
 /** Whether the Task has a context report to show: a reported limit, or a provider that reads its breakdown on demand. */
 export function contextShown(session: SessionDetail): boolean {
@@ -24,19 +25,28 @@ function useThreshold(session: SessionDetail): number {
   return (session.compact_threshold ?? settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD) / 100;
 }
 
-/** The context ring, with a tick where compaction starts; null while no limit is reported. */
-export function ContextRing({ session, className }: Readonly<{ session: SessionDetail; className?: string }>) {
+/**
+ * The context on the Tools button: a flat bar with a tick where compaction starts, and its share, which gains "context"
+ * and the `attention` tone from 80% and `danger` from 95%. A folded row (a phone) keeps the bar. Null while no limit is
+ * reported. A bar, not a ring: the Working mark is the one ring on screen.
+ */
+export function ContextMeter({ session }: Readonly<{ session: SessionDetail }>) {
   const threshold = useThreshold(session);
   const context = session.context;
   if (!context || !(context.limit > 0)) return null;
   const fraction = ringFraction(context);
-  const tick = 2 * Math.PI * threshold;
+  const tone = ringTone(fraction);
+  const pct = Math.round(fraction * 100);
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className={cn('size-4 shrink-0 -rotate-90', tones[ringTone(fraction)], className)} fill="none">
-      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" className="text-hairline-strong" />
-      <circle cx="8" cy="8" r="6" pathLength="100" stroke="currentColor" strokeWidth="2" strokeDasharray={`${fraction * 100} 100`} />
-      <line x1={8 + 4.25 * Math.cos(tick)} y1={8 + 4.25 * Math.sin(tick)} x2={8 + 7.75 * Math.cos(tick)} y2={8 + 7.75 * Math.sin(tick)} stroke="currentColor" strokeWidth="1.25" className="text-ink" data-compact-mark="" />
-    </svg>
+    <>
+      <span aria-hidden="true" className="relative h-1 w-9 shrink-0 rounded-full bg-hairline-strong max-sm:w-7">
+        <span className={cn('block h-full rounded-full', fills[tone])} style={{ width: `${pct}%` }} />
+        <span data-compact-mark="" className="absolute -top-0.5 h-2 w-[1.25px] bg-ink" style={{ left: `${threshold * 100}%` }} />
+      </span>
+      <span aria-hidden="true" className={cn('text-caption tabular-nums in-data-[fold~=model]:hidden max-sm:hidden', tone === 'accent' ? 'text-muted' : tones[tone])}>
+        {tone === 'accent' ? `${pct}%` : `${pct}% context`}
+      </span>
+    </>
   );
 }
 

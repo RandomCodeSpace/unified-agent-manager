@@ -4,8 +4,6 @@ import { conversation, expect, startThread, test, threadState } from './harness'
 test('the toolbar folds its labels as the window narrows, never overflows, and moves pickers into More on a phone', async ({ page, project, model }) => {
   model.reply('fold check', 'Folding reply.');
   await page.setViewportSize({ width: 1400, height: 900 });
-  // The time chip shares the row, and after a fast turn it can stay away; a fixed one keeps the row's width the same every run.
-  await page.route('**/api/sessions/*/time-split', (route) => route.fulfill({ json: { model_ms: 500, model_calls: 1, local_ms: 500, local_runs: 1, waiting_ms: 0, waits: 0, tools: [] } }));
   await startThread(page, project, 'fold check');
   await expect(conversation(page).getByText('Folding reply.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
@@ -22,7 +20,8 @@ test('the toolbar folds its labels as the window narrows, never overflows, and m
     for (const b of [attach, modelButton, sendButton]) await expect(b).toBeInViewport({ ratio: 1 });
   };
 
-  await expect(form.getByRole('button', { name: /^Time in this Thread/ })).toBeVisible();
+  // The time split lives in Tools > Usage, not on the row.
+  await expect(form.getByRole('button', { name: /^Time in this Thread/ })).toHaveCount(0);
   await expect(run).toHaveText('Safe · Interactive', { useInnerText: true });
   await expect(modelButton).toHaveText('Mock', { useInnerText: true });
   await expect(more).toBeHidden();
@@ -55,13 +54,9 @@ test('the toolbar folds its labels as the window narrows, never overflows, and m
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toBeHidden();
 
-  // A narrower phone wraps the row: Send stays on the pickers' row and the time split takes the row under it (owner, 2026-11-18).
+  // A narrower phone still fits, Send on the pickers' row (owner, 2026-11-18).
   await page.setViewportSize({ width: 340, height: 844 });
-  await expect(form.locator('[data-fold~=wrap]')).toHaveCount(1);
   await fits();
   const mid = async (l: typeof attach) => { const b = (await l.boundingBox())!; return b.y + b.height / 2; };
-  const time = form.getByRole('button', { name: /^Time in this Thread/ });
-  await expect(time).toBeInViewport({ ratio: 1 });
   expect(Math.abs((await mid(sendButton)) - (await mid(attach)))).toBeLessThan(4);
-  expect(await mid(time)).toBeGreaterThan((await mid(sendButton)) + 16);
 });

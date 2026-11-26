@@ -200,34 +200,36 @@ test('native plan progress labels only the approved current touched list, and op
 /** The blocks on the strip, as their glyph-less words: "1 done", "2 in progress"… in order. */
 const blocks = (root: HTMLElement) => [...root.querySelectorAll('[title]')].map((b) => `${b.getAttribute('title')} ${(b as HTMLElement).dataset.tone} ${b.querySelector('svg') ? 'glyph' : 'no glyph'}`);
 
-test('the todo list is stage blocks with their glyph and number and "1 of 4", then Now on the progress line; no meter, no counts in words, no made-up verb', () => {
+/** The todo button's words on screen, its name left out. */
+const strip = (button: HTMLElement) => button.querySelector(':scope > [aria-hidden="true"]')!.textContent;
+
+test('the todo list is one sentence, "1 of 4 done · 2 in progress · 1 blocked", then Now on the progress line; no glyph counts, no meter, no made-up verb', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const view = render(draw(withTodos(listOf(rows()))));
   const button = screen.getByRole('button', { name: 'Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
-  // ✓ done, ◉ in progress, ⊘ blocked: each its number behind its glyph in its tone; a stage with no rows is left out.
-  expect(blocks(button)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
-  expect([...button.querySelectorAll('[title]')].map((b) => b.textContent?.replace(b.getAttribute('title')!, ''))).toEqual(['1', '2', '1']);
-  // "1 of 4" on a wide screen, "1/4" on a phone (css.test.mjs).
-  expect(within(button).getByText('1 of 4')).toBeTruthy();
-  expect(within(button).getByText('1/4')).toBeTruthy();
+  // Each stage in words, a stage with no rows left out; blocked in the warning tone, no stage glyphs.
+  expect(strip(button)).toBe('1 of 4 done · 2 in progress · 1 blocked');
+  expect(within(button).getByText('1 blocked').className).toContain('text-warning');
+  expect(button.querySelectorAll('[title]')).toHaveLength(0);
   expect(screen.getByText('Now:').parentElement!.textContent).toBe('Now: Build the index page');
   expect(said()).toBe('Now: Build the index page');
-  // The intent is not on screen while a row is in progress, nor the counts in words, nor the meter.
+  // The intent is not on screen while a row is in progress, nor the meter.
   expect(screen.queryByText(/Working on the site/)).toBeNull();
-  expect(screen.queryByText(/in progress$/, { ignore: '.sr-only' })).toBeNull();
   expect(view.container.querySelector('[data-todo-meter]')).toBeNull();
   expect(view.container.querySelector('[data-spinner]')).toBeNull();
-  // A row to do adds its block.
+  // A row to do is the rest of the total; a stage with none drops out.
   view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])))));
-  expect(blocks(screen.getByRole('button'))).toEqual(['1 done success glyph', '1 in progress accent glyph', '1 blocked warning glyph', '1 to do none glyph']);
+  expect(strip(screen.getByRole('button'))).toBe('1 of 4 done · 1 in progress · 1 blocked');
+  view.rerender(draw(withTodos(listOf(rows([{}, { status: 'pending' }, { status: 'pending' }])))));
+  expect(strip(screen.getByRole('button'))).toBe('1 of 4 done · 1 blocked');
   // No row in progress: the agent's words take Now's place.
   view.rerender(draw(withTodos(listOf(rows([{}, { status: 'pending' }, { status: 'pending' }]), { now: undefined }))));
   expect(screen.getByText('Working on the site', { ignore: '.sr-only' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
-  // The last turn's list, not touched yet: the same blocks, dimmed (css.test.mjs), "From the last turn", and the reader still opens.
+  // The last turn's list, not touched yet: the same sentence, dimmed (css.test.mjs), "From the last turn", and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
   expect(screen.getByText('From the last turn')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
@@ -410,7 +412,7 @@ test('idle, the list and its history stay on the strip as two buttons alone; the
   // No progress line, and the blocks undimmed: the list is the Thread's, not a running turn's carry-over.
   expect(said()).toBeNull();
   const todo = screen.getByRole('button', { name: /^Todo 1 of 4 done.*Show the list$/ });
-  expect(blocks(todo)).toEqual(['1 done success glyph', '2 in progress accent glyph', '1 blocked warning glyph']);
+  expect(strip(todo)).toBe('1 of 4 done · 2 in progress · 1 blocked');
   // "1 turn" on a wide screen, "1" on a phone (css.test.mjs), behind the History glyph.
   const history = screen.getByRole('button', { name: /Show the history$/ });
   expect(history.getAttribute('aria-haspopup')).toBe('dialog');

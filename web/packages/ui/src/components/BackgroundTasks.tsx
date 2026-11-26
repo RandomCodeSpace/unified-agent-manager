@@ -61,8 +61,8 @@ export function BackgroundTasks({ sessionId, snapshot, locked, onOutput }: Reado
         <Button ref={setAnchor} id="composer-background-tasks" size="sm" variant="subtle" aria-label={`Background tasks: ${status}`} aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} className="px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>
           {/* The glyph turns `accent` while any runs; the list says which, on demand. */}
           <Terminal aria-hidden="true" className={active ? 'text-accent' : 'text-faint'} />
-          {/* The number is how many run, as the name says; with none running (or none known), the glyph alone. */}
-          {active && running}
+          {/* How many run, in words ("1 shell"); a folded row (a phone) keeps the number. With none running (or none known), the glyph alone. */}
+          {active && <span>{running}<span className="max-sm:hidden in-data-[fold~=model]:hidden">{running === 1 ? ' shell' : ' shells'}</span></span>}
         </Button>
       </Tip>
       {reader && <AnchoredReader id={id} open={reader.open} sheet={reader.phone} anchor={anchor} side="top" label="Background tasks" className="w-96" initialFocus={heading} finalFocus={() => anchor} onClose={() => setReader({ ...reader, open: false })} onClosed={() => setReader(null)}>

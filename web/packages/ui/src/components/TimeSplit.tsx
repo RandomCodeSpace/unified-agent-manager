@@ -1,13 +1,10 @@
-import { Cpu, Terminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, LIVE, type SessionSummary, type TimeSplit } from '../api';
+import { describeError, type SessionSummary, type TimeSplit } from '../api';
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
 import { formatCount } from '../lib/cost';
 import { Summary } from './common';
-import { Blocks, type Block } from './ui/blocks';
-import { Tip } from './ui/tooltip';
 
 /** The capability a connected instance needs for the split. */
 export const TIME_SPLIT_CAPABILITY = 'time-split-v1';
@@ -47,41 +44,6 @@ export function shares(split: TimeSplit): { model: number; local: number } | nul
   if (total <= 0) return null;
   const model = Math.round((split.model_ms / total) * 100);
   return { model, local: 100 - model };
-}
-
-const recorded = (split: TimeSplit) => split.model_calls > 0 || split.local_runs > 0 || split.waiting_ms > 0;
-
-/** The tip's sentence: both times, and the waiting left out. Model calls include compaction, which the service counts. */
-function sentence(split: TimeSplit): string {
-  const local = `${time(split.local_ms)} running local tools and scripts (${plural(split.local_runs, 'run')})`;
-  const model = split.model_ms === null ? 'Model time is not recorded for this Thread\'s CLI version; ' : `${time(split.model_ms)} in the model (${plural(split.model_calls, 'call')}, compaction included) and `;
-  const waiting = split.waiting_ms > 0 ? ` ${time(split.waiting_ms)} waiting on you is not counted.` : '';
-  return `${model}${local}.${waiting}`;
-}
-
-/**
- * The split on the composer's control row, left of the actions, as two blocks: `Cpu` model and `Terminal` local, their shares
- * while the Thread works and their times once it is idle (only local's time where model time is not recorded). A
- * phase shown before it sits at its left. The whole sentence is its tip and its name. Absent until something is recorded.
- */
-export function TimeSplitSummary({ session }: Readonly<{ session: SessionSummary }>) {
-  const { split } = useTimeSplit(session);
-  if (!split || !recorded(split)) return null;
-  const pct = shares(split);
-  if (!pct && split.local_runs === 0) return null;
-  const idle = !LIVE.includes(session.state);
-  const tip = sentence(split);
-  const items: Block[] = pct ? [
-    { key: 'model', tone: 'accent', Icon: Cpu, label: idle ? time(split.model_ms ?? 0) : `${pct.model}%`, title: idle ? `${time(split.model_ms ?? 0)} model` : `${pct.model}% model` },
-    { key: 'local', tone: 'success', Icon: Terminal, label: idle ? time(split.local_ms) : `${pct.local}%`, title: idle ? `${time(split.local_ms)} local` : `${pct.local}% local` },
-  ] : [{ key: 'local', tone: 'success', Icon: Terminal, label: time(split.local_ms), title: `${time(split.local_ms)} local` }];
-  return (
-    <Tip openOnClick label={tip}>
-      <button type="button" aria-label={`Time in this Thread: ${tip}`} className="flex h-7 shrink-0 cursor-default items-center rounded-sm">
-        <Blocks items={items} />
-      </button>
-    </Tip>
-  );
 }
 
 /** Each tool's own local time on a thin `success` bar: the top rows, the rest folded, then the caveat. */

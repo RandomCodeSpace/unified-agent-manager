@@ -1,4 +1,4 @@
-// The composer's Tools panel: its tabs, the context ring, the Thread's budget, its custom agent and loaded skills, and output styles.
+// The composer's Tools panel: its tabs, the context bar, the Thread's budget, its custom agent and loaded skills, and output styles.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
@@ -27,14 +27,15 @@ const writeAgent = (dir: string) => {
   fs.writeFileSync(path.join(dir, '.github/agents/reviewer.agent.md'), '---\nname: reviewer\ndescription: Reviews the fixture.\n---\nYou review the fixture and nothing else.\n');
 };
 
-test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; the context ring and the Context tab follow the usage', async ({ page, project, model, workdir }) => {
+test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; the context bar, its share and the Context tab follow the usage', async ({ page, project, model, workdir }) => {
   writeAgent(workdir);
   model.reply('small start', 'Ready.');
   model.reply('grow the context', 'Grown.');
   await startThread(page, project, 'small start');
   await expect(threadState(page, 'Finished')).toBeVisible();
 
-  // The ring is the button's drawing of the share its name states; the mark stands at the compaction threshold (80%).
+  // The bar is the button's drawing of the share its name states, with the share in words beside it; the mark stands at the
+  // compaction threshold (80%). No ring: the Working mark is the only one.
   const button = toolsButton(page);
   const share = async () => {
     const name = (await button.getAttribute('aria-label')) ?? '';
@@ -42,15 +43,15 @@ test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; t
     expect(m, name).not.toBeNull();
     return { used: m![1], percent: Number(m![2]) };
   };
-  const ringFill = async () => Number(((await button.locator('svg circle').nth(1).getAttribute('stroke-dasharray')) ?? '').split(' ')[0]);
+  const mark = button.locator('[data-compact-mark]');
+  const barFill = async () => Number(/width: ([\d.]+)%/.exec((await mark.locator('xpath=preceding-sibling::span[1]').getAttribute('style')) ?? '')?.[1]);
   await expect(button).toHaveAccessibleName(/^Tools\. Context .* of 128K tokens · \d+%$/);
   const before = await share();
   expect(before.percent).toBeGreaterThan(0);
-  expect(Math.abs((await ringFill()) - before.percent)).toBeLessThanOrEqual(1);
-  const mark = button.locator('svg line');
-  const angle = 2 * Math.PI * 0.8;
-  expect(Number(await mark.getAttribute('x1'))).toBeCloseTo(8 + 4.25 * Math.cos(angle), 3);
-  expect(Number(await mark.getAttribute('y1'))).toBeCloseTo(8 + 4.25 * Math.sin(angle), 3);
+  expect(Math.abs((await barFill()) - before.percent)).toBeLessThanOrEqual(1);
+  await expect(button).toContainText(`${before.percent}%`);
+  await expect(mark).toHaveAttribute('style', /left: 80%/);
+  await expect(button.locator('circle')).toHaveCount(0);
 
   await button.click();
   const tools = panel(page);
@@ -59,7 +60,7 @@ test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; t
   await expect(tools.getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true');
   await expect(tools.getByRole('tab', { name: 'Context' })).toBeFocused();
   const context = tools.getByRole('tabpanel', { name: 'Context' });
-  // The tab counts the conversation afresh, so its total can differ a little from the ring's last report.
+  // The tab counts the conversation afresh, so its total can differ a little from the bar's last report.
   const total = async () => Number(/([\d.]+)K of 128K tokens/.exec(await context.innerText())?.[1]);
   await expect(context).toContainText(/[\d.]+K of 128K tokens/);
   const totalBefore = await total();
@@ -86,13 +87,14 @@ test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; t
   await expect(tools).toBeHidden();
   await expect(button).toBeFocused();
 
-  // A long message fills the context: the ring, the button's name and the tab's counts all move with it.
+  // A long message fills the context: the bar, the button's name and the tab's counts all move with it.
   await send(page, `grow the context ${'lorem ipsum dolor sit amet '.repeat(1500)}`);
   await expect(conversation(page).getByText('Grown.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
   await expect.poll(async () => (await share()).percent).toBeGreaterThan(before.percent + 3);
   const after = await share();
-  expect(Math.abs((await ringFill()) - after.percent)).toBeLessThanOrEqual(1);
+  expect(Math.abs((await barFill()) - after.percent)).toBeLessThanOrEqual(1);
+  await expect(button).toContainText(`${after.percent}%`);
   await button.click();
   // It opens on the tab last shown.
   await expect(tools.getByRole('tab', { name: 'Style', exact: true })).toHaveAttribute('aria-selected', 'true');

@@ -181,6 +181,24 @@ export function todoBlocks(tally: TodoTally): Block[] {
   return blocks.filter((b) => (b.key === 'open' ? tally.open : b.label));
 }
 
+/**
+ * The strip's todo counts as one sentence, "3 of 6 done · 1 in progress · 1 blocked", stages with no rows left out
+ * (rows to do are the rest of the total). A phone keeps "3 of 6" and the blocked part.
+ */
+function TodoCountLine({ tally }: Readonly<{ tally: TodoTally }>) {
+  const n = (status: string) => tally.stages.find((s) => s.status === status)?.n ?? 0;
+  const working = n('in_progress');
+  const blocked = n('blocked');
+  return (
+    <span className="shrink-0 tabular-nums">
+      <span className="text-body">{`${tally.done} of ${tally.total}`}<span className="max-sm:hidden"> done</span></span>
+      {working > 0 && <span className="max-sm:hidden">{` · ${working} in progress`}</span>}
+      {blocked > 0 && <>{' · '}<span className="text-warning">{`${blocked} blocked`}</span></>}
+      {tally.open > 0 && <span className="max-sm:hidden">{` · ${tally.open} open`}</span>}
+    </span>
+  );
+}
+
 /** The subagents' states as blocks, those with any only: ✗ failed, ● running, ✓ done, ○ stopped. */
 export function subagentBlocks(subagents: readonly Subagent[]): Block[] {
   const c = countSubagents(subagents);
@@ -410,11 +428,7 @@ export function StatusLine({ line: given, session, since, hidden, hideTodos = fa
               {/* The blocks dim while a working turn has not touched the last turn's list; a phone keeps the glyph and the count. */}
               <span aria-hidden="true" className={cn('flex items-center gap-2', list?.kind === 'carried' && 'opacity-55')}>
                 <ListChecks className="size-3.5 shrink-0 text-muted" />
-                <Blocks items={todoBlocks(tally)} className="max-sm:hidden" />
-                <span className="shrink-0 tabular-nums">
-                  <span className="max-sm:hidden">{`${tally.done} of ${tally.total}`}</span>
-                  <span className="sm:hidden">{`${tally.done}/${tally.total}`}</span>
-                </span>
+                <TodoCountLine tally={tally} />
               </span>
               <span className="sr-only">{`${list ? todoWords(list, plan) : `Todo ${tallyWords(tally)}`}. Show the list`}</span>
             </button>

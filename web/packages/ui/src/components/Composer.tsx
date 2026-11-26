@@ -22,7 +22,6 @@ import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput'
 import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
 import { PlaceFoot } from './PlacePicker';
-import { TimeSplitSummary } from './TimeSplit';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
@@ -350,7 +349,7 @@ interface ComposerProps {
   onThread?: () => void;
   /** Text to add to the draft, e.g. an interrupted card's Run again; a new object adds it again. Never sent by itself. */
   seed?: { text: string } | null;
-  /** The Thread's Project: with it, the branch and the time split sit on the control row, left of the actions. */
+  /** The Thread's Project: with it, the branch sits on the control row, left of the actions. */
   project?: Project;
 }
 
@@ -1797,9 +1796,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           context, permissions and execution pickers fold into a More menu; a narrow row folds its labels in priority order
           (lib/toolbarFold), the model's last. The actions are glyphs, named for screen readers and in their tooltips;
           while a turn runs they stay on the row and wrap under it only when the pickers cannot keep their touch targets
-          beside them. The branch and the time split sit left of the actions (owner, 2026-11-09, revamp mock 2).
+          beside them. The branch sits left of the actions (owner, 2026-11-09, revamp mock 2); the time split is on Tools > Usage.
           A settled or archived Thread has this row alone, 44px (revamp mock 1): its state, Reopen, the model and mode
-          as text, then Tools, the branch and the time split. */}
+          as text, then Tools and the branch. */}
       <div ref={toolbar} data-fold="" className={cn('flex items-center data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', settledRow ? 'min-h-11 gap-1.5 pr-3 pl-3.5 data-[fold~=wrap]:py-1.5' : 'gap-0.5 px-2 pt-1 pb-2', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {settledRow && (
           <>
@@ -1992,13 +1991,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
-        {/* The branch and the time split ride with them; once the row has wrapped, they take the last row of their own and the
-            actions keep the right of the first, so Send never leaves a gap above it (owner, 2026-11-18, on a phone). */}
+        {/* The branch rides with them; once the row has wrapped, it takes the last row of its own and the actions keep the
+            right of the first, so Send never leaves a gap above it (owner, 2026-11-18, on a phone). */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:contents">
         {project && !newTask && (
           <span data-composer-foot="" className="flex min-w-0 items-center gap-1 empty:hidden *:data-place:max-w-48 in-data-[fold~=wrap]:order-last in-data-[fold~=wrap]:basis-full">
             <PlaceFoot session={session} project={project} />
-            <TimeSplitSummary session={session} />
           </span>
         )}
         <span className="flex shrink-0 items-center gap-0.5 in-data-[fold~=wrap]:ml-auto">

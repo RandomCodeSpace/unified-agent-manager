@@ -96,13 +96,13 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-34 | Credit/quota budget: set and remove in Tools → Usage; shows spent | task-usage.test.tsx | spec: composer-tools.spec.ts |
 | CMP-35 | At the budget: wraps up, Send disabled with the reason and "Change budget", draft kept; 409 `budget_reached`;… | handoff.test.tsx | not feasible: a custom model spends no AI credits and the signed-out CLI reads no account quota, so no budget is reached |
 | CMP-36 | Tools button opens one panel with tabs (Context, Usage, Agent, Style); arrow keys switch, Esc closes; `/context`… | composer-tools.test.tsx | spec: composer-tools.spec.ts (`/context` in composer-commands.spec.ts) |
-| CMP-37 | Context ring fills from live usage and marks the compaction threshold; Context tab lists counts | context-ring.test.tsx, context.test.tsx | spec: composer-tools.spec.ts |
+| CMP-37 | Context bar on Tools fills from live usage with its share ("42%", "84% context" near the limit) and a tick at the compaction threshold, no ring; Context tab lists counts | context-meter.test.tsx, context.test.tsx | spec: composer-tools.spec.ts |
 | CMP-38 | Agent tab: pick a Project custom agent (quiet Thread only); lists loaded skills | composer-tools.test.tsx | spec: composer-tools.spec.ts |
 | CMP-39 | Output styles: Settings library, Style tab on a new Thread, a started Thread shows its pinned style read only; the… | output-style-settings.test.tsx, composer-tools.test.tsx | spec: composer-tools.spec.ts |
 | CMP-40 | Settings → New threads (model, Safe/Allow all) applies to the next New thread's pickers and its first turn | settings.test.tsx, defaults.test.mjs | spec: settings-saving.spec.ts |
 | CMP-41 | Routines: create one, Run now starts a Thread with its first message (default Allow all with autopilot), card shows the… | routines.test.tsx, routines.test.mjs | spec: composer-routines.spec.ts |
 | CMP-42 | "Scheduled in this Thread · N" chip lists native schedules read only | schedules.test.tsx | not feasible: web schedules are disabled |
-| CMP-43 | Background tasks chip counts running shells; Output and Stop per shell | composer.test.tsx, background-output.test.tsx | spec: activity-steps.spec.ts |
+| CMP-43 | Background tasks chip counts running shells in words ("1 shell"); Output and Stop per shell | composer.test.tsx, background-output.test.tsx | spec: activity-steps.spec.ts |
 | CMP-44 | Model or local line (ModelPhase) says what runs during a turn | model-phase.test.tsx | spec: activity-steps.spec.ts (status line and Usage and AI phases) |
 | CMP-45 | Model brand icon in the picker | none | spec: composer-models.spec.ts |
 | CMP-46 | A settled Thread's composer is one row with Reopen and no message box; Reopen brings the box back, focused | composer.test.tsx | spec: composer-box.spec.ts |
@@ -176,7 +176,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-18 | Pressing a card button queues `[uam_surface action] …` as a short chip; the agent then updates the card; a stale… | none | spec: host-tools.spec.ts |
 | ACT-19 | A deleted card leaves a "Removed by the agent" line; cards survive a reload/restart | none | spec: host-tools.spec.ts (removed line, reload), act-restart.spec.ts (restart) |
 | ACT-20 | `/plan` → "Plan ready" above composer, Thread Needs answer; Read plan; Approve plan sends the staged action; typed… | none | spec: activity-agents.spec.ts (revise, approve, leave planning) |
-| ACT-21 | The live todo list on the status line: "Todo 2/7", counts per stage, the reader by In progress/Blocked/To do/Done | todos.test.mjs | spec: activity-agents.spec.ts |
+| ACT-21 | The live todo list on the status line: one sentence, "1 of 3 done · 1 in progress · 1 blocked", the reader by In progress/Blocked/To do/Done | todos.test.mjs, status-line.test.tsx | spec: activity-agents.spec.ts |
 | ACT-22 | A turn that changed the list keeps it on its outcome bar; "N turns" opens the todo history; both survive a reload | todos.test.mjs | spec: activity-agents.spec.ts (outcome bar; history and reload planned) |
 | ACT-23 | Dependency rails and the graph/board view built from `todo_deps` | todo-graph.test.mjs | spec: act-thread-tools.spec.ts |
 | ACT-24 | Subagents: chip on the turn line, live rows at the foot, a row opens the subagent's own transcript at… | subagents.test.mjs, subagent-transcript.test.mjs, state.test.mjs | spec: activity-agents.spec.ts |

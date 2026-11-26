@@ -91,7 +91,8 @@ test('the todo list counts each stage live on the status line, and the turn keep
   ]);
   await startThread(page, project, 'plan the steps');
   await expect(page.getByRole('button', { name: /^Todo 0 of 3 done, 1 in progress, 2 to do/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^Todo 1 of 3 done, 1 in progress, 1 to do/ })).toBeVisible();
+  // The strip above the composer says the counts in one sentence, not glyph counts; rows to do are the rest of the total.
+  await expect(page.getByRole('button', { name: /^Todo 1 of 3 done, 1 in progress, 1 to do/ })).toContainText('1 of 3 done · 1 in progress');
   const conv = conversation(page);
   await expect(conv.getByText('Paused on the test.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();
