@@ -502,7 +502,7 @@ func copyTree(src, dst string) error {
 		switch {
 		case d.IsDir():
 			return os.MkdirAll(target, 0o700)
-		case !d.Type().IsRegular() || os.Link(p, target) == nil:
+		case !d.Type().IsRegular() || os.Link(p, target) == nil: // #nosec G122 -- uam's own snapshot tree, which holds no links; WalkDir does not follow them.
 			return nil
 		}
 		return copyThreadFile(p, target)

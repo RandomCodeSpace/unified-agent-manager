@@ -93,7 +93,7 @@ func (s *Server) connectedArtifactCommitted(ctx context.Context, target connecti
 	ctx, cancel := context.WithTimeout(ctx, fleetCheckTimeout)
 	defer cancel()
 	unavailable := newError(http.StatusBadGateway, "remote instance is unavailable")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.BaseURL+federationWorkloadPrefix+"api/sessions/"+task+"/artifacts", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.BaseURL+federationWorkloadPrefix+"api/sessions/"+task+"/artifacts", nil) // #nosec G704 -- the stored connection's base URL; the caller checked task with connectedID.
 	if err != nil {
 		return false, unavailable
 	}
