@@ -221,6 +221,31 @@ test('a reply that touched GitLab items carries one chip per item with its state
   }
 });
 
+test('the GitLab panel links the project, a merge request\'s branches and compare, and a pipeline\'s ref and commit; the project path in a reply links to the project', async ({ browser, uam, model, workdir }) => {
+  model.reply('gitlab places', `Pushed to group/proj: ${WEB}/merge_requests/2 and ${WEB}/pipelines/91.`);
+  const own = await glabService(browser, uam.mock.url, workdir, ITEMS);
+  try {
+    const { page } = own;
+    await startYoloThread(page, own.project, 'gitlab places');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const project = `https://${HOST}/group/proj`;
+    await expect(conversation(page).getByRole('link', { name: 'group/proj', exact: true })).toHaveAttribute('href', project);
+    await conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link').first().click();
+    const panel = page.getByRole('complementary', { name: 'GitLab' });
+    await expect(panel.getByRole('heading', { name: 'Add d', level: 2 })).toBeVisible();
+    await expect(panel.getByRole('link', { name: 'group/proj', exact: true })).toHaveAttribute('href', project);
+    await expect(panel.getByRole('link', { name: 'feat/d', exact: true })).toHaveAttribute('href', `${WEB}/tree/feat/d`);
+    await expect(panel.getByRole('link', { name: 'main', exact: true })).toHaveAttribute('href', `${WEB}/tree/main`);
+    await expect(panel.getByRole('link', { name: 'Compare' })).toHaveAttribute('href', `${WEB}/compare/main...feat/d`);
+    await panel.getByRole('group', { name: "This turn's GitLab items" }).getByRole('button', { name: '#91' }).click();
+    await expect(panel.getByRole('heading', { name: 'Pipeline #91', level: 2 })).toBeVisible();
+    await expect(panel.getByRole('link', { name: 'main', exact: true })).toHaveAttribute('href', `${WEB}/tree/main`);
+    await expect(panel.getByRole('link', { name: 'abc', exact: true })).toHaveAttribute('href', `${WEB}/commit/abc`);
+  } finally {
+    await own.stop();
+  }
+});
+
 test('a running pipeline is read again after 20 s and an open merge request after a minute', async ({ browser, uam, model, workdir }) => {
   // Two real waits: uam's own read of an item is kept 15 s, so a page clock alone would not show a new state.
   test.setTimeout(240_000);

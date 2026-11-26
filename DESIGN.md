@@ -1219,7 +1219,7 @@ Expanded groups retain their state across paging, and Jump to latest returns to 
   The line counts only a path the reply says it changed, a command the reply says it ran and a test claim; a command the reply only names is not counted.
   It shows only once every stamp has settled (no test output still being read, the subagents' work judged), so it never flickers in and out, and it says "no record in this turn", never "false" or "not verified".
 - **GitLab in prose (owner, 2026-10-18):** where the Thread's GitLab project is known, a link to one of its items is the item's name with GitLab's mark before it (Tabler `brand-gitlab`, on Lucide's grid and stroke), never a bare address: the reply's own words, or for a bare address "MR !72", "Pipeline #2283401", "Issue #14", "Job #5", "Epic &3".
-  "MR !72", "merge request !72", a bare "!72" and "pipeline #123" in the text link the same way; code and links to other projects stay as written.
+  "MR !72", "merge request !72", a bare "!72" and "pipeline #123" in the text link the same way, and the project's exact path ("group/proj") links to the project with the mark (a press opens GitLab); code and links to other projects stay as written.
   A name right before a link to the same item that reads as its address or its name ("MR !36: <its address>") is left out, so the item shows once (owner, 2026-10-26).
   A plain press opens the item in the GitLab side panel; a modified press opens GitLab.
 - **Turn status:** a turn with nothing in it yet has a status row under the user bubble, with no rule under it (nothing full-width separates turns; the user bubble and the whitespace do).

@@ -250,6 +250,20 @@ export function gitLabUrl(r: GitLabRef, origin: GitLabOrigin): string {
   return `https://${origin.host}/${origin.path}/-/${path}/${r.id}`;
 }
 
+const segments = (s: string) => s.split('/').map(encodeURIComponent).join('/');
+/** The Thread's GitLab project, and its places that are not items: a branch, a compare of two branches, a commit. */
+export const gitLabProjectUrl = (origin: GitLabOrigin) => `https://${origin.host}/${origin.path}`;
+export const gitLabTreeUrl = (origin: GitLabOrigin, branch: string) => `${gitLabProjectUrl(origin)}/-/tree/${segments(branch)}`;
+export const gitLabCompareUrl = (origin: GitLabOrigin, target: string, source: string) => `${gitLabProjectUrl(origin)}/-/compare/${segments(target)}...${segments(source)}`;
+export const gitLabCommitUrl = (origin: GitLabOrigin, sha: string) => `${gitLabProjectUrl(origin)}/-/commit/${encodeURIComponent(sha)}`;
+
+/** Whether an address is the Thread's GitLab project itself. */
+export function isGitLabProjectUrl(href: string, origin: GitLabOrigin): boolean {
+  let url: URL;
+  try { url = new URL(href); } catch { return false; }
+  return url.protocol === 'https:' && lower(url.hostname) === lower(origin.host) && !url.search && !url.hash && lower(decodePath(url.pathname).replace(/\/+$/, '')) === lower(`/${origin.path}`);
+}
+
 /** How a reply names the item when it gave only its address: "MR !72", "Pipeline #2283401". */
 export function gitLabWords(r: GitLabRef): string {
   return `${{ mr: 'MR', issue: 'Issue', epic: 'Epic', pipeline: 'Pipeline', job: 'Job' }[r.kind]} ${refText(r)}`;
@@ -267,13 +281,17 @@ function textRef(m: RegExpMatchArray): GitLabRef | null {
   return Number.isSafeInteger(id) && id > 0 ? { kind: m[3] ? 'pipeline' : 'mr', id } : null;
 }
 
+/** TEXT_REF, then the project's exact path as a whole word ("group/proj", not "group/proj2" or "x/group/proj"). */
+const proseRefs = (origin: GitLabOrigin) => new RegExp(`${TEXT_REF.source}|(?<![\\w./@-])(${escape(origin.path)})(?![\\w/-]|\\.\\w)`, 'gi');
+
 /**
  * A remark plugin: merge requests and pipelines a reply names in its text link to the Thread's
- * GitLab project. Text inside links and code stays as written. A name right before a link to the
+ * GitLab project, and the project's exact path links to the project. Text inside links and code stays as written. A name right before a link to the
  * same item that reads as its address or its name ("MR !36: <address>") is left out, so the item
  * shows once.
  */
 export function remarkGitLabRefs(origin: GitLabOrigin) {
+  const prose = proseRefs(origin);
   const repeats = (link: MdNode | undefined, ref: GitLabRef) => {
     if (link?.type !== 'link' || !sameRef(parseGitLabUrl(link.url ?? '', origin), ref)) return false;
     const label = (link.children ?? []).map((c) => c.value ?? '').join('').trim();
@@ -288,10 +306,15 @@ export function remarkGitLabRefs(origin: GitLabOrigin) {
       const value = child.value;
       const out: MdNode[] = [];
       let at = 0;
-      for (const m of value.matchAll(TEXT_REF)) {
+      for (const m of value.matchAll(prose)) {
+        const end = m.index + m[0].length;
+        if (m[4]) {
+          out.push({ type: 'text', value: value.slice(at, m.index) }, { type: 'link', url: gitLabProjectUrl(origin), children: [{ type: 'text', value: m[0] }] });
+          at = end;
+          continue;
+        }
         const ref = textRef(m);
         if (!ref) continue;
-        const end = m.index + m[0].length;
         if (/^[\s:\u2013\u2014-]*$/.test(value.slice(end)) && repeats(children[i + 1], ref)) {
           out.push({ type: 'text', value: value.slice(at, m.index) });
           at = value.length;

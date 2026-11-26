@@ -3,7 +3,7 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNod
 import { useApi } from '../ApiContext';
 import { describeError, type GitLabItemSummary, type GitLabPipelineDetail, type GitLabReview as Review, type GitLabWorkItem, type GitLabWorkItemLink, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
-import { parseRefKey, refKey, refText, sameRef, type GitLabRef } from '../lib/gitlabRefs';
+import { gitLabCommitUrl, gitLabCompareUrl, gitLabTreeUrl, parseRefKey, refKey, refText, sameRef, type GitLabOrigin, type GitLabRef } from '../lib/gitlabRefs';
 import { dateTime, Note, Skeleton } from './common';
 import { GitLabItemsContext, KIND_WORD, KindGlyph, itemLabel, statusLabel, statusTone, toneText, useSummaries, useSummaryRevision, type GitLabItems } from './GitLabStrip';
 import { GitLabMarkdown, GitLabReview } from './GitLabReview';
@@ -75,6 +75,12 @@ function LinkRow({ link, onOpen }: Readonly<{ link: GitLabWorkItemLink; onOpen: 
   return link.web_url ? <a href={link.web_url} target="_blank" rel="noreferrer" className={linkClass}>{body}<ExternalLink aria-hidden="true" className="size-3 shrink-0 text-muted" /></a> : <div className={className}>{body}</div>;
 }
 
+/** A branch or commit in the Thread's project, opened in GitLab. */
+function Place({ href, children, mono = true }: Readonly<{ href: string; children: ReactNode; mono?: boolean }>) {
+  return <a href={href} target="_blank" rel="noreferrer" className={cn('text-link hover:underline', mono && 'font-mono text-code-sm')}>{children}</a>;
+}
+const Branch = ({ origin, name }: Readonly<{ origin: GitLabOrigin; name: string }>) => <Place href={gitLabTreeUrl(origin, name)}>{name}</Place>;
+
 function useRead<T>(read: (signal: AbortSignal) => Promise<T>, deps: unknown[]): { value?: T; error?: string } {
   const [result, setResult] = useState<{ value?: T; error?: string }>({});
   useEffect(() => {
@@ -97,7 +103,7 @@ function MergeRequestView({ gl, session, r, item, onOpen }: Readonly<{ gl: GitLa
   return (
     <>
       <Head title={(mr?.title ?? item?.title ?? `Merge request ${refText(r)}`).replace(/^Draft:\s*/, '')} state={<StateChip state={mr?.state ?? item?.state} draft={mr?.draft ?? item?.draft} />}
-        facts={mr && <>{refText(r)} · <span className="font-mono text-code-sm">{mr.source_branch}</span> → <span className="font-mono text-code-sm">{mr.target_branch}</span>{mr.author && <> · {mr.author.name || mr.author.username}</>}</>} />
+        facts={mr && <>{refText(r)} · <Branch origin={gl.origin} name={mr.source_branch} /> → <Branch origin={gl.origin} name={mr.target_branch} /> · <Place mono={false} href={gitLabCompareUrl(gl.origin, mr.target_branch, mr.source_branch)}>Compare</Place>{mr.author && <> · {mr.author.name || mr.author.username}</>}</>} />
       {pipeline && (
         <PanelSection label="Pipeline" meta={pipeline.sha ? pipeline.sha.slice(0, 8) : undefined}>
           <button type="button" className={cn(rowClass, '-mx-2 min-h-8 w-auto py-0')} onClick={() => onOpen({ kind: 'pipeline', id: pipeline.id })}>
@@ -192,7 +198,7 @@ function PipelineView({ gl, r, item }: Readonly<{ gl: GitLabItems; r: GitLabRef;
   return (
     <>
       <Head title={`Pipeline #${pipelineId}`} state={p && <Chip tone={statusTone(p.status)} className="px-0 font-medium">{statusLabel(p.status)}</Chip>}
-        facts={p && <><span className="font-mono text-code-sm">{p.ref}</span> · <span className="font-mono text-code-sm">{p.sha.slice(0, 8)}</span>{p.duration != null && <> · {Math.round(p.duration)}s</>}{p.created_at && <> · {dateTime(p.created_at)}</>}</>} />
+        facts={p && <><Branch origin={gl.origin} name={p.ref} /> · <Place href={gitLabCommitUrl(gl.origin, p.sha)}>{p.sha.slice(0, 8)}</Place>{p.duration != null && <> · {Math.round(p.duration)}s</>}{p.created_at && <> · {dateTime(p.created_at)}</>}</>} />
       {own && (own.investigation_task_id && own.investigation_task_id !== gl.sessionId
         ? <div><Button size="sm" variant="secondary" onClick={() => tasks.select(own.investigation_task_id!)}>Open investigation</Button></div>
         : own.can_investigate && !own.auto_investigate && p?.status === 'failed' && <div><Button size="sm" variant="primary" loading={starting} onClick={() => void investigate()}><Search />Investigate</Button></div>)}

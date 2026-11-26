@@ -1,12 +1,12 @@
 import { ExternalLink, GitPullRequest, X } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useContext, useEffect, useRef } from 'react';
 import { popupOpen, threadCovered } from '../App';
 import type { SessionDetail } from '../api';
-import type { GitLabRef } from '../lib/gitlabRefs';
+import { gitLabProjectUrl, type GitLabRef } from '../lib/gitlabRefs';
 import { cn } from '../lib/cn';
 import { InstanceName } from './common';
 import { GitLabItemView } from './GitLabItems';
-import { useGitLabItemHead } from './GitLabStrip';
+import { GitLabItemsContext, useGitLabItemHead } from './GitLabStrip';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
 import { Tip } from './ui/tooltip';
@@ -26,6 +26,7 @@ export default function GitLabSheet({ session, item, onItem, inline, open, onClo
 }>) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const { label, url } = useGitLabItemHead(item?.ref);
+  const origin = useContext(GitLabItemsContext)?.origin;
   const close = useCallback(() => {
     onClose();
     const opener = document.getElementById('gitlab-link') ?? document.querySelector<HTMLElement>('main button[aria-label="Thread actions"]');
@@ -46,6 +47,7 @@ export default function GitLabSheet({ session, item, onItem, inline, open, onClo
     <PanelHeader>
       <GitPullRequest aria-hidden="true" className="size-4 text-muted" />
       <span className="min-w-0 truncate text-title text-ink">{item && label ? label : 'GitLab'}</span>
+      {origin && <a href={gitLabProjectUrl(origin)} target="_blank" rel="noreferrer" title={`Open ${origin.path} in GitLab`} className="min-w-0 shrink-[2] truncate text-caption text-muted hover:text-ink hover:underline">{origin.path}</a>}
       <InstanceName />
       <span className="flex-1" />
       {item && url && <Tip label="Open in GitLab"><a href={url} target="_blank" rel="noreferrer" aria-label="Open in GitLab" className={cn(buttonVariants({ size: 'icon' }), 'text-muted')}><ExternalLink className="size-4" /></a></Tip>}

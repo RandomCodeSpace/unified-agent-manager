@@ -2910,9 +2910,10 @@ the turn named it on the Thread's own project:
 A bar lists at most 20 items. Pressing a chip opens the GitLab side panel
 on that item, with the turn's other items above it to step between; a
 modified click opens it in GitLab instead, and every view has **Open in
-GitLab**. The views:
+GitLab**; the panel's header links the project. The views:
 
-- **Merge request**: title, state, branches, its head pipeline (which opens
+- **Merge request**: title, state, branches (each a link to it in GitLab,
+  then **Compare** for the target-to-source diff), its head pipeline (which opens
   the pipeline view) and its discussions. The merge requests of the Thread's
   own commit keep their reply, resolve, Investigate, Fix and Draft reply
   controls; any other merge request of the project is read-only.
@@ -2920,7 +2921,7 @@ GitLab**. The views:
   child items. Issues are read through the REST API; epics and tasks through
   one fixed, read-only GraphQL query the UAM server runs (agents cannot run
   GraphQL: the shell rules refuse `glab api`).
-- **Pipeline** (also for a job): jobs by stage with their states, the failed
+- **Pipeline** (also for a job): its ref and commit as links to GitLab, jobs by stage with their states, the failed
   job (or the job opened) selected, the last 60 lines of its log with error
   lines marked, and **Full log**. The log opens scrolled to its end, where
   the failure is, and a running job's log stays at its end as it grows
