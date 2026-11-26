@@ -1,7 +1,7 @@
 // The status strip (DESIGN.md Status line): one quiet line over the composer, in three sections.
 // Left, the todo list the agents keep as stage blocks (✓ done, ◉ in progress, ⊘ blocked, ○ to do)
 // and "2 of 6", a button that opens the list as a reader of its own. Centre, the progress line,
-// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs permission · approve bash"; the command itself is in the card), the one
+// what happens now ("Thinking · 12s", "Running go test … · 41s", "Needs permission · approve bash", or "Waiting on you · 3m 07s" while the request's card says what is asked), the one
 // place that says so; with nothing live, "Now:" and the row the work is at (without a list, what
 // the agent says it is doing, `assistant.intent`), a model call being retried and automatic
 // compaction running beside the turn ("Compacting in background", words only); after a stop it
@@ -24,7 +24,7 @@ import { retryWords, stopWords } from '../lib/stop';
 import { backgroundCommands, commandRunning, countSubagents } from '../lib/subagents';
 import { fusionStep, reviews } from '../lib/fusion';
 import { ledgerSections, ledgerStamp, tallyWords, todoLedger, todoLine, todoSections, todoSentence, todoTally, type TodoLine, type TodoTally } from '../lib/todos';
-import { elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
+import { askShown, awaitsUser, elapsedSince, isSubagentCall, toolKind } from '../lib/transcript';
 import { openCall, turnState } from '../lib/turnState';
 import { BreathingDot, Markdown, STATE_LABELS, WorkingMark, clockTime } from './common';
 import { useItemBody } from './Details';
@@ -108,8 +108,10 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
   const phase = session.turn_activity?.phase;
   if (compacting || phase?.by === 'compaction') return { mark: 'dot', phase: 'Compacting the conversation', since: phase?.by === 'compaction' ? phase.since : undefined };
   if (phase?.kind === 'waiting') {
-    const ask = session.interactions.filter((i) => i.state === 'pending' && !i.auto).sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0];
-    const permission = ask ? ask.kind === 'permission' : session.state === 'awaiting_permission';
+    // The request's card (the composer, for one question) says what is asked: the line keeps the wait's clock, which nothing else shows.
+    if (askShown(session.interactions)) return { mark: 'you', phase: 'Waiting on you', since: phase.since };
+    // Only a plan review is left to wait on here, and it is an answer.
+    const permission = session.state === 'awaiting_permission' && !session.interactions.some(awaitsUser);
     return { mark: 'you', phase: STATE_LABELS[permission ? 'awaiting_permission' : 'awaiting_answer'], detail: phase.detail, since: phase.since };
   }
   // A Fusion phase reviewing the draft calls no tool and writes nothing in the conversation.
@@ -136,7 +138,10 @@ export function liveLine(session: SessionDetail, compacting: boolean): Live | nu
       : `Running ${[tool, phase.detail].filter(Boolean).join(' ')}`;
     // The phase names the oldest running tool, so the peek's output is the oldest running command's.
     const item = kind === 'command' ? calls.find((i) => toolKind(i.tool?.name ?? '') === 'command') : undefined;
-    return { mark: 'ring', phase: words, since: phase.since, ...(item ? { item } : {}) };
+    // A call on a background shell (a read of it) counts from the shell's start, as the shell's own row does: one command, one clock.
+    const shell = calls.find((i) => i.tool?.name === tool)?.tool?.shell_id;
+    const started = shell ? backgroundCommands(session.background_tasks).find((c) => c.id === shell && commandRunning(c))?.started_at : undefined;
+    return { mark: 'ring', phase: words, since: started ?? phase.since, ...(item ? { item } : {}) };
   }
   // The model: what its newest item since the call began is says whether it thinks or writes; nothing yet is a wait.
   const last = items.at(-1);

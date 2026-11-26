@@ -8,7 +8,7 @@ import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, read
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { ArtifactsContext, ArtifactsRevisionContext, PreviewContext, TempRootContext } from '../lib/previewContext';
-import { awaitsUser, completedChanges, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { askShown, awaitsUser, completedChanges, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { isRealUserTurn, turnBusy } from '../lib/turnState';
@@ -135,7 +135,7 @@ export function headerRoom(width: number, title = 0): 'wide' | 'snug' | 'tight' 
 interface HeaderProps {
   leading?: ReactNode;
   /** The Task, read for its summary alone: the comparator below holds the header through frames that change nothing else. */
-  session: SessionSummary;
+  session: SessionDetail;
   project: Project | undefined;
   state: SessionState;
   changes: ChangesData | null;
@@ -237,6 +237,16 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
+/** The header's state chip: a read-only Thread's stage, else the state unless a request's card or the composer's question already says it (`askShown`). */
+function HeaderState({ session, state, shown, phone }: Readonly<{ session: SessionDetail; state: HeaderProps['state']; shown: ReturnType<typeof headerState>; phone: boolean }>) {
+  if (readOnly(session)) {
+    const settled = session.stage === 'settled';
+    return <StateLabel status={settled ? 'Settled' : 'Archived'} className={settled ? 'ml-1 max-sm:hidden' : 'ml-1'} />;
+  }
+  if (askShown(session.interactions)) return null;
+  return <StateLabel status={STATE_LABELS[state] as StatusWord} bare={phone} text={shown.word} icon={shown.icon} title={shown.detail} className={phone ? undefined : 'ml-1'} />;
+}
+
 const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, failureCause, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
@@ -301,11 +311,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
           )}
           <InstanceName />
           {/* The state, in the Thread list's label (StateLabel). A phone keeps the glyph alone, and a Settled Thread says so in its composer row, so the squeezed title keeps the room. */}
-          {readOnly(session) ? (
-            <StateLabel status={session.stage === 'settled' ? 'Settled' : 'Archived'} className={session.stage === 'settled' ? 'ml-1 max-sm:hidden' : 'ml-1'} />
-          ) : (
-            <StateLabel status={STATE_LABELS[state] as StatusWord} bare={phone} text={shown.word} icon={shown.icon} title={shown.detail} className={phone ? undefined : 'ml-1'} />
-          )}
+          <HeaderState session={session} state={state} shown={shown} phone={phone} />
           {/* A Task action in flight is words: nothing in the header turns. */}
           {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
           {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}

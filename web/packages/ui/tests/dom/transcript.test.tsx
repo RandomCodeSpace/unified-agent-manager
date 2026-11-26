@@ -1096,7 +1096,8 @@ describe('requests', () => {
   test('a pending permission card lists its options', async () => {
     await openTask('t6');
     const card = within(screen.getByRole('group', { name: 'Run a shell command outside the project' }));
-    expect(card.getByText('Needs permission')).toBeTruthy();
+    // The title carries the request: no state chip repeats the header's and the Thread list's.
+    expect(card.queryByText('Needs permission')).toBeNull();
     expect(card.getByRole('button', { name: 'Deny' })).toBeTruthy();
   });
 });

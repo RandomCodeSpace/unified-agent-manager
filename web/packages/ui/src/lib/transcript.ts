@@ -536,6 +536,12 @@ export function formatMs(ms: number): string | null {
 /** The request waits for the user: pending, and not one yolo mode is already answering. */
 export const awaitsUser = (ix: Interaction) => ix.state === 'pending' && !ix.auto;
 
+/**
+ * A request the Thread shows where it is answered (its card, or the composer for one question) waits: the header's
+ * state label and the live line's words leave the asking to it. A plan review is the composer's "Plan ready" instead.
+ */
+export const askShown = (interactions: readonly Interaction[]) => interactions.some((ix) => awaitsUser(ix) && ix.kind !== 'plan_review');
+
 /** A run's tone: a failure first, then a call waiting for the user, else quiet. */
 function activityTone(failed: number, waiting: boolean): 'muted' | 'error' | 'attention' {
   if (failed) return 'error';
