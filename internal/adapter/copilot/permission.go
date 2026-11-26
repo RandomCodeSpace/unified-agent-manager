@@ -47,8 +47,8 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	_, raw := d.PermissionRequest.(*rpc.RawPermissionRequest)
 	managed := d.PermissionRequest == nil || raw || d.PermissionRequest.RequiresManagedApproval()
 	add(agentapi.Option{ID: "approve_once", Label: "Allow once", AllowOnce: !managed}, &rpc.PermissionDecisionApproveOnce{ApprovedInteractively: copilot.Bool(true)})
-	if dec := sessionApproval(d.PromptRequest); dec != nil {
-		add(agentapi.Option{ID: "approve_session", Label: "Allow for this session"}, dec)
+	if dec, hint := sessionApproval(d.PromptRequest); dec != nil {
+		add(agentapi.Option{ID: "approve_session", Label: "Allow for this session", Hint: hint}, dec)
 		key, _ := json.Marshal(dec)
 		in.onceKey = string(key)
 		// After two owner "Allow once" answers for the same scope, the session
@@ -97,31 +97,38 @@ func (c *conversation) permissionCompletedLocked(d *rpc.PermissionCompletedData)
 // sessionApproval builds the "allow for this session" decision the same way
 // the CLI's own prompt does, for the prompt kinds where that is unambiguous.
 // URL (origin pattern computed natively), path, hook, workflow and extension
-// prompts get no session option.
-func sessionApproval(pr rpc.PermissionPromptRequest) rpc.PermissionDecision {
+// prompts get no session option. The hint names what the approval covers.
+func sessionApproval(pr rpc.PermissionPromptRequest) (rpc.PermissionDecision, string) {
 	var approval rpc.PermissionDecisionApproveForSessionApproval
+	var what string
 	switch r := pr.(type) {
 	case *rpc.PermissionPromptRequestCommands:
 		if r.CanOfferSessionApproval && len(r.CommandIdentifiers) > 0 {
 			approval = &rpc.PermissionDecisionApproveForSessionApprovalCommands{CommandIdentifiers: r.CommandIdentifiers}
+			what = "every " + strings.Join(r.CommandIdentifiers, " or ") + " command"
 		}
 	case *rpc.PermissionPromptRequestWrite:
 		if r.CanOfferSessionApproval {
 			approval = &rpc.PermissionDecisionApproveForSessionApprovalWrite{}
+			what = "every file write"
 		}
 	case *rpc.PermissionPromptRequestRead:
 		approval = &rpc.PermissionDecisionApproveForSessionApprovalRead{}
+		what = "every file read"
 	case *rpc.PermissionPromptRequestMCP:
 		approval = &rpc.PermissionDecisionApproveForSessionApprovalMCP{ServerName: r.ServerName, ToolName: &r.ToolName}
+		what = "the MCP tool " + r.ServerName + "/" + r.ToolName
 	case *rpc.PermissionPromptRequestMemory:
 		approval = &rpc.PermissionDecisionApproveForSessionApprovalMemory{}
+		what = "storing memories"
 	case *rpc.PermissionPromptRequestCustomTool:
 		approval = &rpc.PermissionDecisionApproveForSessionApprovalCustomTool{ToolName: r.ToolName}
+		what = "the tool " + r.ToolName
 	}
 	if approval == nil {
-		return nil
+		return nil, ""
 	}
-	return &rpc.PermissionDecisionApproveForSession{Approval: approval}
+	return &rpc.PermissionDecisionApproveForSession{Approval: approval}, "Allows " + what + " without asking until this Copilot session ends."
 }
 
 func describePermission(d *rpc.PermissionRequestedData) (title, detail string) {

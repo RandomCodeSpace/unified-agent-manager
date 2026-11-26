@@ -1373,6 +1373,9 @@ func TestWebPermissionWaitsForRespond(t *testing.T) {
 	if strings.Join(ids, ",") != "approve_once,approve_session,reject" || !in.Options[2].Reject {
 		t.Fatalf("options = %+v", in.Options)
 	}
+	if want := "Allows every rm command without asking until this Copilot session ends."; in.Options[1].Hint != want {
+		t.Fatalf("session hint = %q, want %q", in.Options[1].Hint, want)
+	}
 	if h.fs.answer("p1") != nil {
 		t.Fatal("permission answered before Respond")
 	}

@@ -69,6 +69,38 @@ test('Allow for this session, where Copilot offers it, becomes the main button a
   expect(fs.readFileSync(path.join(workdir, 's4.txt'), 'utf8')).toBe('s4\n');
 });
 
+test('a destructive shell request says why and has no main button; a harmless one gets no warning', async ({ page, project, model }) => {
+  script(model, { userMessage: 'touch then clean' }, [
+    [{ id: 'call_touch', name: 'bash', arguments: { command: 'touch harmless.txt', description: 'Make a marker' } }],
+    [{ id: 'call_clean', name: 'bash', arguments: { command: 'chmod 0644 ~/.config/zsh/aliases.zsh && rm -f ~/.zcompdump*', description: 'Clean the zsh cache' } }],
+    'Cleaned.',
+  ]);
+  await startThread(page, project, 'touch then clean');
+  const cards = conversation(page).getByRole('group', { name: 'Run shell command' });
+  const background = (el: Element) => getComputedStyle(el).backgroundColor;
+
+  const harmless = cards.filter({ hasText: 'touch harmless.txt' });
+  await expect(harmless.getByRole('button', { name: 'Allow once' })).toBeVisible();
+  await expect(harmless.getByText('Deletes files')).toHaveCount(0);
+  await expect(harmless.getByText('Outside the project')).toHaveCount(0);
+  // Allow once is the filled main button; Deny is neutral, not red.
+  const deny = harmless.getByRole('button', { name: 'Deny' });
+  expect(await harmless.getByRole('button', { name: 'Allow once' }).evaluate(background)).not.toBe(await deny.evaluate(background));
+  // The session option says what it allows and until when.
+  await harmless.getByRole('button', { name: 'Allow for this session' }).hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Allows every touch command without asking until this Copilot session ends.');
+  await harmless.getByRole('button', { name: 'Allow once' }).click();
+
+  const risky = cards.filter({ hasText: 'rm -f' });
+  await expect(risky.getByText('Outside the project · Deletes files · Changes file permissions')).toBeVisible();
+  // No option is the main button: Allow once looks like Deny, and stays last.
+  const once = risky.getByRole('button', { name: 'Allow once' });
+  expect(await once.evaluate(background)).toBe(await risky.getByRole('button', { name: 'Deny' }).evaluate(background));
+  await expect(risky.getByRole('button').last()).toHaveText('Allow once');
+  await risky.getByRole('button', { name: 'Deny' }).click();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+});
+
 test('switching to yolo allows the waiting request; later requests run with no card and read auto-approved', async ({ page, project, model, workdir }) => {
   model.toolRound('wait for yolo', [{ id: 'call_wait', name: 'bash', arguments: { command: 'printf one > one.txt', description: 'Write one' } }], 'One written.');
   model.toolRound('run in yolo', [{ id: 'call_yolo', name: 'bash', arguments: { command: 'printf two > two.txt', description: 'Write two' } }], 'Two written.');

@@ -1653,6 +1653,8 @@ type Option struct {
 	// more. A provider leaves it off when its policy says a person must
 	// decide: the web service's yolo mode answers only with this option.
 	AllowOnce bool `json:"allow_once,omitempty"`
+	// Hint says what the decision covers beyond this request, when it does.
+	Hint string `json:"hint,omitempty"`
 }
 
 // Question is one prompt inside a question interaction.
