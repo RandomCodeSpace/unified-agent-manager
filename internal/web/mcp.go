@@ -61,6 +61,8 @@ type MCPServerView struct {
 	Headers []MCPSecret `json:"headers"`
 	Enabled bool        `json:"enabled"`
 	Source  string      `json:"source"`
+
+	DeferTools string `json:"defer_tools,omitempty"`
 }
 
 // MCPServers is GET /api/mcp. Available is false when no provider manages
@@ -88,6 +90,8 @@ type MCPServerInput struct {
 	URL     string           `json:"url"`
 	Env     []MCPSecretInput `json:"env"`
 	Headers []MCPSecretInput `json:"headers"`
+
+	DeferTools string `json:"defer_tools"`
 }
 
 // MCPSignIn is the answer to starting a sign-in. URL is empty when a kept
@@ -149,6 +153,7 @@ func (m *Manager) MCPServers() (MCPServers, error) {
 		out.Servers = append(out.Servers, MCPServerView{
 			Name: s.Name, Type: s.Type, Command: s.Command, Args: s.Args, Cwd: s.Cwd, URL: s.URL,
 			Env: secretKeys(s.Env), Headers: secretKeys(s.Headers), Enabled: s.Enabled, Source: s.Source,
+			DeferTools: s.DeferTools,
 		})
 	}
 	return out, nil
@@ -220,9 +225,14 @@ func (m *Manager) SaveMCPServer(name string, in MCPServerInput, existing bool) e
 
 // checkMCPInput validates everything but the secret values' presence.
 func checkMCPInput(in MCPServerInput) (agentapi.MCPServerConfig, error) {
-	cfg := agentapi.MCPServerConfig{Name: strings.TrimSpace(in.Name), Type: in.Type}
+	cfg := agentapi.MCPServerConfig{Name: strings.TrimSpace(in.Name), Type: in.Type, DeferTools: in.DeferTools}
 	if !mcpNameExpr.MatchString(cfg.Name) {
 		return cfg, newError(http.StatusBadRequest, "a name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit")
+	}
+	switch in.DeferTools {
+	case "", agentapi.MCPDeferAuto, agentapi.MCPDeferNever:
+	default:
+		return cfg, newError(http.StatusBadRequest, "tool loading must be auto, never or empty")
 	}
 	switch in.Type {
 	case agentapi.MCPStdio:

@@ -84,6 +84,7 @@ export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
       headers: merge(input.headers, existing?.headers ?? {}),
       enabled: existing?.enabled ?? true,
       source: 'user',
+      defer_tools: input.defer_tools,
     };
     servers = existing ? servers.map((s) => (s === existing ? next : s)) : [...servers, next];
     return list();

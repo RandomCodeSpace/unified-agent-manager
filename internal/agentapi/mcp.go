@@ -9,10 +9,16 @@ const (
 	MCPSSE   = "sse"
 )
 
+// MCPServerConfig.DeferTools values; "" leaves the choice to the runtime.
+const (
+	MCPDeferAuto  = "auto"  // the runtime may load the tools on demand (tool search)
+	MCPDeferNever = "never" // the tools are always in the initial tool list
+)
+
 // MCPServerConfig is one MCP server of the provider's own, user-wide
 // configuration: a command it runs (MCPStdio) or a remote endpoint (MCPHTTP,
 // MCPSSE). Env and Headers carry real values; the web service never returns
-// them to a browser.
+// them to a browser. DeferTools is "", MCPDeferAuto or MCPDeferNever.
 type MCPServerConfig struct {
 	Name    string            `json:"name"`
 	Type    string            `json:"type"`
@@ -22,6 +28,8 @@ type MCPServerConfig struct {
 	Env     map[string]string `json:"-"`
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"-"`
+
+	DeferTools string `json:"defer_tools,omitempty"`
 }
 
 // MCPServer is a configured server and whether new conversations start it.

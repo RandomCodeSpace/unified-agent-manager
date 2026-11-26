@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { Plus, X } from 'lucide-react';
 import { useEffect, useState, type SubmitEvent } from 'react';
-import { describeError, type McpSecret, type McpServer, type McpServerInput, type McpServers, type McpType } from '../api';
+import { describeError, type McpDeferTools, type McpSecret, type McpServer, type McpServerInput, type McpServers, type McpType } from '../api';
 import { Note, Skeleton } from './common';
 import { CardGroup, ItemCard, ItemReader, useCardReader } from './ConfigCards';
 import { Field, SectionAction, useInlineForm } from './TaskDefaults';
@@ -34,8 +34,14 @@ interface Draft {
   url: string;
   env: SecretRow[];
   headers: SecretRow[];
+  deferTools: McpDeferTools;
 }
 
+const TOOL_LOADING = [
+  { value: '', label: 'Default' },
+  { value: 'auto', label: 'On demand' },
+  { value: 'never', label: 'Always loaded' },
+];
 export const TYPE_LABEL: Record<string, string> = { stdio: 'Command', http: 'HTTP', sse: 'SSE' };
 const SOURCE_LABEL: Record<string, string> = { plugin: 'From a plugin', builtin: 'Built in', managed: 'Managed' };
 /** The card groups: the servers configured here first, then each read-only source. */
@@ -55,7 +61,7 @@ export interface GithubMcpSetting {
 const stored = (s: McpSecret[]): SecretRow[] => s.map((e) => ({ key: e.key, value: '', stored: e.set }));
 
 function draftOf(s?: McpServer): Draft {
-  if (!s) return { name: '', type: 'http', command: '', args: '', cwd: '', url: '', env: [], headers: [] };
+  if (!s) return { name: '', type: 'http', command: '', args: '', cwd: '', url: '', env: [], headers: [], deferTools: '' };
   return {
     original: s.name,
     name: s.name,
@@ -66,16 +72,18 @@ function draftOf(s?: McpServer): Draft {
     url: s.url ?? '',
     env: stored(s.env),
     headers: stored(s.headers),
+    deferTools: s.defer_tools ?? '',
   };
 }
 
 /** The body to save: secret rows without a typed value keep the stored one (no `value`). */
 export function inputOf(d: Draft): McpServerInput {
+  const deferTools = d.deferTools || undefined;
   const rows = (r: SecretRow[]) => r.filter((e) => e.key.trim()).map((e) => (e.stored && !e.value ? { key: e.key.trim() } : { key: e.key.trim(), value: e.value }));
   if (d.type === 'stdio') {
-    return { name: d.name.trim(), type: 'stdio', command: d.command.trim(), args: d.args.split('\n').map((a) => a.trim()).filter(Boolean), cwd: d.cwd.trim() || undefined, env: rows(d.env) };
+    return { name: d.name.trim(), type: 'stdio', command: d.command.trim(), args: d.args.split('\n').map((a) => a.trim()).filter(Boolean), cwd: d.cwd.trim() || undefined, env: rows(d.env), defer_tools: deferTools };
   }
-  return { name: d.name.trim(), type: d.type, url: d.url.trim(), headers: rows(d.headers) };
+  return { name: d.name.trim(), type: d.type, url: d.url.trim(), headers: rows(d.headers), defer_tools: deferTools };
 }
 
 /** The env variables or headers of the form: a name and a write-only value per row; a stored value shows as dots until replaced. */
@@ -164,6 +172,10 @@ function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCanc
           <SecretRows label="Headers" keyHint="Authorization" rows={draft.headers} disabled={busy} onChange={(headers) => onChange({ ...draft, headers })} />
         </>
       )}
+      <div className="flex min-w-0 flex-col gap-1">
+        <span id="mcp-tool-loading" className="text-caption text-muted">Tool loading</span>
+        <Segmented aria-labelledby="mcp-tool-loading" className="self-start" disabled={busy || locked} value={draft.deferTools} onValueChange={(v) => onChange({ ...draft, deferTools: v as McpDeferTools })} items={TOOL_LOADING} />
+      </div>
       {error && <Note tone="error" role="alert">{error}</Note>}
       <div className="flex gap-2">
         <Button type="submit" variant="primary" size="lg" loading={busy} disabled={locked}>

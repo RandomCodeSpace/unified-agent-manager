@@ -3023,7 +3023,11 @@ built into Copilot are read-only, except the built-in GitHub server's
 switch, `github-mcp-server` (below). **Add
 server** and **Edit** take a name, a type, and then either a command,
 arguments (one per line, passed as typed with no shell) and an optional
-absolute working folder, or an address. Environment variable and header
+absolute working folder, or an address. **Tool loading** sets the
+server's `deferTools` in Copilot's configuration: **Default** leaves it
+unset (the runtime decides), **On demand** (`auto`) lets the runtime keep
+the tools behind tool search until needed, which saves context, and
+**Always loaded** (`never`) puts them in every turn's tool list. Environment variable and header
 values are write-only: no response carries them, an edit shows a stored
 value as `•••• set`, leaving it empty keeps it and typing replaces it. Put
 keys in a header, not in the address: the address is shown to anyone signed
