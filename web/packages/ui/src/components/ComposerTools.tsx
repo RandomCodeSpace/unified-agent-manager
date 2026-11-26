@@ -7,7 +7,7 @@ import { cn } from '../lib/cn';
 import { useCopied } from '../lib/clipboard';
 import { runLines } from '../lib/subagents';
 import { duration } from '../lib/transcript';
-import { contextLabel, ContextReport, ContextRing, contextShown } from './ComposerUsage';
+import { contextLabel, ContextMeter, ContextReport, contextShown } from './ComposerUsage';
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
 import { AgentChoices, LoadedSkills, sandboxLine, useTaskAgents } from './TaskAgent';
@@ -32,8 +32,8 @@ const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent:
  * The composer's Tools: one button for the Task's context, usage and custom agent, opening one
  * anchored reader (a bottom sheet on phones) with a tab per tool. A tool the Task cannot show has no
  * tab (Agent shows only when the Project has a custom agent, the Task names one, the Thread
- * loaded skills, or its sandbox is on or turned off for it), and a Task with none has no button. The button carries the context ring, the one live value worth keeping on the
- * toolbar. Each tab mounts its body only while shown, so a native read happens on open, again when
+ * loaded skills, or its sandbox is on or turned off for it), and a Task with none has no button. The button carries the context bar and share, the one live value worth keeping on
+ * the toolbar. Each tab mounts its body only while shown, so a native read happens on open, again when
  * the Task's pushed counts change, and is aborted on close; a change of Task, conversation,
  * selection, stage or open state, or of the owning API, closes the panel. With `subagent` (one
  * shown in the Conversation pane) it is read-only and scoped to it: Usage (tokens, tool calls,
@@ -141,8 +141,9 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
   return <>
     <Tip label={<>Tools: {tools.map((t) => LABEL[t].toLowerCase()).join(', ')}{reported && <span className="block text-on-primary/70">{contextLabel(session)}</span>}{subagent && <span className="block text-on-primary/70">Read only · this subagent</span>}</>}>
       <Button ref={setAnchor} id="composer-tools" size="sm" variant="subtle" aria-label={label} aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} className="text-body pointer-coarse:min-w-11" onClick={() => show()}>
-        {reported ? <ContextRing session={session} /> : <SlidersHorizontal aria-hidden="true" className="text-faint" />}
+        <SlidersHorizontal aria-hidden="true" className="text-faint" />
         <span className="in-data-[fold~=model]:hidden">Tools</span>
+        {reported && <ContextMeter session={session} />}
         <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
       </Button>
     </Tip>

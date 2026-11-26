@@ -613,7 +613,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Allow all.
-  **Tools** (the context ring and "Tools") opens one panel with a tab for
+  **Tools** ("Tools" and the context bar with its share, "42%") opens one panel with a tab for
   each tool the Thread has: Context (see **Context usage**), Usage (the
   Thread's budget first, then six figures: the AI units recorded for the
   Thread, the time split, see **Time split**, tokens and code from Copilot's
@@ -770,8 +770,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   to the shared provider feature rules (usage and credits and import also use capabilities) and
   requires the provider's capability. Copilot is still the only registered
   provider.
-- **Context usage**: the ring on the composer's Tools button shows used tokens
-  as a share of the active prompt budget. Open Tools (its Context tab, or
+- **Context usage**: the bar and the number on the composer's Tools button show
+  used tokens as a share of the active prompt budget; from 80% the number reads
+  "84% context" in the attention colour, from 95% in the error colour (a phone
+  shows the bar alone). Open Tools (its Context tab, or
   `/context`) for token counts, the reported cached share and, where Copilot
   reports it, the breakdown by source. The counts are for the model named
   under them, by the model picker's name ("Fusion → MAI-Code-1.1-Flash" when a
@@ -779,7 +781,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   model as an approximation.
   Free space and the reserved buffer under Capacity are capacity, not
   occupied tokens, and the output and compaction reservations can overlap.
-  A short mark on the ring, and a line
+  A tick on the bar, and a line
   on the Context tab ("Compacts at 80% (218K tokens)"), show where Copilot starts
   compacting the conversation: the threshold it opened with, reported as
   `compact_threshold` on the Thread summary while it is open (a change in
@@ -885,10 +887,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   long. A model call Copilot retries adds
   "Retrying, attempt 2 · HTTP 429 · rate limited" until the call goes
   through; a subagent's retry shows under its row. With a todo list it also
-  says how far the agents got ("Todo 2/7"), the row the work is at and how
-  many rows are in each open stage, "1 in progress · 1 blocked · 3 to do",
-  each in its own colour behind its own glyph (a phone shows the glyphs and
-  numbers), or, while the turn has not touched the list yet, the same counts
+  says how far the agents got in one sentence, "3 of 6 done · 1 in progress ·
+  1 blocked" (a stage with no rows left out, blocked in its warning colour; a
+  phone reads "3 of 6 · 1 blocked"), and the row the work is at, or, while the turn has not touched the list yet, the same counts
   from the last turn; clicking it then opens the list, by sections In
   progress, Blocked, To do and Done, with the subagent that wrote each row
   when uam could tell. The list stays on the line while the Thread is idle
@@ -953,8 +954,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   is in flight, and **Waiting on you** with what is asked ("approve bash",
   "answer question", "review plan") while a request waits for you; the first
   of these that holds wins, and nothing shows otherwise. A phone shows only
-  the glyph, a short word (Model, Local or You) and the clock, without the
-  time split beside it, so the branch keeps its room. uam reads this from Copilot's events only: an agent's
+  the glyph, a short word (Model, Local or You) and the clock, so the branch
+  keeps its room. uam reads this from Copilot's events only: an agent's
   model call runs from its `assistant.turn_start` to its usage report, its
   first tool call, the end of its turn, an abort, its `assistant.idle` or an
   error, and a retry keeps it; a `task` call, which runs a subagent, is not
@@ -1891,7 +1892,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   end it at the task's completion or when the attached shell shows in the
   task list.
 - **Background tasks**: a chip in the composer's toolbar counts the Thread's
-  running provider shells (once none runs, it shows its glyph alone while
+  running provider shells, "1 shell" ("1" on a phone; once none runs, it shows its glyph alone while
   the finished ones stay listed); click it to see each shell's status and command
   and to stop one. **Output** on a row opens what that command has printed in
   the command output panel: the first 8 KB at once, **Load more** for the

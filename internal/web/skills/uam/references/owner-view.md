@@ -36,8 +36,8 @@
 - **Code blocks** wrap long lines, scroll past about 480 px of height and
   have a copy button. Common language tags are highlighted.
 - **The todo list** you keep in the session's `todos` table shows above the
-  composer while you work: how many rows are done, the row in progress, and
-  how many are in progress, blocked and to do, each stage in its own colour;
+  composer while you work, as one line ("3 of 6 done · 1 in progress ·
+  1 blocked") with the row in progress;
   the list shows blocked rows with the reason from their description, and
   draws the `todo_deps` rows as links between the steps. Each reply that
   changed it keeps the list as the turn left it. The owner changes it by

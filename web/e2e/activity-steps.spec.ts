@@ -82,7 +82,9 @@ test('a background shell is counted on the toolbar and shown as a row at the con
   await expect(page.getByRole('complementary', { name: 'Command output' })).toContainText('tick1');
   await page.getByRole('button', { name: 'Close command output' }).click();
 
-  await page.getByRole('button', { name: 'Background tasks: 1 running' }).click();
+  const shells = page.getByRole('button', { name: 'Background tasks: 1 running' });
+  await expect(shells).toHaveText('1 shell');
+  await shells.click();
   const tasks = page.getByRole('dialog', { name: 'Background tasks' });
   const row = tasks.getByRole('listitem').filter({ hasText: 'Ticker' });
   await expect(row).toContainText('Running');

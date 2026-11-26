@@ -26,10 +26,11 @@ function draw(selected: SessionDetail = session, onAgent = vi.fn()) {
   return { ...view, onAgent };
 }
 
-test('one Tools button carries the context ring and opens a tab per tool, switched with the arrow keys', async () => {
+test('one Tools button carries the context bar and share and opens a tab per tool, switched with the arrow keys', async () => {
   const { onAgent } = draw();
   const button = screen.getByRole('button', { name: 'Tools. Context 50 of 200 tokens · 25%' });
   expect(button.querySelector('[data-compact-mark]')).toBeTruthy();
+  expect(within(button).getByText('25%')).toBeTruthy();
   await userEvent.click(button);
   const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
   expect(panel.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Context', 'Usage', 'Agent']);
