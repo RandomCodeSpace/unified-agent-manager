@@ -233,7 +233,7 @@ test('/rename, /model and /yolo change the Thread; the changes are saved', async
 
     const mode = page.getByRole('button', { name: /^Permissions and execution: / });
     await runCommand(page, '/yolo on', '/allow-all');
-    await expect(mode).toHaveAccessibleName('Permissions and execution: Yolo · Interactive');
+    await expect(mode).toHaveAccessibleName('Permissions and execution: Allow all · Interactive');
     expect(await uam.api('GET', `/api/sessions/${id}`)).toMatchObject({ name: 'Renamed by command', model: `mock/${SECOND_MODEL.modelId}`, mode: 'yolo' });
     await runCommand(page, '/yolo off', '/allow-all');
     await expect(mode).toHaveAccessibleName('Permissions and execution: Safe · Interactive');

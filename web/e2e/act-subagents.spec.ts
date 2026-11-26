@@ -29,7 +29,7 @@ test('a subagent waiting on permission says so on its row and is answered from t
   await expect(threadState(page, 'Finished')).toBeVisible();
   expect(fs.readFileSync(path.join(workdir, 'sub.txt'), 'utf8')).toBe('sub');
 
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'delegate again');
   // Unanswered, the subagent's request would hold the turn on a card.
   await expect(conv.getByText('Second subagent wrote it.')).toBeVisible();
@@ -47,7 +47,7 @@ test('the subagent sheet groups by reply, filters by state, and reads a subagent
   ], {}, 'sleeper');
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'delegate two jobs');
   await page.getByRole('button', { name: /^Subagents: 2, 1 running/ }).click();
   const sheet = page.getByRole('dialog', { name: 'Agents and commands' });
@@ -99,7 +99,7 @@ test('stopping a subagent ends its running tool call, and the Thread goes on', a
   model.on(subagentAsked('Sleep for long'), { toolCalls: [{ id: 'call_sub_nap', name: 'bash', arguments: JSON.stringify({ command: 'sleep 90', description: 'Nap' }) }] }, {}, 'napper');
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'delegate a long sleep');
   await page.getByRole('region', { name: 'Subagents at work' }).getByRole('button', { name: /^napper, running/ }).click();
   const transcript = page.getByRole('region', { name: /^Transcript of / });
@@ -126,7 +126,7 @@ test('a subagent named in a reply wraps with the words around it and opens the s
   model.on(subagentAsked('Review the findings'), { content: 'Nothing to fix.' }, {}, 'reviewer');
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'delegate the review');
   await page.setViewportSize({ width: 420, height: 900 });
   const tag = conversation(page).getByRole('button', { name: `Open subagent ${name}` });

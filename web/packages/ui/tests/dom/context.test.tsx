@@ -48,7 +48,7 @@ test('context categories and sources read only when requested and never sum capa
   expect(screen.getByText('75 of 200 tokens')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Show sources' }));
   expect(await screen.findByText('Included in Shared tools')).toBeTruthy();
-  expect(screen.getByText(/Counted for resolved-model \(Auto resolved\)/)).toBeTruthy();
+  expect(screen.getByText('auto → resolved-model')).toBeTruthy();
   expect(screen.getByText('Free space')).toBeTruthy();
   expect(screen.getByText('85 tokens')).toBeTruthy();
   expect(screen.getByText(/Source counts can overlap/)).toBeTruthy();
@@ -62,6 +62,18 @@ test('context categories and sources read only when requested and never sum capa
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await screen.findByText('Including MCP tools');
   expect(read).toHaveBeenCalledTimes(4);
+});
+
+test('the model is named as the picker names it, with the route that chose it, and compaction uses the CLI threshold', async () => {
+  vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  const meta = { providers: [{ name: 'copilot', models: [{ id: 'auto', name: 'Auto' }, { id: 'resolved-model', name: 'Resolved-Model' }] }] };
+  render(<ApiContext.Provider value={api}><AppContext.Provider value={{ ...app, meta } as unknown as AppContextValue}><ComposerTools session={session} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
+  const name = await screen.findByText('Auto → Resolved-Model');
+  expect(name.getAttribute('title')).toBe('resolved-model');
+  // One compaction number: the CLI's (128), not 80% of the 200-token limit (160).
+  expect(screen.getByText('Compacts at 128 tokens')).toBeTruthy();
+  expect(screen.queryByText(/Compacts at 80%/)).toBeNull();
 });
 
 test('closed and unsupported providers keep quick totals without resuming or requesting metadata', async () => {
@@ -144,7 +156,7 @@ test('changing the owning API closes and disposes the old reader before another 
   expect(previousSignal.aborted).toBe(true);
   expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  await screen.findByText(/Counted for remote-model/);
+  await screen.findByText('auto → remote-model');
   expect(remote).toHaveBeenCalledTimes(1);
   expect(local).toHaveBeenCalledTimes(1);
 });

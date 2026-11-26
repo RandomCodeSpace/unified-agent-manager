@@ -21,8 +21,8 @@ test('the form sends only the fields its kind takes', () => {
 });
 
 test('a routine’s mode reads as the form offers it, and the form sends both fields', () => {
-  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: true }), 'Yolo with autopilot');
-  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: false }), 'Yolo');
+  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: true }), 'Allow all with autopilot');
+  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: false }), 'Allow all');
   assert.equal(routineModeLabel({ mode: 'safe', autopilot: false }), 'Safe');
   assert.equal(routineModeLabel({ mode: 'safe', autopilot: true }), 'Safe with autopilot');
   assert.equal(routineMode({ mode: 'safe', autopilot: true }), 'safe');

@@ -542,7 +542,7 @@ func TestWebCommandCatalogDescribesWebHandling(t *testing.T) {
 	if c := byName[allowAllCommand]; !strings.Contains(c.Description, "permission policy") || c.DisabledReason != "" {
 		t.Fatalf("allow-all = %+v", c)
 	}
-	if c := byName["permissions"]; c.Description != "Manage this Thread's Safe/Yolo permission policy" || c.DisabledReason != "" {
+	if c := byName["permissions"]; c.Description != "Manage this Thread's Safe/Allow all permission policy" || c.DisabledReason != "" {
 		t.Fatalf("permissions = %+v", c)
 	}
 	for name, reason := range map[string]string{"every": "Scheduled commands", "share": "Publishing and remote sessions"} {

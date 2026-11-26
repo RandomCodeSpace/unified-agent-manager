@@ -1,12 +1,12 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type SubmitEvent , type ReactNode } from 'react';
-import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
+import { describeError, isStatus, modelDisplayName, type Answer, type Interaction, type Meta, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { fieldHint } from '../lib/answer';
 import { shellRisk } from '../lib/shellRisk';
 import { approvalMark } from '../lib/transcript';
-import { Markdown, Note } from './common';
+import { Markdown, Note, useApp } from './common';
 import { Button, rowClass } from './ui/button';
 import { Checkbox, Radio, RadioGroup } from './ui/checkbox';
 import { Chip } from './ui/chip';
@@ -44,9 +44,9 @@ function optionVariant(option: Option, primary: Option | undefined, risky: boole
 
 /** Why an assisted Task still asks: the reviewer's outcome, in words. */
 const REVIEW_TEXT: Record<string, string> = { approve: 'approved it', requireApproval: 'asks for your decision', excluded: 'did not review it', error: 'could not review it' };
-function assistedNote(review: NonNullable<Interaction['assisted']>): string {
+function assistedNote(review: NonNullable<Interaction['assisted']>, meta: Meta | null): string {
   const outcome = REVIEW_TEXT[review.recommendation] ?? 'did not approve it';
-  return `Assisted review${review.model ? ` (${review.model})` : ''} ${outcome}${review.reason ? `: ${review.reason}` : '.'}`;
+  return `Assisted review${review.model ? ` (${modelDisplayName(meta, review.model)})` : ''} ${outcome}${review.reason ? `: ${review.reason}` : '.'}`;
 }
 
 export function DecidedRow({ interaction, className }: Readonly<{ interaction: Interaction; className?: string }>) {
@@ -76,6 +76,7 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
  * question is not a card: it is the composer's extension (`ComposerQuestion`).
  */
 export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
+  const { meta } = useApp();
   const api = useApi();
   /** The action in flight: a permission option's id, `answer`, `decline` or `cancel`. */
   const [busy, setBusy] = useState<string | null>(null);
@@ -162,7 +163,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
       )}
       {permission ? (
         <>
-          {interaction.assisted && <Note className="mt-2">{assistedNote(interaction.assisted)}</Note>}
+          {interaction.assisted && <Note className="mt-2">{assistedNote(interaction.assisted, meta)}</Note>}
           {!permitted && <Note className="mt-2">This agent does not take decisions from here.</Note>}
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">

@@ -17,7 +17,7 @@ export const MessageOutcomesContext = createContext<PeerMessage[]>([]);
 const reasons = (limit: number): Record<NonNullable<MessagePair['held']>['reason'], string> => ({
   first: 'The first message between these threads waits for you.',
   limit: `These threads used the deliveries you allowed. Allow covers ${limit} more.`,
-  link: 'One of these threads runs unattended (Yolo, Assisted or autopilot): link them to let messages through.',
+  link: 'One of these threads runs unattended (Allow all, Assisted or autopilot): link them to let messages through.',
 });
 
 const STATUS: Record<PeerStatus, string> = {

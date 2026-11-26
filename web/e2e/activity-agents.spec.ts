@@ -20,7 +20,7 @@ test('a subagent shows inline while it works, opens its own transcript, and its 
   ], {}, 'subagent');
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'delegate the count');
   await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
   const threadUrl = page.url();
@@ -67,7 +67,7 @@ test('a subagent whose Utility name says what its own name says shows the name o
     ], {}, 'subagent');
     await openHome(page);
     await newThread(page, project);
-    await pickMode(page, 'Yolo');
+    await pickMode(page, 'Allow all');
     await send(page, 'delegate the tally');
 
     const atWork = page.getByRole('region', { name: 'Subagents at work' });

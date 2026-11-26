@@ -8,7 +8,7 @@ import { conversation, newThread, openHome, send, type Model, type Project } fro
 export async function startYoloThread(page: Page, project: Project, prompt: string) {
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, prompt);
   await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
   return page.url();
@@ -23,7 +23,7 @@ export async function startWorktreeThread(page: Page, project: Project, prompt: 
   await openHome(page);
   await newThread(page, project);
   await page.getByRole('radiogroup', { name: 'Where this Thread runs' }).getByRole('radio', { name: 'New worktree' }).click();
-  if (yolo) await pickMode(page, 'Yolo');
+  if (yolo) await pickMode(page, 'Allow all');
   await send(page, prompt);
   await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
   await expect.poll(() => worktrees(project.dir).length).toBe(before.length + 1);

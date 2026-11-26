@@ -8,7 +8,7 @@ that starts a turn: `[uam] Reply from thread ...`. Do not wait, poll or send
 again for it.
 
 - The owner must allow the first message between two Threads, and link them
-  when either runs unattended (Yolo, Assisted or autopilot). Until then the
+  when either runs unattended (Allow all, Assisted or autopilot). Until then the
   message is held; the result says so. One allowance covers 6 deliveries,
   each message and each reply counting one; then the owner must allow more.
 - A refusal starts with `Not sent:` and says why (the owner declined, a

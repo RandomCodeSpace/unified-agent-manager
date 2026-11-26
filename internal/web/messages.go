@@ -62,7 +62,7 @@ const (
 var sendTool = agentapi.HostTool{
 	Name: sendToolName,
 	Description: fmt.Sprintf("Send a message to another uam thread. It returns at once: the other thread answers in a turn of its own, and uam brings its final reply here as a new message that starts a turn, so do not wait, poll or send again for it. "+
-		"The uam tool's tasks op lists thread IDs. The owner must allow the first message between two threads, and link them when either runs unattended (Yolo, Assisted or autopilot); one allowance covers %d deliveries, each message and each reply counting one. "+
+		"The uam tool's tasks op lists thread IDs. The owner must allow the first message between two threads, and link them when either runs unattended (Allow all, Assisted or autopilot); one allowance covers %d deliveries, each message and each reply counting one. "+
 		"When a message from another thread starts your turn, answer it in your final reply: uam sends that back, so never use this tool to reply.", pairLimit),
 	Parameters: toolSchema([]string{"id", "message"}, map[string]any{
 		"id":      stringProp("The ID of the thread to message."),

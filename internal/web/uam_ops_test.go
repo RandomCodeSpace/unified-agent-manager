@@ -61,7 +61,7 @@ func TestUAMReadProjectScope(t *testing.T) {
 			fmt.Sprintf(`{"op":"history","args":{"id":%q}}`, other.ID),
 			fmt.Sprintf(`{"op":"search","args":{"query":"x","project":%q}}`, other.ProjectID),
 		} {
-			if res := uamReadCall(t, conv, args); !res.Failed || !strings.Contains(res.Text, "requires Yolo") {
+			if res := uamReadCall(t, conv, args); !res.Failed || !strings.Contains(res.Text, "requires Allow all") {
 				t.Fatalf("%s read escaped project: %+v", mode, res)
 			}
 		}

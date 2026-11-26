@@ -12,7 +12,7 @@ test('a command runs as a live step with its output, then shows as a finished ro
   ]);
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'run the steps');
 
   const conv = conversation(page);
@@ -70,7 +70,7 @@ test('a background shell is counted on the toolbar and shown as a row at the con
   model.reply('still there', 'Still here.');
   await openHome(page);
   await newThread(page, project);
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await send(page, 'start the ticker');
   await expect(conversation(page).getByText('Ticker started.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();

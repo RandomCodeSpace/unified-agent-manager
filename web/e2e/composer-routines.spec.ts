@@ -23,7 +23,7 @@ test('a routine created in Routines starts a Thread with Run now; past its daily
   await expect(dialog).toBeHidden();
   try {
     const card = page.getByRole('region', { name });
-    await expect(card).toContainText('Yolo with autopilot');
+    await expect(card).toContainText('Allow all with autopilot');
     await expect(card).toContainText('at most 1 run a day');
     await expect(card).toContainText('Not run yet');
     await card.getByRole('button', { name: 'Run now' }).click();

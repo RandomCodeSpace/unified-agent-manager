@@ -612,7 +612,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the defaults for new threads and title-model choices. Existing Threads and defaults keep
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
-- **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
+- **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Allow all.
   **Tools** (the context ring and "Tools") opens one panel with a tab for
   each tool the Thread has: Context (see **Context usage**), Usage (the
   Thread's budget first, then six figures: the AI units recorded for the
@@ -774,14 +774,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   as a share of the active prompt budget. Open Tools (its Context tab, or
   `/context`) for token counts, the reported cached share and, where Copilot
   reports it, the breakdown by source. The counts are for the model named
-  under them; an Auto Thread uses its resolved model as an approximation.
+  under them, by the model picker's name ("Fusion → MAI-Code-1.1-Flash" when a
+  route chose it; the raw id is the tooltip); an Auto Thread uses its resolved
+  model as an approximation.
   Free space and the reserved buffer under Capacity are capacity, not
   occupied tokens, and the output and compaction reservations can overlap.
   A short mark on the ring, and a line
   on the Context tab ("Compacts at 80% (218K tokens)"), show where Copilot starts
   compacting the conversation: the threshold it opened with, reported as
   `compact_threshold` on the Thread summary while it is open (a change in
-  Settings reaches it when it reopens), else the setting. Before a report, the track is
+  Settings reaches it when it reopens), else the setting. Where the CLI reports
+  its own compaction threshold (Capacity's "Compaction starts at"), the
+  Context tab's line shows that number instead ("Compacts at 134.4K tokens"),
+  so the two never disagree. Before a report, the track is
   empty and the Context tab says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
   or changing its selection clears it until a fresh report. Compaction or
@@ -1363,7 +1368,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   links work; the latest link is local only.
 - **Reading uam**: every Thread has the `uam` tool with six read operations:
   `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
-  Reads are limited to its Project unless the Thread is in Yolo; a Thread it
+  Reads are limited to its Project unless the Thread is in Allow all; a Thread it
   started with `uam_create_task` is readable in any Project. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
   Results carry compact summaries and outcomes, framed as data; a Thread row
@@ -1385,7 +1390,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent may take, through the same Manager calls and checks as the routes:
   `rename` and `set_budget` on its own Thread (a budget it may add or
   tighten, never raise or remove), `pin_chart` and `unpin_chart` on its own
-  `uam_chart` charts (one with a command needs Yolo), and `settle` and
+  `uam_chart` charts (one with a command needs Allow all), and `settle` and
   `archive` on the Threads it started, refused with unsaved work of their
   own (only the owner can force past that). Running a routine stays the
   owner's, because a run uses the routine's daily limit.
@@ -1453,7 +1458,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   starts is not answered again. Both turns' user messages show who sent them.
   The owner decides per pair of Threads: the first message of a pair is held
   until the owner allows or denies it (on either Thread, which shows it as
-  needing the owner), and a pair where either Thread runs unattended (Yolo,
+  needing the owner), and a pair where either Thread runs unattended (Allow all,
   Assisted, autopilot, or an unknown mode) must be linked when allowed; a
   Thread that turns unattended later gets nothing from an unlinked pair. Every
   message and reply is checked again as its turn is about to start, under the
@@ -1524,7 +1529,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   cheaper, gives a shell command that prints them as CSV or JSON. uam runs
   that command itself in the Thread's folder (30 seconds at most, 1 MiB of
   output), so the rows never pass through the model; the agent gets only a
-  summary. uam runs a chart's command only for a Thread in Yolo mode: in Safe
+  summary. uam runs a chart's command only for a Thread in Allow all mode: in Safe
   mode the agent must run the command with its own shell tool, which asks
   you first, and pass the rows. The chart shows as a card in the
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
@@ -1656,18 +1661,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   two limits. A schedule is every day at a time, every weekday
   (Monday to Friday) at a time, every 1 to 24 hours, or once a week on a
   day at a time, in the local time of the host the service runs on. Nobody
-  watches a run, so a new routine is **Yolo with autopilot**: every
+  watches a run, so a new routine is **Allow all with autopilot**: every
   permission request is allowed, and the run's Thread turns autopilot on
   (as `/autopilot on` does) before its first message, so it keeps working
   until the agent calls `task_complete` or the time limit stops it.
-  **Yolo** allows every request for one turn: the run ends when the agent
+  **Allow all** allows every request for one turn: the run ends when the agent
   first stops. **Safe** makes each permission request wait for you, and
   the Thread shows as Needs permission. The form explains the chosen mode and, for
-  both Yolo modes, that the agent acts without asking while nobody is
+  both Allow all modes, that the agent acts without asking while nobody is
   watching. A routine saved before this choice existed keeps its mode
-  (Safe or Yolo, without autopilot), and each card shows its mode. The API
+  (Safe or Allow all, without autopilot), and each card shows its mode. The API
   takes `mode` (`safe` or `yolo`) and `autopilot`; a create that leaves
-  them out is Yolo with autopilot, and one that sets only `mode: "safe"`
+  them out is Allow all with autopilot, and one that sets only `mode: "safe"`
   gets no autopilot. **Runs in** is New thread's place choice, for every
   run: **Project folder** (the run works in the Project folder, on the
   branch it is on then; a routine saved before the choice existed runs
@@ -1823,14 +1828,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   **Leave planning**); their reader uses the recorded
   review even after the Thread closes. A supported runtime may offer autopilot,
   subagents, interactive implementation, or leaving without implementation.
-  Plan approval does not change Safe/Yolo permissions. During implementation,
+  Plan approval does not change Safe/Allow all permissions. During implementation,
   the status line labels current, touched SQL Todo progress **Plan**; an old
   or unavailable list is never treated as progress on the new plan. Only the
   exact provider-reported scratch-plan file is excluded from Thread changes;
   project files named `plan.md` still count. Native session changes exclude
   it only when its path matches exactly; a relative path whose workspace
   root is unknown or ambiguous stays listed.
-- **Yolo**: a Thread in yolo mode does not ask for permission. As each
+- **Allow all** (stored as `yolo`): a Thread in this mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,
   reads outside the project directory, and web fetches then run without a
@@ -1865,14 +1870,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Results can display text, offer subcommands, or open the existing model,
   permissions, context, usage or rename control. Choosing a subcommand fills
   the composer for explicit submission. `/yolo` and `/allow-all` change the
-  same Safe/Yolo permission policy as the toolbar; autopilot does not change it.
+  same Safe/Allow all permission policy as the toolbar; autopilot does not change it.
   See [Web commands and execution state](web-commands.md) for the exact supported
   command list, limits and retry behavior.
 - **Execution mode**: supported providers report Interactive, Plan or Autopilot
   separately from permissions. Both share one toolbar menu, whose label reads
   them together ("Safe · Interactive"). Its icon and first line rate the pair:
   Safe · Interactive is the safest, Safe · Autopilot keeps working on its own
-  but still asks, Yolo · Interactive is unsafe, and Yolo · Autopilot is highly
+  but still asks, Allow all · Interactive is unsafe, and Allow all · Autopilot is highly
   risky, so switching into it (from the menu or by a typed command) asks you
   to confirm first. The composer shows the runtime's objective
   status and, on expansion, reported turns, credits, limits and pause or
@@ -2092,7 +2097,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Run again and Try with another model**: the Thread's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Thread in the same Project with the same model,
-  effort, context size and Safe/Yolo mode, and this Thread's last message as
+  effort, context size and Safe/Allow all mode, and this Thread's last message as
   its first, and **Try with another model…**, which does the same on a model
   you pick (effort and context size then start at their defaults). The new
   Thread opens; its transcript begins with a note naming the Thread it repeats,
@@ -2119,7 +2124,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `{"send_default": "queue"}` changes them. An unknown key or value is
   refused and changes nothing. **New threads** holds what every new Thread
   starts with, in every Project: model, effort, context size (where the
-  provider allows it) and Safe or Yolo mode, kept as `task_defaults`, e.g.
+  provider allows it) and Safe or Allow all mode, kept as `task_defaults`, e.g.
   `{"task_defaults": {"provider": "copilot", "model": "gpt-5-mini",
   "effort": "high", "context_size": "default", "mode": "safe"}}`; the
   service checks them as it checks a Thread's selection. Until they are set,
@@ -3382,7 +3387,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   starts the service again at boot, or at login without lingering; without a
   systemd user manager nothing starts it until you run `uam web`.
 - **Restart mid-turn.** A restart (or crash) never resumes or replays the turn
-  it cut, Yolo included: Copilot conversations reopen without continuing
+  it cut, Allow all included: Copilot conversations reopen without continuing
   pending work, so the next prompt runs normally. A shell command or tool
   call that had started and not finished is shown as an **Interrupted** card
   naming it. **Run again** only puts a prompt to run it again in the

@@ -3,11 +3,11 @@ import { useCallback, useContext, useEffect, useEffectEvent, useRef, useState } 
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { useApi } from '../ApiContext';
-import { ApiError, LIVE, describeError, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
+import { ApiError, LIVE, describeError, modelDisplayName, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
 import { cn } from '../lib/cn';
 import { gitLabMarkdown } from '../lib/gitlabRefs';
 import { isRealUserTurn } from '../lib/turnState';
-import { dateTime, FileRef, Markdown, Note, Skeleton, Summary } from './common';
+import { dateTime, FileRef, Markdown, Note, Skeleton, Summary, useApp } from './common';
 import { GitLabItemsContext } from './GitLabStrip';
 import { Button, rowClass } from './ui/button';
 import { Chip } from './ui/chip';
@@ -68,6 +68,7 @@ export function GitLabMarkdown({ text, className }: Readonly<{ text: string; cla
  */
 export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0 }: Readonly<{ sessionId: string; session?: SessionDetail; iid: number; sha?: string; onLoad?: (review: Review) => void; /** Read again when this changes: the merge request is due a read. */ refresh?: number }>) {
   const api = useApi();
+  const { meta } = useApp();
   const writable = !!sha;
   const storageKey = api.storageKey(`uam:gitlab-review:${sessionId}:${iid}:${sha ?? 'read'}`);
   const [saved] = useState(() => savedReview(storageKey));
@@ -284,7 +285,7 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
           <Button size="sm" variant="primary" loading={busy === 'investigate'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('investigate')}><Search />Investigate</Button>
           <Button size="sm" variant="secondary" loading={busy === 'fix'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('fix')}><Wrench />Fix</Button>
         </div>
-        {session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model || 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
+        {session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model ? modelDisplayName(meta, session.model) : 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
       </section> : writable && <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
       {notice && notice.key === key && <Note role={notice.error ? 'alert' : 'status'} tone={notice.error ? 'error' : undefined}>{notice.text}</Note>}
       {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the discussion before trying again.</Note>}

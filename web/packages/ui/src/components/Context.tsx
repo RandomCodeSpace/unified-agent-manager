@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { LIVE, describeError, newRequestId, type ContextAttribution, type ContextBreakdown, type ContextHeaviest, type SessionDetail } from '../api';
+import { LIVE, describeError, newRequestId, ranModelName, type ContextAttribution, type ContextBreakdown, type ContextHeaviest, type SessionDetail } from '../api';
 import { formatCount } from '../lib/cost';
-import { Num, Summary } from './common';
+import { Num, Summary, useApp } from './common';
 import { contextLabel } from './ComposerUsage';
 import { Button } from './ui/button';
 import { PanelSection } from './ui/panel';
@@ -95,7 +95,8 @@ function CompactNow({ session, total, onDone }: Readonly<{ session: SessionDetai
  * Mounted only while the reader is open. Closing, navigating or changing selection aborts and drops the data.
  * It reads again when the Task's pushed context report or state changes, so the counts stay current while open.
  */
-function Breakdown({ session, children }: Readonly<{ session: SessionDetail; children: ReactNode }>) {
+function Breakdown({ session, children }: Readonly<{ session: SessionDetail; children: (compactAt?: number) => ReactNode }>) {
+  const { meta } = useApp();
   const api = useApi();
   const [view, setView] = useState<ContextBreakdown | null>(null);
   const [error, setError] = useState('');
@@ -131,8 +132,8 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
       <div className="space-y-1 tabular-nums">
         <p className="text-ui text-ink">{shown ? (shown.limit > 0 ? <><Num value={shown.total_tokens} /> of {tokens(shown.limit)}</> : <>{tokens(shown.total_tokens)}; capacity not reported</>) : contextLabel(session)}</p>
         {status && <p role="status" className="text-caption text-muted">{status}</p>}
-        {shown && shown.model && <p className="text-caption text-muted">Counted for {shown.model}{attribution?.model_source === 'autoResolved' ? ' (Auto resolved)' : ''}</p>}
-        {children}
+        {shown && shown.model && <p className="text-caption text-muted">Counted for <span title={shown.model}>{ranModelName(meta, session.model, shown.model)}</span></p>}
+        {children(shown ? shown.compaction_threshold || undefined : undefined)}
       </div>
       {shown && <div className="mt-2"><Counts rows={occupied} /></div>}
       {shown && <CompactNow session={session} total={shown.total_tokens} onDone={() => setCompacted((n) => n + 1)} />}
@@ -155,9 +156,10 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
 
 /**
  * The Tools panel's Context tab: one Context section with the headline, the latest report's lines
- * (`children`) and, where the provider reads one, the native breakdown. Mounted only while shown.
+ * (`children`, given the CLI's compaction threshold when it reports one) and, where the provider
+ * reads one, the native breakdown. Mounted only while shown.
  */
-export function ContextTab({ session, children }: Readonly<{ session: SessionDetail; children: ReactNode }>) {
+export function ContextTab({ session, children }: Readonly<{ session: SessionDetail; children: (compactAt?: number) => ReactNode }>) {
   if (session.capabilities.context_breakdown) return <Breakdown session={session}>{children}</Breakdown>;
-  return <PanelSection label="Context"><div className="space-y-1 tabular-nums"><p className="text-ui text-ink">{contextLabel(session)}</p>{children}</div></PanelSection>;
+  return <PanelSection label="Context"><div className="space-y-1 tabular-nums"><p className="text-ui text-ink">{contextLabel(session)}</p>{children()}</div></PanelSection>;
 }

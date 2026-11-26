@@ -183,9 +183,9 @@ func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error)
 			item.InputChoices = nil
 			item.InputRequired = false
 		case allowAllCommand:
-			item.Description = "Set this Thread's permission policy: on (Yolo), off (Safe), show; omit to toggle"
+			item.Description = "Set this Thread's permission policy: on (Allow all), off (Safe), show; omit to toggle"
 		case "permissions":
-			item.Description = "Manage this Thread's Safe/Yolo permission policy"
+			item.Description = "Manage this Thread's Safe/Allow all permission policy"
 		}
 		out = append(out, item)
 	}

@@ -336,16 +336,16 @@ describe('settings in the toolbar', () => {
 
   test('Yolo with Autopilot is confirmed before it applies', async () => {
     const { user } = await openTask('t1');
-    await choose(user, 'Permissions and execution: Safe · Interactive', /^Yolo/);
-    expect(await screen.findByRole('button', { name: 'Permissions and execution: Yolo · Interactive' })).toBeTruthy();
-    const menu = await openMenu(user, 'Permissions and execution: Yolo · Interactive');
+    await choose(user, 'Permissions and execution: Safe · Interactive', /^Allow all/);
+    expect(await screen.findByRole('button', { name: 'Permissions and execution: Allow all · Interactive' })).toBeTruthy();
+    const menu = await openMenu(user, 'Permissions and execution: Allow all · Interactive');
     const autopilot = await menu.findByRole('menuitemradio', { name: /^Autopilot/ });
     // The execution controls wait for the command list that carries /autopilot.
     await waitFor(() => expect(autopilot.hasAttribute('aria-disabled')).toBe(false));
     await user.click(autopilot);
-    const confirm = await screen.findByRole('alertdialog', { name: 'Switch to Yolo with Autopilot?' });
+    const confirm = await screen.findByRole('alertdialog', { name: 'Switch to Allow all with Autopilot?' });
     await user.click(within(confirm).getByRole('button', { name: 'Switch' }));
-    expect(await screen.findByRole('button', { name: 'Permissions and execution: Yolo · Autopilot' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Permissions and execution: Allow all · Autopilot' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Stop autopilot' })).toBeTruthy();
   });
 

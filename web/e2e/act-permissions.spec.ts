@@ -108,7 +108,7 @@ test('switching to yolo allows the waiting request; later requests run with no c
   const cards = conversation(page).getByRole('group', { name: 'Run shell command' });
   await expect(cards).toBeVisible();
   await expect(threadState(page, 'Needs permission')).toBeVisible();
-  await pickMode(page, 'Yolo');
+  await pickMode(page, 'Allow all');
   await expect(conversation(page).getByText('One written.')).toBeVisible();
   await expect(cards).toHaveCount(0);
   expect(fs.readFileSync(path.join(workdir, 'one.txt'), 'utf8')).toBe('one');

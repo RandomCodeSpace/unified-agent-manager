@@ -192,7 +192,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
             disabled={disabled}
             items={[
               { value: 'safe', label: 'Safe' },
-              { value: 'yolo', label: 'Yolo' },
+              { value: 'yolo', label: 'Allow all' },
             ]}
             onValueChange={(mode) => onChange({ ...value, mode: mode as 'safe' | 'yolo' })}
           />

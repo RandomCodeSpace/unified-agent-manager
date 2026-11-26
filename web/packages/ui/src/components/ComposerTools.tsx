@@ -120,7 +120,7 @@ export function ComposerTools({ session, model, agentReason, onAgent, onStyle, s
       {/* One fixed height for every tab, so switching never moves or resizes the panel. */}
       <Tabs.Panel value={tab} className={cn('flex flex-none flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4 outline-hidden', sheet ? 'h-[60dvh]' : 'h-[min(440px,60vh)]')}>
         {subagent ? <SubagentTab subagent={subagent} tab={tab} onRun={close} /> : <>
-        {tab === 'context' && <ContextTab session={session}><ContextReport session={session} model={model} /></ContextTab>}
+        {tab === 'context' && <ContextTab session={session}>{(compactAt) => <ContextReport session={session} model={model} compactAt={compactAt} />}</ContextTab>}
         {tab === 'usage' && <UsageTab session={session} />}
         {tab === 'agent' && (skills.length || sandbox ? <>
           {agentShown && <PanelSection label="Agent"><AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} /></PanelSection>}
