@@ -190,24 +190,28 @@ func viewTask(t *testing.T, ts *testServer) (SessionSummary, string) {
 	base := t.TempDir()
 	realDir := filepath.Join(base, "real")
 	outside := filepath.Join(base, "outside")
-	for _, d := range []string{filepath.Join(realDir, "out"), filepath.Join(realDir, "assets"), outside} {
+	for _, d := range []string{filepath.Join(realDir, "out"), filepath.Join(realDir, "assets"), filepath.Join(realDir, "site"), outside} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	files := map[string][]byte{
-		"out/report.html":     []byte(`<link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="../shot.png">`),
-		"out/style.css":       []byte("h1 { color: red }"),
-		"out/app.js":          []byte("document.title = 'ran'"),
-		"assets/x.css":        []byte("body { margin: 0 }"),
-		"shot.png":            pngBytes(t),
-		"logo.svg":            []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
-		"doc.pdf":             []byte("%PDF-1.4\n"),
-		"notes.md":            []byte("# Notes"),
-		"Makefile":            []byte("all:\n\techo hi\n"),
-		"blob.bin":            []byte("head\x00tail"),
-		"a b.txt":             []byte("spaced"),
-		"../outside/secret.x": []byte("secret"),
+		"out/report.html":       []byte(`<link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="../shot.png">`),
+		"out/style.css":         []byte("h1 { color: red }"),
+		"out/app.js":            []byte("document.title = 'ran'"),
+		"assets/x.css":          []byte("body { margin: 0 }"),
+		"shot.png":              pngBytes(t),
+		"logo.svg":              []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+		"doc.pdf":               []byte("%PDF-1.4\n"),
+		"notes.md":              []byte("# Notes"),
+		"Makefile":              []byte("all:\n\techo hi\n"),
+		"blob.bin":              []byte("head\x00tail"),
+		"a b.txt":               []byte("spaced"),
+		"../outside/secret.x":   []byte("secret"),
+		"../outside/index.html": []byte("secret page"),
+		"site/index.html":       []byte(`<link rel="stylesheet" href="style.css">`),
+		"site/font.woff2":       []byte("wOF2\x00font"),
+		"site/data.json":        []byte(`{"a":1}`),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(realDir, name), data, 0o644); err != nil {
@@ -263,11 +267,17 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		"Makefile":        {"text/plain; charset=utf-8", "inline"},
 		"a%20b.txt":       {"text/plain; charset=utf-8", "inline"},
 		"blob.bin":        {"application/octet-stream", "attachment"},
+		"site/":           {"text/html; charset=utf-8", "inline"},
+		"site/font.woff2": {"font/woff2", "inline"},
+		"site/data.json":  {"application/json", "inline"},
 	}
 	for p, want := range served {
 		w := view(http.MethodGet, viewURL(sum.ID, p))
 		h := w.Header()
 		name, _ := url.PathUnescape(p)
+		if strings.HasSuffix(name, "/") {
+			name += "index.html"
+		}
 		body, _ := os.ReadFile(filepath.Join(realDir, name))
 		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), body) || h.Get("Content-Type") != want.mime ||
 			h.Get("Content-Security-Policy") != viewPolicy(strings.Split(want.mime, ";")[0]) || h.Get("X-Content-Type-Options") != "nosniff" ||
@@ -282,13 +292,17 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 	}
 
 	for _, p := range []string{
-		"", "out", "out/", "missing.html", "outside-link.x", "outside-dir/secret.x",
+		"", "out", "out/", "missing.html", "outside-link.x", "outside-dir/secret.x", "outside-dir", "outside-dir/",
 		"..%2Foutside%2Fsecret.x", "out%2F..%2F..%2Foutside%2Fsecret.x", "%2Fetc%2Fpasswd", "%00",
 	} {
 		w := view(http.MethodGet, viewURL(sum.ID, p))
 		if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), realDir) {
 			t.Errorf("GET %q = %d %s", p, w.Code, w.Body)
 		}
+	}
+	// A folder named without its slash moves to the slashed path, so its page's relative links resolve inside it.
+	if w := view(http.MethodGet, viewURL(sum.ID, "site")); w.Code != http.StatusFound || !strings.HasSuffix(w.Header().Get("Location"), "/site/") || !strings.Contains(w.Header().Get("Location"), "/files/key/") {
+		t.Fatalf("folder = %d %q", w.Code, w.Header().Get("Location"))
 	}
 	// A literal .. is cleaned away by the mux before any handler runs.
 	if w := view(http.MethodGet, viewURL(sum.ID, "../../../../etc/passwd")); w.Code == http.StatusOK && strings.Contains(w.Body.String(), "root:") {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { describeError, subscribeAuthLoss, type Changes } from '../api';
 import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
+import { cn } from '../lib/cn';
 import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type TextPreview } from '../lib/preview';
 import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
@@ -16,6 +17,7 @@ import { useFileVersion } from './FileReferences';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
+import { Segmented } from './ui/segmented';
 
 interface Selection {
   owner: object;
@@ -150,14 +152,30 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
     setRevertError('');
     api.revertChange(sessionId, lens.path, runText(lens.hunks[c.hunk], c.run)).then(() => { onReload?.(); onReverted?.(); }, (e: unknown) => setRevertError(`Could not revert: ${describeError(e)}`)).finally(() => setReverting(false));
   };
-  // The agent changed the open file: read it again.
-  const version = useFileVersion(target.path);
+  // The agent changed the open file, or for a page any file in its folder: read it again.
+  const page = /\.html?$/i.test(target.path ?? '');
+  const version = useFileVersion(target.path, page);
   const opened = useRef({ target, version });
   useEffect(() => {
     if (opened.current.target !== target) opened.current = { target, version };
     else if (opened.current.version !== version) { opened.current.version = version; onReload?.(); }
   }, [target, version, onReload]);
   useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
+  // A page shows rendered or as its source, at the panel's width or a phone's.
+  const [view, setView] = useState('preview');
+  const [viewport, setViewport] = useState('desktop');
+  const framed = file?.kind === 'html' && target.frameable;
+  const sourceKey = framed && view === 'source' && target.url ? `${target.url}#${selection.revision ?? 0}` : '';
+  const [source, setSource] = useState<{ key: string; text?: string; truncated?: boolean; error?: string } | null>(null);
+  useEffect(() => {
+    if (!sourceKey || !target.url) return;
+    const controller = new AbortController();
+    api.filePreview(target.url, controller.signal, undefined, true).then(
+      read => setSource({ key: sourceKey, text: read.text ?? '', truncated: read.truncated }),
+      (e: unknown) => { if (!controller.signal.aborted) setSource({ key: sourceKey, error: describeError(e) }); },
+    );
+    return () => controller.abort();
+  }, [api, sourceKey, target.url]);
   // Inline, Esc closes it from inside it or with nothing focused, unless a popup owns the key.
   useEffect(() => {
     if (!inline || !open || target.image || file?.kind === 'image') return;
@@ -200,28 +218,45 @@ export function FilePreview({ selection, open, sessionId, workdir, inline, onClo
       {file.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
       {file.text && !temporary && isMarkdown(target.path) ? <MarkdownFile sessionId={sessionId} workdir={workdir} path={target.path!} text={file.text}>{source}</MarkdownFile> : source}
     </>;
-  } else if (file.kind === 'html' && target.frameable) {
-    body = <iframe
-      key={`${target.url}#${selection.revision ?? 0}`}
-      src={target.url}
-      title={`Preview ${target.name}`}
-      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-      referrerPolicy="no-referrer"
-      className="min-h-64 w-full flex-1 rounded-sm bg-raised"
-    />;
+  } else if (framed) {
+    const read = source?.key === sourceKey ? source : null;
+    let shown: ReactNode;
+    if (view !== 'source') {
+      shown = <iframe
+        key={`${target.url}#${selection.revision ?? 0}`}
+        src={target.url}
+        title={`Preview ${target.name}`}
+        sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+        referrerPolicy="no-referrer"
+        className={cn('min-h-64 flex-1 bg-raised', inline ? 'rounded-sm' : 'rounded-none', inline && viewport === 'phone' ? 'w-phone max-w-full self-center' : 'w-full')}
+      />;
+    } else if (read?.error) shown = <Note tone="error">{read.error}</Note>;
+    else if (!read) shown = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Reading source…</output>;
+    else shown = <>
+      {read.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
+      <div className="min-h-64 flex-1 overflow-x-auto rounded-sm bg-canvas"><CodeView path={target.path ?? target.name} text={read.text ?? ''} /></div>
+    </>;
+    body = <>
+      <div className={cn('flex flex-wrap gap-2', !inline && 'px-3')}>
+        <Segmented size="sm" aria-label="Show the page as" value={view} onValueChange={setView} items={[{ value: 'preview', label: 'Preview' }, { value: 'source', label: 'Source' }]} />
+        {inline && view === 'preview' && <Segmented size="sm" aria-label="Page width" value={viewport} onValueChange={setViewport} items={[{ value: 'desktop', label: 'Desktop' }, { value: 'phone', label: 'Phone' }]} />}
+      </div>
+      {shown}
+    </>;
   } else if (target.url && (file.kind === 'pdf' || file.kind === 'audio' || file.kind === 'video')) {
     body = <FileMedia key={`${target.url}#${selection.revision ?? 0}`} kind={file.kind} url={target.url} name={target.name} />;
   } else body = <Note>Not shown here. Open it in a new tab or download it.</Note>;
   return (
-    <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${target.name}`}>
+    <SidePanel id="file-preview" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Preview ${target.name}`} preferWidth={framed && view === 'preview' && viewport === 'desktop' ? 760 : 0}>
       <PanelHeader>
         {lens && onChanges && <Button size="icon" className="text-muted" aria-label="Back to Changes" onClick={onChanges}><ArrowLeft /></Button>}
         {target.path && <FileIcon path={target.path} />}
         <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={target.name}>{target.name}</h2>
         <Button ref={closeButton} size="icon" className="text-muted" aria-label="Close preview" onClick={onClose}><X /></Button>
       </PanelHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden p-3">
-        <p className="break-all text-caption text-muted">{target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
+      {/* On a phone a page runs edge to edge, its frame the only scroller. */}
+      <div className={cn('flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden', framed && !inline ? 'overflow-y-hidden pt-3' : 'overflow-y-auto p-3')}>
+        <p className={cn('break-all text-caption text-muted', framed && !inline && 'px-3')}>{target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
         {temporary && <Note>{limitation}</Note>}
         {body}
       </div>

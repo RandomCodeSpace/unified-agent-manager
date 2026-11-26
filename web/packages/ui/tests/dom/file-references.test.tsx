@@ -202,3 +202,31 @@ test('a cited line range links the file and marks its first line', async () => {
   await screen.findByRole('button', { name: 'Close preview' });
   await waitFor(() => expect(document.querySelector('li[data-marked]')?.textContent).toBe('2'));
 });
+
+test('a page reloads when a file in its folder changes, and shows its source or a phone width', async () => {
+  const page = 'site/index.html';
+  const html = '<link rel="stylesheet" href="style.css"><h1>Site</h1>';
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/files/resolve')) return Response.json({ files: [{ path: page, exists: true, kind: 'file' }] });
+    return new Response(init?.method === 'HEAD' ? null : html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': String(html.length) } });
+  });
+  const entries: Item[] = [{ ...items[1], text: `Built \`${page}\`.` }];
+  const view = render(<Conversation entries={entries} />);
+  fireEvent.click(await screen.findByRole('link', { name: `Open ${page}` }));
+  const frame = await screen.findByTitle('Preview index.html');
+  const style: Item = { id: 'style', kind: 'tool', time: '2026-10-05T10:00:02Z', tool: { name: 'edit', status: 'completed', file_paths: ['/repo/site/style.css'] } };
+  view.rerender(<Conversation entries={[...entries, style]} />);
+  await waitFor(() => expect(screen.getByTitle('Preview index.html')).not.toBe(frame));
+  const elsewhere: Item = { id: 'other', kind: 'tool', time: '2026-10-05T10:00:03Z', tool: { name: 'edit', status: 'completed', file_paths: ['/repo/other/a.css'] } };
+  const reloaded = screen.getByTitle('Preview index.html');
+  view.rerender(<Conversation entries={[...entries, style, elsewhere]} />);
+  expect(screen.getByTitle('Preview index.html')).toBe(reloaded);
+
+  fireEvent.click(screen.getByRole('radio', { name: 'Phone' }));
+  expect(screen.getByTitle('Preview index.html').className).toContain('w-phone');
+  fireEvent.click(screen.getByRole('radio', { name: 'Source' }));
+  expect(await screen.findByText('Site', { exact: false, selector: 'code *, code' })).toBeTruthy();
+  expect(screen.queryByTitle('Preview index.html')).toBeNull();
+  expect(screen.queryByRole('radio', { name: 'Phone' })).toBeNull();
+});

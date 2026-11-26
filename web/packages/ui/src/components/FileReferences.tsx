@@ -64,11 +64,17 @@ export function useFileReference(path: string | undefined, inlineText?: string) 
   return { eligible: state !== INELIGIBLE, exists, file: exists ? state : undefined };
 }
 
-/** A count that grows each time a completed tool in this Thread changes `path`: an open view of it reloads on change. */
-export function useFileVersion(path: string | null | undefined): number {
+/**
+ * A count that grows each time a completed tool in this Thread changes `path`: an open view of it reloads on change.
+ * With `folder`, any file in `path`'s folder counts, so a page reloads when its style sheet or script changes.
+ */
+export function useFileVersion(path: string | null | undefined, folder = false): number {
   const owner = useContext(Files);
   const subscribe = useCallback((listener: () => void) => owner?.subscribeChanges(listener) ?? (() => {}), [owner]);
-  return useSyncExternalStore(subscribe, () => (owner && path ? owner.changeCount(path) : 0));
+  return useSyncExternalStore(subscribe, () => {
+    if (!owner || !path) return 0;
+    return folder ? owner.folderChangeCount(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '') : owner.changeCount(path);
+  });
 }
 
 /** Asks for the references under the attached element when its text changes, or stops streaming (only then do references render). */

@@ -192,6 +192,8 @@
   --spacing-sheet: 440px;
   --spacing-sheet-wide: 560px;
   --spacing-panel: 440px;
+  /* A page previewed at a phone's width. */
+  --spacing-phone: 390px;
   /* The folder picker's well: fixed so moving between folders never changes the dialog's height. */
   --spacing-picker: min(320px, 40dvh);
   --spacing-picker-phone: 40dvh;
