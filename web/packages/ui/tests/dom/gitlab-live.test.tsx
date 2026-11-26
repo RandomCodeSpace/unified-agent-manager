@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { useRef } from 'react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { useRef, type ReactNode } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { ApiContext } from '../../src/ApiContext';
 import { api, type GitLabItemSummary } from '../../src/api';
 import { GitLabItemView } from '../../src/components/GitLabItems';
-import { GitLabItemsContext, useSummaries } from '../../src/components/GitLabStrip';
+import { GitLabItemsContext, useGitLabOrigin, useSummaries } from '../../src/components/GitLabStrip';
 import { refKey, type GitLabRef } from '../../src/lib/gitlabRefs';
 
 // GitLab items on screen stay live: a running pipeline or job every 20 s, an open merge request
@@ -184,4 +185,22 @@ test('a job log opens at its end, where the failure is, and follows a running jo
     delete (HTMLPreElement.prototype as { scrollHeight?: number }).scrollHeight;
     delete (HTMLPreElement.prototype as { clientHeight?: number }).clientHeight;
   }
+});
+
+test('the Thread\'s GitLab project is read once also while a turn runs, again when a turn ends, never when one starts', async () => {
+  vi.spyOn(api, 'supports').mockReturnValue(true);
+  const origin = vi.spyOn(api, 'gitlabOrigin').mockResolvedValue({ supported: true, auto_investigate: false, can_investigate: false, origin: { host: 'gitlab.example.com', path: 'group/repo' } });
+  const wrapper = ({ children }: { children: ReactNode }) => <ApiContext.Provider value={api}>{children}</ApiContext.Provider>;
+  const { result, rerender } = renderHook(({ working }) => useGitLabOrigin('live', working), { wrapper, initialProps: { working: true } });
+  // Opened mid-turn: read at once, so the conversation links GitLab before the turn ends.
+  await act(async () => {});
+  expect(result.current?.origin?.path).toBe('group/repo');
+  expect(origin).toHaveBeenCalledTimes(1);
+  rerender({ working: false });
+  await act(async () => {});
+  expect(origin).toHaveBeenCalledTimes(2);
+  rerender({ working: true });
+  rerender({ working: true });
+  await act(async () => {});
+  expect(origin).toHaveBeenCalledTimes(2);
 });

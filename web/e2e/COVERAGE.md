@@ -245,6 +245,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-45 | Without WebGL the dock says "The terminal needs WebGL, which this browser has turned off." | none | spec: workspace-terminal.spec.ts |
 | WSP-46 | Settings → Accounts → GitLab shows the glab instance, the signed-in account, the token scopes and expiry; **Check access** reads again | none | spec: workspace-gitlab.spec.ts |
 | WSP-47 | A reply ending a turn that touched GitLab items carries one chip per item in its outcome bar (`!2` draft, `Pipeline… | gitlab-refs.test.mjs | spec: workspace-gitlab.spec.ts |
+| WSP-59 | A Thread opened while a turn runs reads its GitLab project at once: replies link GitLab and earlier turns show their chips before the turn ends | gitlab-live.test.tsx | spec: workspace-gitlab.spec.ts |
 | WSP-48 | Pressing a chip opens the GitLab side panel: MR (discussions as Markdown, head pipeline), pipeline (jobs by stage,… | none | spec: workspace-gitlab.spec.ts |
 | WSP-49 | A failed job chip names the failure kind (**Tests failed · 2 tests**, **Runner failure · not your change**…) | none | spec: workspace-gitlab.spec.ts |
 | WSP-50 | Running items are reread every 20 s and open MRs every minute | none | spec: workspace-gitlab.spec.ts |

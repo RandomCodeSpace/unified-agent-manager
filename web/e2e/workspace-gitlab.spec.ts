@@ -270,6 +270,28 @@ test('a reply\'s prose links issues, jobs, the project\'s merge requests and com
   }
 });
 
+test('a Thread opened while a turn runs links GitLab and shows the earlier turns\' chips at once', async ({ browser, uam, model, workdir }) => {
+  model.reply('gitlab before', `See ${WEB}/pipelines/91.`);
+  model.toolRound('keep working', [bash('call_wait', 'sleep 20')], 'Done later.');
+  const own = await glabService(browser, uam.mock.url, workdir, ITEMS);
+  try {
+    const { page } = own;
+    await startYoloThread(page, own.project, 'gitlab before');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    await send(page, 'keep working');
+    await expect(threadState(page, 'Working')).toBeVisible();
+    // Reopened mid-turn, the page reads the Thread's GitLab project without waiting for the turn to end.
+    await page.reload();
+    await expect(threadState(page, 'Working')).toBeVisible();
+    const conv = conversation(page);
+    await expect(conv.getByRole('link', { name: 'Pipeline #91', exact: true })).toHaveAttribute('data-gitlab-link', '');
+    await expect(conv.getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link')).toHaveAccessibleName('Pipeline #91 failed');
+    await expect(threadState(page, 'Working')).toBeVisible();
+  } finally {
+    await own.stop();
+  }
+});
+
 test('a running pipeline is read again after 20 s and an open merge request after a minute', async ({ browser, uam, model, workdir }) => {
   // Two real waits: uam's own read of an item is kept 15 s, so a page clock alone would not show a new state.
   test.setTimeout(240_000);

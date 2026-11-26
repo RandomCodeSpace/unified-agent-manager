@@ -2975,7 +2975,11 @@ controls. The routes are `GET /api/sessions/{id}/gitlab/items?ref=…`,
 `GET /api/sessions/{id}/gitlab/work-items?ref=…` and
 `GET /api/sessions/{id}/gitlab/pipelines/{pipeline_id}`; the merge request
 and job log routes read any item of the project when called without
-`commit_sha`. Connected instances advertise `gitlab-items-v1`.
+`commit_sha`. Connected instances advertise `gitlab-items-v1`. The page
+reads the Thread's GitLab project (`GET /api/sessions/{id}/gitlab`, which
+asks GitLab nothing) once when the Thread opens, also while a turn runs, and
+again when a turn ends, so a Thread opened mid-turn links GitLab and shows
+its earlier turns' chips at once.
 
 ## MCP servers
 
