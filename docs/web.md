@@ -2916,7 +2916,13 @@ the turn named it on the Thread's own project:
   `!iid`, `#iid`, `&iid` and pipeline IDs it prints (a call with `-R` for
   another project does not count);
 - the pipeline of the Thread's own commit, on the turn whose `git commit` or
-  `git push` made it.
+  `git push` made it;
+- a merge request or pipeline the reply names in its text (`MR !2`, `!2`,
+  `group/proj!2`, `pipeline #91`), outside code.
+
+In the reply's text these names link to the item, as do `issue #14` and
+`job #501` (an issue or a job only with its noun), the project's exact path,
+a full commit SHA and a short one after the word `commit`.
 
 A bar lists at most 20 items. Pressing a chip opens the GitLab side panel
 on that item, with the turn's other items above it to step between; a

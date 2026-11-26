@@ -254,6 +254,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | WSP-54 | `glab mr create` without a description gets one from the Utility model through `--description-file` | none | spec: workspace-gitlab.spec.ts |
 | WSP-55 | Settling keeps a worktree holding git-ignored files outside regenerable folders; Settings counts them as not committed and Remove asks first | worktree_cleanup_test.go | spec: workspace-worktrees.spec.ts |
 | WSP-56 | The GitLab panel links the project (header), a merge request's branches and **Compare**, and a pipeline's ref and commit; the project's exact path in a reply links to the project | gitlab-items.test.tsx, gitlab-refs.test.mjs | spec: workspace-gitlab.spec.ts |
+| WSP-57 | A reply's prose links `issue #N`, `job #N`, `group/proj!N`, full SHAs and `commit <short>`; a bare `#N` stays text; merge requests and pipelines named in prose get outcome-bar chips, one per item | gitlab-items.test.tsx, gitlab-refs.test.mjs | spec: workspace-gitlab.spec.ts |
 | SET-01 | The sidebar gear opens Settings over the main pane with `#settings` in the URL; × or Esc closes it and the Thread… | settings.test.tsx | spec: settings-view.spec.ts |
 | SET-02 | The rail lists the pages by group; Find a setting filters pages by words and Enter opens the first; a page mounts on… | settings.test.tsx, settings-groups.test.tsx | spec: settings-nav.spec.ts |
 | SET-03 | At phone width the rail is a list showing each page's current values; opening a page moves focus to its back button… | settings.test.tsx | spec: settings-nav.spec.ts |

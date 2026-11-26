@@ -246,6 +246,30 @@ test('the GitLab panel links the project, a merge request\'s branches and compar
   }
 });
 
+test('a reply\'s prose links issues, jobs, the project\'s merge requests and commits, and its merge requests and pipelines get chips', async ({ browser, uam, model, workdir }) => {
+  const sha = 'c'.repeat(40);
+  model.reply('gitlab prose', `Opened group/proj!2; pipeline #91 failed in job #501 for issue #14 at ${sha}, after commit abc1234. Bare #14 stays.`);
+  const own = await glabService(browser, uam.mock.url, workdir, ITEMS);
+  try {
+    const { page } = own;
+    await startYoloThread(page, own.project, 'gitlab prose');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const reply = conversation(page).locator('p').filter({ hasText: 'Opened group/proj!2' });
+    const href = (name: string) => expect(reply.getByRole('link', { name, exact: true })).toHaveAttribute('href', name === sha ? `${WEB}/commit/${sha}` : { 'group/proj!2': `${WEB}/merge_requests/2`, 'pipeline #91': `${WEB}/pipelines/91`, 'job #501': `${WEB}/jobs/501`, 'issue #14': `${WEB}/issues/14`, 'commit abc1234': `${WEB}/commit/abc1234` }[name]!);
+    for (const name of ['group/proj!2', 'pipeline #91', 'job #501', 'issue #14', sha, 'commit abc1234']) await href(name);
+    await expect(reply.getByRole('link')).toHaveCount(6);
+    // The merge request and the pipeline the prose names get chips, read as the links' chips are.
+    const chips = conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link');
+    await expect(chips).toHaveCount(2);
+    await expect(chips.nth(0)).toHaveAccessibleName('!2 draft pipeline running');
+    await expect(chips.nth(1)).toHaveAccessibleName('Pipeline #91 failed');
+    await reply.getByRole('link', { name: 'job #501' }).click();
+    await expect(page.getByRole('complementary', { name: 'GitLab' }).getByRole('heading', { name: 'Pipeline #91', level: 2 })).toBeVisible();
+  } finally {
+    await own.stop();
+  }
+});
+
 test('a running pipeline is read again after 20 s and an open merge request after a minute', async ({ browser, uam, model, workdir }) => {
   // Two real waits: uam's own read of an item is kept 15 s, so a page clock alone would not show a new state.
   test.setTimeout(240_000);

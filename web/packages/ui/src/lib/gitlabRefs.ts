@@ -187,13 +187,13 @@ const gitWrite = (words: string[]) => words[0] === 'git' && (words[1] === 'push'
 
 /**
  * The main agent's items of a turn that can name GitLab items: `glab` calls on the project,
- * `git commit` and `git push` calls, and replies with a link to the GitLab host. A call among
+ * `git commit` and `git push` calls, and replies with a link to the GitLab host or a merge request or pipeline in their prose. A call among
  * them whose output the view holds back needs its body read (`needsBody`).
  */
 export function gitLabCandidates(items: Item[], origin: GitLabOrigin): Item[] {
   const host = lower(origin.host);
   return items.filter((item) => !item.agent_id && (
-    (item.kind === 'assistant' && lower(item.text ?? '').includes(host)) ||
+    (item.kind === 'assistant' && (lower(item.text ?? '').includes(host) || proseItems(item.text ?? '', origin).length > 0)) ||
     commands(script(item)).some((words) => gitWrite(words) || !!glabCall(words, origin))));
 }
 
@@ -202,7 +202,8 @@ export const needsBody = (item: Item) => item.kind === 'tool' && !!item.tool && 
 
 /**
  * Every GitLab item the turn touched, in the order it touched them, each once: its main agent's
- * calls first (what each command names, then what it printed), then its replies' links.
+ * calls first (what each command names, then what it printed), then its replies' links and the merge
+ * requests and pipelines their prose names.
  */
 export function turnGitLabRefs(items: Item[], origin: GitLabOrigin, own?: GitLabOwnPipeline): GitLabRef[] {
   const found: GitLabRef[] = [];
@@ -224,7 +225,8 @@ export function turnGitLabRefs(items: Item[], origin: GitLabOrigin, own?: GitLab
       if (own && t.status === 'completed' && namesCommit(output, own.sha)) found.push({ kind: 'pipeline', id: own.pipelineId });
     }
   }
-  for (const text of replies) found.push(...urlRefs(text, origin));
+  // A reply's links first, then what its prose names.
+  for (const text of replies) found.push(...urlRefs(text, origin), ...proseItems(text, origin));
   const seen = new Set<string>();
   return found.filter((r) => {
     const key = refKey(r);
@@ -257,36 +259,68 @@ export const gitLabTreeUrl = (origin: GitLabOrigin, branch: string) => `${gitLab
 export const gitLabCompareUrl = (origin: GitLabOrigin, target: string, source: string) => `${gitLabProjectUrl(origin)}/-/compare/${segments(target)}...${segments(source)}`;
 export const gitLabCommitUrl = (origin: GitLabOrigin, sha: string) => `${gitLabProjectUrl(origin)}/-/commit/${encodeURIComponent(sha)}`;
 
-/** Whether an address is the Thread's GitLab project itself. */
-export function isGitLabProjectUrl(href: string, origin: GitLabOrigin): boolean {
+/** What an https address on the Thread's project has after the project's path ('' for the project itself); null for any other address. */
+function projectRest(href: string, origin: GitLabOrigin): string | null {
   let url: URL;
-  try { url = new URL(href); } catch { return false; }
-  return url.protocol === 'https:' && lower(url.hostname) === lower(origin.host) && !url.search && !url.hash && lower(decodePath(url.pathname).replace(/\/+$/, '')) === lower(`/${origin.path}`);
+  try { url = new URL(href); } catch { return null; }
+  if (url.protocol !== 'https:' || lower(url.hostname) !== lower(origin.host) || url.search || url.hash) return null;
+  const path = decodePath(url.pathname).replace(/\/+$/, '');
+  const base = `/${origin.path}`;
+  if (lower(path) === lower(base)) return '';
+  return lower(path).startsWith(`${lower(base)}/`) ? path.slice(base.length) : null;
 }
+/** Whether an address is the Thread's GitLab project itself. */
+export const isGitLabProjectUrl = (href: string, origin: GitLabOrigin) => projectRest(href, origin) === '';
+/** Whether an address is a commit of the Thread's GitLab project. */
+export const isGitLabCommitUrl = (href: string, origin: GitLabOrigin) => /^\/-\/commit\/[0-9a-f]{7,64}$/i.test(projectRest(href, origin) ?? '');
 
 /** How a reply names the item when it gave only its address: "MR !72", "Pipeline #2283401". */
 export function gitLabWords(r: GitLabRef): string {
   return `${{ mr: 'MR', issue: 'Issue', epic: 'Epic', pipeline: 'Pipeline', job: 'Job' }[r.kind]} ${refText(r)}`;
 }
 
-// "MR !72", "merge request !72", a bare "!72", "pipeline #2283401" or "pipeline 2283401" in prose.
-const TEXT_REF = /\b(?:MR|merge request) ?!(\d+)\b|(?<![\w!&#/])!(\d+)\b|\bpipeline #?(\d+)\b/gi;
+// "MR !72", "merge request !72", a bare "!72", "pipeline #2283401" or "pipeline 2283401", "issue #14" and
+// "job #501" in prose. An issue and a job need their noun: a bare "#14" is Markdown's and GitHub's too.
+const TEXT_REF = /\b(?:MR|merge request) ?!(\d+)\b|(?<![\w!&#/])!(\d+)\b|\bpipeline #?(\d+)\b|\bissue #(\d+)\b|\bjob #(\d+)\b/gi;
+/** The kind each of TEXT_REF's groups names, then proseRefs' "group/proj!72". */
+const TEXT_KINDS: GitLabKind[] = ['mr', 'mr', 'pipeline', 'issue', 'job', 'mr'];
 
 interface MdNode { type: string; value?: string; url?: string; children?: MdNode[] }
 
 const WHOLE_REF = new RegExp(`^(?:${TEXT_REF.source})$`, 'i');
 
 function textRef(m: RegExpMatchArray): GitLabRef | null {
-  const id = Number(m[1] ?? m[2] ?? m[3]);
-  return Number.isSafeInteger(id) && id > 0 ? { kind: m[3] ? 'pipeline' : 'mr', id } : null;
+  const group = TEXT_KINDS.findIndex((_, i) => m[i + 1] !== undefined);
+  if (group < 0) return null;
+  const id = Number(m[group + 1]);
+  return Number.isSafeInteger(id) && id > 0 ? { kind: TEXT_KINDS[group], id } : null;
 }
 
-/** TEXT_REF, then the project's exact path as a whole word ("group/proj", not "group/proj2" or "x/group/proj"). */
-const proseRefs = (origin: GitLabOrigin) => new RegExp(`${TEXT_REF.source}|(?<![\\w./@-])(${escape(origin.path)})(?![\\w/-]|\\.\\w)`, 'gi');
+/**
+ * TEXT_REF, then on the Thread's project: "group/proj!72", the project's exact path as a whole word
+ * ("group/proj", not "group/proj2" or "x/group/proj"), a full commit SHA, and a short one after "commit".
+ * Groups: 1-6 items (TEXT_KINDS), 7 the project, 8 and 9 a commit.
+ */
+function proseRefs(origin: GitLabOrigin) {
+  const path = escape(origin.path);
+  return new RegExp(`${TEXT_REF.source}|(?<![\\w./@-])${path}!(\\d+)\\b|(?<![\\w./@-])(${path})(?![\\w/!-]|\\.\\w)|\\b([0-9a-f]{40})\\b|\\bcommit ([0-9a-f]{7,12})\\b`, 'gi');
+}
+
+const CODE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+
+/** The merge requests and pipelines a reply names in its prose, its code left out. */
+function proseItems(text: string, origin: GitLabOrigin): GitLabRef[] {
+  const out: GitLabRef[] = [];
+  for (const m of text.slice(0, OUTPUT_LIMIT).replace(CODE, ' ').matchAll(proseRefs(origin))) {
+    const r = textRef(m);
+    if (r && (r.kind === 'mr' || r.kind === 'pipeline')) out.push(r);
+  }
+  return out;
+}
 
 /**
  * A remark plugin: merge requests and pipelines a reply names in its text link to the Thread's
- * GitLab project, and the project's exact path links to the project. Text inside links and code stays as written. A name right before a link to the
+ * GitLab project, as do the issues and jobs it names with their noun, the project's exact path and its commits. Text inside links and code stays as written. A name right before a link to the
  * same item that reads as its address or its name ("MR !36: <address>") is left out, so the item
  * shows once.
  */
@@ -308,8 +342,10 @@ export function remarkGitLabRefs(origin: GitLabOrigin) {
       let at = 0;
       for (const m of value.matchAll(prose)) {
         const end = m.index + m[0].length;
-        if (m[4]) {
-          out.push({ type: 'text', value: value.slice(at, m.index) }, { type: 'link', url: gitLabProjectUrl(origin), children: [{ type: 'text', value: m[0] }] });
+        const sha = m[8] ?? m[9];
+        const place = m[7] ? gitLabProjectUrl(origin) : sha ? gitLabCommitUrl(origin, sha.toLowerCase()) : undefined;
+        if (place) {
+          out.push({ type: 'text', value: value.slice(at, m.index) }, { type: 'link', url: place, children: [{ type: 'text', value: m[0] }] });
           at = end;
           continue;
         }
