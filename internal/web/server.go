@@ -1252,16 +1252,15 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
-	s.serveView(w, r, f, err, viewPolicy)
+	s.serveView(w, r, f, err, viewPolicy, "/api/sessions/"+url.PathEscape(id)+"/files/key/"+url.PathEscape(r.PathValue("key"))+"/")
 }
 
 // serveView answers a view or artifact route with f, opened with err, under
 // policy's Content-Security-Policy for its type: a folder named without its
-// slash moves to the slashed path.
-func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile, err error, policy func(string) string) {
+// slash moves to the slashed path under base, the route's escaped prefix.
+func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile, err error, policy func(string) string, base string) {
 	if errors.Is(err, errViewFolder) {
-		// Only the file key route gets here: the cookie-checked route redirected above.
-		target := "/api/sessions/" + url.PathEscape(id) + "/files/key/" + url.PathEscape(r.PathValue("key")) + "/" + viewPath(r.PathValue("path")) + "/"
+		target := base + viewPath(r.PathValue("path")) + "/"
 		http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- a path under /api/sessions/ built from the route's escaped values; never another host.
 		return
 	}

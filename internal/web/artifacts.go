@@ -703,5 +703,5 @@ func (s *Server) handleArtifactFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.m.ArtifactFile(id, artifact, version, r.PathValue("path"))
-	s.serveView(w, r, f, err, artifactPolicy)
+	s.serveView(w, r, f, err, artifactPolicy, "/api/sessions/"+url.PathEscape(id)+"/artifact-files/"+url.PathEscape(artifact)+"/"+strconv.Itoa(version)+"/"+url.PathEscape(r.PathValue("key"))+"/")
 }
