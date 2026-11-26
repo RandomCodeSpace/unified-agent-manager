@@ -10,8 +10,8 @@
   stays code, so prefer the path. Inline code
   counts when it holds a `/` or ends in an extension (`package.json`);
   globs, flags, `~/` paths and directories stay code. Cite a line as
-  `internal/web/server.go:120` (or `:120:5`); the preview opens marked
-  there.
+  `internal/web/server.go:120` (or `:120:5`, `:120-140`,
+  `server.go#L120`); the preview opens marked at the first line.
 - A file you created under the system temp directory (`/tmp/report.html`,
   up to 20 MiB) gets an **Open temp file** button instead. Any other path
   outside the Thread's directory stays plain text.

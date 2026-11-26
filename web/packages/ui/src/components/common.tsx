@@ -638,7 +638,7 @@ function TempFileAction({ file, children }: Readonly<{ file: { path: string; has
 function FileLink({ path, url, label: words }: Readonly<{ path: string; url: string; label?: string }>) {
   const preview = usePreview();
   const label = fileLabel(path);
-  const line = /#L(\d+)$/.exec(url)?.[1];
+  const line = /#L(\d+)(?:-L?\d+)?$/.exec(url)?.[1];
   const image = /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" title={line ? `${label.path}:${line}` : label.path} aria-label={`Open ${label.path}${line ? ` at line ${line}` : ''}`} className={cn(chipVariants({ fill: 'well' }), 'max-w-full min-w-0 align-middle text-file-link hover:bg-sunken')} onClick={event => {
@@ -1362,7 +1362,7 @@ export function Markdown({ text, streaming = false, breaks = false, tally = true
   const [hasStreamed, setHasStreamed] = useState(streaming);
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
-  const fileDemand = useFileDemand(text);
+  const fileDemand = useFileDemand(text, streaming);
   // The outline needs the whole reply (a streamed one renders in blocks), and waits for it to finish like other rich blocks.
   const outline = useMemo(() => streaming ? null : outlineOf(text), [text, streaming]);
   const root = useRef<HTMLDivElement | null>(null);

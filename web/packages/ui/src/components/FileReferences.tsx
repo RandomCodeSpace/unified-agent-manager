@@ -71,12 +71,13 @@ export function useFileVersion(path: string | null | undefined): number {
   return useSyncExternalStore(subscribe, () => (owner && path ? owner.changeCount(path) : 0));
 }
 
-export function useFileDemand(text: string) {
+/** Asks for the references under the attached element when its text changes, or stops streaming (only then do references render). */
+export function useFileDemand(text: string, streaming = false) {
   const owner = useContext(Files);
   const visible = useDetailVisibility();
   const attach = useCallback((element: HTMLElement | null) => {
     if (element && visible) return owner?.observe(element);
   }, [owner, visible]);
-  useEffect(() => { if (visible) owner?.demand(); }, [owner, visible, text]);
+  useEffect(() => { if (visible) owner?.demand(); }, [owner, visible, text, streaming]);
   return attach;
 }

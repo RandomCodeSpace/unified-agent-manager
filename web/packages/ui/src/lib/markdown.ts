@@ -58,15 +58,16 @@ export function splitBlocks(text: string): string[] {
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 /**
- * `ref` without a trailing `:line` or `:line:column` (as compilers and agents cite a place in a
- * file: `src/a.go:12`), with the line as a `#L<line>` fragment. Only a file-like remainder (a
+ * `ref` without a trailing `:line`, `:line:column` or `:line-line` (as compilers and agents cite a
+ * place in a file: `src/a.go:12`, `src/a.go:12-20`, `a.ts:3:5:`) or a bare trailing `:`, with the
+ * first line as a `#L<line>` fragment. Only a file-like remainder (a
  * "/" or a `.ext` ending) loses it, so `tel:123` stays an address; a ref with its own `?` or
  * `#` keeps everything.
  */
 function splitLine(ref: string): { ref: string; hash: string } {
-  const m = /[?#]/.test(ref) ? null : /:(\d+)(?::\d+)?$/.exec(ref);
+  const m = /[?#]/.test(ref) ? null : /:(?:(\d+)(?:[:-]\d+)?:?)?$/.exec(ref);
   const rest = m ? ref.slice(0, m.index) : ref;
-  return m && (rest.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(rest)) ? { ref: rest, hash: `#L${m[1]}` } : { ref, hash: '' };
+  return m && (rest.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(rest)) ? { ref: rest, hash: m[1] ? `#L${m[1]}` : '' } : { ref, hash: '' };
 }
 
 /** Text percent-decoded (agent, file or fragment text); a malformed escape keeps the text as written. */
@@ -139,16 +140,19 @@ export function taskFile(ref: string | undefined, workdir: string | undefined, b
 
 /**
  * Whether an inline code span's text may name a file: no whitespace, no scheme, at most
- * 300 characters, and a "/" or a `.ext` ending (1–10 letters or digits). Calls (`foo()`),
- * globs (`*.ts`), flags (`--force`), versions (`v1.2.3`), home paths (`~/x`) and
- * directories (`out/`) are not; `package.json` and `src/a.go:12` are. The Task's folder decides
- * the rest.
+ * 300 characters, and a "/" or a `.ext` ending (1–10 letters or digits), before a `#fragment`
+ * too. Calls (`foo()`), globs (`*.ts`), flags (`--force`), versions (`v1.2.3`), home paths
+ * (`~/x`), variables (`$HOME/x`) and directories (`out/`) are not; `package.json`,
+ * `src/a.go:12`, `a.go#L10` and route files (`app/[id]/page.tsx`, `src/(app)/x.ts`,
+ * `app/$id.tsx`) are. The Task's folder decides the rest.
  */
 export function looksLikePath(text: string): boolean {
   text = splitLine(text).ref;
-  if (!text || text.length > 300 || /[\s()[\]{}*?<>|"'`$\\]/.test(text) || SCHEME.test(text)) return false;
-  if (/^[-~]/.test(text) || text.endsWith('/') || /^v?\d+(\.\d+)+$/i.test(text)) return false;
-  return text.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(text);
+  if (!text || text.length > 300 || /[\s{}*?<>|"'`\\]/.test(text) || SCHEME.test(text)) return false;
+  // Brackets, parentheses and `$` only as route folder or file names: in a path that is no call.
+  if (/[()[\]$]/.test(text) && (!text.includes('/') || text.endsWith(')'))) return false;
+  if (/^[-~$]/.test(text) || text.endsWith('/') || /^v?\d+(\.\d+)+$/i.test(text)) return false;
+  return text.includes('/') || /\.[A-Za-z0-9]{1,10}(?:#[^#]*)?$/.test(text);
 }
 
 /**

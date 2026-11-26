@@ -77,17 +77,22 @@ test('receipts stamp the claims the turn record contradicts, list the unrecorded
   await expect(conv.getByRole('list', { name: 'Receipts' }).getByRole('listitem')).toHaveCount(2);
 });
 
-// Product bug: about 1 run in 25 under load the page never asks /files/resolve for on-screen references, so they stay plain code.
-test.fixme('a file reference tag opens the preview at the cited line, and a Markdown link to a file previews it', async ({ page, project, model, workdir }) => {
+// A reference renders only once its block stops streaming: that alone, with no new text, must ask for it.
+test('a file reference tag opens the preview at the cited line, and a Markdown link to a file previews it', async ({ page, project, model, workdir }) => {
   fs.mkdirSync(path.join(workdir, 'src'));
   fs.writeFileSync(path.join(workdir, 'src', 'app.go'), Array.from({ length: 40 }, (_, i) => `// line ${i + 1}`).join('\n') + '\n');
-  model.reply('cite a file', 'See `src/app.go:12` and [the readme](README.md).');
+  fs.mkdirSync(path.join(workdir, 'app', '[id]'), { recursive: true });
+  fs.writeFileSync(path.join(workdir, 'app', '[id]', 'page.tsx'), 'export default function Page() {}\n');
+  model.reply('cite a file', 'See `src/app.go:12`, `src/app.go:20-25`, `app/[id]/page.tsx` and [the readme](README.md).');
   await startThread(page, project, 'cite a file');
   const conv = conversation(page);
   await expect(threadState(page, 'Finished')).toBeVisible();
   const tag = conv.getByRole('link', { name: /^Open \S*src\/app\.go at line 12$/ });
   await expect(tag).toContainText('app.go');
   await expect(tag).toContainText('12');
+  // A line range and a route folder name link too.
+  await expect(conv.getByRole('link', { name: /^Open \S*src\/app\.go at line 20$/ })).toBeVisible();
+  await expect(conv.getByRole('link', { name: /^Open \S*app\/\[id\]\/page\.tsx$/ })).toBeVisible();
   await tag.click();
   const preview = page.getByRole('complementary', { name: 'Preview app.go' });
   await expect(preview).toBeVisible();
