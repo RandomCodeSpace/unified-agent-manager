@@ -177,7 +177,7 @@ describe('app shell', () => {
     await user.click(fold);
     await waitFor(() => expect(fold.getAttribute('aria-expanded')).toBe('true'));
     const side = await sidebar();
-    expect(side.getByRole('button', { name: /Doctor: add terminal line/ }).getAttribute('aria-current')).toBe('true');
+    expect(document.querySelector('nav[aria-label="Threads"] [aria-current="true"]')?.textContent).toContain('Doctor: add terminal line');
     await user.click(side.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(header().textContent).toBe('Settings'));
     expect(section.closest('[inert][aria-hidden="true"]')).not.toBeNull();
@@ -190,7 +190,7 @@ describe('app shell', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
     expect(screen.getByRole('region', { name: 'Conversation' })).toBe(section);
     expect(fold.getAttribute('aria-expanded')).toBe('true');
-    expect(side.getByRole('button', { name: /Doctor: add terminal line/ }).getAttribute('aria-current')).toBe('true');
+    expect(document.querySelector('nav[aria-label="Threads"] [aria-current="true"]')?.textContent).toContain('Doctor: add terminal line');
   });
 });
 
