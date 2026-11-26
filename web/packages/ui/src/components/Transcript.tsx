@@ -15,7 +15,7 @@ import { usePreview } from '../lib/previewContext';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { formatCount, lineCountsText } from '../lib/cost';
-import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
+import { agentIdOf, approvalMark, BUDGET_STOPPED, askedOn, callProduct, isPublishCall, callWords, changedFiles, editCounts, firstLine, foldLabel, scratchPlan, currentStep, duration, foregroundItems, formatMs, itemTook, completedDuration, localToolMs, promoted, stepResult, summarizeTurn, timelineRows, timingForTurn, turnElapsed, showTurnEnd, linkInteractions, mergeByTime, peerText, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type StepIcon, type StepWords, type TimelineRow, type TurnSummary, type WordTone } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { isRealUserTurn, openCall, turnState } from '../lib/turnState';
 import { namedSubagent, parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
@@ -50,6 +50,7 @@ const TurnChangesReader = lazy(() => import('./TurnChanges').then(m => ({ defaul
 
 const ChartCard = lazy(() => import('./Chart').then((m) => ({ default: m.ChartCard })));
 const SurfaceCard = lazy(() => import('./Surface').then((m) => ({ default: m.SurfaceCard })));
+const ArtifactCard = lazy(() => import('./Artifacts').then((m) => ({ default: m.ArtifactCard })));
 const InlinePatch = lazy(() => import('./Changes').then((m) => ({ default: m.InlinePatch })));
 
 
@@ -168,7 +169,7 @@ export const Transcript = memo(function Transcript({ sessionId, planVersion, pla
     const kind = callProduct(item);
     return kind ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} className={arrival(item.id)} /> : null;
   };
-  const own = (item: Item) => callProduct(item) === 'chart' || callProduct(item) === 'surface';
+  const own = (item: Item) => callProduct(item) === 'chart' || callProduct(item) === 'surface' || callProduct(item) === 'artifact';
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   // A turn's asides chip sits in its reply's foot once it ended with one, else in its message's foot.
@@ -1644,6 +1645,7 @@ const CallProduct = memo(function CallProduct({ item, sessionId, className }: { 
     <div data-history-anchor={item.id} className={className}>
       {isChartCall(item) && sessionId ? <Suspense fallback={<Skeleton label="Loading the chart…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />}><ChartCard sessionId={sessionId} callId={item.id} /></Suspense>
         : isSurfaceCall(item) && sessionId ? <Suspense fallback={<Skeleton label="Loading the card…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />}><SurfaceCard sessionId={sessionId} callId={item.id} /></Suspense>
+        : isPublishCall(item) && sessionId ? <Suspense fallback={<Skeleton label="Loading the page…" rows={2} className="rounded-lg bg-raised p-4 shadow-raised" />}><ArtifactCard sessionId={sessionId} callId={item.id} /></Suspense>
         : <ToolImages item={item} sessionId={sessionId} />}
     </div>
   );

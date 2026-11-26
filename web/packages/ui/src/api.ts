@@ -853,6 +853,11 @@ export interface SurfaceAction { surface_id: string; name: string; source_compon
 /** A skill a Thread's skill list can name (`thread-skills-v1`). */
 export interface SkillOption { name: string; description?: string }
 
+/** One published snapshot of an artifact; `entry` is its page, `call_id` the `uam_publish` call that made it. */
+export interface ArtifactVersion { version: number; at: string; entry: string; files: number; bytes: number; call_id?: string }
+/** A page a Thread published with `uam_publish`, its versions oldest first. */
+export interface Artifact { id: string; title: string; source: string; versions: ArtifactVersion[] }
+
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
   title: string;
@@ -986,6 +991,8 @@ export interface SessionSummary {
   pending: number | boolean;
   /** Messages to or from this Thread that wait for the owner to allow them (`message_pairs`); absent when none. */
   messages_held?: number;
+  /** Pages the Thread published with `uam_publish`. */
+  artifacts?: number;
   /** The request the Task waits on, for the Task list's status line and notices; absent when nothing waits, and from older servers. */
   ask?: Ask;
   /** When the provider last reported anything for the open conversation, to the minute; absent until it does. */
@@ -2665,6 +2672,11 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     rawFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`),
     /** Any file of the Task's directory by its "/"-separated path relative to it, as a path so a page's relative links resolve to its siblings. */
     viewFileUrl: (id: string, path: string) => url(`/api/sessions/${enc(id)}/files/view/${path.split('/').map(enc).join('/')}`),
+    /** A published artifact's page: that version's, or without one the latest's (the stable link). */
+    artifactUrl: (id: string, artifactId: string, version?: number) => url(`/api/sessions/${enc(id)}/artifacts/${enc(artifactId)}/${version ? `v/${version}/` : ''}`),
+    artifacts: async (id: string, signal?: AbortSignal) => (await call<{ artifacts: Artifact[] }>('GET', `/api/sessions/${enc(id)}/artifacts`, undefined, false, signal)).artifacts,
+    /** Deletes one version, or without one the whole artifact. */
+    deleteArtifact: (id: string, artifactId: string, version?: number) => call<void>('DELETE', `/api/sessions/${enc(id)}/artifacts/${enc(artifactId)}${version ? `/versions/${version}` : ''}`),
     /** A background shell's output after `cursor`; from its start with an empty cursor. */
     backgroundOutput: (id: string, taskId: string, cursor: string) => call<BackgroundOutput>('GET', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/output?cursor=${enc(cursor)}`),
     cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),

@@ -1,6 +1,6 @@
 ---
 name: uam
-description: Guide to uam, the browser app this Thread runs in, and its uam and uam_* tools. Load it before you show the owner a file, image, PDF, HTML page, Mermaid diagram or chart (uam_show_file, uam_chart); read Thread or Project state, search Threads' conversations or read one (uam); start another Thread (uam_create_task); message another Thread or answer one (uam_send); ask the owner a question with ask_user, or several at once with a form (uam_form); start subagents; suggest a slash command or autopilot; and when the owner mentions uam, a Thread, a Project, their phone or the browser.
+description: Guide to uam, the browser app this Thread runs in, and its uam and uam_* tools. Load it before you show the owner a file, image, PDF, HTML page, Mermaid diagram or chart (uam_show_file, uam_chart); publish a page or site you built for the owner to open (uam_publish); read Thread or Project state, search Threads' conversations or read one (uam); start another Thread (uam_create_task); message another Thread or answer one (uam_send); ask the owner a question with ask_user, or several at once with a form (uam_form); start subagents; suggest a slash command or autopilot; and when the owner mentions uam, a Thread, a Project, their phone or the browser.
 ---
 
 # uam
@@ -22,6 +22,8 @@ needs, all in one step when it needs several:
   images and `uam_show_file`.
 - `references/diagrams.md`: a Mermaid diagram.
 - `references/charts.md`: a chart (`uam_chart`).
+- `references/publish.md`: publishing a page or small site you built, with
+  versions (`uam_publish`).
 - `references/forms.md`: asking several things at once, or offering buttons
   (`uam_form`).
 - `references/surfaces.md`: a live card the owner acts on or that you keep

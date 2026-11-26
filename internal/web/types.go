@@ -355,6 +355,8 @@ type SessionSummary struct {
 	// MessagesHeld counts the messages to or from this Thread that wait for
 	// the owner to allow them (messages.go).
 	MessagesHeld int `json:"messages_held,omitempty"`
+	// Artifacts counts the pages the Thread published with uam_publish.
+	Artifacts int `json:"artifacts,omitempty"`
 	// Mode is safe, yolo or assisted. A yolo Task's permission requests are
 	// allowed once without asking, an assisted Task's when the provider's
 	// assisted review approves them; questions still wait for the user.

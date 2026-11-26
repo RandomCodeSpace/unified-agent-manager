@@ -45,6 +45,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Branch:       s.branch,
 		TitlePending: s.titling || s.titleWait != nil,
 		MessagesHeld: m.heldMessagesLocked(s.id),
+		Artifacts:    s.artifacts,
 	}
 	out.BranchLinkURL, out.BranchLinkBranch = m.branchLinkLocked(s)
 	if s.place != nil && s.place.Worktree != "" {

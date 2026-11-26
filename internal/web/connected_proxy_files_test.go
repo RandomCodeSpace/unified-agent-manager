@@ -58,6 +58,7 @@ func newConnectedFileFixture(t *testing.T) connectedFileFixture {
 	mux.HandleFunc("POST /api/sessions/{id}/file-grants", remote.srv.handleCreateGrant)
 	mux.HandleFunc("DELETE /api/sessions/{id}/file-grants/{grant_id}", remote.srv.handleDeleteGrant)
 	mux.HandleFunc(grantKeyRoute, remote.srv.handleRemoteGrantFile)
+	mux.HandleFunc(artifactViewRoute, remote.srv.handleRemoteArtifactFile)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", remote.srv.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", remote.srv.handleAttachment)
 	proxy := newConnectedProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -272,6 +273,8 @@ func TestConnectedFileKeysRedactedInURLs(t *testing.T) {
 	for _, value := range []string{
 		"/api/connected/connection/files/task/" + secret + "/index.html",
 		"https://home.example/api/connected/connection/grants/task/grant/" + secret,
+		"/api/connected/connection/artifact-files/task/0123456789abcdef/2/" + secret + "/style.css",
+		"/api/connected/connection/artifact-files/task/0123456789abcdef/" + secret,
 		"https://home.example/%61pi/%63onnected/connection/files/task/" + secret + "/index.html",
 		"http://[invalid/api/connected/connection/files/task/" + secret,
 		"https://home.example/%61pi/%63onnected/connection/files/task/" + secret + "/%",
@@ -367,5 +370,36 @@ func TestConnectedGrantExpiryToleratesClockSkew(t *testing.T) {
 		if name == "normal" && !grant.ExpiresAt.Equal(expires.Truncate(time.Second)) && grant.ExpiresAt.Sub(expires).Abs() > time.Second {
 			t.Fatalf("normal expiry changed: %v != %v", grant.ExpiresAt, expires)
 		}
+	}
+}
+
+// A connected Thread's published page opens under a key the home issued,
+// scoped to that one version, and loads its relative assets through it.
+func TestConnectedArtifactUsesHomeKeyScopedToItsVersion(t *testing.T) {
+	f := newConnectedFileFixture(t)
+	res := publishCall(t, f.remote.prov.Last(), "publish-1", `{"path":"out","title":"Out"}`)
+	match := artifactIDText.FindStringSubmatch(res.Text)
+	if res.Failed || match == nil {
+		t.Fatalf("publish = %+v", res)
+	}
+	initial := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/artifacts/"+match[1]+"/v/1/", "", nil)
+	location, cookies := initial.Header.Get("Location"), initial.Cookies()
+	prefix := "/api/connected/" + f.proxy.target.ID + "/artifact-files/" + f.task.ID + "/" + match[1] + "/1/"
+	if initial.StatusCode != http.StatusFound || !strings.HasPrefix(location, prefix) || !strings.HasSuffix(location, "/") || len(cookies) != 1 || cookies[0].Path != prefix {
+		t.Fatalf("artifact bootstrap=%d location=%q cookies=%+v", initial.StatusCode, location, cookies)
+	}
+	if response := f.readGrant(t, "GET", location, nil, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("artifact without companion=%d", response.StatusCode)
+	}
+	page := f.readGrant(t, "GET", location, cookies, nil)
+	if body := connectedBody(t, page); page.StatusCode != http.StatusOK || !strings.Contains(body, `href="style.css"`) || page.Header.Get("Content-Security-Policy") != viewSecurity {
+		t.Fatalf("artifact page=%d policy=%q body=%q", page.StatusCode, page.Header.Get("Content-Security-Policy"), body)
+	}
+	if style := f.readGrant(t, "GET", location+"style.css", cookies, nil); style.StatusCode != http.StatusOK || connectedBody(t, style) != "body { color: red; }" {
+		t.Fatalf("artifact style=%d", style.StatusCode)
+	}
+	other := strings.Replace(location, "/1/", "/2/", 1)
+	if response := f.readGrant(t, "GET", other, cookies, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("another version under this key=%d", response.StatusCode)
 	}
 }

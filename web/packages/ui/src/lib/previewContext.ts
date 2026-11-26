@@ -24,3 +24,5 @@ export type OpenPreview = (target: PreviewTarget, opener: HTMLElement) => void;
 export const PreviewContext = createContext<OpenPreview | null>(null);
 export const usePreview = () => useContext(PreviewContext);
 export const TempRootContext = createContext<{ temp_root?: string; temp_root_aliases?: readonly string[] } | null>(null);
+/** Opens the Thread's list of published pages beside the conversation (an artifact card's Versions). */
+export const ArtifactsContext = createContext<(() => void) | null>(null);

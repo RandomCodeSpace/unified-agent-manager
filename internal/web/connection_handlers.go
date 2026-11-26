@@ -66,6 +66,7 @@ func (s *Server) connectionRoutes(mux *http.ServeMux) {
 	s.federationMux = http.NewServeMux()
 	s.federationMux.HandleFunc("GET /api/sessions/{id}/files/view/{path...}", s.handleRemoteViewFile)
 	s.federationMux.HandleFunc(grantKeyRoute, s.handleRemoteGrantFile)
+	s.federationMux.HandleFunc(artifactViewRoute, s.handleRemoteArtifactFile)
 	s.federationMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) })
 }
 

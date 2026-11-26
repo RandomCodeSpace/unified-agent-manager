@@ -346,8 +346,9 @@ func (m *Manager) loadUploads() {
 			continue
 		}
 		uploads := readUploads(dir)
+		artifacts := len(readArtifacts(filepath.Join(dir, artifactsDir)))
 		m.mu.Lock()
-		s.uploads = uploads
+		s.uploads, s.artifacts = uploads, artifacts
 		m.mu.Unlock()
 	}
 }

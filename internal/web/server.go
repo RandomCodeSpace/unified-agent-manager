@@ -338,6 +338,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}/diff", s.handleItemDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.chartRoutes(mux)
+	s.artifactRoutes(mux)
 	s.surfaceRoutes(mux)
 	s.messageRoutes(mux)
 	s.routineRoutes(mux)
@@ -417,7 +418,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // checks the key.
 func (s *Server) fileKeyRequest(r *http.Request) bool {
 	_, pattern := s.mux.Handler(r)
-	return pattern == fileKeyRoute || pattern == grantKeyRoute
+	return pattern == fileKeyRoute || pattern == grantKeyRoute || pattern == artifactKeyRoute
 }
 
 // refuse answers a request the checks turn away. Its body is never read, but
@@ -1251,6 +1252,12 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
+	s.serveView(w, r, f, err)
+}
+
+// serveView answers a view or artifact route with f, opened with err: a
+// folder named without its slash moves to the slashed path.
+func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile, err error) {
 	if errors.Is(err, errViewFolder) {
 		// Only the file key route gets here: the cookie-checked route redirected above.
 		target := "/api/sessions/" + url.PathEscape(id) + "/files/key/" + url.PathEscape(r.PathValue("key")) + "/" + viewPath(r.PathValue("path")) + "/"

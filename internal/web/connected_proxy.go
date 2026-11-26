@@ -20,6 +20,7 @@ func (s *Server) connectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(connectedProxyRoute, s.handleConnectedProxy)
 	mux.HandleFunc(connectedViewKeyRoute, s.handleConnectedViewKey)
 	mux.HandleFunc(connectedGrantKeyRoute, s.handleConnectedGrantKey)
+	mux.HandleFunc(connectedArtifactKeyRoute, s.handleConnectedArtifactKey)
 }
 
 // connectedLocalRequest preserves escaping while dropping exactly the home
@@ -127,6 +128,10 @@ func (s *Server) handleConnectedProxy(w http.ResponseWriter, r *http.Request) {
 	local.URL.RawQuery = query.Encode()
 	if pattern == "GET /api/sessions/{id}/files/view/{path...}" {
 		s.redirectConnectedView(w, r, local, target)
+		return
+	}
+	if pattern == artifactViewRoute {
+		s.redirectConnectedArtifact(w, r, local, target)
 		return
 	}
 	// Temporary grants are only readable through the home grant wrapper. The
@@ -342,7 +347,7 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 
 func connectedResourcePattern(pattern string) bool {
 	switch pattern {
-	case "GET /api/sessions/{id}/files/view/{path...}", "GET /api/sessions/{id}/files/raw", "GET /api/sessions/{id}/attachments/{attachment_id}", "GET /api/sessions/{id}/export", grantKeyRoute:
+	case "GET /api/sessions/{id}/files/view/{path...}", "GET /api/sessions/{id}/files/raw", "GET /api/sessions/{id}/attachments/{attachment_id}", "GET /api/sessions/{id}/export", grantKeyRoute, artifactViewRoute:
 		return true
 	default:
 		return false

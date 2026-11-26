@@ -938,11 +938,17 @@ export function isFileDeclaration(item: Item): boolean {
     && typeof declaration.path === 'string' && declaration.path.startsWith('/');
 }
 
-/** Charts and returned images stand in the answer; file declarations stay in activity. */
-export function callProduct(item: Item): 'chart' | 'surface' | 'images' | null {
+/** A completed `uam_publish` call has a card for the page it published; a refused one is an ordinary failed call. */
+export function isPublishCall(item: Item): boolean {
+  return item.kind === 'tool' && item.tool?.name === 'uam_publish' && item.tool.status === 'completed';
+}
+
+/** Charts, published pages and returned images stand in the answer; file declarations stay in activity. */
+export function callProduct(item: Item): 'chart' | 'surface' | 'artifact' | 'images' | null {
   if (item.kind !== 'tool') return null;
   if (isChartCall(item)) return 'chart';
   if (isSurfaceCall(item)) return 'surface';
+  if (isPublishCall(item)) return 'artifact';
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 

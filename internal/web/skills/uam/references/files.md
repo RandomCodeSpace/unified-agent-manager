@@ -17,7 +17,8 @@
   outside the Thread's directory stays plain text.
 - The preview shows images, and plays PDFs, audio and video in place. An HTML page runs in a
   sandboxed frame and loads its relative CSS, scripts and images from the
-  Thread's directory. Other text shows its first 64 KiB.
+  Thread's directory. Other text shows its first 64 KiB. To publish a page
+  the owner keeps, with versions, use `uam_publish` (`publish.md`).
 - `uam_show_file` checks one file and records it for the owner: `path`
   (required), optional `title` (up to 128 characters) and `type_hint`
   (such as `html`). It never reads the file. A refusal means the path is

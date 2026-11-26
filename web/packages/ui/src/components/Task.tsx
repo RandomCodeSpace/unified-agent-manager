@@ -1,13 +1,13 @@
 import { useApi } from '../ApiContext';
 import { planKey } from '../lib/richMarkdown';
-import { ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { AppWindow, ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { Contained } from './VisualBoundary';
 import { flushSync } from 'react-dom';
 import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace, type TodoView } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
-import { PreviewContext, TempRootContext } from '../lib/previewContext';
+import { ArtifactsContext, PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
@@ -54,7 +54,7 @@ import { Tip } from './ui/tooltip';
 // Thread is idle. The module, once here, is rendered directly: it never suspends, so an open never
 // waits for React's fallback throttle (about 300 ms) the lazy wrappers incur on their first render.
 /** The lazy side panels that have rendered once: a lazy wrapper's first render suspends, to an empty fallback. */
-const lazyShown = new Set<'gitlab' | 'changes' | 'charts'>();
+const lazyShown = new Set<'gitlab' | 'changes' | 'charts' | 'artifacts'>();
 const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.add('gitlab'); return m; }));
 import type { GitLabOpenItem } from './GitLabSheet';
 import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
@@ -66,6 +66,7 @@ const NO_SURFACES: Readonly<Record<string, number>> = {};
 const ChangesSheet = lazy(() => import('./Changes').then((m) => { lazyShown.add('changes'); return { default: m.ChangesSheet }; }));
 /** The pinned charts load with their first opening, never with the Task. */
 const PinnedChartsPanel = lazy(() => import('./Chart').then((m) => { lazyShown.add('charts'); return { default: m.PinnedChartsPanel }; }));
+const ArtifactsPanel = lazy(() => import('./Artifacts').then((m) => { lazyShown.add('artifacts'); return { default: m.ArtifactsPanel }; }));
 
 interface Props {
   session: SessionDetail;
@@ -146,6 +147,8 @@ interface HeaderProps {
   onOpenChanges: () => void;
   chartsOpen: boolean;
   onToggleCharts: () => void;
+  artifactsOpen: boolean;
+  onToggleArtifacts: () => void;
   terminal: boolean;
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
@@ -232,7 +235,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
-const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -264,6 +267,8 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
   const branchLabel = session.branch_link_branch === branch ? `Open ${branch} on the web` : `${branch} is not pushed: open ${session.branch_link_branch}`;
   if (fold && branchHref) folded.push({ key: 'branch-link', label: branchLabel, icon: <BranchLinkIcon href={branchHref} />, onSelect: () => window.open(branchHref, '_blank', 'noopener,noreferrer') });
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
+  const published = session.artifacts ?? 0;
+  if (fold && published > 0) folded.push({ key: 'artifacts', label: artifactsOpen ? 'Close published pages' : `Published pages, ${published}`, icon: <AppWindow />, onSelect: onToggleArtifacts });
   if (fold && terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
@@ -349,6 +354,15 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
             </Button>
           </Tip>
         )}
+        {published > 0 && !fold && (
+          <Tip label="Pages this thread published">
+            <Button id="artifacts-link" size="md" aria-pressed={artifactsOpen} aria-label={`Published pages, ${published}`} className="px-2 text-muted" onClick={onToggleArtifacts}>
+              <AppWindow />
+              {labels && <span>Pages</span>}
+              <span className="tabular-nums text-ink">{published}</span>
+            </Button>
+          </Tip>
+        )}
         {terminal && project && !fold && (
           <Tip label={`Terminal in ${project.name}`}>
             <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
@@ -391,6 +405,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [gitlabItem, setGitlabItem] = useState<GitLabOpenItem | null>(null);
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
+  /** The Thread's published pages beside the conversation, a right panel like the pinned charts. */
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
@@ -455,15 +471,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (locateError) locateNote.current?.focus({ preventScroll: true });
   }, [locateError]);
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setGitlabOpen(false); setChartsOpen(false); setArtifactsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   // Paths written through the folder's real path (symbolic links resolved) name the same files.
   registerRealWorkdir(session.workdir, session.real_workdir);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || gitlabOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, gitlabOpen, chartsOpen, output, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || gitlabOpen || chartsOpen || artifactsOpen || output) closePreview(false); }, [sheetOpen, gitlabOpen, chartsOpen, artifactsOpen, output, closePreview]);
   // The Changes sheet can open from outside the header (a settle guard); it replaces the other panels.
   if (sheetOpen && gitlabOpen) setGitlabOpen(false);
   if (sheetOpen && chartsOpen) setChartsOpen(false);
+  if (sheetOpen && artifactsOpen) setArtifactsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
   const log = useRef<HTMLDivElement>(null);
@@ -697,6 +714,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const sheetPresence = usePresence(sheetOpen);
   const gitlabPresence = usePresence(gitlabOpen);
   const chartsPresence = usePresence(chartsOpen);
+  const artifactsPresence = usePresence(artifactsOpen);
   const outputPresence = usePresence(!!output);
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
@@ -709,7 +727,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const previewClosed = () => { previewPresence.onClosed(); setLastPreview(null); };
   if (!preview.selection && lastPreview && (!active || sheetOpen)) previewClosed();
   // Inline, a panel replaced by another leaves at once (no slide-out), so the column takes one width step; not while the incoming one's first render suspends, which would widen the column to full.
-  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
+  if (sidePanelInline && ((sheetOpen && lazyShown.has('changes')) || (gitlabOpen && lazyShown.has('gitlab')) || (chartsOpen && lazyShown.has('charts')) || (artifactsOpen && lazyShown.has('artifacts')) || output || preview.selection)) for (const [presence, open] of [[sheetPresence, sheetOpen], [gitlabPresence, gitlabOpen], [chartsPresence, chartsOpen], [artifactsPresence, artifactsOpen], [outputPresence, !!output], [{ mounted: previewPresence.mounted, onClosed: previewClosed }, !!preview.selection]] as const) if (presence.mounted && !open) presence.onClosed();
   // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it where this Thread left it.
   const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const changesPlace = useRef<ChangesPlace | null>(null);
@@ -718,6 +736,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setGitlabOpen(false);
     setChartsOpen(false);
+    setArtifactsOpen(false);
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
@@ -741,6 +760,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const openGitlabItem = useCallback((refs: GitLabRef[], ref: GitLabRef) => {
     closePreview(false);
     setChartsOpen(false);
+    setArtifactsOpen(false);
     setOutput(null);
     onSheet(false);
     setGitlabItem({ refs, ref });
@@ -761,15 +781,27 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setGitlabOpen(false);
     setOutput(null);
     onSheet(false);
+    setArtifactsOpen(false);
     setChartsOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeCharts = useCallback(() => setChartsOpen(false), []);
+  const toggleArtifacts = useCallback(() => {
+    closePreview(false);
+    setGitlabOpen(false);
+    setOutput(null);
+    onSheet(false);
+    setChartsOpen(false);
+    setArtifactsOpen((open) => !open);
+  }, [onSheet, closePreview]);
+  const closeArtifacts = useCallback(() => setArtifactsOpen(false), []);
+  const openArtifacts = useCallback(() => { if (!artifactsOpen) toggleArtifacts(); }, [artifactsOpen, toggleArtifacts]);
   const showOutput = useCallback((next: CommandOutput) => {
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
     setGitlabOpen(false);
     setChartsOpen(false);
+    setArtifactsOpen(false);
     onSheet(false, false);
     setOutput(next);
   }, [closePreview, onSheet]);
@@ -786,6 +818,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const closeSidePanels = useCallback(() => {
     closePreview(false);
     setChartsOpen(false);
+    setArtifactsOpen(false);
     setOutput(null);
     onSheet(false, false);
   }, [closePreview, onSheet]);
@@ -1032,13 +1065,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SessionContext.Provider value={session.id}>
     <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
+    <ArtifactsContext.Provider value={openArtifacts}>
     <TempRootContext.Provider value={tempRoots}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent} onOutput={showOutput}>
     <GitLabItemsContext.Provider value={gitlabItems}>
     <ReplyContext.Provider value={replyTools}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && !viewed && (
@@ -1170,6 +1204,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       <Contained what="This panel" of={sheetOpen}>{sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} onOpenFile={openChangedFile} memory={changesPlace} /></Suspense>}</Contained>
       <Contained what="This panel" of={gitlabOpen}>{gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}</Contained>
       <Contained what="This panel" of={chartsOpen}>{chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}</Contained>
+      <Contained what="This panel" of={artifactsOpen}>{artifactsPresence.mounted && <Suspense fallback={null}><ArtifactsPanel sessionId={session.id} count={session.artifacts ?? 0} inline={sidePanelInline} open={artifactsOpen} onClose={closeArtifacts} onClosed={artifactsPresence.onClosed} onOpen={preview.open} /></Suspense>}</Contained>
       <Contained what="This panel" of={!!output}>{outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}</Contained>
       <Contained what="This panel" of={!!preview.selection}>{previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}</Contained>
     </div>
@@ -1177,6 +1212,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     </GitLabItemsContext.Provider>
     </SubagentScope>
     </TempRootContext.Provider>
+    </ArtifactsContext.Provider>
     </PreviewContext.Provider>
     </WorkdirContext.Provider>
     </SessionContext.Provider>
