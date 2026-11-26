@@ -188,6 +188,9 @@ var multipleChoice = regexp.MustCompile(`(?i)\s*\((?:choose|select|pick)\s+(?:an
 func questionOf(req copilot.UserInputRequest) agentapi.Question {
 	q := agentapi.Question{Choices: req.Choices, Custom: true}
 	q.Text, q.Multiple = questionText(req.Question)
+	if c := req.ImageAttachmentConstraints; c != nil {
+		q.Images = &agentapi.ImageLimits{MIMETypes: c.AllowedMIMETypes, MaxBytes: c.MaxBytesPerImage, MaxCount: int(c.MaxCount)}
+	}
 	return q
 }
 
@@ -204,7 +207,7 @@ func questionText(raw string) (string, bool) {
 // blocks until the user answers or the conversation ends. The owner may always
 // type their own answer, even when the agent sent allowFreeform false: the CLI
 // hands a free-form answer to the model like any other.
-func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInputInvocation) (copilot.UserInputResponse, error) {
+func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInputInvocation) (copilot.AttributedUserInputResponse, error) {
 	in := &interaction{
 		Interaction: agentapi.Interaction{
 			ID:        "question-" + rand.Text(),
@@ -219,7 +222,7 @@ func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInput
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return copilot.UserInputResponse{}, errNoUser
+		return copilot.AttributedUserInputResponse{}, errNoUser
 	}
 	c.askedLocked(in, time.Now())
 	c.pending[in.ID] = in

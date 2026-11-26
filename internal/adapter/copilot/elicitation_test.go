@@ -48,14 +48,14 @@ func pendingElicitation(t *testing.T, h webHarness) *agentapi.Interaction {
 func TestWebElicitationRegisteredOnCreateAndResume(t *testing.T) {
 	h := openWeb(t)
 	create := h.fc.create[0]
-	if create.Interaction.OnElicitationRequest == nil || create.Interaction.AskUserVariant != copilot.AskUserVariantLegacy || create.Interaction.OnUserInputRequest == nil {
+	if create.Interaction.OnElicitationRequest == nil || create.Interaction.AskUserVariant != copilot.AskUserVariantLegacy || create.Interaction.OnAttributedUserInputRequest == nil {
 		t.Fatalf("create: elicitation %v, ask_user variant %q", create.Interaction.OnElicitationRequest != nil, create.Interaction.AskUserVariant)
 	}
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{ConversationID: "c-2", Workdir: "/w", Events: &recSink{}}); err != nil {
 		t.Fatal(err)
 	}
 	resume := h.fc.resume[0]
-	if resume.Interaction.OnElicitationRequest == nil || resume.Interaction.AskUserVariant != copilot.AskUserVariantLegacy || resume.Interaction.OnUserInputRequest == nil {
+	if resume.Interaction.OnElicitationRequest == nil || resume.Interaction.AskUserVariant != copilot.AskUserVariantLegacy || resume.Interaction.OnAttributedUserInputRequest == nil {
 		t.Fatalf("resume: elicitation %v, ask_user variant %q", resume.Interaction.OnElicitationRequest != nil, resume.Interaction.AskUserVariant)
 	}
 }

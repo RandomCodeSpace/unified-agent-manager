@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -30,7 +31,7 @@ type interaction struct {
 }
 
 type userReply struct {
-	resp   copilot.UserInputResponse
+	resp   copilot.AttributedUserInputResponse
 	elicit copilot.ElicitationResult
 	err    error
 }
@@ -128,7 +129,10 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 		r.err = errDeclined
 		in.State = agentapi.InteractionRejected
 	} else {
-		if len(ans.Answers) != 1 || len(ans.Answers[0]) == 0 || slices.Contains(ans.Answers[0], "") {
+		if len(ans.Images) > 0 && q.Images == nil {
+			return errors.New("copilot: this question takes no images")
+		}
+		if len(ans.Answers) != 1 || len(ans.Answers[0]) == 0 && len(ans.Images) == 0 || slices.Contains(ans.Answers[0], "") {
 			return errors.New("copilot: a question needs an answer")
 		}
 		if len(ans.Answers[0]) > 1 && !q.Multiple {
@@ -140,7 +144,7 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 		if !chosen && !q.Custom {
 			return errors.New("copilot: the answer must be one of the offered choices")
 		}
-		r.resp = copilot.UserInputResponse{Answer: a, WasFreeform: !chosen}
+		r.resp = copilot.AttributedUserInputResponse{UserInputResponse: copilot.UserInputResponse{Answer: a, WasFreeform: !chosen}, Attachments: imageAttachments(ans.Images)}
 		in.State = agentapi.InteractionAnswered
 	}
 	delete(c.pending, in.ID)
@@ -148,6 +152,15 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 	c.emitInteractionLocked(in)
 	in.reply <- r
 	return nil
+}
+
+// imageAttachments are an answer's images as the CLI takes them: base64, no data URL prefix.
+func imageAttachments(images []agentapi.Blob) []rpc.UserInputImageAttachment {
+	var out []rpc.UserInputImageAttachment
+	for _, b := range images {
+		out = append(out, rpc.UserInputImageAttachment{Type: rpc.UserInputImageAttachmentTypeImage, MIMEType: b.MIME, Data: base64.StdEncoding.EncodeToString(b.Data), DisplayName: copilot.String(b.Name)})
+	}
+	return out
 }
 
 // optionLabel returns the label the user saw for a permission option.

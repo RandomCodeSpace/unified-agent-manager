@@ -1653,6 +1653,16 @@ type Question struct {
 	// Field is the typed form field this question asks for, on an
 	// elicitation form only.
 	Field *Field `json:"field,omitempty"`
+	// Images are the images an answer may carry, as the provider advertised
+	// them; nil means the answer is text only.
+	Images *ImageLimits `json:"images,omitempty"`
+}
+
+// ImageLimits bound the images one answer may carry.
+type ImageLimits struct {
+	MIMETypes []string `json:"mime_types"`
+	MaxBytes  int64    `json:"max_bytes"`
+	MaxCount  int      `json:"max_count"`
 }
 
 // Answer responds to an interaction. Permission answers set Decision; question
@@ -1668,6 +1678,11 @@ type Answer struct {
 	// Auto marks an answer UAM gave on its own (yolo), not one a person chose.
 	// It is internal: a client can never set it.
 	Auto bool `json:"-"`
+	// Attachments are upload IDs of images that go with a question's answer,
+	// for a question whose Images allow them.
+	Attachments []string `json:"attachments,omitempty"`
+	// Images are those uploads' bytes, filled in by the service.
+	Images []Blob `json:"-"`
 }
 
 // SubagentStatus is the lifecycle of one subagent.

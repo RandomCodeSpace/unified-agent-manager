@@ -1,8 +1,9 @@
 // A question with one question is the composer's extension: its options are chosen there, the
 // composer holds the typed answer, Decline and Answer sit in its action row, and the answer is
 // exactly one of the chosen options or the typed text, with nothing sent beside it.
-import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
+import * as data from '../../src/mock/data';
 import { composer, log, openTask } from './render';
 
 /** The composer's surface, where the question sits (the transcript's question block repeats the text once answered). */
@@ -147,6 +148,29 @@ describe('answering from the composer', () => {
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Answer the question first.');
     expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull();
     expect(mock.received).toEqual([]);
+  });
+
+  test('a question that takes images is answered with an attached image alone; other files stay out', async () => {
+    const state = data.seed();
+    const q = state.tasks.find((t) => t.id === 't16')!.interactions[0].questions![0];
+    q.choices = undefined;
+    q.images = { mime_types: ['image/png'], max_bytes: 3 << 20, max_count: 50 };
+    const seed = vi.spyOn(data, 'seed').mockReturnValue(state);
+    onTestFinished(() => seed.mockRestore());
+    const { user, mock } = await openTask('t16');
+    const attach = screen.getByRole('button', { name: /^Attach files/ });
+    expect(attach.getAttribute('aria-disabled')).toBeNull();
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    expect(input.accept).toBe('image/png');
+    fireEvent.paste(composer(), { clipboardData: { files: [textFile()], getData: () => '' } });
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'An answer takes images only.');
+    expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull();
+    await user.upload(input, new File([new Uint8Array([137, 80, 78, 71])], 'error.png', { type: 'image/png' }));
+    await waitFor(() => expect(answerButton().getAttribute('aria-disabled')).toBeNull());
+    await user.click(answerButton());
+    await waitFor(() => expect(mock.received.map((r) => r.route)).toEqual(['answer']));
+    expect(mock.received[0].body.answers).toEqual([[]]);
+    expect(mock.received[0].body.attachments).toHaveLength(1);
   });
 
   test('several options may be chosen where the question allows it', async () => {

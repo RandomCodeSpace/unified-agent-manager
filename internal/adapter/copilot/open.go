@@ -121,11 +121,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Filesystem:    copilot.CreateSessionFilesystemOptions{TrackFileChanges: copilot.Bool(true)},
 			Permissions:   copilot.SessionPermissionOptions{OnRequest: deferPermission},
 			Interaction: copilot.SessionInteractionOptions{
-				OnUserInputRequest:      c.askUser,
-				OnAutoModeSwitchRequest: c.confirmAuto,
-				AskUserVariant:          copilot.AskUserVariantLegacy, // forms and links come from elicitations only
-				OnElicitationRequest:    c.elicit,
-				OnExitPlanModeRequest:   c.reviewPlan,
+				OnAttributedUserInputRequest: c.askUser,
+				OnAutoModeSwitchRequest:      c.confirmAuto,
+				AskUserVariant:               copilot.AskUserVariantLegacy, // forms and links come from elicitations only
+				OnElicitationRequest:         c.elicit,
+				OnExitPlanModeRequest:        c.reviewPlan,
 			},
 			Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart}},
 			// Discovery loads what the terminal CLI loads for this directory:
@@ -157,11 +157,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			ContinuePendingWork: copilot.Bool(false),
 			Permissions:         copilot.SessionPermissionOptions{OnRequest: deferPermission},
 			Interaction: copilot.SessionInteractionOptions{
-				OnUserInputRequest:      c.askUser,
-				AskUserVariant:          copilot.AskUserVariantLegacy,
-				OnElicitationRequest:    c.elicit,
-				OnAutoModeSwitchRequest: c.confirmAuto,
-				OnExitPlanModeRequest:   c.reviewPlan,
+				OnAttributedUserInputRequest: c.askUser,
+				AskUserVariant:               copilot.AskUserVariantLegacy,
+				OnElicitationRequest:         c.elicit,
+				OnAutoModeSwitchRequest:      c.confirmAuto,
+				OnExitPlanModeRequest:        c.reviewPlan,
 			},
 			Hooks: copilot.SessionHookOptions{Handlers: &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUse: c.succeededToolUse, OnPostToolUseFailure: c.failedToolUse, OnUserPromptSubmitted: c.userPromptSubmitted, OnSubagentStart: p.subagentStart}},
 			// Resumed Tasks discover the same configuration as new ones.
