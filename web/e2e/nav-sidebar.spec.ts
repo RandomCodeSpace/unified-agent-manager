@@ -86,6 +86,8 @@ async function filterTo(page: Page, project: Project) {
   await page.getByRole('combobox', { name: 'Search projects' }).fill(project.name);
   await page.getByRole('option', { name: new RegExp(`^${project.name}`) }).click();
   await expect(page.getByRole('button', { name: `Project filter: ${project.name}`, exact: true })).toBeVisible();
+  // The list keeps its search until it has closed: reopened sooner, it still hides All projects.
+  await expect(page.getByRole('dialog', { name: 'Project filter' })).toBeHidden();
 }
 
 test('the list is one tab stop moved by arrows, End and Enter; a Thread renames from the row menu, F2, a double-click and the header menu, kept after a reload', async ({ page, uam, project }) => {
@@ -319,6 +321,8 @@ test('from 3 characters search also lists the Threads whose conversation holds e
 
 test('the draft picks where the Thread runs; a Thread in its own worktree shows the worktree\'s branch in its row, one on the folder\'s branch shows none', async ({ page, uam, project, model, workdir }) => {
   model.title('run me in a worktree', 'Worktree row thread').reply('run me in a worktree', 'Running in the worktree.');
+  // Made first, so it stays under the worktree's row: later activity there cannot move a row from under the pointer.
+  await idleThread(uam.api, project, 'Folder row thread');
   await openHome(page);
   await filterTo(page, project);
   await newThread(page, project);
@@ -336,13 +340,14 @@ test('the draft picks where the Thread runs; a Thread in its own worktree shows 
   await expect(rowOf(page, 'Worktree row thread')).toHaveAccessibleName(new RegExp(`^${project.name} ${branch.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} `));
   expect(execFileSync('git', ['branch', '--show-current'], { cwd: workdir }).toString().trim()).toBe('main');
   // A Thread in the folder is on the folder's branch (main, which has no origin to call it the default): only its tip names it.
-  await idleThread(uam.api, project, 'Folder row thread');
   await expect(rowOf(page, 'Folder row thread')).toHaveAccessibleName(new RegExp(`^${project.name} Idle Folder row thread \\S+$`));
   await rowOf(page, 'Folder row thread').hover();
   await expect(page.getByRole('tooltip')).toContainText('main');
 });
 
-test('the header names its buttons in words: New thread in the bar; the Project filter, Routines and Add project in a row under it, in the phone\'s drawer too', async ({ page, project }) => {
+test('the header names its buttons in words: New thread in the bar; the Project filter, Routines and Add project in a row under it, in the phone\'s drawer too', async ({ page, uam, project }) => {
+  // An empty workspace opens on the collapsed rail: one Thread keeps the sidebar open.
+  await idleThread(uam.api, project, 'Header thread');
   await openHome(page);
   const named = (name: string) => threads(page).getByRole('button', { name, exact: true });
   const check = async () => {
