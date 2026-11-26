@@ -26,6 +26,7 @@ import { TimeSplitSummary } from './TimeSplit';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
+import { failureWords } from '../lib/failure';
 import { SUMMARY_KEYS } from '../state';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Loading, Markdown, Note, useApp, useMedia } from './common';
@@ -413,7 +414,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   // A question whose provider takes images lets its answer carry them; any other answer carries no files.
   const answerImages = answering?.kind === 'question' ? answering.question.images : undefined;
-  const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
+  const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage, openAccount } = useApp();
   const budgetWarning = useBudgetWarning(session);
   // A send the service refused at the budget before this client saw it reached; it holds until the budget changes.
   const budgetKey = `${session.id}\u0000${JSON.stringify(session.budget ?? null)}`;
@@ -924,6 +925,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // Offered only when there is something to put back: its text or an upload with a stored copy. A prompt of
   // only file references, or of uploads without an ID, offers nothing rather than an older prompt.
   const resendable = !editing && (lastSent?.text?.trim() || lastSent?.attachments?.some((a) => a.id)) ? lastSent : null;
+  const failure = !locked && !editing ? failureWords(session, session.recent_items ?? session.items) : null;
+  const accountFix = failure?.recovery === 'account' && !!openAccount;
   function resend() {
     if (!resendable) return;
     const t = resendable.text ?? '';
@@ -1610,7 +1613,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </span>
         </p>
       )}
-      {!subagent && (resendable || (!locked && (budgetWarning || atBudget)) || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
+      {!subagent && (accountFix || resendable || (!locked && (budgetWarning || atBudget)) || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
@@ -1644,13 +1647,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter sends your message after this turn.</Note>}
           {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {effortLabel(session.effort ?? '')} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
           {settingsSteerReason && !cmd && !answering && <Note>{settingsSteerReason}</Note>}
-          {resendable && (
-            <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
-              <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
-                <RotateCcw />
-                Resend last prompt
-              </Button>
-            </Tip>
+          {(accountFix || resendable) && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {accountFix && (
+                <Button size="sm" variant="primary" className="animate-rise" onClick={() => openAccount(session.provider || 'copilot')}>
+                  {failure.recoveryLabel ?? 'Sign in in Settings'}
+                </Button>
+              )}
+              {resendable && (
+                <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
+                  <Button size="sm" variant="secondary" className="animate-rise" onClick={resend}>
+                    <RotateCcw />
+                    Resend last prompt
+                  </Button>
+                </Tip>
+              )}
+            </div>
           )}
         </div>
       )}
