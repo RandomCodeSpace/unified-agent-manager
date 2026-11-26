@@ -170,3 +170,10 @@ export function codeFile(text: string, workdir: string | undefined): { path: str
   if (at >= 0 && !/\.[A-Za-z0-9]{1,10}$/.test(ref.slice(0, at))) ref = ref.replaceAll('#', '%23');
   return taskFile(ref, workdir);
 }
+
+/** Strips common inline Markdown (`code`, **bold**, __bold__, [text](url)) to plain text for previews. */
+export function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\([^)\n]+\)/g, '$1')
+    .replace(/`([^`\n]+)`|\*\*([^*\n]+)\*\*|(?<!\w)__([^_\n]+)__(?!\w)/g, (_, code: string | undefined, bold: string | undefined, under: string | undefined) => code ?? bold ?? under ?? '');
+}

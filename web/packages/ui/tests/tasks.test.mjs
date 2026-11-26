@@ -184,6 +184,10 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   const at = (min) => new Date(now - min * 60000).toISOString();
   const status = (extra, unread = false) => taskStatus(s('t', 'p1', at(60), extra), unread, now).text;
   assert.equal(status({ state: 'awaiting_answer', ask: { id: 'q', kind: 'question', title: 'Which option?' } }), 'Needs answer: Which option?');
+  assert.equal(
+    status({ state: 'awaiting_answer', ask: { id: 'q2', kind: 'question', title: 'A `darwin` target is **not** __ready__ — see [docs](https://example.com) for `linux/*` and `__init__`' } }),
+    'Needs answer: A darwin target is not ready — see docs for linux/* and __init__',
+  );
   assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } }), 'Needs permission to run a shell command');
   assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Confirm deploy' } }), 'Needs permission to confirm deploy');
   assert.equal(status({ state: 'awaiting_permission' }), 'Needs permission to continue');

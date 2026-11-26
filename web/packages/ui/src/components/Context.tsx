@@ -85,7 +85,7 @@ function CompactNow({ session, total, onDone }: Readonly<{ session: SessionDetai
     }
   }
   return <div className="mt-2 space-y-1">
-    <Button size="sm" variant="subtle" disabled={turn || running} onClick={() => void run()} aria-describedby="compact-now-help">{running ? 'Compacting…' : 'Compact now'}</Button>
+    <Button size="sm" variant="secondary" disabled={turn || running} onClick={() => void run()} aria-describedby="compact-now-help">{running ? 'Compacting…' : 'Compact now'}</Button>
     <p id="compact-now-help" className="text-caption text-muted">Between turns only. Summarizes older messages, which uses model tokens.</p>
     {note && <p role="status" className="text-caption text-muted">{note}</p>}
   </div>;

@@ -39,10 +39,10 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-26 | Search threads matches names, titles, Project names and branches, archived included | projects.test.tsx, archived-settings.test.tsx, app.test.tsx | spec: nav-sidebar.spec.ts |
 | NAV-27 | From 3 characters, search adds "In conversations": Threads whose prompts/replies hold every word, read from the… | conversation-search.test.tsx, search_test.go | spec: nav-sidebar.spec.ts |
 | NAV-28 | Reload or a pasted link restores the same place: `#task=<id>`, `#settings`, `#routines`; Back/Forward move between… | app.test.tsx | spec: navigation.spec.ts, shell-nav.spec.ts |
-| NAV-29 | Settings opens over the Thread; × or Esc brings the Thread back with its scroll position, open rows and side panels;… | app.test.tsx | spec: nav-shell.spec.ts |
+| NAV-29 | Settings opens over the Thread (clearing the sidebar's Thread highlight meanwhile); × or Esc brings the Thread back with its scroll position, open rows and side panels;… | app.test.tsx | spec: nav-shell.spec.ts, ui-minors.spec.ts |
 | NAV-30 | Ctrl+B (or the UAM mark) collapses the sidebar to the rail; kept per browser; keeps the selected Thread and URL; the… | app.test.tsx, empty-sidebar.test.tsx | spec: nav-shell.spec.ts |
 | NAV-31 | Narrow window: the sidebar is a drawer; its first rows are ready on first open; Esc closes it every time and gives… | app.test.tsx | spec: shell-nav.spec.ts |
-| NAV-32 | Home with no Thread open: "What are you working on?", New thread, Needs you list, Budgets, "Nothing needs you.";… | home.test.tsx | spec: nav-home.spec.ts |
+| NAV-32 | Home with no Thread open: "What are you working on?", New thread, Needs you list (inline Markdown stripped), Budgets, "Nothing needs you.";… | home.test.tsx, tasks.test.mjs | spec: nav-home.spec.ts, ui-minors.spec.ts |
 | NAV-33 | Theme: Settings → This browser → Theme Light / Dark / Match system (default, follows the OS live); kept per browser… | theme.test.mjs, settings.test.tsx | spec: shell-nav.spec.ts |
 | NAV-34 | Connection indicator: after the service restarts the page shows "Connection lost, reconnecting…", then reconnects on… | event-stream.test.mjs, app.test.tsx, restart_test.go | spec: shell-restart.spec.ts |
 | NAV-35 | A turn running when uam restarts shows Interrupted afterwards; it is not resumed or resent | needs-you.test.tsx, queue_restart_test.go | spec: shell-restart.spec.ts |

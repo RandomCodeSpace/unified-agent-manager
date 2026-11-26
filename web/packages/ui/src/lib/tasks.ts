@@ -1,5 +1,6 @@
 import type { GitPending, Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
 import { failureWords } from './failure.ts';
+import { stripInlineMarkdown } from './markdown.ts';
 import { stopWords } from './stop.ts';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
@@ -111,7 +112,7 @@ function inputStatus(s: SessionSummary): TaskStatus | null {
     const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
     return { label: 'Needs permission', text: `Needs permission to ${what}`, tone: 'attention' };
   }
-  if (ask?.kind === 'question') return { label: 'Needs answer', text: `Needs answer: ${ask.title}`, tone: 'attention' };
+  if (ask?.kind === 'question') return { label: 'Needs answer', text: `Needs answer: ${stripInlineMarkdown(ask.title)}`, tone: 'attention' };
   if (ask?.kind === 'plan_review') return { label: 'Needs answer', text: 'Needs answer: plan ready', tone: 'attention' };
   if (s.state === 'awaiting_permission') return { label: 'Needs permission', text: 'Needs permission to continue', tone: 'attention' };
   if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Needs answer', text: 'Needs answer', tone: 'attention' };
