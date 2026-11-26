@@ -21,11 +21,11 @@ export const systemText = (req: ChatCompletionRequest) =>
 
 /**
  * uam's suggested-reply call (internal/web/assist.go): a background Utility
- * call whose system prompt starts "You predict what the user of a coding
- * agent will most likely send next" and whose user message quotes the last
+ * call whose system prompt starts "You predict how the user of a coding
+ * agent will answer" and whose user message quotes the last
  * prompt as <user_message>…</user_message>.
  */
-export const isSuggestion = (req: ChatCompletionRequest) => systemText(req).includes('You predict what the user of a coding agent');
+export const isSuggestion = (req: ChatCompletionRequest) => systemText(req).includes('You predict how the user of a coding agent');
 
 /** Answers the suggested-reply call for the Thread whose last prompt contains `prompt` with `reply`. */
 export function suggest(uam: Service, prompt: string, reply: string) {

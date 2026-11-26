@@ -142,6 +142,6 @@ question's wording or a caller's instructions.
 Suggested replies were a caller for a day and are written by the Utility
 model again. Their probe is
 `UAM_SUGGEST_LIVE_PROBE=1 go test ./internal/web -run '^TestSuggestReplyLiveProbe$' -v`:
-ten turns on `gpt-6-luna` with the prompt `SuggestReplies` sends (six that
-invite a reply, four that do not, one of those a planted instruction). On
-2026-11-12 all ten were right at about 2 s each.
+ten turns on `gpt-6-luna` with the prompt `SuggestReplies` sends (five that
+ask or offer something, five that do not, one of those a planted
+instruction). On 2026-11-26 all ten were right at about 2 s each.

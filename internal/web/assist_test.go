@@ -207,24 +207,57 @@ func TestSuggestionAnswerContract(t *testing.T) {
 		reply, want string
 		invalid     bool
 	}{
-		"a reply":          {reply: `{"reply":"Run the tests"}`, want: "Run the tests"},
-		"none":             {reply: `{"reply":""}`},
-		"null":             {reply: `{"reply":null}`},
-		"fenced":           {reply: "```json\n{\"reply\":\"Push it\"}\n```", want: "Push it"},
-		"made one line":    {reply: `{"reply":"  Yes,\n go\tahead \u001b[31m "}`, want: "Yes, go ahead"},
-		"at the limit":     {reply: `{"reply":"` + long + `"}`, want: long},
-		"too long":         {reply: `{"reply":"` + long + `x"}`, invalid: true},
-		"not an object":    {reply: "Run the tests", invalid: true},
-		"another field":    {reply: `{"reply":"Run the tests","why":"x"}`, invalid: true},
-		"not valid UTF-8":  {reply: "{\"reply\":\"\xff\"}", invalid: true},
-		"a second answer":  {reply: `{"reply":"a"} {"reply":"b"}`, invalid: true},
-		"a refusal":        {reply: "I cannot help with that.", invalid: true},
-		"reasoning before": {reply: `<think>{"reply":"no"}</think>{"reply":"Yes"}`, want: "Yes"},
+		"a reply":                       {reply: `{"reply":"Run the tests"}`, want: "Run the tests"},
+		"none":                          {reply: `{"reply":""}`},
+		"null":                          {reply: `{"reply":null}`},
+		"fenced":                        {reply: "```json\n{\"reply\":\"Push it\"}\n```", want: "Push it"},
+		"made one line":                 {reply: `{"reply":"  Yes,\n go\tahead \u001b[31m "}`, want: "Yes, go ahead"},
+		"at the limit":                  {reply: `{"reply":"` + long + `"}`, want: long},
+		"too long":                      {reply: `{"reply":"` + long + `x"}`, invalid: true},
+		"not an object":                 {reply: "Run the tests", invalid: true},
+		"another field":                 {reply: `{"reply":"Run the tests","why":"x"}`, invalid: true},
+		"not valid UTF-8":               {reply: "{\"reply\":\"\xff\"}", invalid: true},
+		"a second answer":               {reply: `{"reply":"a"} {"reply":"b"}`, invalid: true},
+		"a refusal":                     {reply: "I cannot help with that.", invalid: true},
+		"reasoning before":              {reply: `<think>{"reply":"no"}</think>{"reply":"Yes"}`, want: "Yes"},
+		"thanks":                        {reply: `{"reply":"Thanks, that works"}`},
+		"thank you":                     {reply: `{"reply":"thank you!"}`},
+		"ok thanks":                     {reply: `{"reply":"Ok thanks"}`},
+		"great":                         {reply: `{"reply":"Great, looks good"}`},
+		"perfect":                       {reply: `{"reply":"Perfect."}`},
+		"filler word only at the start": {reply: `{"reply":"Greatly reduce the logging"}`, want: "Greatly reduce the logging"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := parseSuggestion(tc.reply)
 			if got != tc.want || (err != nil) != tc.invalid || err != nil && !errors.Is(err, errInvalidSuggestion) {
 				t.Fatalf("parseSuggestion = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+// A final reply that asks nothing and offers nothing gets no suggestion,
+// without a Utility call.
+func TestSuggestionSkipsAReplyThatAsksNothing(t *testing.T) {
+	for reply, asks := range map[string]bool{
+		"Committed as 1a2b3c4 and pushed. CI passed.":     false,
+		"It parses the config file and returns a Config.": false,
+		"Fixed it. Shall I commit it?":                    true,
+		"Done. Let me know if the MR should target main.": true,
+		"Two options: A caches in memory, B on disk.":     true,
+	} {
+		t.Run(reply, func(t *testing.T) {
+			prov := newAssistProvider()
+			m, project := assistManager(t, openTestStore(t), prov)
+			suggests(prov, "Yes, do it")
+			sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finishTurn(prov.Last(), "do the work", reply)
+			got, err := m.SuggestReplies(context.Background(), sum.ID)
+			if n := utilityCalls(prov, purposeSuggestReplies); err != nil || got.ItemID != "a-do the work" || (n == 1) != asks || (len(got.Replies) == 1) != asks {
+				t.Fatalf("suggestion = %+v, %v after %d calls", got, err, n)
 			}
 		})
 	}
@@ -243,7 +276,7 @@ func TestSuggestionNeedsAUtilityModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishTurn(prov.Last(), "fix it", "Fixed parse.go. I have not run the tests.")
+	finishTurn(prov.Last(), "fix it", "Fixed parse.go. Want me to run the tests?")
 	if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || got.ItemID != "" || len(got.Replies) != 0 || len(prov.UtilityRequests())+len(m.UtilityLog(0, 10).Calls) != 0 {
 		t.Fatalf("without a Utility model = %+v, %v after %d calls", got, err, len(prov.UtilityRequests()))
 	}
