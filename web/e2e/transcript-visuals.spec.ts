@@ -4,6 +4,7 @@ import path from 'node:path';
 import { conversation, expect, send, startThread, test, threadState, toolResult } from './harness';
 import { expectPinned, pageErrors, yolo } from './transcript-helpers';
 import { systemText, useMockUtility } from './composer-helpers';
+import { startYoloThread } from './workspace-helpers';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
@@ -202,6 +203,21 @@ test('a reload restores a finished rich conversation: table, diagram, code, char
   await expect(conv.getByRole('button', { name: /^Took \S+\. Show this turn's waybill$/ }).last()).toBeVisible();
   for (const prompt of ['rich turn one', 'rich turn two']) await expect(conv.getByText(prompt, { exact: true })).toHaveCount(1);
   await expectPinned(page);
+});
+
+test('a running uam_chart command shows its progress on the tool row until it ends', async ({ page, project, model, workdir }) => {
+  // The command waits for the spec to create "release", so the row is caught while it runs.
+  const command = "while [ ! -e release ]; do sleep 0.1; done; printf 'day,commits\\nMon,3\\n'";
+  model.toolRound('chart slowly', [{ id: 'call_slow', name: 'uam_chart', arguments: { title: 'Slow commits', kind: 'bar', x: 'day', y: ['commits'], format: 'csv', command } }], 'Slow chart drawn.');
+  await startYoloThread(page, project, 'chart slowly');
+  const conv = conversation(page);
+  const progress = conv.getByText("Running the chart's command");
+  await expect(progress).toBeVisible();
+  fs.writeFileSync(path.join(workdir, 'release'), '');
+  await expect(conv.getByText('Slow chart drawn.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+  await expect(progress).toHaveCount(0);
+  await expect(conv.getByRole('figure', { name: 'Chart: Slow commits' })).toBeVisible();
 });
 
 test('a chart command runs in the Thread folder only in Yolo mode, and one printing over 1 MiB is refused', async ({ page, project, model, uam, workdir }) => {

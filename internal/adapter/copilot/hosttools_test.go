@@ -491,3 +491,35 @@ func TestRunUtilityRefusesAClashingTool(t *testing.T) {
 		t.Fatalf("failed create = %v, deleted %v", err, fc.deleted)
 	}
 }
+
+// A host tool's progress goes to the SDK as its invocation's progress, with
+// the call's context; without a reporter (an invocation the SDK did not
+// make) it is dropped.
+func TestHostToolReportsProgress(t *testing.T) {
+	type report struct {
+		callID, message string
+		live            bool
+	}
+	var got []report
+	defer func(old func(copilot.ToolInvocation, context.Context, string)) { reportToolProgress = old }(reportToolProgress)
+	reportToolProgress = func(inv copilot.ToolInvocation, ctx context.Context, message string) {
+		got = append(got, report{inv.ToolCallID, message, ctx.Err() == nil})
+	}
+	calls := &hostCalls{reply: func(_ context.Context, c agentapi.HostToolCall) agentapi.HostToolResult {
+		c.ReportProgress("Copying the files")
+		return agentapi.HostToolResult{Text: "done"}
+	}}
+	gate, tools := readyHostTools(t, calls.call)
+	defer gate.stop()
+	if _, err := callTool(tools[0], "session", "progress", map[string]any{"ref": "#1"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []report{{"progress", "Copying the files", true}}; !slices.Equal(got, want) {
+		t.Fatalf("progress = %+v, want %+v", got, want)
+	}
+	reportToolProgress = copilot.ToolInvocation.ReportProgress
+	if _, err := callTool(tools[0], "session", "unreported", map[string]any{"ref": "#1"}); err != nil {
+		t.Fatal(err)
+	}
+	agentapi.HostToolCall{}.ReportProgress("no provider")
+}

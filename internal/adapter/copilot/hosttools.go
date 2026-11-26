@@ -19,6 +19,10 @@ const maxHostToolCalls = 256
 
 var hostToolName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// reportToolProgress sends a host tool's progress; tests replace it, as only
+// the SDK can make an invocation that reports.
+var reportToolProgress = copilot.ToolInvocation.ReportProgress
+
 type hostToolCall struct {
 	name, args string
 	done       chan struct{}
@@ -135,7 +139,8 @@ func (h *hostTools) invoke(name string, inv copilot.ToolInvocation) (copilot.Too
 	h.calls[key] = call
 	h.order = append(h.order, key)
 	h.mu.Unlock()
-	r := h.call(ctx, agentapi.HostToolCall{Name: name, CallID: inv.ToolCallID, TaskID: h.task, Arguments: encoded})
+	r := h.call(ctx, agentapi.HostToolCall{Name: name, CallID: inv.ToolCallID, TaskID: h.task, Arguments: encoded,
+		Progress: func(message string) { reportToolProgress(inv, ctx, message) }})
 	// The SDK would send the result's Go representation for an empty text.
 	text := cmp.Or(r.Text, "The tool returned no text.")
 	result := copilot.ToolResult{ResultType: "success", TextResultForLLM: text, SessionLog: text}

@@ -596,6 +596,9 @@ func (m *Manager) drawChart(ctx context.Context, taskID string, call agentapi.Ho
 	if spec.Command != "" && mode != store.ModeYolo {
 		return "", errors.New("this thread is in Safe mode, so uam does not run commands for it. Run the command with your shell tool, which asks the owner, and pass its rows as data or its echarts option object as options")
 	}
+	if spec.Command != "" {
+		call.ReportProgress("Running the chart's command")
+	}
 	data, took, err := readChart(ctx, spec, dir, inline)
 	if err != nil {
 		return "", err
