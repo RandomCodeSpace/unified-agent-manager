@@ -3,10 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, send, startThread, test } from './harness';
 
-test('a published site opens from its card, republishing adds a version, and the published pages panel lists and deletes versions', async ({ page, project, model, workdir }) => {
+test('a published site opens from its card, republishing adds a version, and the published pages panel lists and deletes versions', async ({ page, project, model, workdir, uam }) => {
   const site = path.join(workdir, 'site');
   fs.mkdirSync(site);
-  fs.writeFileSync(path.join(site, 'index.html'), '<!doctype html><link rel="stylesheet" href="style.css"><h1>Demo title</h1><p id="out"></p><script src="app.js"></script>\n');
+  // Another origin of this same service: reachable, so only the page's policy can stop it.
+  const other = new URL(uam.url);
+  other.hostname = other.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  fs.writeFileSync(path.join(site, 'index.html'), '<!doctype html><script>addEventListener("securitypolicyviolation", (e) => { document.getElementById("blocked").textContent += e.violatedDirective + " "; });</script>' +
+    '<link rel="stylesheet" href="style.css"><h1>Demo title</h1><p id="out"></p><p id="blocked"></p><img id="own" src="logo.svg" alt="own">' +
+    `<img alt="external" src="${other.origin}/favicon.svg"><script src="${other.origin}/sw.js"></script><script src="app.js"></script>\n`);
+  fs.writeFileSync(path.join(site, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>\n');
   fs.writeFileSync(path.join(site, 'style.css'), 'h1 { color: rgb(200, 0, 0) }\n');
   fs.writeFileSync(path.join(site, 'app.js'), "document.getElementById('out').textContent = 'first build';\n");
   model.toolRound('publish the site', [{ id: 'call_pub1', name: 'uam_publish', arguments: { path: 'site', title: 'Demo site' } }], 'Published the site.');
@@ -23,6 +29,10 @@ test('a published site opens from its card, republishing adds a version, and the
   const frame = preview.locator('iframe').contentFrame();
   await expect(frame.getByText('first build')).toBeVisible();
   await expect.poll(() => frame.getByRole('heading', { name: 'Demo title' }).evaluate((el) => getComputedStyle(el).color)).toBe('rgb(200, 0, 0)');
+  // The page's own image loads; an image and a script from another origin are refused by its policy.
+  await expect.poll(() => frame.locator('#own').evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBe(10);
+  await expect(frame.locator('#blocked')).toContainText('img-src');
+  await expect(frame.locator('#blocked')).toContainText('script-src');
 
   // The snapshot keeps the first build; publishing again makes version 2.
   fs.writeFileSync(path.join(site, 'app.js'), "document.getElementById('out').textContent = 'second build';\n");

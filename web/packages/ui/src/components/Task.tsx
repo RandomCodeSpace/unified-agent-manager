@@ -7,7 +7,7 @@ import { flushSync } from 'react-dom';
 import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace, type TodoView } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
-import { ArtifactsContext, PreviewContext, TempRootContext } from '../lib/previewContext';
+import { ArtifactsContext, ArtifactsRevisionContext, PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
@@ -1066,6 +1066,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <WorkdirContext.Provider value={session.workdir}>
     <PreviewContext.Provider value={preview.open}>
     <ArtifactsContext.Provider value={openArtifacts}>
+    <ArtifactsRevisionContext.Provider value={session.artifacts_revision ?? 0}>
     <TempRootContext.Provider value={tempRoots}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} onLocate={(id) => void locate(id)} onJumpToReply={(key) => void jumpToReply(key)} onShow={onSubagent} onOutput={showOutput}>
     <GitLabItemsContext.Provider value={gitlabItems}>
@@ -1204,7 +1205,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       <Contained what="This panel" of={sheetOpen}>{sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} onOpenFile={openChangedFile} memory={changesPlace} /></Suspense>}</Contained>
       <Contained what="This panel" of={gitlabOpen}>{gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}</Contained>
       <Contained what="This panel" of={chartsOpen}>{chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}</Contained>
-      <Contained what="This panel" of={artifactsOpen}>{artifactsPresence.mounted && <Suspense fallback={null}><ArtifactsPanel sessionId={session.id} count={session.artifacts ?? 0} inline={sidePanelInline} open={artifactsOpen} onClose={closeArtifacts} onClosed={artifactsPresence.onClosed} onOpen={preview.open} /></Suspense>}</Contained>
+      <Contained what="This panel" of={artifactsOpen}>{artifactsPresence.mounted && <Suspense fallback={null}><ArtifactsPanel sessionId={session.id} revision={session.artifacts_revision ?? 0} inline={sidePanelInline} open={artifactsOpen} onClose={closeArtifacts} onClosed={artifactsPresence.onClosed} onOpen={preview.open} /></Suspense>}</Contained>
       <Contained what="This panel" of={!!output}>{outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}</Contained>
       <Contained what="This panel" of={!!preview.selection}>{previewPresence.mounted && previewView && !sheetOpen && <FilePreview selection={previewView} open={!!preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} onClosed={previewClosed} onReload={preview.reload} changes={changes} readOnly={readOnly(session)} onChanges={openChanges} onComment={(path, line) => openTurnChanges({ files: [path], latest: false, line })} onReverted={() => setChangesTick((t) => t + 1)} />}</Contained>
     </div>
@@ -1212,6 +1213,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     </GitLabItemsContext.Provider>
     </SubagentScope>
     </TempRootContext.Provider>
+    </ArtifactsRevisionContext.Provider>
     </ArtifactsContext.Provider>
     </PreviewContext.Provider>
     </WorkdirContext.Provider>

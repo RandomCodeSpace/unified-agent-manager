@@ -9,7 +9,7 @@ import { memo, useContext, useEffect, useState } from 'react';
 import { describeError, type ApiClient, type Artifact, type ArtifactVersion } from '../api';
 import { popupOpen, threadCovered } from '../App';
 import { formatSize } from '../lib/attachments';
-import { ArtifactsContext, usePreview, type OpenPreview, type PreviewTarget } from '../lib/previewContext';
+import { ArtifactsContext, ArtifactsRevisionContext, usePreview, type OpenPreview, type PreviewTarget } from '../lib/previewContext';
 import { Note, Skeleton, timeAgo } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
@@ -22,7 +22,7 @@ function versionTarget(api: ApiClient, sessionId: string, artifact: Artifact, v:
 
 const facts = (v: ArtifactVersion) => `${v.files} ${v.files === 1 ? 'file' : 'files'} · ${formatSize(v.bytes)} · ${timeAgo(v.at)}`;
 
-function useArtifacts(sessionId: string, count?: number) {
+function useArtifacts(sessionId: string, revision: number) {
   const api = useApi();
   const [list, setList] = useState<Artifact[] | null>(null);
   const [error, setError] = useState('');
@@ -33,7 +33,7 @@ function useArtifacts(sessionId: string, count?: number) {
       (err: unknown) => { if (!controller.signal.aborted) setError(describeError(err)); },
     );
     return () => controller.abort();
-  }, [api, sessionId, count]);
+  }, [api, sessionId, revision]);
   return { list, setList, error };
 }
 
@@ -42,7 +42,7 @@ export const ArtifactCard = memo(function ArtifactCard({ sessionId, callId }: Re
   const api = useApi();
   const preview = usePreview();
   const openList = useContext(ArtifactsContext);
-  const { list, error } = useArtifacts(sessionId);
+  const { list, error } = useArtifacts(sessionId, useContext(ArtifactsRevisionContext));
   if (error) return <Note tone="error" role="alert">Could not load this page: {error}</Note>;
   if (!list) return <Skeleton label="Loading the page…" rows={2} className="rounded-lg bg-raised p-4 shadow-raised" />;
   const artifact = list.find((a) => a.versions.some((v) => v.call_id === callId));
@@ -69,10 +69,10 @@ export const ArtifactCard = memo(function ArtifactCard({ sessionId, callId }: Re
 type Doomed = { artifact: Artifact; version?: number };
 
 /** The Thread's published pages beside the conversation, newest first, each with its versions. */
-export function ArtifactsPanel({ sessionId, count, inline, open, onClose, onClosed, onOpen }: Readonly<{
+export function ArtifactsPanel({ sessionId, revision, inline, open, onClose, onClosed, onOpen }: Readonly<{
   sessionId: string;
-  /** The Thread's count: a publish or delete elsewhere reads the list again. */
-  count: number;
+  /** The Thread's `artifacts_revision`: a publish or delete elsewhere reads the list again. */
+  revision: number;
   inline: boolean;
   /** False while the panel leaves; `onClosed` follows, and the owner unmounts it. */
   open: boolean;
@@ -81,7 +81,7 @@ export function ArtifactsPanel({ sessionId, count, inline, open, onClose, onClos
   onOpen: OpenPreview;
 }>) {
   const api = useApi();
-  const { list, setList, error } = useArtifacts(sessionId, count);
+  const { list, setList, error } = useArtifacts(sessionId, revision);
   const [notice, setNotice] = useState('');
   // Deleting removes the snapshot for good, so it is confirmed first (DESIGN.md Confirmations).
   const confirm = useConfirm<Doomed>();

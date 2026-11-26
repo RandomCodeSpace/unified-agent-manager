@@ -654,3 +654,26 @@ func TestForkCarriesTheThreadFiles(t *testing.T) {
 		t.Errorf("branch surfaces file: %v", err)
 	}
 }
+
+// A branch carries its source's published versions, so their cards open.
+func TestForkCarriesPublishedPages(t *testing.T) {
+	m, p, _, source := taskForkManager(t)
+	writeTree(t, source.Workdir, map[string]string{"site/index.html": "page", "site/css/a.css": "a"})
+	res := publishCall(t, p.Last(), "c1", `{"path":"site","title":"Site"}`)
+	if res.Failed {
+		t.Fatal(res.Text)
+	}
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.Artifacts(branch.ID)
+	if err != nil || len(list) != 1 || list[0].Versions[0].CallID != "c1" || summaryArtifacts(m, branch.ID) != 1 {
+		t.Fatalf("branch artifacts = %+v, %v", list, err)
+	}
+	f, err := m.ArtifactFile(branch.ID, list[0].ID, 1, "css/a.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.File.Close()
+}

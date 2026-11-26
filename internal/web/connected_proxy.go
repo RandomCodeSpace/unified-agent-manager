@@ -206,6 +206,9 @@ func (s *Server) proxyConnected(w http.ResponseWriter, r, local *http.Request, t
 			p.Out.Header.Set("Accept-Encoding", "identity")
 		},
 		ModifyResponse: func(response *http.Response) error {
+			// A version's folder named without its slash: redirect within this
+			// request's own validated key path, as the local route does.
+			folder := pattern == artifactViewRoute && response.StatusCode == http.StatusNotFound && response.Header.Get(headerArtifactFolder) == "1"
 			if response.StatusCode == http.StatusUnauthorized {
 				// This response belongs to B. A's own 401 remains reserved for
 				// the home login, including native uploads and blob consumers.
@@ -224,6 +227,17 @@ func (s *Server) proxyConnected(w http.ResponseWriter, r, local *http.Request, t
 			}
 			if err := connectedResponseHeaders(response, pattern); err != nil {
 				return err
+			}
+			if folder {
+				_ = response.Body.Close()
+				location := r.URL.EscapedPath() + "/"
+				if r.URL.Query().Get("download") == "1" {
+					location += "?download=1"
+				}
+				response.StatusCode, response.Status = http.StatusFound, ""
+				response.Header.Set("Location", location)
+				response.Header.Set("Content-Length", "0")
+				response.Body, response.ContentLength = http.NoBody, 0
 			}
 			if pattern == "POST /api/sessions/{id}/file-grants" && response.StatusCode == http.StatusCreated {
 				if err := s.rewriteConnectedGrant(response, r, local, target); err != nil {
@@ -338,7 +352,11 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 	headers.Set("X-Frame-Options", "DENY")
 	if connectedResourcePattern(pattern) {
 		mediaType, _, _ := mime.ParseMediaType(response.Header.Get(headerContentType))
-		headers.Set("Content-Security-Policy", viewPolicy(mediaType))
+		policy := viewPolicy
+		if pattern == artifactViewRoute {
+			policy = artifactPolicy
+		}
+		headers.Set("Content-Security-Policy", policy(mediaType))
 		headers.Set("X-Frame-Options", "SAMEORIGIN")
 	}
 	response.Header = headers

@@ -121,8 +121,6 @@ type Manager struct {
 	// pins the shown pinned charts of every Project, for storedPins.
 	recent sharedReads[[]string]
 	pins   sharedReads[map[string][]store.WebChart]
-	// artifactMu serializes publishing and deleting artifacts (artifacts.go); taken before mu.
-	artifactMu sync.Mutex
 
 	// imageJobs feeds the one goroutine that stores tool images, so Emit
 	// never writes a file. imageWG counts the jobs not yet finished; tests

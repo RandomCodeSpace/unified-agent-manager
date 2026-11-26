@@ -357,6 +357,9 @@ type SessionSummary struct {
 	MessagesHeld int `json:"messages_held,omitempty"`
 	// Artifacts counts the pages the Thread published with uam_publish.
 	Artifacts int `json:"artifacts,omitempty"`
+	// ArtifactsRevision changes whenever its artifacts change, a version
+	// added or deleted included, so open lists and cards read them again.
+	ArtifactsRevision int `json:"artifacts_revision,omitempty"`
 	// Mode is safe, yolo or assisted. A yolo Task's permission requests are
 	// allowed once without asking, an assisted Task's when the provider's
 	// assisted review approves them; questions still wait for the user.

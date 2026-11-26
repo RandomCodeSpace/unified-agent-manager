@@ -59,6 +59,7 @@ func newConnectedFileFixture(t *testing.T) connectedFileFixture {
 	mux.HandleFunc("DELETE /api/sessions/{id}/file-grants/{grant_id}", remote.srv.handleDeleteGrant)
 	mux.HandleFunc(grantKeyRoute, remote.srv.handleRemoteGrantFile)
 	mux.HandleFunc(artifactViewRoute, remote.srv.handleRemoteArtifactFile)
+	mux.HandleFunc("GET /api/sessions/{id}/artifacts", remote.srv.handleArtifacts)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", remote.srv.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", remote.srv.handleAttachment)
 	proxy := newConnectedProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -377,10 +378,20 @@ func TestConnectedGrantExpiryToleratesClockSkew(t *testing.T) {
 // scoped to that one version, and loads its relative assets through it.
 func TestConnectedArtifactUsesHomeKeyScopedToItsVersion(t *testing.T) {
 	f := newConnectedFileFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.task.Workdir, "out", "about"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.task.Workdir, "out", "about", "index.html"), []byte("about"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	res := publishCall(t, f.remote.prov.Last(), "publish-1", `{"path":"out","title":"Out"}`)
 	match := artifactIDText.FindStringSubmatch(res.Text)
 	if res.Failed || match == nil {
 		t.Fatalf("publish = %+v", res)
+	}
+	// No key is signed for a version the other instance has not published.
+	if early := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/artifacts/"+match[1]+"/v/2/", "", nil); early.StatusCode != http.StatusNotFound || len(early.Cookies()) != 0 || early.Header.Get("Location") != "" {
+		t.Fatalf("unpublished version = %d %q", early.StatusCode, early.Header.Get("Location"))
 	}
 	initial := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/artifacts/"+match[1]+"/v/1/", "", nil)
 	location, cookies := initial.Header.Get("Location"), initial.Cookies()
@@ -392,11 +403,18 @@ func TestConnectedArtifactUsesHomeKeyScopedToItsVersion(t *testing.T) {
 		t.Fatalf("artifact without companion=%d", response.StatusCode)
 	}
 	page := f.readGrant(t, "GET", location, cookies, nil)
-	if body := connectedBody(t, page); page.StatusCode != http.StatusOK || !strings.Contains(body, `href="style.css"`) || page.Header.Get("Content-Security-Policy") != viewSecurity {
+	if body := connectedBody(t, page); page.StatusCode != http.StatusOK || !strings.Contains(body, `href="style.css"`) || page.Header.Get("Content-Security-Policy") != artifactSecurity {
 		t.Fatalf("artifact page=%d policy=%q body=%q", page.StatusCode, page.Header.Get("Content-Security-Policy"), body)
 	}
 	if style := f.readGrant(t, "GET", location+"style.css", cookies, nil); style.StatusCode != http.StatusOK || connectedBody(t, style) != "body { color: red; }" {
 		t.Fatalf("artifact style=%d", style.StatusCode)
+	}
+	// A folder named without its slash moves under the same key, as locally.
+	if folder := f.readGrant(t, "GET", location+"about", cookies, nil); folder.StatusCode != http.StatusFound || folder.Header.Get("Location") != location+"about/" {
+		t.Fatalf("folder = %d %q", folder.StatusCode, folder.Header.Get("Location"))
+	}
+	if about := f.readGrant(t, "GET", location+"about/", cookies, nil); about.StatusCode != http.StatusOK || connectedBody(t, about) != "about" {
+		t.Fatalf("folder page = %d", about.StatusCode)
 	}
 	other := strings.Replace(location, "/1/", "/2/", 1)
 	if response := f.readGrant(t, "GET", other, cookies, nil); response.StatusCode != http.StatusForbidden {

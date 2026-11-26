@@ -1340,8 +1340,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Published pages**: `uam_publish` publishes a folder with `index.html` at
   its top, or one file, of the Thread's folder as a page you open from uam.
   uam copies an immutable snapshot of it into the Thread's own data beside
-  its charts, leaving out `.git`, `node_modules`, `.env` files and symbolic
-  links, at most 500 files and 25 MiB. Publishing again with the same title
+  its charts, leaving out `.git`, `node_modules`, `.env` files, symbolic
+  links, hard-linked and special files, at most 500 files and folders, 32
+  deep, and 25 MiB; a path inside an excluded folder or through a link is
+  refused. Publishing again with the same title
   (or the id the agent was given) adds a version; an artifact keeps its last
   10 versions and a Thread at most 20 artifacts. The call shows a card in the
   conversation with the title, its version, **Open** (the page in the file
@@ -1352,8 +1354,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   preview or a new tab, or delete (one version, or the page). A version's
   page is served from its snapshot only: the key in its address opens that
   version's files and nothing else. `/api/sessions/<id>/artifacts/<artifact>/`
-  always opens the latest version, `…/v/<n>/` that version. Pages run in the
-  same opaque-origin sandbox as the file preview (see File previews). The
+  always opens the latest version, `…/v/<n>/` that version; a deleted
+  version's number is never reused. Pages run in the same opaque-origin
+  sandbox as the file preview (see File previews), and load scripts, styles,
+  images and fonts only from uam itself, never from other hosts. A branch
+  copies its source's pages. The
   pages go when the Thread is deleted. On a connected instance the versioned
   links work; the latest link is local only.
 - **Reading uam**: every Thread has the `uam` tool with six read operations:

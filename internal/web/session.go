@@ -227,8 +227,12 @@ type webSession struct {
 
 	// uploads are the Task's stored attachments and tool images by ID.
 	uploads map[string]*upload
-	// artifacts counts the pages the Thread published (artifacts.go).
-	artifacts int
+	// artifacts counts the pages the Thread published (artifacts.go);
+	// artifactsRevision counts their changes since uam started.
+	artifacts, artifactsRevision int
+	// artifactMu serializes publishing, deleting and copying the Thread's
+	// artifacts. It is taken before Manager.mu.
+	artifactMu sync.Mutex
 	// imageMu serializes storing tool images, so an image the live stream
 	// and the history both carry is stored once. It is taken before
 	// Manager.mu, never while holding it.

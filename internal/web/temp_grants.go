@@ -466,7 +466,7 @@ func redactKeyURL(value string) string {
 	if err != nil {
 		// A malformed header value must not bypass redaction merely because
 		// it is not parseable as a URL.
-		if strings.Contains(value, "file-grants") || strings.Contains(value, "files/key") || strings.Contains(value, "artifact-files") {
+		if decoded := decodeEscapes(value); strings.Contains(decoded, "file-grants") || strings.Contains(decoded, "files/key") || strings.Contains(decoded, "artifact-files") {
 			return redactedValue
 		}
 		return value

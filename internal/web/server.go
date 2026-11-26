@@ -1252,12 +1252,13 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
-	s.serveView(w, r, f, err)
+	s.serveView(w, r, f, err, viewPolicy)
 }
 
-// serveView answers a view or artifact route with f, opened with err: a
-// folder named without its slash moves to the slashed path.
-func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile, err error) {
+// serveView answers a view or artifact route with f, opened with err, under
+// policy's Content-Security-Policy for its type: a folder named without its
+// slash moves to the slashed path.
+func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile, err error, policy func(string) string) {
 	if errors.Is(err, errViewFolder) {
 		// Only the file key route gets here: the cookie-checked route redirected above.
 		target := "/api/sessions/" + url.PathEscape(id) + "/files/key/" + url.PathEscape(r.PathValue("key")) + "/" + viewPath(r.PathValue("path")) + "/"
@@ -1273,7 +1274,7 @@ func (s *Server) serveView(w http.ResponseWriter, r *http.Request, f *ServedFile
 	h.Set(headerContentType, f.MIME)
 	h.Set(headerCacheControl, "private, no-cache")
 	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, f.Info.Size(), f.Info.ModTime().UnixNano()))
-	h.Set(headerContentSecurity, viewPolicy(f.MIME))
+	h.Set(headerContentSecurity, policy(f.MIME))
 	h.Set(headerFrameOptions, "SAMEORIGIN")
 	disposition := "inline"
 	if f.MIME == "application/octet-stream" || r.URL.Query().Get("download") == "1" {

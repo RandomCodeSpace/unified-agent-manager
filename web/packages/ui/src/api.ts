@@ -993,6 +993,8 @@ export interface SessionSummary {
   messages_held?: number;
   /** Pages the Thread published with `uam_publish`. */
   artifacts?: number;
+  /** Changes whenever the Thread's published pages change, a version added or deleted included; absent until one does. */
+  artifacts_revision?: number;
   /** The request the Task waits on, for the Task list's status line and notices; absent when nothing waits, and from older servers. */
   ask?: Ask;
   /** When the provider last reported anything for the open conversation, to the minute; absent until it does. */

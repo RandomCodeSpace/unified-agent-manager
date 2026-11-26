@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -83,7 +86,7 @@ func TestPublishSnapshotsTheSiteAndServesOnlyIt(t *testing.T) {
 	view := authenticatedFileView(t, ts)
 	base := "/api/sessions/" + sum.ID + "/artifacts/" + id
 	w := view(http.MethodGet, base+"/")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "style.css") || w.Header().Get("Content-Security-Policy") != viewSecurity || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "style.css") || w.Header().Get("Content-Security-Policy") != artifactSecurity || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
 		t.Fatalf("latest = %d %v", w.Code, w.Header())
 	}
 	auth := ts.login(t, "127.0.0.1:8260")
@@ -145,12 +148,12 @@ func TestPublishRefusesPathsOutsideTheThreadAndOverTheCaps(t *testing.T) {
 	for args, want := range map[string]string{
 		`{"path":"..","title":"x"}`:                                 "inside the thread's directory",
 		`{"path":".","title":"x"}`:                                  "inside the thread's directory",
-		`{"path":"linked","title":"x"}`:                             "inside the thread's directory",
+		`{"path":"linked","title":"x"}`:                             "symbolic link",
 		`{"path":"` + outside + `","title":"x"}`:                    "inside the thread's directory",
 		`{"path":".env","title":"x"}`:                               ".env",
 		`{"path":"noindex","title":"x"}`:                            "has no index.html",
-		`{"path":"many","title":"x"}`:                               "more than 500 files",
-		`{"path":"big","title":"x"}`:                                "more than 500 files or 25 MiB",
+		`{"path":"many","title":"x"}`:                               "more than 500 files and folders",
+		`{"path":"big","title":"x"}`:                                "more than 500 files and folders or 25 MiB",
 		`{"path":"index.html","title":""}`:                          "title must be",
 		`{"path":"index.html","title":"x","id":"no"}`:               "id must be",
 		`{"path":"index.html","title":"x","id":"0123456789abcdef"}`: "no artifact",
@@ -225,4 +228,212 @@ func TestPublishVersionsLatestAndDelete(t *testing.T) {
 func summaryArtifacts(m *Manager, id string) int {
 	got, _ := m.Summary(id)
 	return got.Artifacts
+}
+
+// A selected path is checked name by name: an excluded folder or a link on
+// the way refuses it, whatever lies below.
+func TestPublishRefusesExcludedOrLinkedSelections(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{
+		".git/config":                 "[core]",
+		".git/site/index.html":        "repo",
+		"node_modules/pkg/index.html": "pkg",
+		"site/.env.local":             "TOKEN=x",
+		"site/.env.d/index.html":      "env",
+		"site/index.html":             "site",
+	})
+	if err := os.Symlink(filepath.Join(dir, "site"), filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".git/config", ".git/site", "node_modules/pkg/index.html", "site/.env.local", "site/.env.d", "site/.env.d/index.html", dir + "/.git/site", "alias", "alias/index.html"} {
+		if res := publishCall(t, conv, "c", `{"path":"`+p+`","title":"x"}`); !res.Failed {
+			t.Errorf("publish %s = %+v", p, res)
+		}
+	}
+	if list, _ := ts.m.Artifacts(sum.ID); len(list) != 0 {
+		t.Fatalf("artifacts = %+v", list)
+	}
+}
+
+// A folder swapped for a link after Lstat saw it is not opened through it.
+func TestSnapshotDirRefusesASwappedFolder(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"site/index.html": "site", ".git/index.html": "repo"})
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat("site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(dir, "site"), filepath.Join(dir, "old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".git", filepath.Join(dir, "site")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openSnapshotDir(root, "site", info); err == nil {
+		t.Fatal("opened the link put in the folder's place")
+	}
+}
+
+// The copy reads through the directory it opened: replacing the Thread's
+// directory by name afterwards does not change what it copies.
+func TestSnapshotCopiesThroughTheOpenedRoot(t *testing.T) {
+	parent := t.TempDir()
+	workdir := filepath.Join(parent, "work")
+	writeTree(t, workdir, map[string]string{"index.html": "original"})
+	root, err := os.OpenRoot(workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := os.Rename(workdir, filepath.Join(parent, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, workdir, map[string]string{"index.html": "replacement"})
+	dst := t.TempDir()
+	s := snapshotter{ctx: context.Background()}
+	if err := s.copyDir(root, dst, "", 1); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dst, "index.html")); string(data) != "original" {
+		t.Fatalf("copied %q", data)
+	}
+}
+
+// Hard-linked files and special files are left out and named in the result;
+// a selected hard-linked file is refused; a FIFO is never opened.
+func TestPublishLeavesOutHardLinksAndSpecialFiles(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"site/index.html": "page", ".env": "TOKEN=secret"})
+	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "site", "env.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "site", "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := publishCall(t, conv, "c1", `{"path":"site","title":"Site"}`)
+	if res.Failed || !strings.Contains(res.Text, "1 files") || !strings.Contains(res.Text, "env.txt (has other hard links)") || !strings.Contains(res.Text, "pipe (a link or special file)") {
+		t.Fatalf("publish = %+v", res)
+	}
+	list, _ := ts.m.Artifacts(sum.ID)
+	if _, err := ts.m.ArtifactFile(sum.ID, list[0].ID, 1, "env.txt"); err == nil {
+		t.Fatal("the hard link was published")
+	}
+	if res := publishCall(t, conv, "c2", `{"path":"site/env.txt","title":"Env"}`); !res.Failed || !strings.Contains(res.Text, "hard links") {
+		t.Fatalf("publish the link = %+v", res)
+	}
+}
+
+// Folders count toward the entry cap and nesting is bounded.
+func TestPublishBoundsFoldersAndDepth(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	_, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"wide/index.html": "x", "deep/index.html": "x"})
+	for i := range maxArtifactFiles {
+		if err := os.Mkdir(filepath.Join(dir, "wide", fmt.Sprintf("d%d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "deep", strings.Repeat("d/", maxArtifactDepth+1)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{"wide": "more than 500 files and folders", "deep": "more than 32 deep"} {
+		if res := publishCall(t, conv, "c", `{"path":"`+p+`","title":"x"}`); !res.Failed || !strings.Contains(res.Text, want) {
+			t.Errorf("publish %s = %+v", p, res)
+		}
+	}
+}
+
+// Concurrent publishes of new artifacts never pass the Thread's cap.
+func TestConcurrentPublishesKeepTheArtifactCap(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"page.html": "x"})
+	for i := range maxThreadArtifacts - 1 {
+		if res := publishCall(t, conv, fmt.Sprintf("c%d", i), fmt.Sprintf(`{"path":"page.html","title":"t%d"}`, i)); res.Failed {
+			t.Fatal(res.Text)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			publishCall(t, conv, fmt.Sprintf("r%d", i), fmt.Sprintf(`{"path":"page.html","title":"race %d"}`, i))
+		})
+	}
+	wg.Wait()
+	if list, _ := ts.m.Artifacts(sum.ID); len(list) != maxThreadArtifacts {
+		t.Fatalf("artifacts = %d", len(list))
+	}
+	if entries, _ := os.ReadDir(ts.m.artifactRoot(sum.ID)); len(entries) != maxThreadArtifacts {
+		t.Fatalf("entries = %d", len(entries))
+	}
+}
+
+// Deleting the newest version never lets the next publish reuse its number,
+// so a key for the deleted version keeps failing; every change bumps the
+// summary's revision, even one that keeps the count.
+func TestPublishNeverReusesAVersionNumber(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"report.html": "v1"})
+	id := artifactIDText.FindStringSubmatch(publishCall(t, conv, "c1", `{"path":"report.html","title":"Report"}`).Text)[1]
+	writeTree(t, dir, map[string]string{"report.html": "v2 secret draft"})
+	publishCall(t, conv, "c2", `{"path":"report.html","title":"Report"}`)
+	auth := ts.login(t, "127.0.0.1:8260")
+	base := "/api/sessions/" + sum.ID + "/artifacts/" + id
+	key := ts.do(http.MethodGet, base+"/v/2/", "", auth).Header().Get("Location")
+	if w := ts.do(http.MethodGet, key, ""); w.Code != http.StatusOK || w.Body.String() != "v2 secret draft" {
+		t.Fatalf("v2 = %d %q", w.Code, w.Body)
+	}
+	before, _ := ts.m.Summary(sum.ID)
+	if w := ts.do(http.MethodDelete, base+"/versions/2", "", auth); w.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d", w.Code)
+	}
+	after, _ := ts.m.Summary(sum.ID)
+	if after.Artifacts != before.Artifacts || after.ArtifactsRevision == before.ArtifactsRevision {
+		t.Fatalf("summary before %+v after %+v", before, after)
+	}
+	writeTree(t, dir, map[string]string{"report.html": "v3"})
+	if res := publishCall(t, conv, "c3", `{"path":"report.html","title":"Report"}`); !strings.Contains(res.Text, "version 3") {
+		t.Fatalf("next publish = %+v", res)
+	}
+	if w := ts.do(http.MethodGet, key, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("deleted version's key = %d %q", w.Code, w.Body)
+	}
+}
+
+// What an interrupted publish left is never served and goes on the next
+// publish: staging folders, unlisted versions, an artifact with no metadata.
+func TestPublishReconcilesWhatAnInterruptedPublishLeft(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv, dir := chartTask(t, ts.m, ts.prov, "")
+	writeTree(t, dir, map[string]string{"report.html": "v1"})
+	id := artifactIDText.FindStringSubmatch(publishCall(t, conv, "c1", `{"path":"report.html","title":"Report"}`).Text)[1]
+	root := ts.m.artifactRoot(sum.ID)
+	leftovers := []string{filepath.Join(root, stagingPrefix+"123"), artifactVersionDir(root, id, 2), artifactVersionDir(root, "0123456789abcdef", 1)}
+	for _, p := range leftovers {
+		writeTree(t, p, map[string]string{"report.html": "stray"})
+	}
+	if _, err := ts.m.ArtifactFile(sum.ID, id, 2, "report.html"); err == nil {
+		t.Fatal("served a version its metadata does not list")
+	}
+	if res := publishCall(t, conv, "c2", `{"path":"report.html","title":"Report"}`); res.Failed || !strings.Contains(res.Text, "version 2") {
+		t.Fatalf("publish = %+v", res)
+	}
+	for _, p := range []string{leftovers[0], filepath.Dir(leftovers[2])} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left: %v", p, err)
+		}
+	}
+	if f, err := ts.m.ArtifactFile(sum.ID, id, 2, "report.html"); err != nil {
+		t.Fatal(err)
+	} else if data, _ := io.ReadAll(f.File); string(data) != "v1" {
+		t.Fatalf("version 2 = %q", data)
+	}
 }
