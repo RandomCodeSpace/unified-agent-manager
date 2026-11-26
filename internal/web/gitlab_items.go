@@ -44,8 +44,15 @@ type GitLabItemSummary struct {
 	PipelineID int64  `json:"pipeline_id,omitempty"`
 	// PipelineState is a merge request's head pipeline status.
 	PipelineState string `json:"pipeline_state,omitempty"`
-	WebURL        string `json:"web_url,omitempty"`
-	Error         string `json:"error,omitempty"`
+	// A merge request's readiness: GitLab's detailed_merge_status, merge
+	// conflicts, unresolved blocking threads and auto-merge (merge when the
+	// pipeline succeeds), from the same read as its state.
+	MergeStatus string `json:"merge_status,omitempty"`
+	Conflicts   bool   `json:"conflicts,omitempty"`
+	ThreadsOpen bool   `json:"threads_open,omitempty"`
+	AutoMerge   bool   `json:"auto_merge,omitempty"`
+	WebURL      string `json:"web_url,omitempty"`
+	Error       string `json:"error,omitempty"`
 	// Stale marks the last known state, kept while GitLab rate limits reads.
 	Stale bool `json:"stale,omitempty"`
 	// FailureKind and FailureDetail say what a failed job failed on
@@ -299,6 +306,8 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 		if p := mr.HeadPipeline; p != nil && p.ID > 0 {
 			out.PipelineID, out.PipelineState = p.ID, displaytext.Sanitize(p.Status)
 		}
+		out.MergeStatus, out.Conflicts, out.AutoMerge = displaytext.Sanitize(mr.DetailedMergeStatus), mr.HasConflicts, mr.MergeWhenPipelineSucceeds
+		out.ThreadsOpen = mr.BlockingDiscussionsResolved != nil && !*mr.BlockingDiscussionsResolved
 	case "pipeline":
 		var p gitLabPipelineResponse
 		if _, err := gitLabGetJSON(ctx, gate, fmt.Sprintf("%s/pipelines/%d", base, ref.id), &p); err != nil {

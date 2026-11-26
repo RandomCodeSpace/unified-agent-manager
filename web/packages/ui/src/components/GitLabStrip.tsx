@@ -311,7 +311,18 @@ export function TurnStrip({ items: calls, hide }: Readonly<{ items: Item[]; hide
 const BLOCK_TONE: Record<NonNullable<ChipProps['tone']>, BlockTone> = { success: 'success', error: 'error', accent: 'accent', warning: 'warning', attention: 'warning', muted: 'none' };
 const blockTone = (status: string): BlockTone => BLOCK_TONE[statusTone(status) ?? 'muted'];
 
-/** An item's state as blocks: its state word, an open merge request's pipeline (a glyph and "pipeline", its state in words), a failed job's failure kind and "stale" while GitLab rate limits reads. */
+/** GitLab's detailed_merge_status words the chip says; the rest (checking, a draft, conflicts and threads, said on their own) say nothing. */
+const MERGE_STATUS: Record<string, Block> = {
+  not_approved: { key: 'merge', tone: 'warning', label: 'needs approval', title: 'needs approval' },
+  need_rebase: { key: 'merge', tone: 'warning', label: 'needs rebase', title: 'needs rebase' },
+  mergeable: { key: 'merge', tone: 'success', label: 'ready', title: 'ready to merge' },
+};
+
+/**
+ * An item's state as blocks: its state word, an open merge request's pipeline (a glyph and "pipeline", its state in words)
+ * and readiness (auto-merge, conflict, threads open, needs approval or rebase, ready), a failed job's failure kind and
+ * "stale" while GitLab rate limits reads.
+ */
 export function stateBlocks(item?: GitLabItemSummary): Block[] {
   const word = stateWord(item);
   if (!item || !word) return [];
@@ -321,12 +332,27 @@ export function stateBlocks(item?: GitLabItemSummary): Block[] {
     const pipeline = item.pipeline_state;
     out.push({ key: 'pipeline', tone: blockTone(pipeline), Icon: pipeline === 'success' ? Check : pipeline === 'failed' ? X : CircleDashed, label: 'pipeline', title: `pipeline ${statusLabel(pipeline).toLowerCase()}` });
   }
+  if (item.kind === 'mr' && item.state === 'opened') {
+    if (item.auto_merge) out.push({ key: 'auto', tone: 'accent', label: 'auto-merge', title: 'auto-merge when the pipeline succeeds' });
+    if (item.conflicts) out.push({ key: 'conflict', tone: 'error', label: 'conflict', title: 'merge conflict' });
+    if (item.threads_open) out.push({ key: 'threads', tone: 'warning', label: 'threads open', title: 'unresolved threads' });
+    const merge = item.merge_status ? MERGE_STATUS[item.merge_status] : undefined;
+    if (merge) out.push(merge);
+  }
   if (item.failure_kind) {
     const failure = item.failure_detail ? `${item.failure_kind} · ${item.failure_detail}` : item.failure_kind;
     out.push({ key: 'failure', tone: 'none', label: failure, title: failure });
   }
   if (item.stale) out.push({ key: 'stale', tone: 'none', label: 'stale', title: 'stale' });
   return out;
+}
+
+const URGENCY: BlockTone[] = ['error', 'attention', 'warning', 'accent', 'success', 'none'];
+/** The most urgent tone of an item's blocks and their words, for the dot on an in-text link; nothing until it is read. */
+export function linkState(item?: GitLabItemSummary): { tone: BlockTone; words: string } | undefined {
+  const blocks = item && !item.error ? stateBlocks(item) : [];
+  if (!blocks.length) return undefined;
+  return { tone: URGENCY.find((t) => blocks.some((b) => b.tone === t)) ?? 'none', words: blocks.map((b) => b.title).join(' · ') };
 }
 
 /** The open item's name and address in GitLab, for the panel's head. */

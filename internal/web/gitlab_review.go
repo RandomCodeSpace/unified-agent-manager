@@ -79,6 +79,12 @@ type gitLabReviewMRResponse struct {
 	SourceProjectID int64  `json:"source_project_id"`
 	TargetProjectID int64  `json:"target_project_id"`
 	SHA             string `json:"sha"`
+	// Merge readiness, read with the rest of the merge request (GitLab 15.6+
+	// for detailed_merge_status); an absent field shows nothing.
+	DetailedMergeStatus         string `json:"detailed_merge_status"`
+	HasConflicts                bool   `json:"has_conflicts"`
+	BlockingDiscussionsResolved *bool  `json:"blocking_discussions_resolved"`
+	MergeWhenPipelineSucceeds   bool   `json:"merge_when_pipeline_succeeds"`
 }
 
 func (m *Manager) gitLabReview(ctx context.Context, id, sha string, iid int64) (GitLabReview, error) {

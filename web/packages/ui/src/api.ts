@@ -2202,6 +2202,11 @@ export interface GitLabItemSummary {
   pipeline_id?: number;
   /** A merge request's head pipeline status. */
   pipeline_state?: string;
+  /** A merge request's readiness: GitLab's detailed_merge_status ("not_approved", "mergeable"…), conflicts, unresolved blocking threads, auto-merge set. */
+  merge_status?: string;
+  conflicts?: boolean;
+  threads_open?: boolean;
+  auto_merge?: boolean;
   web_url?: string;
   error?: string;
   /** The last known state, kept while GitLab rate limits reads. */

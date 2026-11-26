@@ -89,7 +89,7 @@ func gitLabItemResponses() map[string]gitLabFixtureResponse {
 	}
 	return map[string]gitLabFixtureResponse{
 		"projects/group%2Fsub%2Frepo":                                             {body: `{"id":42,"path_with_namespace":"group/sub/repo"}`},
-		"projects/42/merge_requests/2":                                            {body: `{"id":700,"iid":2,"project_id":42,"title":"Draft: demo","state":"opened","draft":true,"web_url":"https://gitlab.example.com/group/sub/repo/-/merge_requests/2","source_branch":"demo","target_branch":"main","sha":"` + strings.Repeat("a", 40) + `","author":{"name":"Amit","username":"amit"},"head_pipeline":{"id":91,"status":"failed","ref":"demo","sha":"` + strings.Repeat("a", 40) + `","web_url":"https://evil.example.com/p/91"}}`},
+		"projects/42/merge_requests/2":                                            {body: `{"id":700,"iid":2,"project_id":42,"title":"Draft: demo","state":"opened","draft":true,"web_url":"https://gitlab.example.com/group/sub/repo/-/merge_requests/2","source_branch":"demo","target_branch":"main","sha":"` + strings.Repeat("a", 40) + `","author":{"name":"Amit","username":"amit"},"head_pipeline":{"id":91,"status":"failed","ref":"demo","sha":"` + strings.Repeat("a", 40) + `","web_url":"https://evil.example.com/p/91"},"detailed_merge_status":"not_approved\u001b[31m","has_conflicts":true,"blocking_discussions_resolved":false,"merge_when_pipeline_succeeds":true}`},
 		"projects/42/merge_requests/2/discussions?per_page=100&page=1":            {body: `[{"id":"` + strings.Repeat("d", 40) + `","individual_note":false,"notes":[{"id":5,"body":"Return 503","author":{"name":"Priya","username":"priya"},"resolvable":true,"resolved":false}]}]`},
 		"projects/42/issues/14":                                                   {body: `{"iid":14,"project_id":42,"title":"Health endpoint","state":"opened","issue_type":"issue","web_url":"https://gitlab.example.com/group/sub/repo/-/issues/14","description":"GET /healthz","labels":["bug"],"assignees":[{"name":"Amit","username":"amit"}],"milestone":{"title":"v0.4"}}`},
 		"projects/42/issues/22":                                                   {body: `{"iid":22,"project_id":42,"title":"Timeout test","state":"opened","issue_type":"task"}`},
@@ -124,6 +124,9 @@ func TestGitLabItemsReadStateWordsWithinTheThreadProject(t *testing.T) {
 	}
 	if !items[0].Draft || items[5].PipelineID != 91 {
 		t.Fatalf("draft or job pipeline missing: %+v", items)
+	}
+	if mr := items[0]; mr.MergeStatus != "not_approved" || !mr.Conflicts || !mr.ThreadsOpen || !mr.AutoMerge {
+		t.Fatalf("merge readiness not read (or not sanitized) from the merge request: %+v", mr)
 	}
 	for _, i := range []int{6, 7, 8} {
 		if items[i].Error == "" {

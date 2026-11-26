@@ -19,8 +19,8 @@ import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
 import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
-import { gitLabWords, isGitLabCommitUrl, isGitLabProjectUrl, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
-import { GitLabItemsContext, plainClick } from './GitLabStrip';
+import { gitLabWords, isGitLabCommitUrl, isGitLabProjectUrl, parseGitLabUrl, refKey, remarkGitLabRefs } from '../lib/gitlabRefs';
+import { GitLabItemsContext, linkState, plainClick, useSummaries } from './GitLabStrip';
 import { remarkReferences } from '../lib/references';
 import { MdCite, useCites } from './ReferenceCite';
 import { useFederation, type Machine } from '../FederationContext';
@@ -30,6 +30,7 @@ import { DiagramCard } from './Diagram';
 import { DataTable, MarkdownTable } from './DataTable';
 import { VisualBoundary } from './VisualBoundary';
 import { useFileDemand, useFileReference } from './FileReferences';
+import type { BlockTone } from './ui/blocks';
 import { Button, buttonVariants } from './ui/button';
 import { chipVariants } from './ui/chip';
 import { Input } from './ui/input';
@@ -240,6 +241,8 @@ export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; clas
     </span>
   );
 }
+
+const DOT_TONE: Record<BlockTone, Tone> = { success: 'success', accent: 'accent', warning: 'warning', error: 'error', attention: 'attention', none: 'muted' };
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
 export function Dot({ tone, className }: Readonly<{ tone: Tone; className?: string }>) {
@@ -839,19 +842,26 @@ export function GitHubMark({ className }: Readonly<{ className?: string }>) {
 /**
  * A link to an item of the Thread's GitLab project, or to the project or one of its commits: GitLab's mark, then the reply's own words, or
  * "MR !72" for a bare address. A plain click opens an item in the GitLab side panel; a modified one, the project and a commit, GitLab.
+ * A merge request or pipeline ends in a dot in its state's most urgent tone, read as its chip is (the same shared read),
+ * while the link is on screen and its block has stopped streaming; its words are the link's title.
  */
 function GitLabLink({ href, words }: Readonly<{ href: string; words: string }>) {
   const gitlab = useContext(GitLabItemsContext);
+  const { streaming } = useContext(MdContext);
   const ref = gitlab ? parseGitLabUrl(href, gitlab.origin) : null;
   const label = !words || /^https?:\/\//i.test(words) ? (ref ? gitLabWords(ref) : words) : words;
+  const anchor = useRef<HTMLAnchorElement>(null);
+  const live = ref && !streaming && (ref.kind === 'mr' || ref.kind === 'pipeline') ? ref : null;
+  const state = linkState(useSummaries(gitlab?.sessionId ?? '', live ? [live] : [], anchor).get(live ? refKey(live) : ''));
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" data-gitlab-link="" title={href} onClick={(e) => {
+    <a ref={anchor} href={href} target="_blank" rel="noopener noreferrer" data-gitlab-link="" title={state ? `${state.words} · ${href}` : href} onClick={(e) => {
       if (!gitlab || !ref || !plainClick(e)) return;
       e.preventDefault();
       gitlab.open([ref], ref);
     }}>
       <GitLabMark className="mr-1" />
       {label}
+      {state && <Dot tone={DOT_TONE[state.tone]} className="ml-1 size-1.5 align-middle" />}
     </a>
   );
 }
