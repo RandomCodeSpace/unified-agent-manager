@@ -141,7 +141,9 @@ test('an archived Thread is found in Settings, unarchives as Finished without a 
     await expect(unsettled(page).getByRole('button', { name: / Zeta thread / })).toHaveCount(0);
   };
   await archive();
-  const served = model.served().length;
+  // Count turns only: the background title request can be served after this point.
+  const turns = () => model.served().filter((s) => s.fixture.startsWith('reply ')).length;
+  const served = turns();
 
   await page.getByRole('searchbox', { name: 'Search threads' }).fill('Zeta');
   await expect(page.getByRole('navigation', { name: 'Threads' }).getByRole('button', { name: /Zeta thread/ })).toBeVisible();
@@ -163,7 +165,7 @@ test('an archived Thread is found in Settings, unarchives as Finished without a 
   await page.getByRole('menuitem', { name: 'Unarchive' }).click();
   await expect(threadState(page, 'Finished')).toBeVisible();
   await expect(row(page, project, 'Zeta thread', 'Finished')).toBeVisible();
-  expect(model.served()).toHaveLength(served);
+  expect(turns()).toBe(served);
 
   await archive();
   list = await archived();
