@@ -40,14 +40,18 @@ export function ContextRing({ session, className }: Readonly<{ session: SessionD
   );
 }
 
-/** The latest context report's detail lines, under the Context tab's headline; unknown values never become a zero estimate. */
-export function ContextReport({ session, model }: Readonly<{ session: SessionDetail; model?: Model }>) {
+/**
+ * The latest context report's detail lines, under the Context tab's headline; unknown values never become a zero estimate.
+ * `compactAt` is the CLI's own compaction threshold, which wins over the one computed from the setting.
+ */
+export function ContextReport({ session, model, compactAt }: Readonly<{ session: SessionDetail; model?: Model; compactAt?: number }>) {
   const threshold = useThreshold(session);
   const context = session.context;
   const cost = estimateTurnCost(model, context, session.context_size);
   return (
     <>
-      {context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% (<Num value={Math.round(context.limit * threshold)} /> tokens)</p>}
+      {compactAt ? <p className="text-caption text-muted">Compacts at <Num value={compactAt} /> tokens</p>
+        : context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% (<Num value={Math.round(context.limit * threshold)} /> tokens)</p>}
       {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: <Num value={context.prompt} /> tokens</p>}
       {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: <Num value={context.cached} /> tokens</p>}
       {cost !== null && context && <p className="text-caption">Estimate: ≈ <Num value={cost} format={formatCredits} /> AI credits per model request at <Num value={context.used} /> context tokens, input only. A prompt makes one or more requests. Reported cached tokens use the cache-read price; actual usage may differ.</p>}

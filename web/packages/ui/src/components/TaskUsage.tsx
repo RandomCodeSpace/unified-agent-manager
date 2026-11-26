@@ -1,10 +1,10 @@
 import { ChevronRight } from 'lucide-react';
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, readOnly, type SessionDetail, type TaskUsageMetrics, type UsageMetricAgent, type UsageMetricModel } from '../api';
+import { describeError, modelDisplayName, ranModelName, readOnly, type SessionDetail, type TaskUsageMetrics, type UsageMetricAgent, type UsageMetricModel } from '../api';
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
-import { LineCounts, Note, Num } from './common';
+import { LineCounts, Note, Num, useApp } from './common';
 import { plural, shares, time, ToolTimes, useTimeSplit } from './TimeSplit';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -140,6 +140,9 @@ function Budget({ session }: Readonly<{ session: SessionDetail }>) {
  */
 export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   const api = useApi();
+  const { meta } = useApp();
+  // The picker's name for a reported model id; the raw id stays in the tooltip.
+  const named = (id: string) => <span key={id} title={id}>{modelDisplayName(meta, id)}</span>;
   const inactive = readOnly(session);
   // A draft (NewTaskPane) has no id yet: it is not closed, it has not started.
   const native = !!session.capabilities.usage_metrics && !!session.id && session.open && !inactive;
@@ -167,7 +170,7 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   // With no native read (a closed or inactive Thread), the tokens come from the Thread's session log, the time split's read.
   const logged = native ? undefined : split?.tokens;
   const tokens = (key: 'input' | 'output', sub: 'cache_read' | 'reasoning', words: string) => logged ? { value: count(logged[key]), sub: part(logged[sub], words) } : metric((s) => count(total(s.models, key)), (s) => part(total(s.models, sub), words));
-  const tokenTypes = snapshot ? [...snapshot.token_details.map((row) => [row.type, count(row.tokens)] as const), ...snapshot.models.flatMap((m) => m.token_details.map((row) => [`${m.model} · ${row.type}`, count(row.tokens)] as const))] : [];
+  const tokenTypes = snapshot ? [...snapshot.token_details.map((row) => [row.type, count(row.tokens)] as const), ...snapshot.models.flatMap((m) => m.token_details.map((row) => [`${modelDisplayName(meta, m.model)} · ${row.type}`, count(row.tokens)] as const))] : [];
   return <>
     {session.id && !inactive && api.supports('thread-budget-v1') && <Budget session={session} />}
     <PanelSection label="This Thread" meta={split && split.waiting_ms > 0 ? `${time(split.waiting_ms)} waiting on you (${plural(split.waits, 'request')}), not counted` : undefined} action={<Button size="sm" variant="subtle" onClick={refresh} disabled={!snapshot && !error}>Refresh</Button>}>
@@ -183,21 +186,21 @@ export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
         : !session.open || inactive ? <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread{logged ? '; tokens are from the session log' : ''}.</p>
           : error && <p role="status" className="text-caption text-muted">{error}</p>)}
       {splitError && <p className="text-caption text-muted">{splitError}</p>}
-      {snapshot?.current_model && <p className="break-words text-caption text-muted">Current model: {snapshot.current_model}</p>}
+      {snapshot?.current_model && <p title={snapshot.current_model} className="break-words text-caption text-muted">Current model: {ranModelName(meta, session.model, snapshot.current_model)}</p>}
       {snapshot && <p className="text-caption text-muted">Native AI credits {units(snapshot.ai_units)} · Premium request cost {requestCost.format(snapshot.premium_request_cost)} · Model API time {duration(snapshot.api_duration_ms)}</p>}
       {snapshot?.truncated && <p className="text-caption text-muted">Some breakdown rows are not shown. Reported session counters are unchanged.</p>}
     </PanelSection>
     {(snapshot || split) && <div className="flex flex-col">
       {snapshot && <Fold label="By model" meta={plural(snapshot.models.length, 'model')}>
-        {snapshot.models.length ? <Table head={['Model', 'Requests', premium, 'AI credits', 'In', 'Out']} rows={snapshot.models.map((m) => [m.model, count(m.requests), requestCost.format(m.premium_request_cost), units(m.ai_units), count(m.input), count(m.output)])} /> : <p className="text-caption text-muted">No model metrics reported.</p>}
-        {snapshot.models.map((m) => m.cache_expires_at && <p key={m.model} className="mt-1 text-caption text-muted">{m.model}: last reported prompt cache expiry {new Date(m.cache_expires_at).toLocaleString()}</p>)}
+        {snapshot.models.length ? <Table head={['Model', 'Requests', premium, 'AI credits', 'In', 'Out']} rows={snapshot.models.map((m) => [named(m.model), count(m.requests), requestCost.format(m.premium_request_cost), units(m.ai_units), count(m.input), count(m.output)])} /> : <p className="text-caption text-muted">No model metrics reported.</p>}
+        {snapshot.models.map((m) => m.cache_expires_at && <p key={m.model} className="mt-1 text-caption text-muted">{named(m.model)}: last reported prompt cache expiry {new Date(m.cache_expires_at).toLocaleString()}</p>)}
       </Fold>}
       {snapshot && <Fold label="By agent" meta={plural(snapshot.agents.length, 'agent')}>
-        {snapshot.agents.length ? <Table head={['Agent', 'AI credits', 'Model time', 'Model']} numeric={(i) => i === 1 || i === 2} rows={snapshot.agents.map((a) => [<AgentName key="name" agent={a} session={session} />, units(a.ai_units), time(a.api_duration_ms), <span key="models" className="text-muted">{a.models.map((m) => m.model).join(', ')}</span>])} /> : <p className="text-caption text-muted">No agent metrics reported.</p>}
+        {snapshot.agents.length ? <Table head={['Agent', 'AI credits', 'Model time', 'Model']} numeric={(i) => i === 1 || i === 2} rows={snapshot.agents.map((a) => [<AgentName key="name" agent={a} session={session} />, units(a.ai_units), time(a.api_duration_ms), <span key="models" className="text-muted">{a.models.map((m) => modelDisplayName(meta, m.model)).join(', ')}</span>])} /> : <p className="text-caption text-muted">No agent metrics reported.</p>}
       </Fold>}
       {split && split.tools.length > 0 && <Fold label="Local time by tool" meta={plural(split.tools.length, 'tool')}><ToolTimes split={split} /></Fold>}
       {snapshot && <Fold label="Tokens" meta="by model and type">
-        {snapshot.models.length > 0 && <Table head={['Model', 'In', 'Out', 'Cache read', 'Cache write', 'Reasoning']} rows={snapshot.models.map((m) => [m.model, count(m.input), count(m.output), count(m.cache_read), count(m.cache_write), count(m.reasoning)])} />}
+        {snapshot.models.length > 0 && <Table head={['Model', 'In', 'Out', 'Cache read', 'Cache write', 'Reasoning']} rows={snapshot.models.map((m) => [named(m.model), count(m.input), count(m.output), count(m.cache_read), count(m.cache_write), count(m.reasoning)])} />}
         <div className="mt-2"><Counts rows={[...tokenTypes, ['Latest main input tokens', count(snapshot.last_input)], ['Latest main output tokens', count(snapshot.last_output)]]} /></div>
       </Fold>}
     </div>}

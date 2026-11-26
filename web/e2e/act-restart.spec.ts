@@ -38,7 +38,7 @@ test('a restart mid-turn: a started call offers Run again, which only drafts; a 
     const waitingUrl = page.url();
 
     await newThread(page, own.project);
-    await pickMode(page, 'Yolo');
+    await pickMode(page, 'Allow all');
     await send(page, 'run the sleeper');
     await expect(conv.getByRole('button', { name: 'bash sleep 120 , running' })).toBeVisible();
 

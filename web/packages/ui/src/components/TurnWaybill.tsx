@@ -1,17 +1,17 @@
 import { Package } from 'lucide-react';
 import { useId, useRef, type ReactNode } from 'react';
-import type { TurnTiming } from '../api';
+import { modelDisplayName, type Meta, type TurnTiming } from '../api';
 import { cn } from '../lib/cn';
 import { formatCount, formatCredits } from '../lib/cost';
 import { completedDuration, formatMs } from '../lib/transcript';
-import { clockTime } from './common';
+import { clockTime, useApp } from './common';
 import { Key } from './InlinePicker';
 import { plural } from './TimeSplit';
 import { PanelFoot, PanelHead } from './ui/panel';
 import { AnchoredReader } from './ui/reader';
 
 /** One line per section from the timing alone; a section without a figure is left out. `nano_aiu` is in billionths of an AI credit. */
-function lines(timing: TurnTiming): { label: string; value: ReactNode }[] {
+function lines(timing: TurnTiming, meta: Meta | null): { label: string; value: ReactNode }[] {
   const input = timing.input_tokens ?? 0;
   const cached = timing.cache_read_tokens ?? 0;
   const share = input > 0 && cached > 0 ? Math.round((cached / input) * 100) : 0;
@@ -28,7 +28,7 @@ function lines(timing: TurnTiming): { label: string; value: ReactNode }[] {
   ].filter(Boolean).join(' · ');
   return [
     { label: 'Weight', value: weight },
-    ...(timing.model ? [{ label: 'Carrier', value: <span className="font-mono text-code-sm text-ink">{timing.model}</span> }] : []),
+    ...(timing.model ? [{ label: 'Carrier', value: <span title={timing.model} className="text-ink">{modelDisplayName(meta, timing.model)}</span> }] : []),
     { label: 'Postage', value: postage },
     ...(route ? [{ label: 'Route', value: route }] : []),
   ];
@@ -43,6 +43,7 @@ export function TurnWaybill({ timing, anchor, phone, open, onClose, onClosed }: 
   onClose: () => void;
   onClosed: () => void;
 }>) {
+  const { meta } = useApp();
   const heading = useRef<HTMLHeadingElement>(null);
   const id = useId();
   const took = completedDuration(timing);
@@ -58,7 +59,7 @@ export function TurnWaybill({ timing, anchor, phone, open, onClose, onClosed }: 
       <p className="pl-6 text-caption tabular-nums text-muted">{facts}</p>
     </PanelHead>
     <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2.5 px-4 pt-1 pb-3">
-      {lines(timing).map(({ label, value }) => <div key={label} className="contents">
+      {lines(timing, meta).map(({ label, value }) => <div key={label} className="contents">
         <dt className="text-eyebrow uppercase text-muted">{label}</dt>
         <dd className="min-w-0 text-ui tabular-nums text-body [overflow-wrap:anywhere]">{value}</dd>
       </div>)}

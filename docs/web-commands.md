@@ -17,8 +17,8 @@ aliases are accepted, including `goal`, `yolo`, and `models`.
 | --- | --- |
 | Discovered skills; `init`, `review`, `blame`, `fleet`, `research`, `security-review` | Resolve the native prompt and submit it with the selected Thread model. Referenced files and attachments are supported. |
 | `autopilot` / `goal` | Invoke native autopilot, including its on/off, objective, and credit-limit arguments. Reconcile execution mode and report the native objective state. Autopilot does not change permissions. |
-| `allow-all` / `yolo` | Change the Thread's existing permission policy: `on` means Yolo, `off` means Safe, `show` reports it, and no argument toggles it. |
-| `permissions` | Open permission settings; `default`, `allow-all`, and `show` select Safe, select Yolo, or report the policy. |
+| `allow-all` / `yolo` | Change the Thread's existing permission policy: `on` means Allow all, `off` means Safe, `show` reports it, and no argument toggles it. |
+| `permissions` | Open permission settings; `default`, `allow-all`, and `show` select Safe, select Allow all, or report the policy. |
 | `model` / `models` | Open model settings, or select one offered Thread model ID. Native global/repository and plan-model options are not accepted. |
 | `rename` | Open rename, or rename this web Thread. |
 | `context`, `usage`, `list-dirs`, `env`, `skills` | Display native read-only output. Arguments are rejected before invocation. |
@@ -41,8 +41,8 @@ through an unsupported command to bypass Thread model settings.
 
 Choose Interactive or Autopilot from the Permissions and execution menu beside
 the model control. Selecting a mode preserves the draft and attachments and
-does not send a message or change Safe/Yolo permissions. Entering Autopilot
-while in Yolo, or Yolo while Autopilot runs, including by a typed command, asks
+does not send a message or change Safe/Allow all permissions. Entering Autopilot
+while in Allow all, or Allow all while Autopilot runs, including by a typed command, asks
 for confirmation first. Selecting Interactive
 disables future continuation; use Stop to abort current work as well. Objective
 details appear inside the dropdown, without a separate execution banner.
@@ -74,7 +74,7 @@ live execution observation until the provider is read again.
 Stop serializes with command execution, requests interactive mode to disable
 future autopilot continuation, then aborts active work. Abort is attempted even
 if the mode change fails, and partial failures are reported. Stop pauses queued
-follow-ups and never grants pending permissions. Changing to Yolo through the
+follow-ups and never grants pending permissions. Changing to Allow all through the
 permission control or an explicit permission command retains its existing
 behavior of approving pending permission requests.
 

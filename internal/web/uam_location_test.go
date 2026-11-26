@@ -134,7 +134,7 @@ func TestUAMReadLocationProjectScope(t *testing.T) {
 					}
 					if mode != store.ModeYolo {
 						res := uamReadCall(t, conv, args)
-						if !res.Failed || !strings.Contains(res.Text, "requires Yolo") || strings.Contains(res.Text, other.Workdir) || strings.Contains(res.Text, other.Branch) {
+						if !res.Failed || !strings.Contains(res.Text, "requires Allow all") || strings.Contains(res.Text, other.Workdir) || strings.Contains(res.Text, other.Branch) {
 							t.Fatalf("cross-project location read: %+v", res)
 						}
 						return

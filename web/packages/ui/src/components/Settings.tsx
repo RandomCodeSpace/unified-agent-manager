@@ -489,7 +489,7 @@ function utilityModelName(utility: ProviderInfo, choice: string): string {
 /** New threads' line: the default model, effort and mode, once the defaults resolve. */
 function newThreadsSummary(taskDefaults: ReturnType<typeof resolveTaskDefaults>, defaultModel: Model | null | undefined): string | undefined {
   if (!taskDefaults) return undefined;
-  const mode = taskDefaults.mode === 'yolo' ? 'Yolo' : 'Safe';
+  const mode = taskDefaults.mode === 'yolo' ? 'Allow all' : 'Safe';
   return [defaultModel?.name ?? 'Provider default', taskDefaults.effort && `${effortLabel(taskDefaults.effort)} effort`, mode].filter(Boolean).join(' · ');
 }
 

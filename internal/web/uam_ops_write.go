@@ -94,7 +94,7 @@ func (m *Manager) uamWrite(ctx context.Context, id string, in uamRequest) (strin
 		}
 		// A pinned chart's command reruns on refresh without a permission request, as uam_chart's does.
 		if c.Command != "" && !caller.yolo {
-			return "", errors.New("this chart runs a command, so pinning it needs Yolo")
+			return "", errors.New("this chart runs a command, so pinning it needs Allow all")
 		}
 		pin, err := m.PinChart(id, args.CallID)
 		if err != nil {

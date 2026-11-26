@@ -126,13 +126,13 @@ test('Permissions and execution: Yolo runs a tool without asking, Safe asks agai
 
   await expect(trigger).toHaveAccessibleName('Permissions and execution: Safe · Interactive');
   await open();
-  for (const [name, checked] of [['Safe', true], ['Yolo', false], ['Interactive', true], ['Autopilot', false]] as const) {
+  for (const [name, checked] of [['Safe', true], ['Allow all', false], ['Interactive', true], ['Autopilot', false]] as const) {
     if (checked) await expect(item(name)).toBeChecked();
     else await expect(item(name)).not.toBeChecked();
   }
-  await item('Yolo').click();
+  await item('Allow all').click();
   await close();
-  await expect(trigger).toHaveAccessibleName('Permissions and execution: Yolo · Interactive');
+  await expect(trigger).toHaveAccessibleName('Permissions and execution: Allow all · Interactive');
 
   await send(page, 'write freely');
   await expect(conv.getByText('Wrote it without asking.')).toBeVisible();
@@ -141,24 +141,24 @@ test('Permissions and execution: Yolo runs a tool without asking, Safe asks agai
   expect(fs.readFileSync(path.join(workdir, 'yolo.txt'), 'utf8')).toBe('call_yolo\n');
 
   // The riskiest pair is asked about; Cancel leaves the Thread as it was.
-  const confirm = page.getByRole('alertdialog', { name: 'Switch to Yolo with Autopilot?' });
+  const confirm = page.getByRole('alertdialog', { name: 'Switch to Allow all with Autopilot?' });
   await open();
   await item('Autopilot').click();
   await expect(confirm).toContainText('The agent will allow every permission request itself and keep working between turns without waiting for you.');
   await confirm.getByRole('button', { name: 'Cancel' }).click();
   await expect(confirm).toHaveCount(0);
   await close();
-  await expect(trigger).toHaveAccessibleName('Permissions and execution: Yolo · Interactive');
+  await expect(trigger).toHaveAccessibleName('Permissions and execution: Allow all · Interactive');
   await open();
   await item('Autopilot').click();
   await confirm.getByRole('button', { name: 'Switch' }).click();
   await expect(confirm).toHaveCount(0);
   await close();
-  await expect(trigger).toHaveAccessibleName(/^Permissions and execution: Yolo · Autopilot/);
+  await expect(trigger).toHaveAccessibleName(/^Permissions and execution: Allow all · Autopilot/);
 
   // Leaving the pair is not asked about.
   await pick('Interactive');
-  await expect(trigger).toHaveAccessibleName('Permissions and execution: Yolo · Interactive');
+  await expect(trigger).toHaveAccessibleName('Permissions and execution: Allow all · Interactive');
   await pick('Safe');
   await expect(trigger).toHaveAccessibleName('Permissions and execution: Safe · Interactive');
   await expect(confirm).toHaveCount(0);

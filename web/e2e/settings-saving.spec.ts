@@ -76,15 +76,15 @@ test('New threads defaults (model and Yolo) are what the next new Thread starts 
     await page.getByRole('option', { name: 'Mock Two' }).click();
     await expect(threads.getByRole('combobox', { name: 'Model', exact: true })).toHaveText('Mock Two');
     await threads.getByRole('combobox', { name: 'Mode', exact: true }).click();
-    await page.getByRole('option', { name: 'Yolo' }).click();
-    await expect(threads.getByRole('combobox', { name: 'Mode', exact: true })).toHaveText('Yolo');
+    await page.getByRole('option', { name: 'Allow all' }).click();
+    await expect(threads.getByRole('combobox', { name: 'Mode', exact: true })).toHaveText('Allow all');
     await expect.poll(async () => (await readSettings(uam)).task_defaults).toMatchObject({ provider: 'copilot', model: 'mock/mock-2', mode: 'yolo' });
 
     await page.reload();
     await openHome(page);
     await newThread(page, project);
     await expect(page.getByRole('button', { name: 'Model: Mock Two' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Permissions and execution: Yolo/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Permissions and execution: Allow all/ })).toBeVisible();
     await send(page, 'run on the default model');
     await expect(conversation(page).getByText('Reply from the default model.')).toBeVisible();
     await expect(threadState(page, 'Finished')).toBeVisible();

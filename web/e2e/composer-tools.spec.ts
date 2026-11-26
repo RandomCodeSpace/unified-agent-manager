@@ -64,8 +64,8 @@ test('Tools opens one panel of tabs that the arrow keys switch and Esc closes; t
   await expect(context).toContainText(/[\d.]+K of 128K tokens/);
   const totalBefore = await total();
   expect(Math.abs((totalBefore / 128) * 100 - before.percent)).toBeLessThan(2);
-  await expect(context).toContainText('Counted for mock/mock-1');
-  await expect(context).toContainText('Compacts at 80% (102.4K tokens)');
+  await expect(context).toContainText('Counted for Mock');
+  await expect(context).toContainText('Compacts at 102.4K tokens');
   await expect(context).toContainText(/Latest prompt: [\d,]+ tokens/);
   /** The token count beside `term` in the Context tab's list. */
   const count = async (term: string) => Number((await context.getByRole('term').filter({ hasText: term }).locator('xpath=following-sibling::dd[1]').innerText()).replace(/[^\d]/g, ''));
@@ -183,7 +183,7 @@ test('the Agent tab picks a Project custom agent between turns only, and lists t
   expect(systemText(model.served().find((s) => s.fixture === 'tools for hold the agent')!.request)).toContain('You review the fixture and nothing else.');
 
   await uam.api('PATCH', `/api/sessions/${id}`, { mode: 'yolo' });
-  await expect(page.getByRole('button', { name: /^Permissions and execution: Yolo/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Permissions and execution: Allow all/ })).toBeVisible();
   await send(page, 'load the skill');
   await expect(conv.getByText('Skill loaded.')).toBeVisible();
   await expect(threadState(page, 'Finished')).toBeVisible();

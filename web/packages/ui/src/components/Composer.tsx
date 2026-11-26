@@ -60,7 +60,7 @@ const ASSISTED_RISKS = [
   { Icon: ShieldHalf, tone: 'text-warning', text: 'A reviewer model allows the permission requests it approves; the rest ask you. Waits for each message.' },
   { Icon: ShieldHalf, tone: 'text-warning', text: 'Keeps working between turns by itself; a reviewer model allows the permission requests it approves.' },
 ] as const;
-const PERMISSION_LABEL: Record<PermissionMode, string> = { safe: 'Safe', assisted: 'Assisted', yolo: 'Yolo' };
+const PERMISSION_LABEL: Record<PermissionMode, string> = { safe: 'Safe', assisted: 'Assisted', yolo: 'Allow all' };
 /** A failed change left the mode unread: it is never shown as the old one. */
 const UNKNOWN_RISK = { Icon: ShieldAlert, tone: 'text-warning', text: 'The permission mode could not be confirmed. Nothing is allowed automatically until you choose a mode again.' } as const;
 
@@ -1361,7 +1361,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     ...(session.capabilities.assisted_permissions || mode === 'assisted' || session.capabilities.assisted_unavailable
       ? [{ value: 'assisted', label: 'Assisted', description: session.capabilities.assisted_unavailable ?? MODE_TEXT.assisted, disabled: !!session.capabilities.assisted_unavailable && mode !== 'assisted' }]
       : []),
-    { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
+    { value: 'yolo', label: 'Allow all', description: MODE_TEXT.yolo },
   ];
   // Yolo with autopilot is the riskiest pair: every way into it is confirmed first.
   const chooseMode = (next: PermissionMode) => {
@@ -1713,7 +1713,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       {(riskConfirm.target || riskConfirm.props.open) && (
         <AlertDialog
           {...riskConfirm.props}
-          title="Switch to Yolo with Autopilot?"
+          title="Switch to Allow all with Autopilot?"
           description="The agent will allow every permission request itself and keep working between turns without waiting for you."
           confirmLabel="Switch"
           onConfirm={() => {

@@ -130,7 +130,7 @@ func TestUAMPinChartOwnThread(t *testing.T) {
 		t.Fatalf("command chart = %+v", res)
 	}
 	setSession(m, task.ID, func(s *webSession) { s.mode = store.ModeSafe })
-	uamRefused(t, conv, `{"op":"pin_chart","args":{"call_id":"call-3"}}`, "needs Yolo")
+	uamRefused(t, conv, `{"op":"pin_chart","args":{"call_id":"call-3"}}`, "needs Allow all")
 	setSession(m, task.ID, func(s *webSession) { s.mode = store.ModeYolo })
 	uamReadJSON(t, conv, `{"op":"pin_chart","args":{"call_id":"call-3"}}`, &pin)
 }

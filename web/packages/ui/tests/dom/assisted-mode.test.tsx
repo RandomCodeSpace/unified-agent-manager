@@ -21,7 +21,7 @@ test('Assisted is an opt-in, clearly labelled mode where the provider supports i
 test('a Task whose provider lacks assisted permissions does not offer it', async () => {
   const { user } = await openTask('t3');
   const menu = await openMenu(user, /^Permissions and execution: Safe/);
-  await menu.findByRole('menuitemradio', { name: /^Yolo/ });
+  await menu.findByRole('menuitemradio', { name: /^Allow all/ });
   expect(menu.queryByRole('menuitemradio', { name: /^Assisted/ })).toBeNull();
 });
 

@@ -2857,6 +2857,18 @@ export function modelName(meta: Meta | null, providerName: string, id: string): 
   return modelCatalog(meta, providerName).find((m) => m.id === id)?.name ?? id;
 }
 
+/** A model as the picker names it, from any provider's catalog; an id no catalog lists stays raw. */
+export function modelDisplayName(meta: Meta | null, id: string): string {
+  return meta?.providers.flatMap((p) => p.models ?? []).find((m) => m.id === id)?.name ?? id;
+}
+
+/** The model that ran, as the picker names it; "Fusion → MAI-Code-1.1-Flash" when the chosen route (Fusion, Auto) picked it. */
+export function ranModelName(meta: Meta | null, chosen: string | undefined, ran: string): string {
+  const name = modelDisplayName(meta, ran);
+  const route = chosen ? modelDisplayName(meta, chosen) : name;
+  return route === name ? name : `${route} → ${name}`;
+}
+
 export const readOnly = (s: Pick<SessionSummary, 'stage'>): boolean => s.stage === 'settled' || s.stage === 'archived';
 export const stageLabel = (s: SessionSummary): string => {
   if (s.stage === 'settled') return 'Settled';

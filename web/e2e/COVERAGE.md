@@ -76,7 +76,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-15 | After a failed turn, "Resend last prompt" puts the prompt (and stored uploads) back in the box | composer.test.tsx | spec: composer-attachments.spec.ts |
 | CMP-16 | The Model picker switches the Thread's model between turns; the next turn uses it; the choice is saved on the Thread | composer.test.tsx | spec: composer-models.spec.ts |
 | CMP-17 | Effort and context size picker offers the model's levels/sizes | composer.test.tsx | not feasible: custom models offer no effort or context levels |
-| CMP-18 | Permissions and execution menu: Safe/Yolo × Interactive/Autopilot; Yolo · Autopilot asks to confirm | composer.test.tsx, assisted-mode.test.tsx | spec: composer-models.spec.ts |
+| CMP-18 | Permissions and execution menu: Safe/Allow all × Interactive/Autopilot; Allow all · Autopilot asks to confirm | composer.test.tsx, assisted-mode.test.tsx | spec: composer-models.spec.ts |
 | CMP-19 | A narrow toolbar folds labels in priority order (execution word, credits, effort/context, permissions → glyphs in… | composer.test.tsx | spec: composer-layout.spec.ts |
 | CMP-20 | Attach files (paper clip): chip shows progress then size/type; the file goes with the message; the transcript shows… | composer.test.tsx, app.test.tsx, attachments.test.mjs | spec: composer-drafts.spec.ts |
 | CMP-21 | The service types an upload by its bytes; SVG/archives refused; image > 3 MiB, PDF > 10 MiB, text > 256 KiB, > 5 per… | attachments.test.mjs, composer.test.tsx | spec: composer-attachments.spec.ts (the PDF limit through the API: a custom model takes no PDF) |
@@ -98,8 +98,8 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-37 | Context ring fills from live usage and marks the compaction threshold; Context tab lists counts | context-ring.test.tsx, context.test.tsx | spec: composer-tools.spec.ts |
 | CMP-38 | Agent tab: pick a Project custom agent (quiet Thread only); lists loaded skills | composer-tools.test.tsx | spec: composer-tools.spec.ts |
 | CMP-39 | Output styles: Settings library, Style tab on a new Thread, a started Thread shows its pinned style read only; the… | output-style-settings.test.tsx, composer-tools.test.tsx | spec: composer-tools.spec.ts |
-| CMP-40 | Settings → New threads (model, Safe/Yolo) applies to the next New thread's pickers and its first turn | settings.test.tsx, defaults.test.mjs | spec: settings-saving.spec.ts |
-| CMP-41 | Routines: create one, Run now starts a Thread with its first message (default Yolo with autopilot), card shows the… | routines.test.tsx, routines.test.mjs | spec: composer-routines.spec.ts |
+| CMP-40 | Settings → New threads (model, Safe/Allow all) applies to the next New thread's pickers and its first turn | settings.test.tsx, defaults.test.mjs | spec: settings-saving.spec.ts |
+| CMP-41 | Routines: create one, Run now starts a Thread with its first message (default Allow all with autopilot), card shows the… | routines.test.tsx, routines.test.mjs | spec: composer-routines.spec.ts |
 | CMP-42 | "Scheduled in this Thread · N" chip lists native schedules read only | schedules.test.tsx | not feasible: web schedules are disabled |
 | CMP-43 | Background tasks chip counts running shells; Output and Stop per shell | composer.test.tsx, background-output.test.tsx | spec: activity-steps.spec.ts |
 | CMP-44 | Model or local line (ModelPhase) says what runs during a turn | model-phase.test.tsx | spec: activity-steps.spec.ts (status line and Usage and AI phases) |
@@ -121,7 +121,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | TRN-09 | Rich replies: exact Markdown shapes (alerts/callouts, label grids, stat tiles, step lists, task lists, status lists,… | none | spec: transcript-messages.spec.ts |
 | TRN-10 | A ```mermaid flowchart opens in the React Flow view (selecting a node lights its edges; a dragged node resets with Reset layout); React Flow / Mermaid / Code toggle; the Mermaid view is a `data:` SVG `img alt="Diagram"` from the sandboxed frame; a box-and-arrow diagram Pele cannot read opens in React Flow through one Utility-model conversion per source, and one the model cannot convert falls back to Mermaid with a note | diagram.test.mjs, flowGraph.test.mjs, diagram_graph_test.go | spec: transcript-visuals.spec.ts |
 | TRN-14 | A `uam_chart` call shows a chart card (`Chart: <title>`) with Table, Copy CSV and Pin to project | chart.test.mjs, chart-table.test.mjs | spec: transcript-visuals.spec.ts (Pin to project not covered) |
-| TRN-15 | A chart with `command` runs it in the Thread folder only in Yolo mode (30 s, 1 MiB) | unsure: none found in UI tests (Go tests | spec: transcript-visuals.spec.ts (the 30 s limit not covered: it needs a 30 s wait) |
+| TRN-15 | A chart with `command` runs it in the Thread folder only in Allow all mode (30 s, 1 MiB) | unsure: none found in UI tests (Go tests | spec: transcript-visuals.spec.ts (the 30 s limit not covered: it needs a 30 s wait) |
 | TRN-16 | Scrolling up loads older pages until the first recorded message | history-paging (7), history-window (14), | spec: transcript-history.spec.ts |
 | TRN-17 | After reading old pages while new turns arrive, `Jump to bottom` drops the old window (`history_after`) and lands on… | none | spec: transcript-history.spec.ts (window never drops its newest rows: that needs more than 150 rows) |
 | TRN-18 | History older than the service's in-memory part, or read after a service restart, comes from Copilot's record | none in UI (no test for the truncated no | spec: transcript-history.spec.ts (after a restart; history past the in-memory part needs 2,000 items or 16 MiB of record) |
@@ -162,9 +162,9 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | ACT-05 | A file-write request shows the proposed change as a diff with the path once | none | spec: act-permissions.spec.ts |
 | ACT-06 | The agent's reason for a command shows in grey under the request (cut at ~300 chars) | none | spec: act-permissions.spec.ts |
 | ACT-07 | "Allow for this session" appears only when Copilot offers it, and becomes the main button after two Allow once of… | none | spec: act-permissions.spec.ts |
-| ACT-08 | Yolo allows each request without a card (no flash), marks its step "auto-approved"; switching to yolo allows the waiting… | none | spec: act-permissions.spec.ts |
+| ACT-08 | Allow all allows each request without a card (no flash), marks its step "auto-approved"; switching to yolo allows the waiting… | none | spec: act-permissions.spec.ts |
 | ACT-09 | Assisted: a reviewer model approves some requests; the rest wait, with the reason | none | spec: act-permissions.spec.ts (refused with the reason while the reviewer model is not offered); a review itself not feasible (the reviewer is a Copilot model; the pack runs signed out on the mock) |
-| ACT-10 | Autopilot keeps working turn after turn until the agent completes; Stop between autopilot turns ends it; Yolo ·… | composer ("Yolo with Autopilot is confir | spec: activity-agents.spec.ts (completion, Stop) |
+| ACT-10 | Autopilot keeps working turn after turn until the agent completes; Stop between autopilot turns ends it; Allow all ·… | composer ("Allow all with Autopilot is confir | spec: activity-agents.spec.ts (completion, Stop) |
 | ACT-11 | A single question sits on the composer with the recommended option picked; Enter/Answer or clicking it again sends;… | answer.test.mjs | spec: activity.spec.ts (typed answer), activity-attention.spec.ts (recommended on Enter, Decline) |
 | ACT-12 | A "(Choose any that apply)" question ticks several options and sends them together | none | spec: activity-attention.spec.ts |
 | ACT-13 | A draft typed before the question returns after it is settled; attaching while it waits says "Answer the question… | none | spec: activity-attention.spec.ts |
@@ -271,7 +271,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | SET-03 | At phone width the rail is a list showing each page's current values; opening a page moves focus to its back button… | settings.test.tsx | spec: settings-nav.spec.ts |
 | SET-04 | Every service setting changed in the UI is saved at once and is still there after a reload and after a service… | settings.test.tsx | spec: settings-saving.spec.ts (reload; after a service restart: planned) |
 | SET-05 | A save the service refuses puts the old value back and shows "Could not save the setting: <reason>" | settings.test.tsx | spec: settings-models.spec.ts |
-| SET-06 | New threads defaults (model, effort, context size, Safe/Yolo) are saved as `task_defaults` and a new Thread starts… | settings.test.tsx | spec: settings-saving.spec.ts |
+| SET-06 | New threads defaults (model, effort, context size, Safe/Allow all) are saved as `task_defaults` and a new Thread starts… | settings.test.tsx | spec: settings-saving.spec.ts |
 | SET-07 | The compaction threshold (50-90 % in 5s; 80 stored as unset) is saved and applies to new Threads | settings.test.tsx | spec: settings-saving.spec.ts (stored; reaching Copilot not assertable) |
 | SET-08 | Conversation: the Enter-while-running default (Send now / After this turn), Suggest replies and Threads-can-message… | settings.test.tsx, settings-help.test.tsx, federation.test.tsx | spec: settings-saving.spec.ts |
 | SET-09 | Custom providers: Add provider with name, base URL and API key, Load models lists what the endpoint serves (`POST… | settings.test.tsx | spec: settings.spec.ts |

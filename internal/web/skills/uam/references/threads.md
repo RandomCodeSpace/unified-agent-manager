@@ -34,7 +34,7 @@ not such a write.
   `worktreeBaseRef` setting decides (the Project's current branch unless it
   says `defaultBranch`).
 
-The new Thread starts in Yolo mode when you are in Yolo, else in Safe mode.
+The new Thread starts in Allow all mode when you are in Allow all, else in Safe mode.
 It runs on its own and shows in the owner's
 sidebar. The result names its Thread ID. Each time its turn ends (completed,
 failed, stopped, at its spending limit), or it is settled or archived, you get

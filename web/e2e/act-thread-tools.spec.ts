@@ -72,7 +72,7 @@ test('automatic compaction beside a turn is a quiet note on the working line, an
     script(model, { userMessage: 'work beside it' }, [[{ id: 'call_beside', name: 'bash', arguments: { command: 'sleep 3', description: 'Work' } }], 'Worked beside it.']);
     await openHome(page);
     await newThread(page, project);
-    await pickMode(page, 'Yolo');
+    await pickMode(page, 'Allow all');
     await send(page, 'fill the context');
     await expect(threadState(page, 'Finished')).toBeVisible({ timeout: 60_000 });
 
@@ -138,7 +138,7 @@ test('Settings, Background AI logs uam\'s Utility calls, and a subagent\'s name 
     model.title('delegate the tally for the log', 'Tally thread');
     await openHome(page);
     await newThread(page, project);
-    await pickMode(page, 'Yolo');
+    await pickMode(page, 'Allow all');
     await send(page, 'delegate the tally for the log');
     await expect(page.getByRole('region', { name: 'Subagents at work' }).getByRole('button', { name: /^Tallier \(counter\), running/ })).toBeVisible();
     await expect(conversation(page).getByText('Tally back.')).toBeVisible();

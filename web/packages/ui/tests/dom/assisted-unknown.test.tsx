@@ -19,5 +19,5 @@ test('an unread permission mode is shown as unknown, never as the old mode', asy
   const { user } = await openTask('t1');
   const menu = await openMenu(user, 'Permissions and execution: Permissions unknown · Interactive');
   expect(menu.getByText(/could not be confirmed\. Nothing is allowed automatically/)).toBeTruthy();
-  for (const name of [/^Safe/, /^Assisted/, /^Yolo/]) expect(menu.getByRole('menuitemradio', { name }).getAttribute('aria-checked')).toBe('false');
+  for (const name of [/^Safe/, /^Assisted/, /^Allow all/]) expect(menu.getByRole('menuitemradio', { name }).getAttribute('aria-checked')).toBe('false');
 });
