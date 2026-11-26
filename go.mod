@@ -10,7 +10,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/dustin/go-humanize v1.1.0
 	github.com/google/uuid v1.6.0
-	github.com/microsoft/copilot-sdk/go/v2 v2.0.1
+	github.com/microsoft/copilot-sdk/go/v2 v2.0.3
 	github.com/sourcegraph/go-diff v0.9.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/sys v0.49.0
@@ -21,11 +21,12 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/ebitengine/purego v0.11.3 // indirect
+	github.com/go-json-experiment/json v1.27.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
-	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

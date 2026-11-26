@@ -119,7 +119,7 @@ func (a sdkClientAdapter) MCPConfigList(ctx context.Context) (map[string]rpc.MCP
 	if err != nil {
 		return nil, err
 	}
-	res, err := server.MCP.Config().List(ctx)
+	res, err := server.MCP.Config().List(ctx, &rpc.MCPConfigListRequest{})
 	if err != nil {
 		return nil, err
 	}
