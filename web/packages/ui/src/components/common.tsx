@@ -19,7 +19,7 @@ import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
 import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
-import { gitLabWords, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
+import { gitLabWords, isGitLabProjectUrl, parseGitLabUrl, remarkGitLabRefs } from '../lib/gitlabRefs';
 import { GitLabItemsContext, plainClick } from './GitLabStrip';
 import { remarkReferences } from '../lib/references';
 import { MdCite, useCites } from './ReferenceCite';
@@ -822,8 +822,8 @@ export function GitHubMark({ className }: Readonly<{ className?: string }>) {
 }
 
 /**
- * A link to an item of the Thread's GitLab project: GitLab's mark, then the reply's own words, or
- * "MR !72" for a bare address. A plain click opens it in the GitLab side panel; a modified one, GitLab.
+ * A link to an item of the Thread's GitLab project, or to the project: GitLab's mark, then the reply's own words, or
+ * "MR !72" for a bare address. A plain click opens an item in the GitLab side panel; a modified one, and the project, GitLab.
  */
 function GitLabLink({ href, words }: Readonly<{ href: string; words: string }>) {
   const gitlab = useContext(GitLabItemsContext);
@@ -857,7 +857,7 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   const file = named && resolved ? { ...named, path: resolved } : named;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}><SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider></TempFileAction>;
-  if (href && gitlab && parseGitLabUrl(href, gitlab.origin)) return <GitLabLink href={href} words={nodeText(node).trim()} />;
+  if (href && gitlab && (parseGitLabUrl(href, gitlab.origin) || isGitLabProjectUrl(href, gitlab.origin))) return <GitLabLink href={href} words={nodeText(node).trim()} />;
   const target = linkTarget(api, href, file, sessionId, exists);
   // A subagent's name inside a link stays text: a button inside a link is not valid.
   const inner = <SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider>;

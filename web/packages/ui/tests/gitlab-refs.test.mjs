@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gitLabCandidates, gitLabMarkdown, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
+import { gitLabCandidates, gitLabCommitUrl, gitLabCompareUrl, gitLabMarkdown, gitLabProjectUrl, gitLabTreeUrl, isGitLabProjectUrl, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
 
 const origin = { host: 'gitlab.com', path: 'aksops/demo' };
 const P = 'https://gitlab.com/aksops/demo/-';
@@ -78,4 +78,17 @@ test('GitLab uploads link to the project', () => {
   const body = '![shot](/uploads/abc/shot.png) and [log](/uploads/def/log.txt)\n[ref]: /uploads/ghi/a.png\nKeep `/uploads/x` and https://gitlab.com/uploads/y';
   assert.equal(gitLabMarkdown(body, origin), '![shot](https://gitlab.com/aksops/demo/uploads/abc/shot.png) and [log](https://gitlab.com/aksops/demo/uploads/def/log.txt)\n[ref]: https://gitlab.com/aksops/demo/uploads/ghi/a.png\nKeep `/uploads/x` and https://gitlab.com/uploads/y');
   assert.equal(gitLabMarkdown(body), body);
+});
+
+test('project places: branches keep their slashes with each segment escaped; only the project itself is its address', () => {
+  assert.equal(gitLabProjectUrl(origin), 'https://gitlab.com/aksops/demo');
+  assert.equal(gitLabTreeUrl(origin, 'feat/a#b c'), `${P}/tree/feat/a%23b%20c`);
+  assert.equal(gitLabCompareUrl(origin, 'main', 'feat/x?y'), `${P}/compare/main...feat/x%3Fy`);
+  assert.equal(gitLabCommitUrl(origin, 'a'.repeat(40)), `${P}/commit/${'a'.repeat(40)}`);
+  assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops/demo', origin), true);
+  assert.equal(isGitLabProjectUrl('https://GitLab.com/Aksops/Demo/', origin), true);
+  assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops/demo/-/issues', origin), false);
+  assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops/demo?x=1', origin), false);
+  assert.equal(isGitLabProjectUrl('http://gitlab.com/aksops/demo', origin), false);
+  assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops', origin), false);
 });

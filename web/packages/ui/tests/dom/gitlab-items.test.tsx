@@ -100,6 +100,42 @@ test('a reply names merge requests and pipelines as links with GitLab\'s mark; a
   expect(open).toHaveBeenCalledExactlyOnceWith([{ kind: 'mr', id: 2 }], { kind: 'mr', id: 2 });
 });
 
+test('the project\'s exact path in a reply links to the project with GitLab\'s mark; longer paths, code and other projects stay text', async () => {
+  const items: Item[] = [
+    { id: 'owner', kind: 'user', text: 'where?', time: at },
+    { id: 'reply', kind: 'assistant', text: 'Pushed to group/repo. Not group/repo2, x/group/repo, group/repo.git or `group/repo`; [GitLab](https://gitlab.example.com/group/repo) too.', time: at },
+  ];
+  const user = userEvent.setup();
+  const open = vi.fn();
+  render(<ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context(open)}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const reply = screen.getByText(/^Pushed/).closest('p')!;
+  const links = [...reply.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'), a.hasAttribute('data-gitlab-link')]);
+  expect(links).toEqual([['group/repo', 'https://gitlab.example.com/group/repo', true], ['GitLab', 'https://gitlab.example.com/group/repo', true]]);
+  // The project is no item: a press opens GitLab, not the panel.
+  const link = within(reply).getAllByRole('link')[0];
+  link.addEventListener('click', (e) => e.preventDefault());
+  await user.click(link);
+  expect(open).not.toHaveBeenCalled();
+});
+
+test('the panel links a merge request\'s branches and their compare, and a pipeline\'s ref and commit, to GitLab', async () => {
+  mockItems();
+  vi.spyOn(api, 'gitlabReview').mockResolvedValue({ ...review, merge_request: { ...review.merge_request, source_branch: 'feat/a#1' } });
+  const { unmount } = render(<GitLabItemsContext.Provider value={context()}><GitLabItemView refs={[{ kind: 'mr', id: 2 }]} current={{ kind: 'mr', id: 2 }} onOpen={vi.fn()} /></GitLabItemsContext.Provider>);
+  const href = (name: string) => screen.getByRole('link', { name }).getAttribute('href');
+  expect(await screen.findByRole('link', { name: 'feat/a#1' })).toBeTruthy();
+  expect(href('feat/a#1')).toBe(`${P}/tree/feat/a%231`);
+  expect(href('main')).toBe(`${P}/tree/main`);
+  expect(href('Compare')).toBe(`${P}/compare/main...feat/a%231`);
+  unmount();
+  vi.spyOn(api, 'gitlabPipelineDetail').mockResolvedValue({ pipeline: { id: 91, status: 'failed', sha, ref: 'demo', web_url: '' }, jobs: [] });
+  render(<GitLabItemsContext.Provider value={context()}><GitLabItemView refs={[{ kind: 'pipeline', id: 91 }]} current={{ kind: 'pipeline', id: 91 }} onOpen={vi.fn()} /></GitLabItemsContext.Provider>);
+  expect((await screen.findByRole('link', { name: 'demo' })).getAttribute('href')).toBe(`${P}/tree/demo`);
+  expect(href(sha.slice(0, 8))).toBe(`${P}/commit/${sha}`);
+});
+
 test('a name right before a link to the same item shows the item once; other links keep the name', () => {
   const items: Item[] = [
     { id: 'owner', kind: 'user', text: 'status?', time: at },
