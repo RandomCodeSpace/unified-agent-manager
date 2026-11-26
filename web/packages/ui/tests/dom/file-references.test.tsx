@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from 'vitest';
 import type { Item } from '../../src/api';
 import { FileReferencesProvider } from '../../src/components/FileReferences';
@@ -229,4 +229,42 @@ test('a page reloads when a file in its folder changes, and shows its source or 
   expect(await screen.findByText('Site', { exact: false, selector: 'code *, code' })).toBeTruthy();
   expect(screen.queryByTitle('Preview index.html')).toBeNull();
   expect(screen.queryByRole('radio', { name: 'Phone' })).toBeNull();
+});
+
+test('a folder reference opens its listing in the preview: files open, folders list in place, up goes back', async () => {
+  const trees: string[] = [];
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = new URL(String(input), 'http://localhost');
+    if (url.pathname.endsWith('/files/resolve')) {
+      const { paths } = JSON.parse(String(init?.body)) as { paths: string[] };
+      return Response.json({ files: paths.map(p => (p === 'src' ? { path: p, exists: false, kind: 'directory' } : { path: p, exists: false, kind: 'unavailable' })) });
+    }
+    if (url.pathname.endsWith('/files/tree')) {
+      const dir = url.searchParams.get('dir') ?? '';
+      trees.push(dir);
+      const files = { src: [{ path: 'src/lib', type: 'directory' }, { path: 'src/app.go', type: 'file', status: 'modified' }], 'src/lib': [{ path: 'src/lib/util.go', type: 'file' }], '': [{ path: 'src', type: 'directory' }] }[dir];
+      return Response.json({ files, reason: '' });
+    }
+    if (url.pathname.endsWith('/files/view/src/app.go')) return new Response(init?.method === 'HEAD' ? null : 'package app\n', { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': '12' } });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  render(<Conversation entries={[{ ...items[1], text: 'See `src/` and [the sources](src/).' }]} />);
+  const chips = await screen.findAllByRole('button', { name: 'Open folder src' });
+  expect(chips.map(chip => chip.textContent)).toEqual(['src/', 'the sources']);
+  fireEvent.click(chips[0]);
+  const listing = await screen.findByRole('list', { name: 'Files in src' });
+  expect(screen.getByRole('complementary', { name: 'Preview src' })).toBeTruthy();
+  expect(listing.textContent).toContain('app.gomodified');
+  fireEvent.click(screen.getByRole('button', { name: 'lib/' }));
+  expect(await screen.findByRole('list', { name: 'Files in src/lib' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Up to src' }));
+  await screen.findByRole('list', { name: 'Files in src' });
+  fireEvent.click(screen.getByRole('button', { name: 'Up to repo' }));
+  await screen.findByRole('list', { name: 'Files in this folder' });
+  expect(screen.queryByRole('button', { name: /^Up to/ })).toBeNull();
+  expect(trees).toEqual(['src', 'src/lib', 'src', '']);
+  fireEvent.click(screen.getByRole('button', { name: 'src/' }));
+  fireEvent.click(within(await screen.findByRole('list', { name: 'Files in src' })).getByRole('button', { name: /app\.go/ }));
+  const file = await screen.findByRole('complementary', { name: 'Preview app.go' });
+  await waitFor(() => expect(file.textContent).toContain('package app'));
 });

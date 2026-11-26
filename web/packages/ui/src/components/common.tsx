@@ -635,11 +635,14 @@ function TempFileAction({ file, children }: Readonly<{ file: { path: string; has
  * cited line (`#L12`) shows after the name, and a Markdown link's own words (`label`) replace
  * the name. An image the view route serves opens larger at once.
  */
+/** A file name the preview opens as an image, larger at once. */
+export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg)$/i;
+
 function FileLink({ path, url, label: words }: Readonly<{ path: string; url: string; label?: string }>) {
   const preview = usePreview();
   const label = fileLabel(path);
   const line = /#L(\d+)(?:-L?\d+)?$/.exec(url)?.[1];
-  const image = /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
+  const image = IMAGE_FILE.test(path);
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" title={line ? `${label.path}:${line}` : label.path} aria-label={`Open ${label.path}${line ? ` at line ${line}` : ''}`} className={cn(chipVariants({ fill: 'well' }), 'max-w-full min-w-0 align-middle text-file-link hover:bg-sunken')} onClick={event => {
       if (preview && previewClick(event)) {
@@ -650,6 +653,18 @@ function FileLink({ path, url, label: words }: Readonly<{ path: string; url: str
       <FileIcon path={label.path} className="size-3.5" />
       <span className="min-w-0 truncate">{words ?? <>{label.name}{line && <span className="text-muted">:{line}</span>}</>}</span>
     </a>
+  );
+}
+
+/** A folder of the Task's folder: a chip like a file's, with the folder glyph, that lists the folder in the preview panel. */
+function FolderLink({ path, label: words }: Readonly<{ path: string; label?: string }>) {
+  const preview = usePreview();
+  const name = path.split('/').pop() || path;
+  return (
+    <button type="button" title={path} aria-label={`Open folder ${path}`} className={cn(chipVariants({ fill: 'well' }), 'max-w-full min-w-0 align-middle text-file-link hover:bg-sunken')} onClick={event => preview?.({ folder: path, name, description: path }, event.currentTarget)}>
+      <FileIcon path={path} folder className="size-3.5" />
+      <span className="min-w-0 truncate">{words ?? `${name}/`}</span>
+    </button>
   );
 }
 
@@ -852,17 +867,19 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   const { streaming } = useContext(MdContext);
   const gitlab = useContext(GitLabItemsContext);
   const named = !streaming ? taskFile(href, workdir, base) : null;
-  const { eligible, exists, file: resolved } = useFileReference(named?.path);
+  const { eligible, exists, file: resolved, folder } = useFileReference(named?.path);
   // A bare name opens the one file it means.
   const file = named && resolved ? { ...named, path: resolved } : named;
+  const folderLink = folder && preview && file && !containsImage(node) ? <FolderLink path={file.path} label={linkWords(node, href, file.path)} /> : null;
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}><SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider></TempFileAction>;
   if (href && gitlab && (parseGitLabUrl(href, gitlab.origin) || isGitLabProjectUrl(href, gitlab.origin) || isGitLabCommitUrl(href, gitlab.origin))) return <GitLabLink href={href} words={nodeText(node).trim()} />;
-  const target = linkTarget(api, href, file, sessionId, exists);
+  const target = folder ? undefined : linkTarget(api, href, file, sessionId, exists);
   // A subagent's name inside a link stays text: a button inside a link is not valid.
   const inner = <SubagentLinkContext.Provider value={null}>{children}</SubagentLinkContext.Provider>;
   let link: ReactNode;
-  if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
+  if (folderLink) link = folderLink;
+  else if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} label={linkWords(node, href, file.path)} />;
   else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
     if (preview && file && localPath(href) && previewClick(event)) {
       event.preventDefault();
@@ -888,7 +905,7 @@ function InlineCode({ text, className }: Readonly<{ text: string; className?: st
   const hintedPath = sessionId && !streaming && !text.includes('/') ? hintPath(text, workdir ?? '') : undefined;
   let file: ReturnType<typeof codeFile> = null;
   if (sessionId && !streaming) file = codeFile(text, workdir) ?? (hintedPath ? { path: hintedPath, hash: '' } : null);
-  const { eligible, exists, file: resolved } = useFileReference(file?.path, text);
+  const { eligible, exists, file: resolved, folder } = useFileReference(file?.path, text);
   // A bare name opens the one file it means.
   const target = resolved ?? file?.path;
   const url = api.supports('files-v1') && sessionId && target ? api.viewFileUrl(sessionId, target) : undefined;
@@ -900,7 +917,7 @@ function InlineCode({ text, className }: Readonly<{ text: string; className?: st
   if (!file) return code;
   return (
     <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>
-      {exists && url && file && target ? <FileLink path={target} url={url + file.hash} /> : code}
+      {folder && preview && file ? <FolderLink path={file.path} /> : exists && !folder && url && file && target ? <FileLink path={target} url={url + file.hash} /> : code}
     </span>
   );
 }

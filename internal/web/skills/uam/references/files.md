@@ -9,7 +9,11 @@
   one file of that name is in the Thread's record or directory; with two it
   stays code, so prefer the path. Inline code
   counts when it holds a `/` or ends in an extension (`package.json`);
-  globs, flags, `~/` paths and directories stay code. Cite a line as
+  globs, flags and `~/` paths stay code.
+- A folder of the Thread's directory links too: `internal/web/` in inline
+  code, or a link to it, becomes a folder chip that lists the folder in the
+  preview (as git lists it, so ignored files are left out). A folder outside
+  the Thread's directory, or reached through a symbolic link, stays text. Cite a line as
   `internal/web/server.go:120` (or `:120:5`, `:120-140`,
   `server.go#L120`); the preview opens marked at the first line.
 - A file you created under the system temp directory (`/tmp/report.html`,

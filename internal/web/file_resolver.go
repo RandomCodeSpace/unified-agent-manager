@@ -30,6 +30,7 @@ const (
 // readable file of the Thread's folder. When it does not, Target may name the
 // one file a bare name (`gen.py`) or a partial path (`lib/gen.py`) means, with
 // Kind "file" and Exists false, so a client that predates Target links nothing.
+// A folder the tree route lists is Kind "directory", also with Exists false.
 type resolvedFile struct {
 	Path   string `json:"path"`
 	Exists bool   `json:"exists"`
@@ -107,8 +108,12 @@ func (m *Manager) resolveFiles(ctx context.Context, id string, paths []string) (
 		file := resolvedFile{Path: path, Kind: "unavailable"}
 		// A name the connected file route refuses is never offered as a link,
 		// so a reference behaves the same on this instance and through another.
-		if !strings.ContainsAny(path, "\\\r\n") && readableTaskFile(workdir, path) {
+		switch {
+		case strings.ContainsAny(path, "\\\r\n"):
+		case readableTaskFile(workdir, path):
 			file.Exists, file.Kind = true, "file"
+		case taskFolder(workdir, path):
+			file.Kind = "directory"
 		}
 		files = append(files, file)
 	}
@@ -142,7 +147,7 @@ func (m *Manager) findTargets(ctx context.Context, s *webSession, workdir string
 	var search []string
 	for i := range files {
 		f := &files[i]
-		if f.Exists || filepath.IsAbs(f.Path) || strings.ContainsAny(f.Path, "\\\r\n") {
+		if f.Exists || f.Kind == "directory" || filepath.IsAbs(f.Path) || strings.ContainsAny(f.Path, "\\\r\n") {
 			continue
 		}
 		name := filepath.ToSlash(filepath.Clean(f.Path))

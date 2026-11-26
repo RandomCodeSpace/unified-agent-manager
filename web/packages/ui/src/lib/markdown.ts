@@ -142,17 +142,19 @@ export function taskFile(ref: string | undefined, workdir: string | undefined, b
  * Whether an inline code span's text may name a file: no whitespace, no scheme, at most
  * 300 characters, and a "/" or a `.ext` ending (1–10 letters or digits), before a `#fragment`
  * too. Calls (`foo()`), globs (`*.ts`), flags (`--force`), versions (`v1.2.3`), home paths
- * (`~/x`), variables (`$HOME/x`) and directories (`out/`) are not; `package.json`,
- * `src/a.go:12`, `a.go#L10` and route files (`app/[id]/page.tsx`, `src/(app)/x.ts`,
- * `app/$id.tsx`) are. The Task's folder decides the rest.
+ * (`~/x`) and variables (`$HOME/x`) are not; `package.json`, `src/a.go:12`, `a.go#L10`,
+ * folders (`out/`) and route files (`app/[id]/page.tsx`, `src/(app)/x.ts`, `app/$id.tsx`)
+ * are. The Task's folder decides the rest.
  */
 export function looksLikePath(text: string): boolean {
   text = splitLine(text).ref;
+  const folder = /[^/]\/$/.test(text);
+  if (folder) text = text.slice(0, -1);
   if (!text || text.length > 300 || /[\s{}*?<>|"'`\\]/.test(text) || SCHEME.test(text)) return false;
   // Brackets, parentheses and `$` only as route folder or file names: in a path that is no call.
   if (/[()[\]$]/.test(text) && (!text.includes('/') || text.endsWith(')'))) return false;
   if (/^[-~$]/.test(text) || text.endsWith('/') || /^v?\d+(\.\d+)+$/i.test(text)) return false;
-  return text.includes('/') || /\.[A-Za-z0-9]{1,10}(?:#[^#]*)?$/.test(text);
+  return folder || text.includes('/') || /\.[A-Za-z0-9]{1,10}(?:#[^#]*)?$/.test(text);
 }
 
 /**
