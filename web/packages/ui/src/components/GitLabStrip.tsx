@@ -41,15 +41,20 @@ export interface GitLabItems {
 
 export const GitLabItemsContext = createContext<GitLabItems | null>(null);
 
-/** The Thread's GitLab project, read once per Thread and again when a turn ends (the service reads no GitLab data for it). */
+/**
+ * The Thread's GitLab project, read once per Thread, also while a turn runs (a Thread opened mid-turn
+ * links GitLab at once), and again when a turn ends; the service reads no GitLab data for it.
+ */
 export function useGitLabOrigin(sessionId: string, working: boolean): GitLabPipelineState | undefined {
   const api = useApi();
   const supported = api.supports('gitlab-items-v1');
   const [state, setState] = useState<{ id: string; value: GitLabPipelineState }>();
+  const read = useRef('');
   useEffect(() => {
-    if (!supported || working) return;
+    // A turn starting reads nothing new: only a Thread not read yet, or a turn's end.
+    if (!supported || (working && read.current === sessionId)) return;
     const controller = new AbortController();
-    api.gitlabOrigin(sessionId, controller.signal).then((value) => setState({ id: sessionId, value }), () => {});
+    api.gitlabOrigin(sessionId, controller.signal).then((value) => { read.current = sessionId; setState({ id: sessionId, value }); }, () => {});
     return () => controller.abort();
   }, [api, supported, sessionId, working]);
   return state?.id === sessionId ? state.value : undefined;
