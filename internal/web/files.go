@@ -660,9 +660,17 @@ var viewTypes = map[string]string{
 	".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".svg": "image/svg+xml",
 	".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+	".avif": "image/avif", ".ico": "image/x-icon",
+	".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf",
+	".json": "application/json", ".map": "application/json", ".wasm": "application/wasm", ".txt": "text/plain; charset=utf-8",
 	".pdf": "application/pdf",
 	".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
 }
+
+// errViewFolder answers a folder named without its trailing slash: the view
+// route sends the browser to the slashed path, so the folder's index.html
+// resolves its relative links against the folder itself.
+var errViewFolder = newError(http.StatusNotFound, "open the folder with a trailing slash")
 
 // ViewFile opens the file at rel, relative to the Task's directory, for the
 // view route, with the confinement of RawImage. Its type comes from the
@@ -681,10 +689,20 @@ func (m *Manager) ViewFile(id, rel string) (*ServedFile, error) {
 func openView(workdir, rel string) (*ServedFile, error) {
 	// Joined, never taken as absolute: the route names a path inside the
 	// directory.
-	root, rel, err := resolveTaskFile(workdir, filepath.Join(workdir, filepath.FromSlash(rel)))
+	p := filepath.Join(workdir, filepath.FromSlash(rel))
+	root, name, err := resolveTaskFile(workdir, p)
 	if err != nil {
-		return nil, err
+		// A folder serves its index.html, resolved with the same confinement.
+		var indexErr error
+		if root, name, indexErr = resolveTaskFile(workdir, filepath.Join(p, indexDocument)); indexErr != nil {
+			return nil, err
+		}
+		if rel != "" && !strings.HasSuffix(rel, "/") {
+			_ = root.Close()
+			return nil, errViewFolder
+		}
 	}
+	rel = name
 	defer func() { _ = root.Close() }()
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {

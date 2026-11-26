@@ -1317,7 +1317,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   video play in place with the browser's own viewer. The preview reloads in
   place when a tool in the Thread edits the open file; **Reload** reads it
   again after other changes. Use **Open in new tab** or **Download** for the
-  full file. HTML reports stay interactive inside an isolated frame. The
+  full file. HTML reports stay interactive inside an isolated frame. A page
+  reloads when a tool edits any file in its folder (its style sheets and
+  scripts), shows as **Preview** or **Source**, and beside the conversation at
+  the panel's width or a phone's (**Desktop** | **Phone**); on a phone it runs
+  edge to edge. A folder's own address serves its `index.html`. The page's
+  origin is opaque, so it loads classic scripts, style sheets, images and
+  fonts beside it, but ES modules, `fetch` of its own files and
+  `localStorage` do not work, and it cannot connect to or submit forms to any
+  host. The
   **Close preview** button remains available; Escape closes the preview from
   inside it or with nothing focused, as it closes the other side panels, but
   does not cross into the app from a focused HTML frame. Closing slides it

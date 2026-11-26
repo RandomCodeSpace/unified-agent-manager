@@ -55,7 +55,10 @@ const (
 	// and it loads what it likes, but without allow-same-origin its origin is
 	// opaque, so it holds no cookie, cannot read this service's responses and
 	// cannot reach the opener or navigate the top level.
-	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; frame-ancestors 'self'"
+	// The opaque origin already reads no response of this host; connect-src
+	// and form-action 'none' also keep the page from sending what it shows to
+	// any other host, at the cost of calls to outside APIs.
+	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; connect-src 'none'; form-action 'none'; frame-ancestors 'self'"
 	// mediaSecurity replaces viewSecurity for PDFs, audio and video: browsers
 	// refuse to run their built-in PDF and media viewers in a sandboxed
 	// document, and these types run no page script when served as their own
@@ -1248,6 +1251,10 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
+	if errors.Is(err, errViewFolder) {
+		http.Redirect(w, r, r.URL.EscapedPath()+"/", http.StatusFound) // #nosec G710 -- this request's own /api/sessions/ path with a slash added; never another host.
+		return
+	}
 	if err != nil {
 		writeFailure(w, err)
 		return

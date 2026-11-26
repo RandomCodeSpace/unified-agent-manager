@@ -136,6 +136,12 @@ export class FileReferences {
   snapshot = () => this.revision;
   subscribeChanges = (listener: () => void) => { this.changeListeners.add(listener); return () => { this.changeListeners.delete(listener); }; };
   changeCount = (path: string) => this.changes.get(path) ?? 0;
+  /** The changes to every file under folder `dir` ('' is the Thread's folder): an open page reloads when its assets change. */
+  folderChangeCount = (dir: string) => {
+    let count = 0;
+    for (const [path, n] of this.changes) if (!dir || path.startsWith(`${dir}/`)) count += n;
+    return count;
+  };
   private emit() { this.revision++; this.listeners.forEach(listener => listener()); }
   /** A code span is looked up when it looks like a path; a bare name without an extension (`Makefile`) only when a tool named it. */
   eligible(text: string, path: string) { return text.includes('/') || looksLikePath(text) || [...this.sources.values()].some(source => source.hints.has(path)); }

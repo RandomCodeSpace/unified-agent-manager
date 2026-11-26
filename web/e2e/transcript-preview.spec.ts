@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { conversation, expect, send, startThread, test, threadState } from './harness';
-import { yolo } from './transcript-helpers';
+import { threadId, yolo } from './transcript-helpers';
 
 test('a Markdown preview renders and toggles to source, reloads in place when a tool edits the file, and Reload reads other changes', async ({ page, project, model, uam, workdir }) => {
   const file = path.join(workdir, 'notes.md');
@@ -42,4 +42,44 @@ test('a Markdown preview renders and toggles to source, reloads in place when a 
   await expect(preview.getByRole('listitem')).toHaveText(['first point', 'edited point']);
   await preview.getByRole('button', { name: 'Reload' }).click();
   await expect(preview.getByRole('listitem')).toHaveText(['changed outside']);
+});
+
+test('a page built from several files runs in the preview, reloads when its style sheet changes, shows its source and a phone width, and its folder opens in a tab', async ({ page, project, model, uam, workdir }) => {
+  const site = path.join(workdir, 'site');
+  fs.mkdirSync(site);
+  model.toolRound('build the site', [
+    { id: 'call_html', name: 'create', arguments: { path: path.join(site, 'index.html'), file_text: '<!doctype html><link rel="stylesheet" href="style.css"><h1>Site title</h1><p id="out"></p><script src="app.js"></script>\n' } },
+    { id: 'call_css', name: 'create', arguments: { path: path.join(site, 'style.css'), file_text: 'h1 { color: rgb(200, 0, 0) }\n' } },
+    { id: 'call_js', name: 'create', arguments: { path: path.join(site, 'app.js'), file_text: "document.getElementById('out').textContent = 'ran by app.js';\n" } },
+  ], 'Built `site/index.html`.');
+  model.toolRound('recolour the title', [{ id: 'call_recolour', name: 'edit', arguments: { path: path.join(site, 'style.css'), old_str: 'rgb(200, 0, 0)', new_str: 'rgb(0, 0, 200)' } }], 'Recoloured the title.');
+  await startThread(page, project, 'build the site');
+  await yolo(page, uam.api);
+  const conv = conversation(page);
+  await expect(threadState(page, 'Finished')).toBeVisible();
+
+  await conv.getByRole('link', { name: 'Open site/index.html' }).click();
+  const preview = page.getByRole('complementary', { name: 'Preview index.html' });
+  const frame = preview.locator('iframe').contentFrame();
+  await expect(frame.getByText('ran by app.js')).toBeVisible();
+  const colour = () => frame.getByRole('heading', { name: 'Site title' }).evaluate(el => getComputedStyle(el).color);
+  await expect.poll(colour).toBe('rgb(200, 0, 0)');
+
+  // The agent edits only the style sheet: the page loads again with it.
+  await send(page, 'recolour the title');
+  await expect(conv.getByText('Recoloured the title.')).toBeVisible();
+  await expect.poll(colour).toBe('rgb(0, 0, 200)');
+
+  await preview.getByRole('radio', { name: 'Phone' }).click();
+  await expect.poll(async () => (await preview.locator('iframe').boundingBox())?.width).toBe(390);
+  await preview.getByRole('radio', { name: 'Source' }).click();
+  await expect(preview).toContainText('<h1>Site title</h1>');
+  await expect(preview.locator('iframe')).toHaveCount(0);
+
+  // The folder, named without its slash, opens its index.html with the assets beside it.
+  const tab = await page.context().newPage();
+  await tab.goto(`${uam.url}/api/sessions/${threadId(page)}/files/view/site`);
+  await expect(tab).toHaveURL(/\/files\/key\/[^/]+\/site\/$/);
+  await expect(tab.getByText('ran by app.js')).toBeVisible();
+  await tab.close();
 });
