@@ -1337,6 +1337,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the conversation's inline file link opens the preview without a separate
   card. Opening a file still checks current availability, and temporary
   files require an explicit grant. Declaration metadata does not grant access.
+- **Published pages**: `uam_publish` publishes a folder with `index.html` at
+  its top, or one file, of the Thread's folder as a page you open from uam.
+  uam copies an immutable snapshot of it into the Thread's own data beside
+  its charts, leaving out `.git`, `node_modules`, `.env` files, symbolic
+  links, hard-linked and special files, at most 500 files and folders, 32
+  deep, and 25 MiB; a path inside an excluded folder or through a link is
+  refused. Publishing again with the same title
+  (or the id the agent was given) adds a version; an artifact keeps its last
+  10 versions and a Thread at most 20 artifacts. The call shows a card in the
+  conversation with the title, its version, **Open** (the page in the file
+  preview), **Open version N** when a newer one exists and **Versions**.
+  Once the Thread has any, the Thread header shows **Pages** with their count
+  (on a phone, in the thread's actions menu); it opens a panel beside the
+  conversation listing each page's versions, newest first, to open in the
+  preview or a new tab, or delete (one version, or the page). A version's
+  page is served from its snapshot only: the key in its address opens that
+  version's files and nothing else. `/api/sessions/<id>/artifacts/<artifact>/`
+  always opens the latest version, `…/v/<n>/` that version; a deleted
+  version's number is never reused. Pages run in the same opaque-origin
+  sandbox as the file preview (see File previews), and load scripts, styles,
+  images and fonts only from uam itself, never from other hosts. A branch
+  copies its source's pages. The
+  pages go when the Thread is deleted. On a connected instance the versioned
+  links work; the latest link is local only.
 - **Reading uam**: every Thread has the `uam` tool with six read operations:
   `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
   Reads are limited to its Project unless the Thread is in Yolo; a Thread it
@@ -2586,7 +2610,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
-- **Side panels**: only one of Changes, GitLab, pinned charts, a command's
+- **Side panels**: only one of Changes, GitLab, pinned charts, published pages, a command's
   output and a file preview is open at a time. On a wide window, a click
   on the conversation's empty background closes whichever of them is open (GitLab stays);
   the composer, everything under it, the conversation's buttons, links,

@@ -456,7 +456,7 @@ func (w grantResponse) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// Scrub grant and Task file-key URLs in request targets and headers, including
+// Scrub grant, Task file-key and artifact-key URLs in request targets and headers, including
 // opaque-frame Referer values.
 func redactKeyURL(value string) string {
 	if redacted, ok := redactConnectedKeyURL(value); ok {
@@ -466,7 +466,7 @@ func redactKeyURL(value string) string {
 	if err != nil {
 		// A malformed header value must not bypass redaction merely because
 		// it is not parseable as a URL.
-		if strings.Contains(value, "file-grants") || strings.Contains(value, "files/key") {
+		if decoded := decodeEscapes(value); strings.Contains(decoded, "file-grants") || strings.Contains(decoded, "files/key") || strings.Contains(decoded, "artifact-files") {
 			return redactedValue
 		}
 		return value
@@ -480,6 +480,15 @@ func redactKeyURL(value string) string {
 		}
 		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "files" && parts[i+4] == "key" && i+5 < len(parts) {
 			parts[i+5] = redactedValue
+			u.Path, u.RawPath = strings.Join(parts, "/"), ""
+			return u.String()
+		}
+		// An artifact version's key follows its artifact and version (artifactKeyRoute).
+		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "artifact-files" {
+			if i+6 >= len(parts) {
+				return redactedValue
+			}
+			parts[i+6] = redactedValue
 			u.Path, u.RawPath = strings.Join(parts, "/"), ""
 			return u.String()
 		}

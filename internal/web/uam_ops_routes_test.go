@@ -42,16 +42,18 @@ var uamRouteExclusions = map[string]string{
 	"POST /api/push/unsubscribe":  "browser push subscription",
 	"POST /api/service/restart":   "restarts uam and every Thread",
 
-	"POST /api/projects":                                        "adding a project is the owner's confirmation (uam_create_task asks for it)",
-	"PATCH /api/projects/{id}":                                  "project settings",
-	"DELETE /api/projects/{id}":                                 "destroys a project and its Threads",
-	"POST /api/projects/{id}/branch-link/detect":                "project settings",
-	"POST /api/projects/{id}/previous/{conversation_id}/import": "imports the owner's provider history",
-	"POST /api/projects/{id}/routines":                          "routines run unattended on a schedule; the owner sets them",
-	"PATCH /api/routines/{id}":                                  "routines run unattended on a schedule; the owner sets them",
-	"DELETE /api/routines/{id}":                                 "routines run unattended on a schedule; the owner sets them",
-	"POST /api/projects/{id}/charts/{chart_id}/refresh":         "reruns a pinned chart's command without a permission request",
-	"POST /api/worktrees/remove":                                "destroys worktrees, which can hold unsaved work",
+	"POST /api/projects":                                                "adding a project is the owner's confirmation (uam_create_task asks for it)",
+	"PATCH /api/projects/{id}":                                          "project settings",
+	"DELETE /api/projects/{id}":                                         "destroys a project and its Threads",
+	"POST /api/projects/{id}/branch-link/detect":                        "project settings",
+	"POST /api/projects/{id}/previous/{conversation_id}/import":         "imports the owner's provider history",
+	"POST /api/projects/{id}/routines":                                  "routines run unattended on a schedule; the owner sets them",
+	"PATCH /api/routines/{id}":                                          "routines run unattended on a schedule; the owner sets them",
+	"DELETE /api/routines/{id}":                                         "routines run unattended on a schedule; the owner sets them",
+	"POST /api/projects/{id}/charts/{chart_id}/refresh":                 "reruns a pinned chart's command without a permission request",
+	"POST /api/worktrees/remove":                                        "destroys worktrees, which can hold unsaved work",
+	"DELETE /api/sessions/{id}/artifacts/{artifact}":                    "deletes what the owner was shown; uam_publish adds versions and keeps the last ones",
+	"DELETE /api/sessions/{id}/artifacts/{artifact}/versions/{version}": "deletes what the owner was shown; uam_publish adds versions and keeps the last ones",
 
 	"PATCH /api/settings":                                       "settings",
 	"POST /api/settings/custom-models/discover":                 "settings, with provider keys",
@@ -221,7 +223,7 @@ func TestEveryOwnerWriteRouteHasAnAgentOpOrAReason(t *testing.T) {
 		t.Fatalf("route scan missed known routes: %q", routes)
 	}
 	tools := map[string]bool{}
-	for _, tool := range []agentapi.HostTool{createTaskTool, sendTool, chartTool, formTool, surfaceTool, uamTool} {
+	for _, tool := range []agentapi.HostTool{createTaskTool, sendTool, chartTool, publishTool, formTool, surfaceTool, uamTool} {
 		tools[tool.Name] = true
 	}
 	seen := map[string]bool{}

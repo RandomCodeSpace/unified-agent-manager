@@ -372,7 +372,11 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 		delete(cfg.WebForks, fork.Lineage.RequestID)
 		return nil
 	}
+	// Held from before the branch is visible until its inherited artifacts
+	// are copied and counted, so a publish or delete in the branch waits.
+	s.artifactMu.Lock()
 	if err := m.register(s, nil, rec, check); err != nil {
+		s.artifactMu.Unlock()
 		if errors.Is(err, errForkRegistered) {
 			return m.Summary(fork.ID)
 		}
@@ -381,6 +385,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	if source != nil {
 		m.copyUploads(source, s)
 	}
+	s.artifactMu.Unlock()
 	return m.Summary(s.id)
 }
 
@@ -399,7 +404,8 @@ func branchTitle(source string) string {
 // copyUploads gives a branch its source's kept files, the uploads its
 // prompts carried and the images its tools returned, so the copied history
 // shows them as chips and thumbnails as the source does, and its
-// threadFiles, so its cards and lists show too. Each upload keeps its ID
+// threadFiles and committed artifact versions, so its cards and lists show
+// too. The caller holds branch's artifactMu. Each upload keeps its ID
 // and record; the bytes are linked where the file system allows, else
 // copied. A file that cannot be copied shows by name only, as before.
 func (m *Manager) copyUploads(source, branch *webSession) {
@@ -433,6 +439,9 @@ func (m *Manager) copyUploads(source, branch *webSession) {
 			log.Warn("copy branch file failed", "session", branch.id, "file", name, "error", err)
 		}
 	}
+	source.artifactMu.Lock()
+	artifacts := m.copyArtifacts(filepath.Join(from, artifactsDir), filepath.Join(to, artifactsDir))
+	source.artifactMu.Unlock()
 	m.mu.Lock()
 	removed := branch.removed
 	if !removed {
@@ -440,11 +449,64 @@ func (m *Manager) copyUploads(source, branch *webSession) {
 			branch.uploads = map[string]*upload{}
 		}
 		maps.Copy(branch.uploads, copied)
+		before := m.summaryLocked(branch)
+		branch.artifacts = artifacts
+		branch.artifactsRevision++
+		m.changedLocked(branch, before)
 	}
 	m.mu.Unlock()
 	if removed {
 		removeUploads(to)
 	}
+}
+
+// copyArtifacts copies the versions the metadata under from lists to to,
+// each file linked (a snapshot never changes) or else copied, and returns
+// how many artifacts it copied. A version that cannot be copied is left out.
+func (m *Manager) copyArtifacts(from, to string) int {
+	n := 0
+	for _, a := range readArtifacts(from) {
+		var kept []ArtifactVersion
+		for _, v := range a.Versions {
+			if err := copyTree(artifactVersionDir(from, a.ID, v.Version), artifactVersionDir(to, a.ID, v.Version)); err != nil {
+				log.Warn("copy branch artifact failed", "artifact", a.ID, "error", err)
+				continue
+			}
+			kept = append(kept, v)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		a.Last = max(a.Last, a.Versions[len(a.Versions)-1].Version)
+		a.Versions = kept
+		if err := writePrivateJSON(m.uploadRoot(), filepath.Join(to, a.ID, artifactMetaFile), a); err != nil {
+			log.Warn("copy branch artifact failed", "artifact", a.ID, "error", err)
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// copyTree links or copies the folders and regular files of src to dst.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, 0o700)
+		case !d.Type().IsRegular() || os.Link(p, target) == nil: // #nosec G122 -- uam's own snapshot tree, which holds no links; WalkDir does not follow them.
+			return nil
+		}
+		return copyThreadFile(p, target)
+	})
 }
 
 // copyUpload links or copies one stored upload's bytes and writes its record.

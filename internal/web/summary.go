@@ -42,9 +42,11 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
 		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(), FailureKind: string(s.failKind),
 		ForkOf: forkOf, ForkUserItemID: forkUser, NotStarted: s.fork != nil && s.base == StateClosed && len(s.turnTimings) == 0, Rewind: s.rewindSummary(),
-		Branch:       s.branch,
-		TitlePending: s.titling || s.titleWait != nil,
-		MessagesHeld: m.heldMessagesLocked(s.id),
+		Branch:            s.branch,
+		TitlePending:      s.titling || s.titleWait != nil,
+		MessagesHeld:      m.heldMessagesLocked(s.id),
+		Artifacts:         s.artifacts,
+		ArtifactsRevision: s.artifactsRevision,
 	}
 	out.BranchLinkURL, out.BranchLinkBranch = m.branchLinkLocked(s)
 	if s.place != nil && s.place.Worktree != "" {

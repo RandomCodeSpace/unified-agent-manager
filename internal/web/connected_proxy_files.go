@@ -2,12 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,16 +18,166 @@ import (
 const (
 	connectedViewKeyRoute  = "GET /api/connected/{connection}/files/{id}/{key}/{path...}"
 	connectedGrantKeyRoute = "GET /api/connected/{connection}/grants/{id}/{grant_id}/{key}"
-	connectedPathPrefix    = "/api/connected/"
-	sessionsPathPrefix     = "/api/sessions/"
-	filesViewSegment       = "/files/view/"
+	// connectedArtifactKeyRoute is artifactKeyRoute for a connected
+	// instance's Thread, under a key this side issued.
+	connectedArtifactKeyRoute = "GET /api/connected/{connection}/artifact-files/{id}/{artifact}/{version}/{key}/{path...}"
+	// headerArtifactFolder marks a connected instance's answer for a
+	// version's folder named without its trailing slash.
+	headerArtifactFolder = "X-UAM-Artifact-Folder"
+	connectedPathPrefix  = "/api/connected/"
+	sessionsPathPrefix   = "/api/sessions/"
+	filesViewSegment     = "/files/view/"
 )
 
 // These are the only connected routes allowed through without the home owner
 // cookie. Their handlers require a signed, generation-bound file credential.
 func (s *Server) connectedFileKeyRequest(r *http.Request) bool {
 	_, pattern := s.mux.Handler(r)
-	return pattern == connectedViewKeyRoute || pattern == connectedGrantKeyRoute
+	return pattern == connectedViewKeyRoute || pattern == connectedGrantKeyRoute || pattern == connectedArtifactKeyRoute
+}
+
+// connectedArtifactGrant names one artifact version in a connected file
+// scope, as a grant ID names one temporary file.
+func connectedArtifactGrant(artifact, version string) string {
+	return "artifact-" + artifact + "-" + version
+}
+
+// redirectConnectedArtifact is redirectConnectedView for a version of a
+// connected Thread's artifact: a key this side issued, scoped to that version.
+func (s *Server) redirectConnectedArtifact(w http.ResponseWriter, r, local *http.Request, target connectionTarget) {
+	// /api/sessions/{id}/artifacts/{artifact}/v/{version}/{path...}, which the route matched.
+	parts := strings.SplitN(strings.TrimPrefix(local.URL.Path, sessionsPathPrefix), "/", 6)
+	if len(parts) != 6 || parts[1] != "artifacts" || parts[3] != "v" {
+		writeError(w, http.StatusBadRequest, "invalid connected artifact path")
+		return
+	}
+	task, artifact, version, filePath := parts[0], parts[2], parts[4], parts[5]
+	n, err := strconv.Atoi(version)
+	if !connectedID(task) || !artifactIDRE.MatchString(artifact) || err != nil || n < 1 || strconv.Itoa(n) != version || !connectedCleanPath("/"+filePath) {
+		writeError(w, http.StatusBadRequest, "invalid connected artifact path")
+		return
+	}
+	committed, err := s.connectedArtifactCommitted(r.Context(), target, task, artifact, n)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	if !committed {
+		writeError(w, http.StatusNotFound, "artifact version not found")
+		return
+	}
+	expires := time.Now().Add(fileKeyTTL).Unix()
+	scope := connectedFileScope(target, task, connectedArtifactGrant(artifact, version))
+	prefix := connectedPathPrefix + target.ID + "/artifact-files/" + task + "/" + artifact + "/" + version + "/"
+	session := s.requestFileSession(r)
+	if s.secureRequest(r) {
+		setFileCookie(w, fileCookie(s.signKey, r.Host, session, scope, expires), prefix, int(fileKeyTTL/time.Second))
+	}
+	location := prefix + fileKey(s.signKey, r.Host, session, scope, expires) + "/" + viewPath(filePath)
+	if r.URL.Query().Get("download") == "1" {
+		location += "?download=1"
+	}
+	http.Redirect(w, r, location, http.StatusFound) // #nosec G710 -- fixed /api/connected/ prefix, validated route IDs and escaped file path; never another host.
+}
+
+// connectedArtifactCommitted reports whether the connected instance lists
+// version of its Thread task's artifact, so a key is signed only for a
+// snapshot it committed. It is false only when the instance answered that it
+// has no such Thread or version; any other failure is an error.
+func (s *Server) connectedArtifactCommitted(ctx context.Context, target connectionTarget, task, artifact string, version int) (bool, error) {
+	transport, err := s.proxyTransport(target)
+	if err != nil {
+		return false, err
+	}
+	// The deadline covers the headers and the body.
+	ctx, cancel := context.WithTimeout(ctx, fleetCheckTimeout)
+	defer cancel()
+	unavailable := newError(http.StatusBadGateway, "remote instance is unavailable")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.BaseURL+federationWorkloadPrefix+"api/sessions/"+task+"/artifacts", nil) // #nosec G704 -- the stored connection's base URL; the caller checked task with connectedID.
+	if err != nil {
+		return false, unavailable
+	}
+	req.Header.Set("Authorization", "Bearer "+target.Credential)
+	req.Header.Set(headerUAMInstance, target.InstanceID)
+	response, err := transport.RoundTrip(req)
+	if err != nil {
+		return false, unavailable
+	}
+	defer func() { _ = response.Body.Close() }()
+	switch response.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, unavailable
+	}
+	var got struct {
+		Artifacts []Artifact `json:"artifacts"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil || json.Unmarshal(raw, &got) != nil {
+		return false, unavailable
+	}
+	return slices.ContainsFunc(got.Artifacts, func(a Artifact) bool {
+		return a.ID == artifact && slices.ContainsFunc(a.Versions, func(v ArtifactVersion) bool { return v.Version == version })
+	}), nil
+}
+
+func (s *Server) handleConnectedArtifactKey(w http.ResponseWriter, r *http.Request) {
+	artifact, version, filePath := r.PathValue("artifact"), r.PathValue("version"), r.PathValue("path")
+	if n, ok := artifactVersionParam(r); !artifactIDRE.MatchString(artifact) || !ok || n == 0 || !connectedCleanPath("/"+filePath) {
+		writeError(w, http.StatusBadRequest, "invalid connected artifact path")
+		return
+	}
+	target, ok := s.connectedFileTarget(w, r, connectedArtifactGrant(artifact, version))
+	if !ok {
+		return
+	}
+	local := r.Clone(r.Context())
+	base := sessionsPathPrefix + r.PathValue("id") + "/artifacts/" + artifact + "/v/" + version + "/"
+	local.URL.Path = base + filePath
+	local.URL.RawPath = base + viewPath(filePath)
+	local.URL.RawQuery = connectedDownloadQuery(r)
+	current, lifetime, err := s.connections.Acquire(target.ID)
+	if err != nil || current.Generation != target.Generation {
+		writeError(w, http.StatusConflict, "connection changed")
+		return
+	}
+	s.proxyConnected(w, r, local, current, lifetime, artifactViewRoute)
+}
+
+// handleRemoteArtifactFile serves a version's file to the instance this one
+// is connected to, after workload bearer authentication, as
+// handleRemoteViewFile does; an empty path is the version's page.
+func (s *Server) handleRemoteArtifactFile(w http.ResponseWriter, r *http.Request) {
+	id, artifact := r.PathValue("id"), r.PathValue("artifact")
+	version, ok := artifactVersionParam(r)
+	if !ok || version == 0 {
+		writeError(w, http.StatusNotFound, "artifact version not found")
+		return
+	}
+	p := r.PathValue("path")
+	if p == "" {
+		v, err := s.m.artifactVersion(id, artifact, version)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		p = v.Entry
+	}
+	f, err := s.m.ArtifactFile(id, artifact, version, p)
+	if errors.Is(err, errViewFolder) {
+		w.Header().Set(headerArtifactFolder, "1")
+	}
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	defer func() { _ = f.File.Close() }()
+	connectedFileHeaders(w.Header(), r, f)
+	w.Header().Set("Content-Security-Policy", artifactPolicy(f.MIME))
+	w.Header().Set("ETag", `"`+strconv.FormatInt(f.Info.Size(), 16)+"-"+strconv.FormatInt(f.Info.ModTime().UnixNano(), 16)+`"`)
+	http.ServeContent(w, r, "", f.Info.ModTime(), f.File)
 }
 
 func connectedFileScope(target connectionTarget, task, grant string) string {
@@ -201,26 +353,30 @@ func connectedFileHeaders(h http.Header, r *http.Request, f *ServedFile) {
 	h.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": f.Info.Name()}))
 }
 
+// decodeEscapes decodes a value's valid escapes one by one, for recognizing
+// a key route only: a bad escape elsewhere must not hide an encoded one.
+func decodeEscapes(value string) string {
+	var decoded strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '%' && i+2 < len(value) {
+			if part, err := url.PathUnescape(value[i : i+3]); err == nil {
+				decoded.WriteString(part)
+				i += 2
+				continue
+			}
+		}
+		decoded.WriteByte(value[i])
+	}
+	return decoded.String()
+}
+
 // Home file capabilities also occur in Referer and arbitrary URL-valued
 // headers. Recognize escaped paths and redact malformed connected URLs whole.
 func redactConnectedKeyURL(value string) (string, bool) {
 	u, err := url.Parse(value)
 	if err != nil {
-		// Decode valid escapes individually for recognition only: a bad
-		// escape elsewhere must not hide an encoded connection prefix.
 		// Ordinary non-URL headers retain the existing logging behavior.
-		var decoded strings.Builder
-		for i := 0; i < len(value); i++ {
-			if value[i] == '%' && i+2 < len(value) {
-				if part, err := url.PathUnescape(value[i : i+3]); err == nil {
-					decoded.WriteString(part)
-					i += 2
-					continue
-				}
-			}
-			decoded.WriteByte(value[i])
-		}
-		if strings.Contains(decoded.String(), connectedPathPrefix) {
+		if strings.Contains(decodeEscapes(value), connectedPathPrefix) {
 			return redactedValue, true
 		}
 		return "", false
@@ -235,6 +391,8 @@ func redactConnectedKeyURL(value string) (string, bool) {
 		case "files":
 		case "grants":
 			keyIndex++
+		case "artifact-files":
+			keyIndex += 2
 		default:
 			continue
 		}

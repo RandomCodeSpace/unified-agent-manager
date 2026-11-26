@@ -600,7 +600,10 @@ func TestTempGrantUnavailableRootsAndRedaction(t *testing.T) {
 	}
 	secret := "1234567.secret-mac"
 	for _, input := range []string{"/api/sessions/task/file-grants/grant/" + secret, "https://uam.example/api/sessions/task/file-grants/grant/" + secret + "?download=1",
-		"/api/sessions/task/files/key/" + secret + "/out/report.html", "https://uam.example/api/sessions/task/files/key/" + secret + "/a%20b.txt?download=1"} {
+		"/api/sessions/task/files/key/" + secret + "/out/report.html", "https://uam.example/api/sessions/task/files/key/" + secret + "/a%20b.txt?download=1",
+		"/api/sessions/task/artifact-files/0123456789abcdef/2/" + secret + "/index.html", "https://uam.example/api/sessions/task/artifact-files/0123456789abcdef/2/" + secret,
+		"/api/sessions/task/artifact-files/" + secret, "http://[invalid/api/sessions/task/artifact-files/a/1/" + secret,
+		"http://[invalid/api/sessions/task/artifact%2Dfiles/a/1/" + secret, "%zz/api/sessions/task/files%2Fkey/" + secret} {
 		if got := redactKeyURL(input); strings.Contains(got, secret) || !strings.Contains(got, "redacted") {
 			t.Fatalf("redaction = %q", got)
 		}

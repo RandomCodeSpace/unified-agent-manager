@@ -2,11 +2,13 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -652,5 +654,80 @@ func TestForkCarriesTheThreadFiles(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(m.taskUploadDir(branch.ID), surfacesFile)); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("branch surfaces file: %v", err)
+	}
+}
+
+// A branch carries its source's published versions, so their cards open.
+func TestForkCarriesPublishedPages(t *testing.T) {
+	m, p, _, source := taskForkManager(t)
+	writeTree(t, source.Workdir, map[string]string{"site/index.html": "page", "site/css/a.css": "a"})
+	res := publishCall(t, p.Last(), "c1", `{"path":"site","title":"Site"}`)
+	if res.Failed {
+		t.Fatal(res.Text)
+	}
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.Artifacts(branch.ID)
+	if err != nil || len(list) != 1 || list[0].Versions[0].CallID != "c1" || summaryArtifacts(m, branch.ID) != 1 {
+		t.Fatalf("branch artifacts = %+v, %v", list, err)
+	}
+	f, err := m.ArtifactFile(branch.ID, list[0].ID, 1, "css/a.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.File.Close()
+}
+
+// A publish into a branch while its inherited pages are still being copied
+// waits for the copy, so it neither removes an inherited version nor has its
+// count overwritten.
+func TestForkCopyHoldsOffABranchPublish(t *testing.T) {
+	m, p, _, source := taskForkManager(t)
+	site := map[string]string{"site/index.html": "page", "other/index.html": "other"}
+	for i := range 200 {
+		site[fmt.Sprintf("site/f%03d.txt", i)] = "x"
+	}
+	writeTree(t, source.Workdir, site)
+	if res := publishCall(t, p.Last(), "c1", `{"path":"site","title":"Site"}`); res.Failed {
+		t.Fatal(res.Text)
+	}
+	published := make(chan error, 1)
+	go func() {
+		for {
+			m.mu.Lock()
+			var id string
+			for k := range m.sessions {
+				if k != source.ID {
+					id = k
+				}
+			}
+			m.mu.Unlock()
+			if id != "" {
+				_, err := m.publish(context.Background(), id, agentapi.HostToolCall{TaskID: id, CallID: "c2", Name: publishToolName, Arguments: json.RawMessage(`{"path":"other","title":"Other"}`)})
+				published <- err
+				return
+			}
+			runtime.Gosched()
+		}
+	}()
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-published; err != nil {
+		t.Fatal(err)
+	}
+	list, err := m.Artifacts(branch.ID)
+	if err != nil || len(list) != 2 || summaryArtifacts(m, branch.ID) != 2 {
+		t.Fatalf("branch artifacts = %+v, %v, count %d", list, err, summaryArtifacts(m, branch.ID))
+	}
+	for _, a := range list {
+		f, err := m.ArtifactFile(branch.ID, a.ID, 1, "index.html")
+		if err != nil {
+			t.Fatalf("%s: %v", a.Title, err)
+		}
+		_ = f.File.Close()
 	}
 }

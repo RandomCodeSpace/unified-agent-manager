@@ -58,6 +58,8 @@ func newConnectedFileFixture(t *testing.T) connectedFileFixture {
 	mux.HandleFunc("POST /api/sessions/{id}/file-grants", remote.srv.handleCreateGrant)
 	mux.HandleFunc("DELETE /api/sessions/{id}/file-grants/{grant_id}", remote.srv.handleDeleteGrant)
 	mux.HandleFunc(grantKeyRoute, remote.srv.handleRemoteGrantFile)
+	mux.HandleFunc(artifactViewRoute, remote.srv.handleRemoteArtifactFile)
+	mux.HandleFunc("GET /api/sessions/{id}/artifacts", remote.srv.handleArtifacts)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", remote.srv.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", remote.srv.handleAttachment)
 	proxy := newConnectedProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -272,6 +274,8 @@ func TestConnectedFileKeysRedactedInURLs(t *testing.T) {
 	for _, value := range []string{
 		"/api/connected/connection/files/task/" + secret + "/index.html",
 		"https://home.example/api/connected/connection/grants/task/grant/" + secret,
+		"/api/connected/connection/artifact-files/task/0123456789abcdef/2/" + secret + "/style.css",
+		"/api/connected/connection/artifact-files/task/0123456789abcdef/" + secret,
 		"https://home.example/%61pi/%63onnected/connection/files/task/" + secret + "/index.html",
 		"http://[invalid/api/connected/connection/files/task/" + secret,
 		"https://home.example/%61pi/%63onnected/connection/files/task/" + secret + "/%",
@@ -367,5 +371,91 @@ func TestConnectedGrantExpiryToleratesClockSkew(t *testing.T) {
 		if name == "normal" && !grant.ExpiresAt.Equal(expires.Truncate(time.Second)) && grant.ExpiresAt.Sub(expires).Abs() > time.Second {
 			t.Fatalf("normal expiry changed: %v != %v", grant.ExpiresAt, expires)
 		}
+	}
+}
+
+// A connected Thread's published page opens under a key the home issued,
+// scoped to that one version, and loads its relative assets through it.
+func TestConnectedArtifactUsesHomeKeyScopedToItsVersion(t *testing.T) {
+	f := newConnectedFileFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.task.Workdir, "out", "about"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.task.Workdir, "out", "about", "index.html"), []byte("about"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := publishCall(t, f.remote.prov.Last(), "publish-1", `{"path":"out","title":"Out"}`)
+	match := artifactIDText.FindStringSubmatch(res.Text)
+	if res.Failed || match == nil {
+		t.Fatalf("publish = %+v", res)
+	}
+	// No key is signed for a version the other instance has not published.
+	if early := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/artifacts/"+match[1]+"/v/2/", "", nil); early.StatusCode != http.StatusNotFound || len(early.Cookies()) != 0 || early.Header.Get("Location") != "" {
+		t.Fatalf("unpublished version = %d %q", early.StatusCode, early.Header.Get("Location"))
+	}
+	initial := f.proxy.request(t, "GET", "/api/sessions/"+f.task.ID+"/artifacts/"+match[1]+"/v/1/", "", nil)
+	location, cookies := initial.Header.Get("Location"), initial.Cookies()
+	prefix := "/api/connected/" + f.proxy.target.ID + "/artifact-files/" + f.task.ID + "/" + match[1] + "/1/"
+	if initial.StatusCode != http.StatusFound || !strings.HasPrefix(location, prefix) || !strings.HasSuffix(location, "/") || len(cookies) != 1 || cookies[0].Path != prefix {
+		t.Fatalf("artifact bootstrap=%d location=%q cookies=%+v", initial.StatusCode, location, cookies)
+	}
+	if response := f.readGrant(t, "GET", location, nil, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("artifact without companion=%d", response.StatusCode)
+	}
+	page := f.readGrant(t, "GET", location, cookies, nil)
+	if body := connectedBody(t, page); page.StatusCode != http.StatusOK || !strings.Contains(body, `href="style.css"`) || page.Header.Get("Content-Security-Policy") != artifactSecurity {
+		t.Fatalf("artifact page=%d policy=%q body=%q", page.StatusCode, page.Header.Get("Content-Security-Policy"), body)
+	}
+	if style := f.readGrant(t, "GET", location+"style.css", cookies, nil); style.StatusCode != http.StatusOK || connectedBody(t, style) != "body { color: red; }" {
+		t.Fatalf("artifact style=%d", style.StatusCode)
+	}
+	// A folder named without its slash moves under the same key, as locally.
+	if folder := f.readGrant(t, "GET", location+"about", cookies, nil); folder.StatusCode != http.StatusFound || folder.Header.Get("Location") != location+"about/" {
+		t.Fatalf("folder = %d %q", folder.StatusCode, folder.Header.Get("Location"))
+	}
+	if about := f.readGrant(t, "GET", location+"about/", cookies, nil); about.StatusCode != http.StatusOK || connectedBody(t, about) != "about" {
+		t.Fatalf("folder page = %d", about.StatusCode)
+	}
+	other := strings.Replace(location, "/1/", "/2/", 1)
+	if response := f.readGrant(t, "GET", other, cookies, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("another version under this key=%d", response.StatusCode)
+	}
+}
+
+// The connected key check answers 404 only when the other instance says the
+// version is absent; a failed, stalled or malformed answer is a gateway
+// error, and a stalled body cannot hold the request past the deadline.
+func TestConnectedArtifactCheckSeparatesAbsenceFromFailure(t *testing.T) {
+	for name, tc := range map[string]struct {
+		upstream func(http.ResponseWriter, *http.Request)
+		want     int
+	}{
+		"absent": {func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "session not found") }, http.StatusNotFound},
+		"5xx":    {func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusServiceUnavailable, "down") }, http.StatusBadGateway},
+		"stalled": {func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"artifacts":[`))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}, http.StatusBadGateway},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newConnectedProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/artifacts") {
+					http.NotFound(w, r)
+					return
+				}
+				tc.upstream(w, r)
+			})
+			f.client.Timeout = fleetCheckTimeout + 5*time.Second
+			start := time.Now()
+			got := f.request(t, "GET", "/api/sessions/"+mustUUID(t)+"/artifacts/0123456789abcdef/v/1/", "", nil)
+			if got.StatusCode != tc.want || got.Header.Get("Location") != "" || len(got.Cookies()) != 0 {
+				t.Fatalf("status = %d, location %q", got.StatusCode, got.Header.Get("Location"))
+			}
+			if elapsed := time.Since(start); elapsed > fleetCheckTimeout+5*time.Second {
+				t.Fatalf("took %v", elapsed)
+			}
+		})
 	}
 }
