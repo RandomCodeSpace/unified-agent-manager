@@ -109,6 +109,7 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | CMP-48 | A failed command catalogue load holds slash input and offers "Retry commands" | none | spec: composer-commands.spec.ts |
 | CMP-49 | A message queued while the service cannot save stays in the box with the error, is not queued, and queues once on retry after saving works | prompt_reserve_test.go | spec: composer-send.spec.ts |
 | CMP-50 | A Copilot Fusion level the plan or a policy turns off shows in the effort menu, off, with GitHub's reason | composer.test.tsx, fusion_test.go | not feasible (Fusion's levels come from GitHub's catalog; aimock serves one model) |
+| CMP-51 | Agent tab shows a Sandbox row only while the Copilot sandbox is on or turned off for the Thread; hidden when never configured, off or unknown | composer-tools.test.tsx, sandbox_test.go | not feasible (the pack's CLI runs with no sandbox configured, which shows nothing; turning it on needs a CLI sandbox setting and a host that enforces it) |
 | TRN-01 | While a reply streams in and the reader is at the bottom, the conversation stays pinned to the newest text,… | none | spec: transcript.spec.ts |
 | TRN-02 | Scrolling up while text arrives leaves the view where the reader put it | none | spec: transcript-scroll.spec.ts |
 | TRN-03 | Replies render as Markdown while streaming (headings, lists, emphasis, blockquote, inline code) | markdown.test.mjs | spec: transcript.spec.ts, transcript-markdown.spec.ts |

@@ -949,6 +949,8 @@ export interface SessionSummary {
   /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
   mode_unknown?: boolean;
   execution?: ExecutionState | null;
+  /** The provider's sandbox for the open or last open conversation; absent while unknown. `source` is the provider's attribution, such as `user_enabled`. */
+  sandbox?: { enabled: boolean; off_for_thread?: boolean; source?: string };
   stage?: 'active' | 'settled' | 'archived';
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;

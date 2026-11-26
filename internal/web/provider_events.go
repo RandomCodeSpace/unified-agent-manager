@@ -109,6 +109,8 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			state := *ev.Execution
 			s.execution = &state
 		}
+	case agentapi.EventSandbox:
+		s.sandbox = ev.Sandbox
 	case agentapi.EventBackgroundTasks:
 		if ev.BackgroundTasks != nil {
 			m.backgroundTasksLocked(s, *ev.BackgroundTasks)

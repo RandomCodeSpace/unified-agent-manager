@@ -127,6 +127,7 @@ type conversation struct {
 	planReading, planAgain bool
 	mcpStatus              agentapi.MCPStatusSnapshot
 	mcpRevision            uint64
+	sandbox                sandboxSeen
 	control                sync.Mutex
 	// agent is the selected custom agent's ID, "" for the default agent;
 	// written under control and mu.
