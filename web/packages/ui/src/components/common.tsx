@@ -78,6 +78,8 @@ const TONE_BG: Record<Tone, string> = {
  */
 export const BAR_ROW = 'relative z-10 flex h-header shrink-0 items-center px-1.5 sm:px-2';
 export const BAR_BOX = 'flex h-9 min-w-0 flex-1 items-center gap-1.5 pr-1 pl-1.5';
+/** A sidebar header button named in words (DESIGN.md Sidebar): the small button's 28px box, a 14px glyph and its name in `caption` `muted`. */
+export const BAR_LABELLED = 'gap-1 px-1.5 text-caption text-muted [&_svg]:size-3.5';
 /** The same bar as the header of a view that scrolls beneath it (Settings, Routines, a loading pane): `.pane-header` adds the canvas and the scroll fade. */
 export const VIEW_BAR = `pane-header ${BAR_ROW}`;
 

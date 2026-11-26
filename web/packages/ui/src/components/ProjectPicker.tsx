@@ -5,7 +5,7 @@ import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, newTaskProject, searchProjects } from '../lib/tasks';
-import { ProjectBadge, Skeleton, useApp } from './common';
+import { BAR_LABELLED, ProjectBadge, Skeleton, useApp } from './common';
 import { Key } from './InlinePicker';
 import { Button } from './ui/button';
 import { CommandDialog } from './ui/dialog';
@@ -25,15 +25,17 @@ const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-n
 /* ---------- Sidebar filter ---------- */
 
 /**
- * The header's Project badge is the filter: the filtered Project's badge, or a layers glyph
- * for all of them. It opens a searchable list with All projects first; each Project row
- * carries a gear that opens Edit project once the list has closed, so focus returns to the badge.
+ * The header's Project button is the filter: the filtered Project's badge, or a layers glyph
+ * for all of them, with the choice in words beside it in the sidebar (the collapsed rail keeps the glyph alone).
+ * It opens a searchable list with All projects first; each Project row
+ * carries a gear that opens Edit project once the list has closed, so focus returns to the button.
  */
 export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRoutines, groups, side = 'bottom' }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onRoutines?: (p: Project) => void; /** With connected instances: the Projects by machine, each with its own actions; `projects` and `filter` then name the chosen one alone. */ groups?: ProjectGroup[]; /** Where the list opens: below the sidebar header's button, or right of the collapsed rail's. */ side?: 'bottom' | 'right' }>) {
   const chosen = filteredProject(projects, filter);
+  const rail = side === 'right';
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  // Routines or Edit, run once the list has closed so focus lands back on the badge.
+  // Routines or Edit, run once the list has closed so focus lands back on the button.
   const after = useRef<(() => void) | null>(null);
   const later = (run: () => void) => {
     after.current = run;
@@ -50,9 +52,11 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRout
         run?.();
       }}
     >
-      <Tip side={side === 'right' ? 'right' : undefined} label={chosen ? <>Project filter<span className="block text-on-primary/70">{chosen.name}</span></> : 'All projects'}>
-        <Popover.Trigger render={<Button size="icon" aria-label={chosen ? `Project filter: ${chosen.name}` : 'Project filter: all projects'} className="text-muted" />}>
+      <Tip side={rail ? 'right' : undefined} label={chosen ? <>Project filter<span className="block text-on-primary/70">{chosen.name}</span></> : rail ? 'All projects' : 'Project filter'}>
+        <Popover.Trigger render={<Button size={rail ? 'icon' : 'sm'} aria-label={chosen ? `Project filter: ${chosen.name}` : 'Project filter: all projects'} className={rail ? 'text-muted' : cn(BAR_LABELLED, 'min-w-0 shrink')} />}>
           {chosen ? <ProjectBadge badge={chosen.badge} /> : <Layers />}
+          {!rail && <span className="min-w-0 truncate">{chosen?.name ?? 'All projects'}</span>}
+          {!rail && <ChevronDown className="-ml-0.5 size-3!" />}
         </Popover.Trigger>
       </Tip>
       {/* Wider than the Routines picker's list: each row also carries its Routines and Edit buttons. */}

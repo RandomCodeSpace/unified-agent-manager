@@ -551,7 +551,7 @@ The ViewTransition was removed later; Thread switches render at once.
   Nothing inside a card gets another edge; nested structure uses a `sunken` well or an indent.
 - Colour is reserved for act-now (`attention`), in-motion (`accent`) and broken (`error`, `warning`).
   Ready is unlabelled: a finished row shows its relative time, not a colour.
-  The one exception is identity: the Project badge, a 20px square in one of ten tones that identifies a Project wherever it appears, and the Project name on a Thread row and a subagent's name, which take that tone as text (owner, 2026-10-24: more colour on labels).
+  The one exception is identity: the Project badge, a 20px square in one of ten tones that identifies a Project wherever it appears, and a subagent's name, which takes that tone as text (owner, 2026-10-24: more colour on labels); the Project name on a Thread row is `muted` beside its badge (owner, 2026-11-26, sidebar mock A).
   The permissions label takes its risk tone, like its shield.
 - The assistant does not get a bubble.
   The user does.
@@ -658,7 +658,7 @@ Everywhere else separation is spacing, a surface step or an elevation level.
 ### Badges
 Each Project has a badge: two uppercase characters the service chooses from the name (unique among Projects, kept across renames) on one of ten tones, stored as the palette key.
 The tones are fills under `on-primary` text, tuned to the same depth as the semantic tones so they sit quietly on paper.
-They appear in sidebar Thread metadata (where the Project name beside the badge takes the tone as text), the Project filter, the Thread header and the Edit and Remove project dialogs; the Add project dialog says the badge is assigned when added, since available letters and colours can change before creation.
+They appear in sidebar Thread metadata (the Project name beside the badge is `muted`), the Project filter, the Thread header and the Edit and Remove project dialogs; the Add project dialog says the badge is assigned when added, since available letters and colours can change before creation.
 
 | Token | Value | On `on-primary` text | Against `rail` | Against `canvas` |
 |---|---|---|---|---|
@@ -808,15 +808,17 @@ Hover is one surface step; press adds `ink`.
 ### Sidebar
 Sits on `rail`, 384px, no border to the main pane: the `rail` → `canvas` step is the seam, with a full-height 1px `hairline` rule at the column's right edge (`rail-edge`; owner, 2026-11-09, revamp mock 3: it no longer fades at its ends).
 
-**Header (44px, two rows below 481px).**
+**Header (44px bar and a 32px row of named buttons; the bar is two rows below 481px).**
 The row keeps its 44px box and its controls sit flat on `rail`, with no bar card (owner, 2026-11-09, revamp mock 3), in the same 36px box as the Thread header's card (see Thread header): 4px from the row's top and bottom and 8px from its sides (6px on a phone), so the two top rows line up.
-In it, the compact 16px UAM mark with the `title` wordmark "UAM" beside it (one button) sits in the top-left corner, followed by local Search, the Project filter (a badge button), Add project and New thread (a pen, Alt+N).
-Search takes the spare toolbar width; below 481px it occupies a full-width second row so its text stays visible.
+In it, the compact 16px UAM mark with the `title` wordmark "UAM" beside it (one button) sits in the top-left corner, followed by local Search and **New thread**, the one tonal button (`fill`, 28px, a pen and the words in `caption` `ink`; Alt+N in its tip).
+Under the bar a second row, 32px (44px on a coarse pointer), names the rest in words (owner, 2026-11-26, sidebar mock A: a name beside each glyph, not in a tip): the Project filter ("All projects" or the chosen Project, with a chevron), **Routines** and **Add project**, small ghost buttons (28px, a 14px glyph and the name in `caption` `muted`), their glyphs over the Thread rows' badges.
+Named in words, Routines and Add project have no tip.
+Search takes the spare toolbar width; below 481px it occupies a full-width second row so its text stays visible, and New thread keeps the bar's right end.
 The mark stays in the same position when the sidebar opens or closes.
 The UAM mark collapses the sidebar to its rail without changing the selected Thread or URL, retaining Ctrl/Cmd+B and focus restoration (focus on the sidebar moves to the rail's mark, and back).
 
 **Collapsed rail (48px, wide layout only).**
-Full height on `rail` with the same `rail-edge` seam, the sidebar's own controls stacked in one centred column with tips opening to the right: at the top, in a 44px row level with the pane headers, the UAM mark without the wordmark, which the 48px rail has no room for (Show sidebar, with the Needs you count pill on its corner); below it, in the header's order, the Project filter (the same badge button and list, opening to the right of the rail), Routines, Add project (the same dialog) and New thread (the pen, Alt+N, the same palette); at the foot Settings, the allowance (the share left over a short meter; see Account allowance in Usage) and the connection mark.
+Full height on `rail` with the same `rail-edge` seam, the sidebar's own controls stacked in one centred column with tips opening to the right: at the top, in a 44px row level with the pane headers, the UAM mark without the wordmark, which the 48px rail has no room for (Show sidebar, with the Needs you count pill on its corner); below it, in the header's order, the Project filter (its badge or glyph alone and the same list, opening to the right of the rail), Routines, Add project (the same dialog) and New thread (the pen, Alt+N, the same palette); at the foot Settings, the allowance (the share left over a short meter; see Account allowance in Usage) and the connection mark.
 Buttons are the header's 28px icon buttons, 6px apart, with 44px hit areas and 16px gaps on a coarse pointer.
 Search and the Thread list wait for the expanded sidebar.
 A phone keeps the drawer and never shows the rail.
@@ -825,9 +827,9 @@ Search matches all entered words across Thread name/title and real Project name/
 Results include active, settled and archived Threads; clearing Search restores the active list and shelves.
 No backend search or PR lookups.
 
-**Project filter (the badge button).**
-The header's badge button is the filter: the filtered Project's badge, or a `Layers` glyph in `muted` for all of them (T3 Code).
-It opens a 352px Base UI popover below it, the level 2 surface: a "Search projects…" box that takes focus (name and directory, every word), an **All projects** row, then one 30px row per Project: the option (its badge and name, named by the Project alone) and, beside it at the right, the Routines and gear ("Edit <project>") buttons, separate controls the Tab key reaches, each acting once the popover has closed, so focus lands back on the badge.
+**Project filter.**
+The first button of the header's second row is the filter: the filtered Project's badge and name, or a `Layers` glyph and "All projects" in `muted` for all of them, then a chevron (T3 Code); a long name truncates.
+It opens a 352px Base UI popover below it, the level 2 surface: a "Search projects…" box that takes focus (name and directory, every word), an **All projects** row, then one 30px row per Project: the option (its badge and name, named by the Project alone) and, beside it at the right, the Routines and gear ("Edit <project>") buttons, separate controls the Tab key reaches, each acting once the popover has closed, so focus lands back on the button.
 The current choice carries an `accent` check.
 The box keeps focus: arrows move the highlight (`aria-activedescendant` over `role="option"` rows), Enter chooses, Esc closes, a pointer over a row takes the highlight.
 Choosing a row closes the popover.
@@ -852,8 +854,9 @@ The tab title, the app badge and the sidebar toggle (a filled `attention` count 
 
 **Thread row (46px on a 48px pitch).**
 Every row in every group is flat on `rail` (owner, 2026-11-09, revamp mock 3): no card, no shadow and no ring in either theme, a 46px tile with `md` radius, 2px apart, so a hovered row beside the open one stays a separate tile.
-Hover tints the tile `tint-hover` (`fast`, no lift), its Settle button included; the open Thread's tile is `tint-selected`, with its name in semibold; an unread or Needs you row sets its name in medium `ink`.
-Two lines: first the 16px Project badge, visible Project name, and the state label.
+Hover tints the tile `tint-hover` (`fast`, no lift), its Settle button included; the open Thread's tile is `tint-selected`, with its name in semibold; every row's name is `ink`, and an unread or Needs you row sets it in medium.
+Two lines (owner, 2026-11-26, sidebar mock A, "Quiet meta": the same two lines, the Project line steps back and the title carries the row): first the 16px Project badge, the Project name in normal-weight `muted`, the Thread's branch where it is not its Project folder's, the files it changed, and the state label.
+On a row "Starting" and "Working" set their word in `body` beside the `accent` ring, and "Finished" is its `muted` word beside the `success` glyph: plain words, so the one fill on a row is a waiting state's tag.
 **State labels** (owner, 2026-11-09, revamp mock 5 L2, the urgency ladder; `StateLabel` in common.tsx, the same on a row and in the Thread header): a 14px glyph and the word in `caption`, coloured by how much the state asks of the owner.
 "Needs answer" and "Needs permission" are the one filled tag: `attention` on `attention-wash`, 20px, `sm` radius, medium, the colour of the request's own glyph and of the Needs you count.
 The Thread header leaves the label out while a request shows where it is answered (its card, or the composer for one question; `askShown`): the Thread list's row says the state, the request says what is asked, and the header keeps only its name, "State: Needs permission".
@@ -862,8 +865,10 @@ The Thread header leaves the label out while a request shows where it is answere
 "Idle", "Stopped", "Settled" and "Archived" have no colour: a `faint` glyph and a `muted` word.
 A new state takes one of these four rungs; nothing else on a row or a header is filled.
 These are the only Thread states (owner, 2026-10-25: more create confusion): a phase of the work (compacting, wrapping up at a budget), what a finished turn found (tests fail, commands failed, a claim contradicted), why a turn failed (rate limit reached, sign-in needed) and why a Thread is idle (closed, a branch not started) are the row tip's and the header chip's hover words, never another state.
-The second line holds the Thread title at 13px, the Thread's branch in normal-weight `meta` `muted` (up to 112px) only when it is not the Project's default branch (owner, 2026-11-09, revamp mock 3: a branch on a row means "not the default"), and the relative time of its last change.
-The default is the default branch of the Project's origin as the folder's local refs record it (`default_branch`, never guessed from a name); when git cannot tell (no origin, an older server) the branch is drawn.
+The second line holds the Thread title at 13px in `ink`, the full width up to the relative time of its last change.
+The branch is on the first line, after the Project name and a `faint` middle dot, in normal-weight `meta` `muted`, only when the Thread is off its Project folder's current branch (`Project.branch`): a Thread in its own worktree, mostly (owner, 2026-11-26: a branch on a row means "not where the folder is", so rows in one folder no longer repeat it).
+A folder on no named branch (a detached head) compares the default branch of the Project's origin instead (`default_branch`, never guessed from a name); when git can tell neither, the branch is drawn.
+The name and the branch share what the state label leaves: the branch truncates first, the name only past 60% of that room.
 Long titles and branches truncate.
 The row's tip (the styled tooltip, to the right, like a shelf row's; no native title) keeps the full question, permission request, outcome, quiet duration, branch (always, the default one too), and reported `+N −M` line counts.
 A Needs you row carries no answer controls: questions and permissions are answered in the Thread.

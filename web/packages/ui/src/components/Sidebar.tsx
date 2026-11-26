@@ -9,7 +9,7 @@ import { MOTION_NOTICE, motionNoticeDue } from '../lib/motion';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { byActivity, filteredProject, groupTasks, needsYouNow, putAwayWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
-import { BADGE_TEXT, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, StateLabel, TaskTitle, dateTime, relTime, useApp, useMinuteTick } from './common';
+import { BAR_LABELLED, BAR_ROW, Dot, InlineName, ProjectBadge, Skeleton, StateLabel, TaskTitle, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { lineCountsText } from '../lib/cost';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
 import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
@@ -79,7 +79,8 @@ type TipSide = 'top' | 'right';
 
 /* ---------- Header and footer controls (the sidebar's, and the collapsed rail's) ---------- */
 
-function NewTaskButton({ actions, id, side }: Readonly<{ actions: WorkspaceActions; id?: string; side?: TipSide }>) {
+/** `labelled`: named in words beside its glyph (the sidebar's header); the collapsed rail keeps the glyph alone, its name in a tip. */
+function NewTaskButton({ actions, id, side, labelled = false }: Readonly<{ actions: WorkspaceActions; id?: string; side?: TipSide; labelled?: boolean }>) {
   return (
     <Tip
       side={side}
@@ -89,21 +90,23 @@ function NewTaskButton({ actions, id, side }: Readonly<{ actions: WorkspaceActio
         </>
       }
     >
-      <Button id={id} size="icon" aria-label="New thread" aria-keyshortcuts="Alt+N" className="text-muted" onClick={actions.onNewTask}>
+      <Button id={id} variant={labelled ? 'secondary' : 'ghost'} size={labelled ? 'sm' : 'icon'} aria-label="New thread" aria-keyshortcuts="Alt+N" className={labelled ? 'gap-1 text-caption max-sm:ml-auto [&_svg]:size-3.5' : 'text-muted'} onClick={actions.onNewTask}>
         <SquarePen />
+        {labelled && 'New thread'}
       </Button>
     </Tip>
   );
 }
 
-function AddProjectButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
-  return (
-    <Tip label="Add project" side={side}>
-      <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
-        <FolderPlus />
-      </Button>
-    </Tip>
+function AddProjectButton({ actions, side, labelled = false }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
+  const button = (
+    <Button size={labelled ? 'sm' : 'icon'} aria-label="Add project" className={labelled ? BAR_LABELLED : 'text-muted'} onClick={actions.onAddProject}>
+      <FolderPlus />
+      {labelled && 'Add project'}
+    </Button>
   );
+  // Named in words, it needs no tip.
+  return labelled ? button : <Tip label="Add project" side={side}>{button}</Tip>;
 }
 
 function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[]; actions: WorkspaceActions; side?: TipSide }>) {
@@ -137,14 +140,14 @@ function useAnyProject(projects: Project[]): boolean {
   return projects.length > 0 || !!machines?.some((m) => !m.active && m.state.projects.length > 0);
 }
 
-function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
-  return (
-    <Tip label="Routines" side={side}>
-      <Button size="icon" aria-label="Routines" aria-pressed={actions.routinesOpen} className="text-muted" onClick={actions.onAllRoutines}>
-        <Clock />
-      </Button>
-    </Tip>
+function RoutinesButton({ actions, side, labelled = false }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
+  const button = (
+    <Button size={labelled ? 'sm' : 'icon'} aria-label="Routines" aria-pressed={actions.routinesOpen} className={labelled ? BAR_LABELLED : 'text-muted'} onClick={actions.onAllRoutines}>
+      <Clock />
+      {labelled && 'Routines'}
+    </Button>
   );
+  return labelled ? button : <Tip label="Routines" side={side}>{button}</Tip>;
 }
 
 /**
@@ -367,14 +370,20 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
 export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
   const changed = session.diff?.files ?? 0;
-  // On the row only off the Project's default branch (the tip always names it); a default git cannot tell (no origin, an older server) draws it.
+  // On the row only off the Project folder's current branch (the tip always names it); a folder on no named branch (a detached head) compares the Project's default.
   const own = taskBranch(session, project);
-  const branch = own === project?.default_branch ? undefined : own;
+  const branch = own === (project?.branch ?? project?.default_branch) ? undefined : own;
+  // Working is plain words beside its ring: the row's one filled label is a waiting state's.
+  const live = status.label === 'Working' || status.label === 'Starting';
   return (
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} />}
-        <span className={cn('min-w-0 truncate font-medium', project ? BADGE_TEXT[project.badge.color] : 'text-muted')}>{project?.name ?? 'Project'}</span>
+        {/* The name and the branch share what the state leaves: a long branch truncates first, the name past 60% of it. */}
+        <span className="flex min-w-0 items-center gap-1.5 font-normal text-muted">
+          <span className={cn('truncate', branch ? 'max-w-[60%] shrink-0' : 'min-w-0')}>{project?.name ?? 'Project'}</span>
+          {branch && <span className="min-w-0 truncate text-meta font-normal text-muted"><span aria-hidden="true" className="mr-1.5 text-faint">·</span><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{branch}</span></span>}
+        </span>
         {/* The files this Thread changed, after its name: its own, never its folder's. Glyph and count, the words for screen readers. */}
         {changed > 0 && (
           <span className="flex shrink-0 items-center gap-0.5 text-meta font-normal text-warning tabular-nums">
@@ -383,11 +392,10 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
           </span>
         )}
         <span className="flex-1" />
-        <StateLabel status={status.label} unread={unread} className={cn('justify-end', settleable && 'min-w-14 group-hover/row:opacity-0 group-has-focus-visible/row:opacity-0')} />
+        <StateLabel status={status.label} unread={unread} className={cn('justify-end', live && 'text-body', settleable && 'min-w-14 group-hover/row:opacity-0 group-has-focus-visible/row:opacity-0')} />
       </span>
       <span className="flex w-full min-w-0 items-baseline gap-1.5">
         <TaskTitle session={session} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-        {branch && <span className="min-w-0 max-w-28 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{branch}</span></span>}
         <time dateTime={session.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(session.updated_at)}</time>
         {machine && <InstanceBadge id={machine.id} label={machine.label} />}
       </span>
@@ -404,7 +412,7 @@ function TipMachine({ label }: Readonly<{ label: string }>) {
 
 /**
  * `compact`: a Settled shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
+ * Otherwise a Task row, never more than two lines: Project badge/name, the branch where it is not the folder's, and state, then Task title and time;
  * its tip holds the full detail (what a waiting row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
@@ -504,6 +512,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   const unavailable = machine?.status.status === 'account-mismatch';
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A Thread row is flat on the rail, a 46px tile on a 48px pitch: `fill-hover` under the pointer (anywhere on the row, its Settle included), the open one `fill`.
+  // Its title is the row's `ink`; the Project line above it is `muted`.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -522,7 +531,8 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
       selected ? 'bg-fill text-ink shadow-highlight-tonal' : 'group-hover/row:bg-fill-hover',
       readOnly(s) && !selected && 'text-muted',
       unavailable && !selected && 'opacity-60',
-      weight,
+      'text-ink',
+      strong && 'font-medium',
     );
   }
 
@@ -941,12 +951,15 @@ export const Sidebar = memo(function Sidebar({
             <input ref={search} type="search" aria-label="Search threads" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
           </label>
           {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
-          {anyProject && <FilterButton projects={projects} actions={actions} />}
-          {projects.length > 0 && <RoutinesButton actions={actions} />}
-          <AddProjectButton actions={actions} />
-          {anyProject && <NewTaskButton actions={actions} id="new-task" />}
+          {anyProject && <NewTaskButton actions={actions} id="new-task" labelled />}
         </div>
       </header>
+      {/* The header's second row, 32px: the Project filter, Routines and Add project, each named in words, their glyphs over the rows' badges. A coarse pointer gets the 44px row their hit areas need. */}
+      <div className="flex h-8 shrink-0 items-start gap-0.5 pr-2 pl-3 pointer-coarse:h-11 pointer-coarse:items-center">
+        {anyProject && <FilterButton projects={projects} actions={actions} />}
+        {projects.length > 0 && <RoutinesButton actions={actions} labelled />}
+        <AddProjectButton actions={actions} labelled />
+      </div>
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="flex min-h-0 flex-1 flex-col" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
