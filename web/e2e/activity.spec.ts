@@ -98,8 +98,10 @@ test('an upstream failure ends the turn with its error and the next prompt succe
   model.reply('recover please', 'Recovered after the failure.');
   await startThread(page, project, 'break please');
   await expect(threadState(page, 'Error')).toBeVisible({ timeout: 45_000 });
+  await expect(conversation(page).getByRole('alert')).toHaveText('Rate limit reached; wait a moment, then send your message again.');
+  await expect(conversation(page).getByText(/429 mock rate limit/)).toBeHidden();
+  await conversation(page).getByText('Details', { exact: true }).click();
   await expect(conversation(page).getByText(/429 mock rate limit/)).toBeVisible();
-  await expect(conversation(page).getByRole('alert')).toHaveText('Rate limit reached. Wait, then send your message again.');
 
   await send(page, 'recover please');
   await expect(conversation(page).getByText('Recovered after the failure.')).toBeVisible();

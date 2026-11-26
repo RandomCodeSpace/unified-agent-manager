@@ -97,6 +97,8 @@ export interface AppContextValue {
   usage: AccountUsage | null;
   /** Opens the shared account Usage popover, revealing the sidebar on phones. */
   openUsage?: () => void;
+  /** Opens Settings on a provider's account section (sign-in). */
+  openAccount?: (provider: string) => void;
   /** Reads GET /api/meta again: the catalogs and each provider's cheapest_model. */
   refreshMeta: () => void;
 }

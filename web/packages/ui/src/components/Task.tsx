@@ -8,15 +8,15 @@ import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, read
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { ArtifactsContext, ArtifactsRevisionContext, PreviewContext, TempRootContext } from '../lib/previewContext';
-import { awaitsUser, completedChanges, foregroundItems, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { awaitsUser, completedChanges, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { isRealUserTurn, turnBusy } from '../lib/turnState';
 import { stopWords } from '../lib/stop';
-import { failureWords } from '../lib/failure';
+import { UNKNOWN_FAILURE_SENTENCE, failureNoticeItem, failureWords } from '../lib/failure';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
+import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, Summary, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { PHONE } from './ui/dialog';
@@ -143,6 +143,8 @@ interface HeaderProps {
   evidenceError: string;
   /** What the finished turn's own record shows failed ("tests fail, a claim contradicted"), for the chip's hover only; '' when nothing did. */
   failures: string;
+  /** Why a failed Thread failed (lib/failure), for the chip's hover. */
+  failureCause?: string;
   sheetOpen: boolean;
   onOpenChanges: () => void;
   chartsOpen: boolean;
@@ -163,7 +165,7 @@ interface HeaderProps {
  * finished turn's failures are its detail, never another state. The bar says it by its fill and its name; a phone, which
  * has no sidebar beside it, also shows the glyph after the title.
  */
-function headerState(session: SessionSummary, state: SessionState, failures: string): { word: string; detail?: string; icon?: ReactNode } {
+function headerState(session: SessionSummary, state: SessionState, failures: string, failureCause?: string): { word: string; detail?: string; icon?: ReactNode } {
   let detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   let word = STATE_LABELS[state];
   let icon: ReactNode;
@@ -185,8 +187,8 @@ function headerState(session: SessionSummary, state: SessionState, failures: str
   } else if (state === 'completed' && failures) {
     detail = failures;
   } else if (state === 'failed') {
-    // Why it failed, when the provider said (lib/failure); its own text stays in the conversation.
-    detail = failureWords(session)?.cause;
+    // Why it failed, when known (lib/failure); its own text stays in the conversation.
+    detail = failureCause ?? failureWords(session)?.cause;
   }
   return { word, detail, icon };
 }
@@ -235,7 +237,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
-const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, failureCause, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -275,7 +277,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
   const renamable = canRename(session, actions);
   const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
   // The state is the card's still fill and its name (DESIGN.md Thread header); a read-only Thread's stage chip stands for it.
-  const shown = headerState(session, state, failures);
+  const shown = headerState(session, state, failures, failureCause);
   const word = readOnly(session) ? stageLabel(session) : shown.word;
 
   return (
@@ -1016,11 +1018,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }
   const cards = [...session.interactions.filter(carded), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && carded(x)))];
 
-  // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
-  const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
-  const noticed = !!failure && foregroundItems(liveItems).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
-  // The cause in plain words leads when the provider named one (lib/failure); its own text follows unless the notice already holds it.
-  const why = failureWords(session);
+  // The cause in plain words (lib/failure), and any duplicate error notice from this turn folded into its disclosure.
+  const why = failureWords(session, liveItems);
+  const failureNotice = !session.history_after ? failureNoticeItem(session, visibleItems) : null;
+  const transcriptItems = useMemo(() => (failureNotice ? visibleItems.filter((i) => i.id !== failureNotice.id) : visibleItems), [visibleItems, failureNotice]);
+  const failureDetail = session.state === 'failed' ? (failureNotice?.text ?? session.state_detail?.trim() ?? '') : '';
 
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
@@ -1073,7 +1075,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <ReplyContext.Provider value={replyTools}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} failureCause={why?.cause} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && !viewed && (
@@ -1117,7 +1119,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 planVersion={session.plan_version}
                 planPath={session.plan_path}
                 planAvailable={session.open}
-                items={visibleItems}
+                items={transcriptItems}
                 identityItems={session.history_index}
                 liveItems={liveItems}
                 historyItemSeq={historyItemSeq}
@@ -1160,15 +1162,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {session.handoff && !live && !session.history_after && (
                 <HandoffCard session={session} items={liveItems} onContinue={actions.continueFrom ? (text) => actions.continueFrom?.(session.project_id, text) : undefined} />
               )}
-              {why ? (
-                <Note tone="error" role="alert">
-                  <span className="font-medium">{why.cause}.</span> {why.action}
-                  {!noticed && session.state_detail && <span className="block text-muted">{session.state_detail}</span>}
-                </Note>
-              ) : session.state === 'failed' && !noticed && (
-                <Note tone="error" role="alert">
-                  Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
-                </Note>
+              {session.state === 'failed' && (
+                <div className="flex flex-col gap-1">
+                  <Note tone="error" role="alert">
+                    {why?.sentence ?? UNKNOWN_FAILURE_SENTENCE}
+                  </Note>
+                  {failureDetail && (
+                    <details className="text-caption text-muted">
+                      <Summary>Details</Summary>
+                      <p className="m-0 mt-1 break-words whitespace-pre-wrap">{failureDetail}</p>
+                    </details>
+                  )}
+                </div>
               )}
             </div>
           </section>

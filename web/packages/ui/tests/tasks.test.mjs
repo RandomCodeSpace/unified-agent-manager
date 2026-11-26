@@ -211,6 +211,7 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'failed', failure_kind: 'authentication' }), 'Sign-in needed');
   assert.equal(status({ state: 'failed', failure_kind: 'other' }), 'Stopped with an error');
   assert.equal(status({ state: 'failed', failure_kind: 'something_new' }), 'Stopped with an error');
+  assert.equal(status({ state: 'failed', failure_kind: 'query', state_detail: 'HTTP 401 Bad credentials' }), 'Sign-in needed');
   assert.equal(status({ state: 'completed', failure_kind: 'rate_limit' }), 'Finished');
   // No reason is not proof it was you: Copilot reports uam's own Stop and any other as user_initiated.
   assert.equal(status({ state: 'cancelled' }), 'Stopped');

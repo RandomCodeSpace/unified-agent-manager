@@ -202,10 +202,6 @@ export default function App() {
     });
   }, [narrow, setDrawerOpen]);
   const ownerSettings = useMemo(() => api.owner ? { ...state.settings, terminal: state.settings.terminal && api.supports('terminal-v1') } : state.settings, [api, state.settings]);
-  const ctx = useMemo(
-    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage }),
-    [meta, metaError, state.loaded, narrow, ownerSettings, state.usage, refreshMeta, openUsage],
-  );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into,
   // and a rename the choosing double-click started keeps its input.
@@ -303,9 +299,21 @@ export default function App() {
   const mismatched = useMemo(() => (meta?.providers ?? []).find((p) => p.account_mismatch) ?? (fleetMismatch ? { name: 'copilot', reason: fleetMismatch } : null), [meta, fleetMismatch]);
   /** Settings on the provider's account section, its title focused. */
   const openAccount = useCallback((name: string) => {
-    showSettings();
-    setAccountFocus(name);
-  }, [showSettings]);
+    noteOpener();
+    setDrawerOpen(false);
+    startTransition(() => {
+      setTokenPricesRequest(0);
+      setConnectionsRequest(0);
+      setAccountFocus(name);
+      setSettingsOpen(true);
+      setRoutinesFor(null);
+      setNewTask(null);
+    });
+  }, [noteOpener, setDrawerOpen]);
+  const ctx = useMemo(
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage, openAccount }),
+    [meta, metaError, state.loaded, narrow, ownerSettings, state.usage, refreshMeta, openUsage, openAccount],
+  );
   /** Routines in the main pane, one Project's or `all` (like Settings, it keeps the selected Task behind it). */
   const showRoutines = useCallback((projectId: string) => {
     noteOpener();
