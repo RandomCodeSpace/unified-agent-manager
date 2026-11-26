@@ -815,8 +815,9 @@ export const Sidebar = memo(function Sidebar({
   // Latest activity first, whatever their state; only the shelf placement waits for a quiet list.
   const unsettled = active;
   const here = machines?.find((m) => m.active);
+  const currentKey = selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId;
   // While Settings covers the pane, no Thread row is highlighted as the active view.
-  const selectedKey = actions.settingsOpen ? null : (selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId);
+  const selectedKey = actions.settingsOpen ? null : currentKey;
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const [settledAll, setSettledAll] = useState(false);
