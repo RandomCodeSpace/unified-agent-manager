@@ -14,7 +14,7 @@ test('a credentials error shows one sentence, folds detail, and opens Settings a
   await conversation(page).getByText('Details', { exact: true }).click();
   await expect(conversation(page).getByText(/HTTP 401/)).toBeVisible();
 
-  const signIn = page.getByRole('button', { name: 'Sign in in Settings' });
+  const signIn = page.getByRole('button', { name: 'Sign in again' });
   const resend = page.getByRole('button', { name: 'Resend last prompt' });
   await expect(signIn).toBeVisible();
   await expect(resend).toBeVisible();

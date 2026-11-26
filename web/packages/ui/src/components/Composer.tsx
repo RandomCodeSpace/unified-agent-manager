@@ -1651,7 +1651,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             <div className="flex flex-wrap items-center gap-1.5">
               {accountFix && (
                 <Button size="sm" variant="primary" className="animate-rise" onClick={() => openAccount(session.provider || 'copilot')}>
-                  {failure.recoveryLabel ?? 'Sign in in Settings'}
+                  {failure.recoveryLabel ?? 'Sign in again'}
                 </Button>
               )}
               {resendable && (
