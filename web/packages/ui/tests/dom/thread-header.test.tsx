@@ -14,7 +14,6 @@ const bar = () => screen.getByRole('group', { name: /^State: / });
 // colour the glyph and the word, `done` the glyph alone, `off` nothing.
 test.each([
   ['t8', 'Working', 'live'],
-  ['t2', 'Needs answer', 'now'],
   ['t5', 'Interrupted', 'bad'],
   ['t4', 'Error', 'bad'],
   ['t-chart', 'Finished', 'done'],
@@ -22,6 +21,16 @@ test.each([
   await openTask(id);
   expect(bar().getAttribute('aria-label')).toBe(`State: ${word}`);
   expect(within(bar()).getByText(word).dataset.rung).toBe(rung);
+});
+
+// The request's card, or the composer's question, says the state where it is answered: the bar is named for it and repeats no label.
+test.each([
+  ['t2', 'Needs answer'],
+  ['t6', 'Needs permission'],
+])('%s shows its request, so the bar has no %s label', async (id, word) => {
+  await openTask(id);
+  expect(bar().getAttribute('aria-label')).toBe(`State: ${word}`);
+  expect(within(bar()).queryByText(word)).toBeNull();
 });
 
 test('an idle Thread\'s header label has no colour', async () => {
@@ -46,14 +55,12 @@ test('on a phone the state is also a glyph after the title, the Thread list\'s o
   expect(word.parentElement!.querySelector('.lucide-triangle-alert')).not.toBeNull();
 });
 
-test('on a phone a Thread waiting on a permission shows the shield of the Thread list, in the same rung, with no fill', async () => {
+test('on a phone a Thread waiting on a permission its card shows has no state glyph in the bar', async () => {
   onPhone();
   await openTask('t6');
-  const word = within(bar()).getByText('Needs permission', { selector: '.sr-only' });
-  const label = word.parentElement!;
-  expect(label.dataset.rung).toBe('now');
-  expect(label.querySelector('.lucide-shield-question-mark')).not.toBeNull();
-  expect(label.querySelector('.lucide-message-circle-question')).toBeNull();
+  expect(bar().getAttribute('aria-label')).toBe('State: Needs permission');
+  expect(within(bar()).queryByText('Needs permission')).toBeNull();
+  expect(bar().querySelector('.lucide-shield-question-mark')).toBeNull();
 });
 
 test('one state vocabulary: a waiting Thread reads Needs answer or Needs permission, never Input or Needs you', () => {

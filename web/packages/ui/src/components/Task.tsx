@@ -8,7 +8,7 @@ import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, read
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { ArtifactsContext, ArtifactsRevisionContext, PreviewContext, TempRootContext } from '../lib/previewContext';
-import { awaitsUser, completedChanges, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { askShown, awaitsUser, completedChanges, interruptedCall, rerunRequest, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
 import { lastTurnContradicted } from '../lib/receipts';
 import { isRealUserTurn, turnBusy } from '../lib/turnState';
@@ -138,6 +138,8 @@ interface HeaderProps {
   session: SessionSummary;
   project: Project | undefined;
   state: SessionState;
+  /** A request's card, or the composer's question, says the state (`askShown`): the state label gives way to it. */
+  asked: boolean;
   changes: ChangesData | null;
   evidenceAvailable: boolean;
   evidenceError: string;
@@ -237,7 +239,7 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
 }
 
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
-const TaskHeader = memo(function TaskHeader({ leading, session, project, state, changes, evidenceAvailable, evidenceError, failures, failureCause, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ leading, session, project, state, asked, changes, evidenceAvailable, evidenceError, failures, failureCause, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, artifactsOpen, onToggleArtifacts, terminal, terminalOpen, onTerminal, onMcp, spawnerName, spawnerBadge }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -303,7 +305,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
           {/* The state, in the Thread list's label (StateLabel). A phone keeps the glyph alone, and a Settled Thread says so in its composer row, so the squeezed title keeps the room. */}
           {readOnly(session) ? (
             <StateLabel status={session.stage === 'settled' ? 'Settled' : 'Archived'} className={session.stage === 'settled' ? 'ml-1 max-sm:hidden' : 'ml-1'} />
-          ) : (
+          ) : !asked && (
             <StateLabel status={STATE_LABELS[state] as StatusWord} bare={phone} text={shown.word} icon={shown.icon} title={shown.detail} className={phone ? undefined : 'ml-1'} />
           )}
           {/* A Task action in flight is words: nothing in the header turns. */}
@@ -1075,7 +1077,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <ReplyContext.Provider value={replyTools}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} failureCause={why?.cause} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
+        {viewed ? <SubagentBar session={session} subagent={viewed} badge={project?.badge} leading={leading} onBack={backToThread} /> : <TaskHeader spawnerName={spawnedBy?.name} spawnerBadge={spawnedBy?.badge} leading={leading} session={session} project={project} state={state} asked={askShown(session.interactions)} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} failureCause={why?.cause} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} onMcp={setMcpOpen} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && !viewed && (

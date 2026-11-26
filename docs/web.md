@@ -2700,7 +2700,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   page loads), and after Push; the summary carries it as
   `git_pending {uncommitted, unpushed}`. The status is one of "Needs answer", "Needs permission", "Starting",
   "Working", "Finished", "Error", "Interrupted", "Stopped", or "Idle";
-  the header and the strip's live line use the same words. "Needs you" is only
+  the header uses the same words. While a request shows where it is answered
+  (its card, or the composer for one question), the header leaves the label out
+  and the strip's live line reads "Waiting on you" with how long, so the state
+  is said once beside the request. "Needs you" is only
   the count of Threads that want you.
   Needs answer, Needs permission and Interrupted are amber; Working/Starting blue; Compacting violet;
   Finished green (an unread one teal, with an eye); Error red; inactive states gray.

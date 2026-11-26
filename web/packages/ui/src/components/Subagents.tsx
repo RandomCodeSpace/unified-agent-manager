@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
-import { awaitsUser, isSubagentCall, subagentSummary, duration, toolLabel, windowInteractions } from '../lib/transcript';
+import { awaitsUser, isSubagentCall, subagentSummary, duration, formatMs, toolLabel, windowInteractions } from '../lib/transcript';
 import { BodyNotice, useDetailAgent, useItemBody } from './Details';
 import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, CornerDownRight, CornerUpLeft, Diamond, Minus, Square, Terminal, Workflow, X } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
@@ -471,7 +471,8 @@ export function Took({ subagent: s, className }: Readonly<{ subagent: Pick<Subag
   const running = s.status === 'running';
   const now = useNow(running && !!s.started_at);
   let text = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
-  if (running && s.started_at) text = duration(s.started_at, new Date(Math.max(now, ms(s.started_at))).toISOString());
+  // A running clock counts whole seconds, as the strip's live line does (`liveClock`): the two agree on one command.
+  if (running && s.started_at) text = formatMs(Math.floor(Math.max(0, now - ms(s.started_at)) / 1000) * 1000);
   return <span className={cn('shrink-0 text-meta tabular-nums', running ? 'text-accent' : 'text-muted', className)}>{text ?? ''}</span>;
 }
 

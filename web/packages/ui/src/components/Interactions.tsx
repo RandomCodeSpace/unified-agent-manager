@@ -71,8 +71,8 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
 
 /**
  * Permission or question card. The first answer from any tab wins: a 409 means someone
- * else answered, a 410 means the provider withdrew the request. While pending the header
- * carries the attention chip; that is the only orange on the card. A question with one
+ * else answered, a 410 means the provider withdrew the request. While pending the title
+ * carries the request's glyph in `attention`; that is the only orange on the card. A question with one
  * question is not a card: it is the composer's extension (`ComposerQuestion`).
  */
 export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
@@ -118,13 +118,8 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
 
   return (
     <section className="rounded-lg bg-raised px-4 py-3 shadow-float animate-rise" role="group" aria-labelledby={titleId}>
-      <div className="mb-1.5 flex items-center gap-2">
-        <Chip tone="attention">
-          <Icon aria-hidden="true" className="size-3.5" />
-          {permission ? 'Needs permission' : 'Needs answer'}
-        </Chip>
-      </div>
-      <h3 id={titleId} className="text-title text-ink">
+      <h3 id={titleId} className="flex items-start gap-2 text-title text-ink">
+        <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-attention" />
         {interaction.title}
       </h3>
       {write ? (

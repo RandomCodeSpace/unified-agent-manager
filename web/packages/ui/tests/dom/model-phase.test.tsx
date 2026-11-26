@@ -44,8 +44,12 @@ describe('the live line at the strip', () => {
     expect(liveLine(reads, false)?.phase).toBe('Reading 3 files');
     expect(liveLine(task({ kind: 'local', since: ago(2), tool: 'view', detail: 'redraw_test.go' }, { items: [tool('1', 'view')] }), false)?.phase).toBe('Reading redraw_test.go');
     const you = task({ kind: 'waiting', since: ago(72), detail: 'approve bash' }, { state: 'awaiting_permission', interactions: [{ id: 'p', kind: 'permission', title: 'Run shell command', detail: 'rm -rf build/', state: 'pending', time: ago(72) }] as SessionDetail['interactions'] });
-    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Needs permission', detail: 'approve bash', since: ago(72) });
-    // The permission card shows the command: the line names the state and the tool only.
+    // The permission card says what is asked: the line keeps the wait's clock and repeats neither the state nor the tool.
+    expect(liveLine(you, false)).toEqual({ mark: 'you', phase: 'Waiting on you', since: ago(72) });
+    // A read of a background shell counts from the shell's start, as the shell's own row does.
+    const read = tool('r', 'read_bash', 'running', { shell_id: '3' });
+    const shell = task({ kind: 'local', since: ago(45), tool: 'read_bash', detail: '3' }, { items: [read], background_tasks: { known: true, tasks: [{ id: '3', command: 'npm test', status: 'running', started_at: ago(184) }] } });
+    expect(liveLine(shell, false)).toEqual({ mark: 'ring', phase: 'Running read_bash 3', since: ago(184) });
     const agents = task({ kind: 'model', since: ago(5), calls: 3, subagents: 3 }, { subagents: [{ id: 'a', status: 'running' }, { id: 'b', status: 'running' }, { id: 'c', status: 'running' }, { id: 'd', status: 'completed' }] as SessionDetail['subagents'] });
     expect(liveLine(agents, false)).toEqual({ mark: 'subagents', phase: 'Waiting on 3 subagents' });
     // A background command running beside them is said too; an ended one is not.
@@ -202,7 +206,7 @@ describe('the live line at the strip', () => {
   test.each([
     ['t1', /^Running go test \.\/internal\/vterm\/\.\.\. -run Redraw -count=1, /],
     ['t8', /^Waiting for the model, /],
-    ['t6', /^Needs permission, approve bash, /],
+    ['t6', /^Waiting on you, /],
     ['t7', /^Compacting the conversation, /],
     ['t22', /^Waiting on 4 subagents, /],
   ])('mock Thread %s says its own phase on the strip', async (id, words) => {
