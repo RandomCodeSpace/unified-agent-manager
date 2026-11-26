@@ -442,11 +442,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   no other Project uses while one is left. UAM picks it when you add the
   Project and keeps it when you rename it; Projects from before badges
   existed get one when the service starts.
-- **Threads**: "New thread" (the pen in the sidebar, or Alt+N) opens a list of
+- **Threads**: "New thread" (the button at the top of the sidebar, or Alt+N) opens a list of
   your Projects to pick from: type to search by name or directory, use the
   arrow keys and Enter, click one, or press Alt+1 to Alt+9 for the first
   nine. The Project the sidebar is filtered to starts highlighted, otherwise
-  the one you worked in last; with a single Project the pen skips the list.
+  the one you worked in last; with a single Project the button skips the list.
   Picking one opens a new, empty Thread pane on the defaults for new threads
   from Settings and puts the cursor in the composer. The Thread
   itself, and its Copilot conversation, is created only when you send the
@@ -2693,7 +2693,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Thread is read only while the page is visible: what it does while the tab is
   in the background stays unread until you come back. Marks of deleted
   Threads are dropped.
-  A row first shows the Project badge, Project name, the files this Thread
+  The header names its buttons in words: **New thread** beside Search, and
+  in a row under it the Project filter ("All projects", or the Project the
+  list is filtered to), **Routines** and **Add project**.
+  A row first shows the Project badge, the Project name in muted text, the
+  Thread's branch where it is not its Project folder's, the files this Thread
   changed, and a short status with an icon. The files are a pen glyph with
   the count from the Thread's own changes (`diff.files` on the summary),
   left out at zero; screen readers hear "4 files changed by this thread".
@@ -2712,9 +2716,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the count of Threads that want you.
   Needs answer, Needs permission and Interrupted are amber; Working/Starting blue; Compacting violet;
   Finished green (an unread one teal, with an eye); Error red; inactive states gray.
-  The second line shows the Thread title, its branch in muted text (a
-  Thread in its own worktree shows the worktree's branch, not the Project
-  folder's), and how long ago the Thread changed. Hovering the row shows the full title,
+  On a row only Needs answer and Needs permission are a filled label; Working
+  and Finished are plain words beside their coloured icon.
+  The branch is shown only when the Thread is off the branch its Project
+  folder is on (a Thread in its own worktree shows the worktree's branch);
+  a folder on no named branch compares origin's default branch instead.
+  The second line shows the Thread title and how long ago the Thread
+  changed. Hovering the row shows the full title,
   the Project, the full request or outcome, the branch, and `+N −M` line
   counts when known. Hovering an
   active row that can settle shows Settle. On touch, a tap anywhere on a row

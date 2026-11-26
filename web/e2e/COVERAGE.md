@@ -56,9 +56,10 @@ approvals, WSP workspace (changes, git, terminal, GitLab), SET settings.
 | NAV-43 | A save the service refuses shows a strip over the pane until a save succeeds | resilience.test.tsx | spec: nav-live.spec.ts |
 | NAV-44 | With browser storage refusing reads/writes the app still renders, opens Threads and shelves | storage-refused.test.tsx | spec: nav-live.spec.ts |
 | NAV-45 | Sidebar keyboard: list is one tab stop, arrows move, Enter opens, End reaches Settled, Shift+F10 opens the row menu | app.test.tsx | spec: nav-sidebar.spec.ts |
-| NAV-46 | Where this Thread runs (Project folder / New worktree) on the draft; a worktree Thread's row shows the worktree's branch | place-foot.test.tsx, needs-you.test.tsx | spec: nav-sidebar.spec.ts |
+| NAV-46 | Where this Thread runs (Project folder / New worktree) on the draft; a worktree Thread's row shows the worktree's branch, a row on its Project folder's branch shows none (the tip names it) | place-foot.test.tsx, needs-you.test.tsx | spec: nav-sidebar.spec.ts |
 | NAV-47 | A `sessions.json` that cannot be read at start: the first view says it was set aside, names the backup and how to recover, and keeps this browser's drafts | drafts.test.mjs, store_write_failure_test.go | spec: shell-state-set-aside.spec.ts |
 | NAV-48 | A Thread another Thread started shows its parent as the header's first crumb; in a narrow header the crumb shrinks and truncates instead of drawing over the title | css.test.mjs | spec: shell-nav.spec.ts |
+| NAV-49 | Sidebar header names its buttons in words: New thread in the bar; the Project filter (All projects or the chosen Project), Routines and Add project in one row under it, also in the phone's drawer | needs-you.test.tsx | spec: nav-sidebar.spec.ts |
 | CMP-01 | New thread: the first Send creates the Thread (sidebar row appears only then) and its reply streams in | app.test.tsx | spec: first-thread.spec.ts |
 | CMP-02 | Enter sends on an idle Thread and clears the box; Shift+Enter adds a line; one Send button when idle | composer.test.tsx | spec: composer-send.spec.ts |
 | CMP-03 | A long multi-line message grows the box up to a cap (max-h 40dvh), then scrolls inside it; Send and the toolbar stay… | none | spec: composer-box.spec.ts |

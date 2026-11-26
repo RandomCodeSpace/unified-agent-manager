@@ -62,6 +62,18 @@ describe('the Task list', () => {
     expect(toggle.textContent).toBe('UAM');
   });
 
+  test('the header names New thread in its bar, and the Project filter, Routines and Add project in a second row', async () => {
+    renderApp();
+    const side = await sidebar();
+    const named = (name: string) => side.getByRole('button', { name });
+    expect(named('New thread').textContent).toBe('New thread');
+    expect(named('New thread').closest('header')).toBeTruthy();
+    for (const [name, words] of [['Project filter: all projects', 'All projects'], ['Routines', 'Routines'], ['Add project', 'Add project']]) {
+      expect(named(name).textContent).toBe(words);
+      expect(named(name).closest('header')).toBeNull();
+    }
+  });
+
   test('a Needs you row only says what it waits on; answering happens in the Task', async () => {
     const { user } = renderApp();
     await sidebar();
@@ -73,14 +85,14 @@ describe('the Task list', () => {
     await waitFor(() => expect(header().textContent).toBe('Set up the dependency lockfile'));
   });
 
-  test('a Task row keeps project and state above title, muted branch and time', async () => {
+  test('a Task row keeps project and state above title and time, and leaves its folder’s branch to the tip', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     const rows = side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]');
     expect(rows.length).toBeGreaterThan(2);
     for (const el of rows) {
       const button = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
-      // Project and state are the first line; task, branch and time share the second.
+      // Project and state are the first line; task and time share the second.
       expect(button.children).toHaveLength(2);
       const first = button.children[0] as HTMLElement;
       const second = button.children[1] as HTMLElement;
@@ -98,8 +110,12 @@ describe('the Task list', () => {
     const [projectLine, taskLine] = Array.from(example.children) as HTMLElement[];
     expect(within(projectLine).getByText('unified-agent-manager')).toBeTruthy();
     expect(within(taskLine).getByText('Fix re-attach redraw regression')).toBeTruthy();
-    // The branch, quiet (css.test.mjs), with its whole name in the tip.
-    expect(within(taskLine).getByText('feat/web-project-defaults-and-sidebar-revamp')).toBeTruthy();
+    // The Project's name is quiet and the title is the row's ink: no badge tone on the name.
+    expect(within(projectLine).getByText('unified-agent-manager').closest('[class*="text-muted"]')).toBeTruthy();
+    expect(projectLine.querySelector('[class*="text-badge-"]')).toBeNull();
+    expect(example.className).toMatch(/(^| )text-ink( |$)/);
+    // On its Project folder's branch (off the default one), the row leaves the branch to its tip.
+    expect(within(example).queryByText('feat/web-project-defaults-and-sidebar-revamp')).toBeNull();
     expect(await tipOf(user, example)).toContain('feat/web-project-defaults-and-sidebar-revamp');
     // A project without a branch omits it, without adding a placeholder or third line.
     const noBranch = row('t6').getByRole('button', { name: /Tidy zsh startup/ });
@@ -114,7 +130,8 @@ describe('the Task list', () => {
     const { user } = renderApp();
     await sidebar();
     const worktree = document.querySelector<HTMLElement>('[data-task-row="t15"] button[data-nav]')!;
-    expect(within(worktree).getByText('uam/remove-unused-exports')).toBeTruthy();
+    // Beside the Project's name, quiet (css.test.mjs).
+    expect(within(worktree.children[0] as HTMLElement).getByText('uam/remove-unused-exports')).toBeTruthy();
     expect(within(worktree).queryByText('feat/web-project-defaults-and-sidebar-revamp')).toBeNull();
     const tip = await tipOf(user, worktree);
     expect(tip).toContain('uam/remove-unused-exports');
@@ -128,6 +145,29 @@ describe('the Task list', () => {
     const onDefault = document.querySelector<HTMLElement>('[data-task-row="t17"] button[data-nav]')!;
     expect(within(onDefault).queryByText('main')).toBeNull();
     expect(await tipOf(user, onDefault)).toContain('main');
+  });
+
+  test('a folder on no named branch compares its Project’s default branch instead', async () => {
+    const state = data.seed();
+    delete state.projects.find((p) => p.id === 'p1')!.branch;
+    state.tasks.find((t) => t.id === 't1')!.branch = 'main';
+    state.tasks.find((t) => t.id === 't19')!.branch = 'topic/off-default';
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    renderApp();
+    await sidebar();
+    expect(row('t1').queryByText('main')).toBeNull();
+    expect(row('t19').getByText('topic/off-default')).toBeTruthy();
+  });
+
+  test('Working and Finished are plain words beside their glyph; only a waiting state is a filled tag', async () => {
+    renderApp();
+    await sidebar();
+    const label = (id: string, word: string) => row(id).getByText(word).closest<HTMLElement>('[data-rung]')!;
+    expect(label('t1', 'Working').dataset.rung).toBe('live');
+    expect(label('t1', 'Working').className).toContain('text-body');
+    expect(label('t1', 'Working').className).not.toMatch(/\bbg-/);
+    expect(label('t19', 'Needs answer').className).toContain('bg-attention-wash');
+    expect(label('t6', 'Needs permission').className).toContain('bg-attention-wash');
   });
 
   test('every Task row in every group is flat on the rail; only the open one is tinted', async () => {
@@ -170,11 +210,11 @@ describe('the Task list', () => {
     const side = await sidebar();
     const first = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText(/^Needs (answer|permission)$/))!.getAttribute('data-task-row');
     // Base UI opens a tip on hover or keyboard focus; it is no menu or dialog.
-    await user.hover(side.getByRole('button', { name: 'Add project' }));
+    await user.hover(side.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
     fireEvent.keyDown(document.body, { code: 'KeyJ', key: 'j', altKey: true });
     await waitFor(() => expect(window.location.hash).toBe(`#task=${first}`));
-    await user.hover(side.getByRole('button', { name: 'Add project' }));
+    await user.hover(side.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
     fireEvent.keyDown(document.body, { code: 'KeyN', key: 'n', altKey: true });
     expect(await screen.findByRole('dialog', { name: /New thread/ })).toBeTruthy();

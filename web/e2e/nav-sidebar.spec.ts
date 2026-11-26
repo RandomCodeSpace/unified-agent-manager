@@ -15,7 +15,7 @@ const idleThread = async (api: Api, project: Project, name: string) =>
 
 const threads = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
 const unsettled = (page: Page) => page.getByRole('list', { name: 'Unsettled threads' });
-/** A sidebar row by its Thread's title: its name is "<project> [changes] <state> <title> <branch> <time>". */
+/** A sidebar row by its Thread's title: its name is "<project> [branch] [changes] <state> <title> <time>", the branch only off the Project folder's. */
 const rowOf = (page: Page, title: string) => unsettled(page).getByRole('button', { name: new RegExp(` ${title} `) });
 
 test('one flat list across Projects, latest activity first whatever the state; the Project filter is kept; search finds names, titles, Projects, branches and archived Threads', async ({ page, uam, project, model }) => {
@@ -86,6 +86,8 @@ async function filterTo(page: Page, project: Project) {
   await page.getByRole('combobox', { name: 'Search projects' }).fill(project.name);
   await page.getByRole('option', { name: new RegExp(`^${project.name}`) }).click();
   await expect(page.getByRole('button', { name: `Project filter: ${project.name}`, exact: true })).toBeVisible();
+  // The list keeps its search until it has closed: reopened sooner, it still hides All projects.
+  await expect(page.getByRole('dialog', { name: 'Project filter' })).toBeHidden();
 }
 
 test('the list is one tab stop moved by arrows, End and Enter; a Thread renames from the row menu, F2, a double-click and the header menu, kept after a reload', async ({ page, uam, project }) => {
@@ -317,8 +319,10 @@ test('from 3 characters search also lists the Threads whose conversation holds e
   await expect(page.getByRole('heading', { level: 1, name: 'Fruit chat' })).toBeVisible();
 });
 
-test('the draft picks where the Thread runs; a Thread in its own worktree shows the worktree\'s branch in its row', async ({ page, project, model, workdir }) => {
+test('the draft picks where the Thread runs; a Thread in its own worktree shows the worktree\'s branch in its row, one on the folder\'s branch shows none', async ({ page, uam, project, model, workdir }) => {
   model.title('run me in a worktree', 'Worktree row thread').reply('run me in a worktree', 'Running in the worktree.');
+  // Made first, so it stays under the worktree's row: later activity there cannot move a row from under the pointer.
+  await idleThread(uam.api, project, 'Folder row thread');
   await openHome(page);
   await filterTo(page, project);
   await newThread(page, project);
@@ -332,6 +336,44 @@ test('the draft picks where the Thread runs; a Thread in its own worktree shows 
   expect(trees).toHaveLength(1);
   const branch = /^branch refs\/heads\/(.*)$/m.exec(trees[0])![1];
   expect(branch).toMatch(/^uam\//);
-  await expect(rowOf(page, 'Worktree row thread')).toHaveAccessibleName(new RegExp(` Worktree row thread ${branch.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} `));
+  // The branch follows the Project's name, before the state.
+  await expect(rowOf(page, 'Worktree row thread')).toHaveAccessibleName(new RegExp(`^${project.name} ${branch.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} `));
   expect(execFileSync('git', ['branch', '--show-current'], { cwd: workdir }).toString().trim()).toBe('main');
+  // A Thread in the folder is on the folder's branch (main, which has no origin to call it the default): only its tip names it.
+  await expect(rowOf(page, 'Folder row thread')).toHaveAccessibleName(new RegExp(`^${project.name} Idle Folder row thread \\S+$`));
+  await rowOf(page, 'Folder row thread').hover();
+  await expect(page.getByRole('tooltip')).toContainText('main');
+});
+
+test('the header names its buttons in words: New thread in the bar; the Project filter, Routines and Add project in a row under it, in the phone\'s drawer too', async ({ page, uam, project }) => {
+  // An empty workspace opens on the collapsed rail: one Thread keeps the sidebar open.
+  await idleThread(uam.api, project, 'Header thread');
+  await openHome(page);
+  const named = (name: string) => threads(page).getByRole('button', { name, exact: true });
+  const check = async () => {
+    await expect(named('New thread')).toHaveText('New thread');
+    await expect(named('Project filter: all projects')).toHaveText('All projects');
+    await expect(named('Routines')).toHaveText('Routines');
+    await expect(named('Add project')).toHaveText('Add project');
+    // One row under the bar, inside the sidebar's width.
+    const [bar, ...row] = await Promise.all(['New thread', 'Project filter: all projects', 'Routines', 'Add project'].map(async (name) => (await named(name).boundingBox())!));
+    const side = (await threads(page).boundingBox())!;
+    for (const box of row) {
+      expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+      expect(box.y).toBe(row[0].y);
+      expect(box.x + box.width).toBeLessThanOrEqual(side.x + side.width);
+    }
+  };
+  await check();
+  // The filter's button names the chosen Project, after its badge.
+  await filterTo(page, project);
+  await expect(named(`Project filter: ${project.name}`)).toContainText(project.name);
+  await named(`Project filter: ${project.name}`).click();
+  await page.getByRole('option', { name: 'All projects' }).click();
+  await named('Routines').click();
+  await expect(page).toHaveURL(/#routines$/);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: /^Show sidebar/ }).click();
+  await check();
 });
