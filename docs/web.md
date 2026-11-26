@@ -1958,8 +1958,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   prompt and pauses the remaining queue. Attachment uploads accept an optional
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
-- **Suggested reply**: when a turn completes with an answer, the reply you
-  would most likely send next shows as muted ghost text in the empty composer,
+- **Suggested reply**: when a turn completes with a reply that asks you
+  something, offers options or proposes a next step, your likely answer shows as muted ghost text in the empty composer,
   where its placeholder would be (two lines, then an ellipsis; the composer
   keeps its size). Right Arrow or End in the empty composer puts it in the
   box with the cursor at its end, ready to edit or send; nothing is sent
@@ -1968,11 +1968,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it back. Screen readers hear it as the box's description. The Utility model
   writes it, in one call (logged as "suggest-replies") the first time a
   composer shows that turn, from your last message and the agent's final
-  reply: one line of at most 120 characters, such as "Run the tests" or the
-  likely answer to a question the reply ends with, or none when no next
-  message is clearly likely. It is asked not to write thanks or other
-  filler, and to treat both messages as material, not instructions; an
-  answer that is not one such line counts as unusable and shows nothing.
+  reply: one line of at most 120 characters, in your voice, such as "Yes,
+  open the MR" or "Go with option B", or none. A final reply with no question
+  mark and no offer ("want me to", "should I", "let me know", "would you
+  like", an option) gets none without a call. It is asked not to write
+  thanks or other filler, and to treat both messages as material, not
+  instructions; an answer that opens with thanks, "great" or "perfect" shows
+  nothing, and one that is not one such line counts as unusable and shows
+  nothing.
   The call never runs on the Thread's own model. Messages longer than 2,000
   characters are shortened to their first and last 1,000 characters, with an
   ellipsis between them. Tool calls and earlier agent messages are excluded.

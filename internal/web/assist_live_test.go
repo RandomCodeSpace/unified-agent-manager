@@ -29,9 +29,9 @@ func TestSuggestReplyLiveProbe(t *testing.T) {
 	}{
 		{user: "rename the helper", reply: "I can rename parseCfg to parseConfig across 4 files. Shall I go ahead?", want: true},
 		{user: "make the test pass", reply: "Fixed it. Shall I commit it?", want: true},
-		{user: "fix the parser", reply: "I changed parse.go to handle empty input. I have not run the tests yet.", want: true},
+		{user: "fix the parser", reply: "I changed parse.go to handle empty input. I have not run the tests yet."},
 		{user: "help me plan the migration", reply: "Which database do you want to migrate first, orders or users?", want: true},
-		{user: "run the tests", reply: "Two tests fail: TestParse and TestUpload.", want: true},
+		{user: "run the tests", reply: "Two tests fail: TestParse and TestUpload. Want me to fix them?", want: true},
 		{user: "should we cache this?", reply: "Two options: A caches in memory, B caches on disk. I recommend A because the data is small.", want: true},
 		{user: "what is the capital of France?", reply: "Paris."},
 		{user: "explain what this function does", reply: "It parses the config file and returns a Config struct, or an error when a key is missing."},

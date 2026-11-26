@@ -75,7 +75,7 @@ test('/ lists the real CLI catalogue; unsupported commands are dimmed with the r
 test('a suggested reply shows as ghost text after a turn; Right Arrow takes it without sending; a reload asks for no other', async ({ page, uam, project, model }) => {
   const restore = await useMockUtility(uam);
   try {
-    model.reply('should I run the tests?', 'Yes, they cover the change.');
+    model.reply('should I run the tests?', 'Yes, they cover the change. Shall I run them now?');
     suggest(uam, 'should I run the tests?', 'Run the tests now');
     model.reply('keep going', 'Going'.padEnd(400, '.'), { latency: 250, chunkSize: 4 });
     await startThread(page, project, 'should I run the tests?');
@@ -116,6 +116,23 @@ test('a suggested reply shows as ghost text after a turn; Right Arrow takes it w
     await expect(box).not.toHaveAccessibleDescription(/Suggestion/);
     await page.getByRole('button', { name: 'Stop turn' }).click();
     await expect(threadState(page, 'Stopped')).toBeVisible();
+  } finally {
+    await restore();
+  }
+});
+
+test('no suggested reply when the agent asks nothing, and no suggestion call', async ({ page, uam, project, model }) => {
+  const restore = await useMockUtility(uam);
+  try {
+    model.reply('report the build', 'The build passed in 42 s.');
+    // Shows if the call is made: the turn must not ask.
+    suggest(uam, 'report the build', 'Yes, do it');
+    const answered = page.waitForResponse((r) => r.url().endsWith('/suggestions') && r.ok());
+    await startThread(page, project, 'report the build');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    expect(await (await answered).json()).toMatchObject({ replies: [] });
+    await expect(page.getByRole('textbox', { name: 'Message' })).not.toHaveAccessibleDescription(/Suggestion/);
+    expect(model.served().map((s) => s.fixture)).toEqual(['reply report the build']);
   } finally {
     await restore();
   }
