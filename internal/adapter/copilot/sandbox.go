@@ -48,9 +48,9 @@ func (c *conversation) publishSandboxLocked(incarnation, revision int64, state a
 
 // readSandbox reads the state once after an open; changes arrive as
 // session.sandbox_state_changed.
-func (c *conversation) readSandbox(runtime sandboxSession) {
+func (c *conversation) readSandbox(ctx context.Context, runtime sandboxSession) {
 	defer log.Recover("copilot sandbox read", &c.mu, &c.p.mu)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	res, err := runtime.SandboxState(ctx)
 	c.mu.Lock()
