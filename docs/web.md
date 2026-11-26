@@ -2917,7 +2917,13 @@ signed in to, each reply that ends a turn which touched GitLab items carries
 them in its outcome bar: one chip per item, in the order the turn touched
 them, each with its state as blocks (`!2` draft, pipeline; `Pipeline #91`
 failed; `#14` open); an open merge request also shows its head pipeline's
-state as a block. A failed job's chip also says what failed: **Tests
+state as a block, and its readiness from the same read: **auto-merge**
+(merge when the pipeline succeeds), **conflict**, **threads open**
+(unresolved blocking threads), **needs approval**, **needs rebase** or
+**ready** (GitLab's `detailed_merge_status`, GitLab 15.6 and later; an
+older GitLab shows none of these). A merge request or pipeline link in a
+reply ends in a small dot in the most urgent of those states, with the words
+in its tooltip; it shares the chip's read. A failed job's chip also says what failed: **Tests
 failed · 2 tests**, **Build failed**, **Lint failed**, **Type check
 failed**, **Timed out**, **Auth failed**, or **Runner failure · not your
 change**. GitLab's own runner failure reasons name the last two without a

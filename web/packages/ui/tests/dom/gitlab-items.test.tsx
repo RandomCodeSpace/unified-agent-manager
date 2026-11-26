@@ -76,6 +76,7 @@ test('a reply that ended a turn which touched GitLab carries its items in its ou
 });
 
 test('a reply names merge requests and pipelines as links with GitLab\'s mark; a bare address reads "MR !2"; code and other projects stay as written', async () => {
+  mockItems();
   const open = vi.fn();
   const items: Item[] = [
     { id: 'owner', kind: 'user', text: 'status?', time: at },
@@ -182,6 +183,7 @@ test('the panel links a merge request\'s branches and their compare, and a pipel
 });
 
 test('a name right before a link to the same item shows the item once; other links keep the name', () => {
+  mockItems();
   const items: Item[] = [
     { id: 'owner', kind: 'user', text: 'status?', time: at },
     { id: 'reply', kind: 'assistant', text: `Done. MR !2: ${P}/merge_requests/2\n\nRan pipeline #91 \u2014 [pipeline #91](${P}/pipelines/91)\n\nSee MR !2: [the fix](${P}/merge_requests/2) and MR !3: ${P}/merge_requests/2\n\nLast: MR !4`, time: at },
@@ -288,4 +290,38 @@ test('a failed job chip names what failed; a pipeline chip keeps its state word 
   expect(stateBlocks({ ref: 'job:7', kind: 'job', title: 'test', state: 'failed', failure_kind: 'Tests failed', failure_detail: '2 tests' }).map((b) => b.label)).toEqual(['failed', 'Tests failed · 2 tests']);
   expect(stateBlocks({ ref: 'job:8', kind: 'job', title: 'build', state: 'failed', failure_kind: 'Build failed' }).map((b) => b.label)).toEqual(['failed', 'Build failed']);
   expect(stateBlocks({ ref: 'pipeline:91', kind: 'pipeline', state: 'failed' }).map((b) => b.label)).toEqual(['failed']);
+});
+
+test('an open merge request\'s chip says its readiness: auto-merge, conflict, threads open, needs approval or rebase, ready', () => {
+  const mr = { ref: 'mr:2', kind: 'mr', state: 'opened' };
+  const blocks = (extra: Record<string, unknown>) => stateBlocks({ ...mr, ...extra }).map((b) => [b.label, b.tone]);
+  expect(blocks({ auto_merge: true, conflicts: true, threads_open: true, merge_status: 'not_approved' })).toEqual([['open', 'success'], ['auto-merge', 'accent'], ['conflict', 'error'], ['threads open', 'warning'], ['needs approval', 'warning']]);
+  expect(blocks({ merge_status: 'mergeable' })).toEqual([['open', 'success'], ['ready', 'success']]);
+  expect(blocks({ merge_status: 'need_rebase' })).toEqual([['open', 'success'], ['needs rebase', 'warning']]);
+  // A status the chip has no word for, or none (an older GitLab), says nothing; a merged one says only merged.
+  expect(blocks({ merge_status: 'checking' })).toEqual([['open', 'success']]);
+  expect(blocks({ state: 'merged', conflicts: true, merge_status: 'not_approved' })).toEqual([['merged', 'accent']]);
+});
+
+test('a merge request or pipeline link in a reply ends in a dot in its most urgent tone, its words in the title; no read while streaming', async () => {
+  onScreen();
+  const read = vi.spyOn(api, 'gitlabItems').mockImplementation(async (_id, refs) => ({ items: refs.map((ref) => (ref === 'mr:8'
+    ? { ref, kind: 'mr', title: 'Fix', state: 'opened', conflicts: true, pipeline_state: 'success', web_url: `${P}/merge_requests/8` }
+    : { ref, kind: 'pipeline', title: 'main', state: 'success', web_url: `${P}/pipelines/98` })) }));
+  const items = (partial: boolean): Item[] => [
+    { id: 'owner', kind: 'user', text: 'status?', time: at },
+    { id: 'reply', kind: 'assistant', text: 'MR !8 waits on pipeline #98; issue #14 has no dot.', time: at, partial },
+  ];
+  const view = (partial: boolean) => <ApiContext.Provider value={api}><SessionContext.Provider value="thread"><DetailVisibility open><GitLabItemsContext.Provider value={context()}>
+    <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items(partial)} interactions={[]} subagents={[]} live={partial} working={partial} turnTimings={[]} />
+  </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>;
+  const { rerender } = render(view(true));
+  await screen.findByText(/waits on/);
+  expect(read).not.toHaveBeenCalled();
+  rerender(view(false));
+  const link = (name: string) => screen.getByRole('link', { name });
+  await waitFor(() => expect(link('MR !8').querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('error'));
+  expect(link('MR !8').title).toBe(`open · pipeline success · merge conflict · ${P}/merge_requests/8`);
+  await waitFor(() => expect(link('pipeline #98').querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('success'));
+  expect(link('issue #14').querySelector('[data-tone]')).toBeNull();
 });

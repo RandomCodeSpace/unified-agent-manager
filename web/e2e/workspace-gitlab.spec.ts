@@ -230,7 +230,10 @@ test('the GitLab panel links the project, a merge request\'s branches and compar
     await expect(threadState(page, 'Finished')).toBeVisible();
     const project = `https://${HOST}/group/proj`;
     await expect(conversation(page).getByRole('link', { name: 'group/proj', exact: true })).toHaveAttribute('href', project);
-    await conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link').first().click();
+    // A chip is a link once its item is read; the links in the reply may read the pipeline first.
+    const chips = conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link');
+    await expect(chips).toHaveCount(2);
+    await chips.first().click();
     const panel = page.getByRole('complementary', { name: 'GitLab' });
     await expect(panel.getByRole('heading', { name: 'Add d', level: 2 })).toBeVisible();
     await expect(panel.getByRole('link', { name: 'group/proj', exact: true })).toHaveAttribute('href', project);
@@ -287,6 +290,29 @@ test('a Thread opened while a turn runs links GitLab and shows the earlier turns
     await expect(conv.getByRole('link', { name: 'Pipeline #91', exact: true })).toHaveAttribute('data-gitlab-link', '');
     await expect(conv.getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link')).toHaveAccessibleName('Pipeline #91 failed');
     await expect(threadState(page, 'Working')).toBeVisible();
+  } finally {
+    await own.stop();
+  }
+});
+
+test('an open merge request\'s chip says its readiness from the one read, and its link and a pipeline\'s in the reply end in a state dot', async ({ browser, uam, model, workdir }) => {
+  const mr = { iid: 3, project_id: 42, title: 'Add e', state: 'opened', web_url: `${WEB}/merge_requests/3`, source_branch: 'feat/e', target_branch: 'main', detailed_merge_status: 'not_approved', has_conflicts: true, blocking_discussions_resolved: false, merge_when_pipeline_succeeds: true };
+  // group/proj!3 is no number the References ledger cites, so its state stays on the chip.
+  model.reply('gitlab readiness', 'Opened group/proj!3; pipeline #91 is done.');
+  const own = await glabService(browser, uam.mock.url, workdir, { ...ITEMS, 'projects/42/merge_requests/3': mr });
+  try {
+    const { page } = own;
+    await startYoloThread(page, own.project, 'gitlab readiness');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const chips = conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link');
+    await expect(chips.nth(0)).toHaveAccessibleName('!3 open auto-merge when the pipeline succeeds merge conflict unresolved threads needs approval');
+    await expect(chips.nth(1)).toHaveAccessibleName('Pipeline #91 failed');
+    const link = conversation(page).getByRole('link', { name: 'group/proj!3', exact: true });
+    await expect(link.locator('[data-tone]')).toHaveAttribute('data-tone', 'error');
+    await expect(link).toHaveAttribute('title', `open · auto-merge when the pipeline succeeds · merge conflict · unresolved threads · needs approval · ${WEB}/merge_requests/3`);
+    await expect(conversation(page).getByRole('link', { name: 'pipeline #91', exact: true }).locator('[data-tone]')).toHaveAttribute('data-tone', 'error');
+    // The chips and the links share one read per item: no glab call beyond the merge request and the pipeline.
+    expect(own.calls().filter((c) => c.args[0] === 'api' && /^projects\/42\/(merge_requests|pipelines)\//.test(c.args[1])).map((c) => c.args[1]).sort()).toEqual(['projects/42/merge_requests/3', 'projects/42/pipelines/91']);
   } finally {
     await own.stop();
   }
