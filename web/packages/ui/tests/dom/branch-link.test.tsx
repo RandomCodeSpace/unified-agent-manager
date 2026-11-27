@@ -80,3 +80,19 @@ test('Detect from git remote says why when there is no remote', async () => {
   expect((await dialog.findByRole('alert')).textContent).toBe('git has no origin remote here that uam can read');
   expect(dialog.getByRole('textbox', { name: 'Branch link' })).toHaveProperty('value', '');
 });
+
+test('Detect from git remote says whether the link was read from GitLab or built from the origin remote', async () => {
+  const { user } = await openTask('t8');
+  const dialog = await editProject(user, 'notes-site');
+  const field = dialog.getByRole('textbox', { name: 'Branch link' });
+  await user.click(dialog.getByRole('button', { name: 'Detect from git remote' }));
+  expect(await dialog.findByText('An https address with {branch} where the branch name goes. Built from the origin remote.')).toBeTruthy();
+  const fetch = window.fetch;
+  const read = vi.spyOn(window, 'fetch').mockImplementation((input, init) => String(input).endsWith('/branch-link/detect')
+    ? Promise.resolve(new Response(JSON.stringify({ branch_link: 'https://gitlab.example.com:8443/gitlab/web/notes-site/-/tree/{branch}', source: 'gitlab', gitlab_url: 'https://gitlab.example.com:8443/gitlab/web/notes-site' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    : fetch(input, init));
+  await user.click(dialog.getByRole('button', { name: 'Detect from git remote' }));
+  await waitFor(() => expect(field).toHaveProperty('value', 'https://gitlab.example.com:8443/gitlab/web/notes-site/-/tree/{branch}'));
+  expect(dialog.getByText('An https address with {branch} where the branch name goes. Read from GitLab: https://gitlab.example.com:8443/gitlab/web/notes-site.')).toBeTruthy();
+  read.mockRestore();
+});

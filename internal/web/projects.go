@@ -60,7 +60,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	branch, noGit := readBranch(m.ctx, canonical)
 	defaultBranch := readDefaultBranch(m.ctx, canonical)
 	var link *string
-	if detected, ok := detectBranchLink(m.ctx, canonical); ok {
+	if detected, _, ok := m.detectBranchLink(m.ctx, canonical); ok {
 		link = &detected
 	}
 	m.projectMu.Lock()

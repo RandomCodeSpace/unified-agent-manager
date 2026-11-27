@@ -348,13 +348,27 @@ func TestGitLabClientTraceFailuresDoNotExposeOutput(t *testing.T) {
 }
 
 func TestGitLabClientSafeLinks(t *testing.T) {
+	remote := glabGate{Host: "gitlab.example.com"}
 	for _, raw := range []string{"javascript:alert(1)", "http://gitlab.example.com/path", "https://other.example/path", "https://user:secret@gitlab.example.com/path", "//gitlab.example.com/path", "https://gitlab.example.com:444/path"} {
-		if got := gitLabSafeURL("gitlab.example.com", raw); got != "" {
+		if got := gitLabSafeURL(remote, raw); got != "" {
 			t.Fatalf("unsafe link accepted: %q", got)
 		}
 	}
 	valid := "https://gitlab.example.com/group/repo/-/pipelines/91"
-	if got := gitLabSafeURL("gitlab.example.com", valid); got != valid {
+	if got := gitLabSafeURL(remote, valid); got != valid {
 		t.Fatalf("valid link discarded: %q", got)
+	}
+	// The project's web address names the host links are on.
+	web := glabGate{Host: "ssh.example.com", Web: "http://web.example.com:8080/gitlab/group/repo"}
+	for raw, want := range map[string]bool{
+		"http://web.example.com:8080/gitlab/group/repo/-/pipelines/91": true,
+		"https://ssh.example.com/group/repo/-/pipelines/91":            true,
+		"https://web.example.com:8080/gitlab/group/repo":               false,
+		"http://web.example.com/gitlab/group/repo":                     false,
+		"http://user@web.example.com:8080/gitlab/group/repo":           false,
+	} {
+		if got := gitLabSafeURL(web, raw); (got != "") != want {
+			t.Errorf("gitLabSafeURL(%q) = %q, want kept %v", raw, got, want)
+		}
 	}
 }

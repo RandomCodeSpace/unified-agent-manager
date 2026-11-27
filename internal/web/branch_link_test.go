@@ -191,6 +191,7 @@ func TestBranchLinkDetectedLazilyOnOpen(t *testing.T) {
 }
 
 func TestDetectBranchLinkRoute(t *testing.T) {
+	glabTestFake(t, "exit 1") // signed out: built from the remote
 	dir, _ := branchLinkRepo(t, "git@gitlab.example.com:group/project.git")
 	bare := t.TempDir()
 	ts := newTestServer(t, ServerConfig{})
@@ -201,7 +202,7 @@ func TestDetectBranchLinkRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := ts.do(http.MethodPost, "/api/projects/"+p+"/branch-link/detect", "", auth)
-	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"branch_link":"https://gitlab.example.com/group/project/-/tree/{branch}"}` {
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"branch_link":"https://gitlab.example.com/group/project/-/tree/{branch}","source":"remote"}` {
 		t.Fatalf("detect = %d %s", w.Code, w.Body)
 	}
 	// Detecting only suggests: the cleared link stays cleared.
@@ -239,5 +240,21 @@ func TestPatchProjectBranchLink(t *testing.T) {
 	cfg, err := ts.m.store.Load()
 	if err != nil || cfg.WebProjects[id].Name != "renamed" || cfg.WebProjects[id].BranchLink == nil || *cfg.WebProjects[id].BranchLink != link {
 		t.Fatalf("saved = %+v, %v", cfg.WebProjects[id], err)
+	}
+}
+
+// On GitLab the detected link is built from the project's web address glab
+// reads, with its port and sub-path, not from the SSH remote's host.
+func TestDetectBranchLinkReadsGitLab(t *testing.T) {
+	glabTestFake(t, "[ \"$1\" = auth ] && exit 0\nprintf '%s' '{\"web_url\":\"https://gitlab.example.com:8443/gitlab/group/project\"}'\n")
+	dir, _ := branchLinkRepo(t, "git@ssh.example.com:group/project.git")
+	ts := newTestServer(t, ServerConfig{})
+	p, err := ts.m.AddProject(dir, "")
+	if want := "https://gitlab.example.com:8443/gitlab/group/project/-/tree/{branch}"; err != nil || p.BranchLink == nil || *p.BranchLink != want {
+		t.Fatalf("AddProject = %+v, %v", p, err)
+	}
+	w := ts.do(http.MethodPost, "/api/projects/"+p.ID+"/branch-link/detect", "", withCookie(ts))
+	if want := `{"branch_link":"https://gitlab.example.com:8443/gitlab/group/project/-/tree/{branch}","gitlab_url":"https://gitlab.example.com:8443/gitlab/group/project","source":"gitlab"}`; w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want {
+		t.Fatalf("detect = %d %s", w.Code, w.Body)
 	}
 }

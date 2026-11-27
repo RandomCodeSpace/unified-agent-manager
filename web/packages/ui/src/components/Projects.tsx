@@ -2,7 +2,7 @@ import { ApiContext, useApi } from '../ApiContext';
 import type { Machine, MachineChoice } from '../FederationContext';
 import { ArrowRight, Check, Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
 import { Suspense, lazy, useEffect, useRef, useState, type SubmitEvent } from 'react';
-import { describeError, isStatus, type Project, type SessionSummary } from '../api';
+import { describeError, isStatus, type BranchLinkDetection, type Project, type SessionSummary } from '../api';
 import { Loading, Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
 import { cleanPath } from '../lib/folders';
@@ -231,6 +231,9 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
   );
 }
 
+/** Where a detected branch link came from: the GitLab project's own web address, or the origin remote. */
+const detectedFrom = (d: BranchLinkDetection | null) => !d ? '' : d.source === 'gitlab' && d.gitlab_url ? ` Read from GitLab: ${d.gitlab_url}.` : ' Built from the origin remote.';
+
 /**
  * The one place for a Project: its name, with Previous sessions (import) and Remove project
  * opening over it, so closing either lands back here. What new Tasks start with is in Settings.
@@ -247,6 +250,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const [skills, setSkills] = useState(project.skills);
   const skillsChanged = JSON.stringify(skills) !== JSON.stringify(project.skills);
   const [detecting, setDetecting] = useState(false);
+  const [detected, setDetected] = useState<BranchLinkDetection | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previous, setPrevious] = useState(false);
@@ -275,7 +279,9 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
     setDetecting(true);
     setError(null);
     try {
-      setLink((await api.detectBranchLink(project.id)).branch_link);
+      const found = await api.detectBranchLink(project.id);
+      setLink(found.branch_link);
+      setDetected(found);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -311,7 +317,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
         <Field id="edit-name" label="Name">
           <Input id="edit-name" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field id="edit-branch-link" label="Branch link" hint="An https address with {branch} where the branch name goes." hintVisible>
+        <Field id="edit-branch-link" label="Branch link" hint={`An https address with {branch} where the branch name goes.${detectedFrom(detected)}`} hintVisible>
           <div className="flex items-center gap-2">
             <Input id="edit-branch-link" className="min-w-0 flex-1" spellCheck={false} aria-describedby="edit-branch-link-hint" placeholder="https://github.com/org/repo/tree/{branch}" value={link} onChange={(e) => setLink(e.target.value)} />
             <Button variant="secondary" loading={detecting} onClick={() => void detect()}>

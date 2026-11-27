@@ -31,6 +31,13 @@ fs.appendFileSync(log, JSON.stringify({ args, description }) + '\\n');
 const [a, b] = args;
 if (a === 'auth' && b === 'status') process.exit(0);
 if (a === 'config' && b === 'get') { console.log(host); process.exit(0); }
+if (a === 'repo' && b === 'view') {
+  // The project's own web address, when a case gives one; else the read fails.
+  const project = JSON.parse(fs.readFileSync(apiFile, 'utf8'))['repo view'];
+  if (project === undefined) process.exit(1);
+  process.stdout.write(JSON.stringify(project));
+  process.exit(0);
+}
 if (a === 'ci' && b === 'lint') {
   console.log(args.find((x) => x.startsWith('./')) + ' is invalid.');
   console.log('jobs config should contain at least one visible job');
@@ -244,6 +251,32 @@ test('the GitLab panel links the project, a merge request\'s branches and compar
     await expect(panel.getByRole('heading', { name: 'Pipeline #91', level: 2 })).toBeVisible();
     await expect(panel.getByRole('link', { name: 'main', exact: true })).toHaveAttribute('href', `${WEB}/tree/main`);
     await expect(panel.getByRole('link', { name: 'abc', exact: true })).toHaveAttribute('href', `${WEB}/commit/abc`);
+  } finally {
+    await own.stop();
+  }
+});
+
+test('links use the web address glab reads for the project, with its own host, port and sub-path', async ({ browser, uam, model, workdir }) => {
+  const project = 'https://web.example.invalid:8443/gitlab/group/proj';
+  const site = `${project}/-`;
+  const items = JSON.parse(JSON.stringify(ITEMS).replaceAll(WEB, site)) as Api;
+  model.reply('gitlab web address', `Pushed to group/proj: ${site}/merge_requests/2.`);
+  const own = await glabService(browser, uam.mock.url, workdir, { ...items, 'repo view': { path_with_namespace: 'group/proj', web_url: project } });
+  try {
+    const { page } = own;
+    await startYoloThread(page, own.project, 'gitlab web address');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    await expect(conversation(page).getByRole('link', { name: 'group/proj', exact: true })).toHaveAttribute('href', project);
+    // The branch link detected when the Project was added is on the web address too.
+    expect(own.project.branch_link).toBe(`${site}/tree/{branch}`);
+    await conversation(page).getByRole('group', { name: 'GitLab items in this turn' }).getByRole('link').first().click();
+    const panel = page.getByRole('complementary', { name: 'GitLab' });
+    await expect(panel.getByRole('heading', { name: 'Add d', level: 2 })).toBeVisible();
+    // GitLab's own address for the item is kept: it is on the project's web host.
+    await expect(panel.getByRole('link', { name: 'Open in GitLab' })).toHaveAttribute('href', `${site}/merge_requests/2`);
+    await expect(panel.getByRole('link', { name: 'feat/d', exact: true })).toHaveAttribute('href', `${site}/tree/feat/d`);
+    await expect(panel.getByRole('link', { name: 'Compare' })).toHaveAttribute('href', `${site}/compare/main...feat/d`);
+    expect(own.calls().filter((c) => c.args[0] === 'repo' && c.args[1] === 'view')).toHaveLength(1);
   } finally {
     await own.stop();
   }

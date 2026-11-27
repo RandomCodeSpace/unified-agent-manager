@@ -154,7 +154,7 @@ func (m *Manager) gitLabItemGate(ctx context.Context, id string) (glabGate, erro
 	if !ok || !m.glab.authenticated(ctx, gate) {
 		return glabGate{}, newError(http.StatusConflict, "This Thread has no signed-in GitLab origin.")
 	}
-	return gate, m.gitLabBackoff(gate.Host)
+	return m.glab.withWeb(ctx, gate), m.gitLabBackoff(gate.Host)
 }
 
 // gitLabProjectID reads the origin's numeric project ID once per process.
@@ -302,7 +302,7 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 		if mr.IID != ref.id || mr.ProjectID != projectID {
 			return out, errors.New("GitLab returned a different merge request")
 		}
-		out.Title, out.State, out.Draft, out.WebURL = displaytext.Sanitize(mr.Title), displaytext.Sanitize(mr.State), mr.Draft, gitLabSafeURL(gate.Host, mr.WebURL)
+		out.Title, out.State, out.Draft, out.WebURL = displaytext.Sanitize(mr.Title), displaytext.Sanitize(mr.State), mr.Draft, gitLabSafeURL(gate, mr.WebURL)
 		if p := mr.HeadPipeline; p != nil && p.ID > 0 {
 			out.PipelineID, out.PipelineState = p.ID, displaytext.Sanitize(p.Status)
 		}
@@ -316,7 +316,7 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 		if p.ID != ref.id || p.ProjectID != projectID {
 			return out, errors.New("GitLab returned a different pipeline")
 		}
-		out.Title, out.State, out.PipelineID, out.WebURL = displaytext.Sanitize(p.Ref), displaytext.Sanitize(p.Status), p.ID, gitLabSafeURL(gate.Host, p.WebURL)
+		out.Title, out.State, out.PipelineID, out.WebURL = displaytext.Sanitize(p.Ref), displaytext.Sanitize(p.Status), p.ID, gitLabSafeURL(gate, p.WebURL)
 	case "job":
 		job, err := readGitLabJob(ctx, gate, projectID, ref.id)
 		if err != nil {
@@ -351,7 +351,7 @@ func readGitLabJob(ctx context.Context, gate glabGate, projectID, jobID int64) (
 		return gitLabProjectJob{}, errors.New("GitLab returned a job outside this project")
 	}
 	job.Name, job.Stage, job.Status = displaytext.Sanitize(job.Name), displaytext.Sanitize(job.Stage), displaytext.Sanitize(job.Status)
-	job.WebURL = gitLabSafeURL(gate.Host, job.WebURL)
+	job.WebURL = gitLabSafeURL(gate, job.WebURL)
 	return gitLabProjectJob{GitLabJob: job.GitLabJob, pipelineID: job.Pipeline.ID, sha: job.Pipeline.SHA}, nil
 }
 
@@ -391,7 +391,7 @@ func readGitLabWorkItem(ctx context.Context, gate glabGate, projectID int64, ref
 	if issue.Type != "" && issue.Type != "issue" && issue.Type != "incident" {
 		return readGitLabWorkItemGraph(ctx, gate, gate.Path, ref)
 	}
-	out := GitLabWorkItem{Ref: ref.String(), IID: issue.IID, Kind: "issue", Title: displaytext.Sanitize(issue.Title), State: displaytext.Sanitize(issue.State), WebURL: gitLabSafeURL(gate.Host, issue.WebURL),
+	out := GitLabWorkItem{Ref: ref.String(), IID: issue.IID, Kind: "issue", Title: displaytext.Sanitize(issue.Title), State: displaytext.Sanitize(issue.State), WebURL: gitLabSafeURL(gate, issue.WebURL),
 		CreatedAt: displaytext.Sanitize(issue.CreatedAt), Description: gitLabDescription(issue.Description), Labels: []string{}, Assignees: []GitLabReviewAuthor{}, Children: []GitLabWorkItemLink{}}
 	if issue.Type == "incident" {
 		out.Kind = "incident"
@@ -543,7 +543,7 @@ func gitLabWorkItemLink(gate glabGate, link gitLabGraphLink) GitLabWorkItemLink 
 	if strings.EqualFold(link.State, "CLOSED") {
 		state = "closed"
 	}
-	out := GitLabWorkItemLink{IID: iid, Kind: kind, Title: displaytext.Sanitize(link.Title), State: state, WebURL: gitLabSafeURL(gate.Host, link.WebURL)}
+	out := GitLabWorkItemLink{IID: iid, Kind: kind, Title: displaytext.Sanitize(link.Title), State: state, WebURL: gitLabSafeURL(gate, link.WebURL)}
 	path := link.Namespace.FullPath
 	switch {
 	case iid <= 0:
@@ -604,7 +604,7 @@ func (m *Manager) gitLabPipelineDetail(ctx context.Context, id string, pipelineI
 		return out, errors.New("GitLab returned a different pipeline")
 	}
 	pipeline.Status, pipeline.Ref, pipeline.SHA = displaytext.Sanitize(pipeline.Status), displaytext.Sanitize(pipeline.Ref), displaytext.Sanitize(pipeline.SHA)
-	pipeline.WebURL = gitLabSafeURL(gate.Host, pipeline.WebURL)
+	pipeline.WebURL = gitLabSafeURL(gate, pipeline.WebURL)
 	jobs, err := gitLabReadJobs(ctx, gate, base, pipeline)
 	if err != nil {
 		return out, err
@@ -683,7 +683,10 @@ func (m *Manager) gitLabOrigin(ctx context.Context, id string) (glabGate, bool) 
 		return glabGate{}, false
 	}
 	gate, ok := glabOrigin(ctx, t.workdir)
-	return gate, ok && m.glab.authenticated(ctx, gate)
+	if !ok || !m.glab.authenticated(ctx, gate) {
+		return gate, false
+	}
+	return m.glab.withWeb(ctx, gate), true
 }
 
 func (s *Server) registerGitLabItemRoutes(mux *http.ServeMux) {

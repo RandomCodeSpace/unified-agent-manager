@@ -68,8 +68,23 @@ func branchLinkFromRemote(remote string) (string, bool) {
 	return link, err == nil
 }
 
-// detectBranchLink suggests a branch link from dir's origin remote.
-func detectBranchLink(ctx context.Context, dir string) (string, bool) {
+// detectBranchLink suggests a branch link from dir's origin remote. On
+// GitLab it is built from the project's web address when glab reads one
+// (fromGitLab), else from the remote.
+func (m *Manager) detectBranchLink(ctx context.Context, dir string) (link string, fromGitLab, ok bool) {
+	if gate, gitLab := glabOrigin(ctx, dir); gitLab {
+		if web := m.glab.withWeb(ctx, gate).Web; web != "" {
+			if clean, err := cleanBranchLink(web + "/-/tree/" + branchPlaceholder); err == nil {
+				return clean, true, true
+			}
+		}
+	}
+	link, ok = remoteBranchLink(ctx, dir)
+	return link, false, ok
+}
+
+// remoteBranchLink suggests a branch link from dir's origin remote URL.
+func remoteBranchLink(ctx context.Context, dir string) (string, bool) {
 	git, err := execpath.Resolve("git")
 	if err != nil {
 		return "", false
@@ -161,7 +176,7 @@ var errBranchLinkSet = errors.New("branch link already set")
 // detectProjectBranchLink saves the branch link detected from the Project's
 // origin, unless one was set meanwhile.
 func (m *Manager) detectProjectBranchLink(ctx context.Context, id, dir string) {
-	link, ok := detectBranchLink(ctx, dir)
+	link, _, ok := m.detectBranchLink(ctx, dir)
 	if !ok {
 		return
 	}
@@ -220,10 +235,16 @@ func (s *Server) handleDetectBranchLink(w http.ResponseWriter, r *http.Request) 
 		writeFailure(w, errProjectNotFound)
 		return
 	}
-	link, ok := detectBranchLink(r.Context(), dir)
+	link, fromGitLab, ok := s.m.detectBranchLink(r.Context(), dir)
 	if !ok {
 		writeError(w, http.StatusUnprocessableEntity, "git has no origin remote here that uam can read")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"branch_link": link})
+	// source says where the link came from; gitlab_url is the project's web
+	// address glab read.
+	out := map[string]string{"branch_link": link, "source": "remote"}
+	if fromGitLab {
+		out["source"], out["gitlab_url"] = "gitlab", strings.TrimSuffix(link, "/-/tree/"+branchPlaceholder)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
