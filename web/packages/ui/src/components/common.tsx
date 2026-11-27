@@ -246,7 +246,7 @@ export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; clas
   );
 }
 
-const DOT_TONE: Record<BlockTone, Tone> = { success: 'success', accent: 'accent', warning: 'warning', error: 'error', attention: 'attention', none: 'muted' };
+export const DOT_TONE: Record<BlockTone, Tone> = { success: 'success', accent: 'accent', warning: 'warning', error: 'error', attention: 'attention', none: 'muted' };
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
 export function Dot({ tone, className }: Readonly<{ tone: Tone; className?: string }>) {

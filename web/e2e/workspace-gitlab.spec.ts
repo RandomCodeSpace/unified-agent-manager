@@ -356,3 +356,69 @@ test('a running pipeline is read again after 20 s and an open merge request afte
     await own.stop();
   }
 });
+
+test('the Thread header shows the branch\'s merge request or pipeline in the branch link\'s place, one chip with +N for several, folded on a phone', async ({ browser, uam, model, workdir }) => {
+  const mr = (iid: number, extra: Api) => ({ iid, project_id: 42, title: `Change ${iid}`, state: 'opened', web_url: `${WEB}/merge_requests/${iid}`, source_branch: 'feat/h', ...extra });
+  model.reply('gitlab header', 'Done.');
+  const own = await glabService(browser, uam.mock.url, workdir, {
+    'projects/42/merge_requests/5': mr(5, { target_branch: 'main', detailed_merge_status: 'mergeable' }),
+    'projects/42/merge_requests/6': mr(6, { target_branch: 'release', has_conflicts: true }),
+    'projects/42/pipelines/91': { id: 91, project_id: 42, ref: 'feat/h', sha: 'abc', status: 'running', web_url: `${WEB}/pipelines/91` },
+  });
+  try {
+    const { page } = own;
+    // The Thread's own commit, its pipeline and its merge requests come from uam's GitLab monitor; the page's read of them is
+    // stubbed here, and each item's state is the stand-in glab's answer to the same item read the reply chips use.
+    let extra: Record<string, unknown> = {};
+    expect((await page.request.patch(`/api/projects/${own.project.id}`, { data: { branch_link: `https://${HOST}/group/proj/-/tree/{branch}` } })).ok()).toBe(true);
+    await page.route('**/api/sessions/*/gitlab', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, json: { ...(await response.json()), ...extra } });
+    });
+    await startYoloThread(page, own.project, 'gitlab header');
+    await expect(threadState(page, 'Finished')).toBeVisible();
+    const header = page.getByRole('group', { name: /^State: / });
+    const chip = header.locator('#branch-gitlab');
+    // Neither: the branch link as before. Opening a Thread reads where its branch link opens; the page shows it from its next read.
+    const detail = `/api/sessions/${new URL(page.url()).hash.split('task=')[1]}`;
+    await expect.poll(async () => ((await (await page.request.get(detail)).json()) as { branch_link_url?: string }).branch_link_url).toBe(`https://${HOST}/group/proj/-/tree/main`);
+    await page.reload();
+    await expect(header.locator('#branch-link')).toBeVisible();
+    await expect(chip).toHaveCount(0);
+
+    const pipeline = { id: 91, status: 'running', sha: 'abc', ref: 'feat/h', web_url: `${WEB}/pipelines/91` };
+    extra = { pipeline, merge_requests: [] };
+    await page.reload();
+    await expect(chip).toHaveAccessibleName('Pipeline #91: running');
+    await expect(header.locator('#branch-link')).toHaveCount(0);
+
+    const listed = (iid: number) => ({ iid, title: `Change ${iid}`, state: 'opened', draft: false, web_url: `${WEB}/merge_requests/${iid}` });
+    extra = { pipeline, merge_requests: [listed(5)] };
+    await page.reload();
+    await expect(chip).toHaveAccessibleName('Merge request !5: open, ready to merge');
+    await expect(chip).toHaveAttribute('href', `${WEB}/merge_requests/5`);
+
+    // Two targets: the conflicted one is the more urgent; the panel lists both.
+    extra = { pipeline, merge_requests: [listed(5), listed(6)] };
+    await page.reload();
+    await expect(chip).toHaveAccessibleName('Merge request !6: open, merge conflict. 1 more merge request');
+    await expect(chip).toContainText('!6+1');
+    await chip.click();
+    const panel = page.getByRole('complementary', { name: 'GitLab' });
+    await expect(panel.getByRole('heading', { name: 'Change 6', level: 2 })).toBeVisible();
+    const items = panel.getByRole('group', { name: "This turn's GitLab items" });
+    await expect(items.getByRole('button', { name: '!6' })).toBeVisible();
+    await items.getByRole('button', { name: '!5' }).click();
+    await expect(panel.getByRole('heading', { name: 'Change 5', level: 2 })).toBeVisible();
+
+    // A phone keeps the glyph, the number, +N and one dot in the most urgent tone.
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.reload();
+    await expect(chip).toHaveAccessibleName('Merge request !6: open, merge conflict. 1 more merge request');
+    await expect(chip).toHaveText('!6+1');
+    await expect(chip.locator('[data-tone]')).toHaveCount(1);
+    await expect(chip.locator('[data-tone]')).toHaveAttribute('data-tone', 'error');
+  } finally {
+    await own.stop();
+  }
+});

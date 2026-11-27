@@ -278,6 +278,9 @@ export function useTurnGitLabRefs(calls: Item[]): GitLabRef[] {
   }, [calls, origin, own, sessionId, seen]);
 }
 
+/** A GitLab item's chip: the reply's outcome bar and the Thread header's branch place. */
+export const CHIP_CLASS = 'min-w-0 max-w-full shrink bg-raised pr-0.5 pl-2 font-normal text-ink shadow-raised not-aria-disabled:hover:bg-fill-hover aria-[current=true]:bg-fill-strong [&_svg]:size-3';
+
 /** Every GitLab item a turn touched, at its reply's end, but those in `hide` (the reply's references list them, by `refKey`); `items` are its candidates (`gitLabCandidates`). */
 export function TurnStrip({ items: calls, hide }: Readonly<{ items: Item[]; hide?: ReadonlySet<string> }>) {
   const gl = useContext(GitLabItemsContext);
@@ -297,12 +300,11 @@ export function TurnStrip({ items: calls, hide }: Readonly<{ items: Item[]; hide
           <span className={cn('min-w-0 truncate font-semibold', r.kind === 'job' && 'font-mono font-medium')}>{itemLabel(r, item)}</span>
           <Blocks items={stateBlocks(item)} />
         </>;
-        const chipClass = 'min-w-0 max-w-full shrink bg-raised pr-0.5 pl-2 font-normal text-ink shadow-raised not-aria-disabled:hover:bg-fill-hover aria-[current=true]:bg-fill-strong [&_svg]:size-3';
         const name = item?.title && r.kind !== 'job' ? `${itemLabel(r, item, true)} · ${item.title}` : undefined;
         const title = item?.stale && !item.error ? `${name ? `${name} · ` : ''}Last known state: GitLab is rate limiting reads` : name;
         return item?.web_url
-          ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={cn(buttonVariants({ size: 'xs' }), chipClass)} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
-          : <Button key={refKey(r)} size="xs" aria-current={on || undefined} title={title} className={chipClass} onClick={() => gl.open(refs, r)}>{body}</Button>;
+          ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={cn(buttonVariants({ size: 'xs' }), CHIP_CLASS)} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
+          : <Button key={refKey(r)} size="xs" aria-current={on || undefined} title={title} className={CHIP_CLASS} onClick={() => gl.open(refs, r)}>{body}</Button>;
       })}
     </span>
   );
@@ -347,7 +349,7 @@ export function stateBlocks(item?: GitLabItemSummary): Block[] {
   return out;
 }
 
-const URGENCY: BlockTone[] = ['error', 'attention', 'warning', 'accent', 'success', 'none'];
+export const URGENCY: BlockTone[] = ['error', 'attention', 'warning', 'accent', 'success', 'none'];
 /** The most urgent tone of an item's blocks and their words, for the dot on an in-text link; nothing until it is read. */
 export function linkState(item?: GitLabItemSummary): { tone: BlockTone; words: string } | undefined {
   const blocks = item && !item.error ? stateBlocks(item) : [];
