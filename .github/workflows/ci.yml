@@ -4,7 +4,9 @@ name: CI
 # and release fallbacks. The web bundle is built once and shared by every Go job.
 # A pull request runs only the quick jobs (web, lint, govulncheck, gosec,
 # dependency-review). Tests, coverage, Sonar, the builds and the smokes run once,
-# in the merge queue, against the main they will land on.
+# in the merge queue, against the main they will land on. A push to main is the
+# commit the queue already tested, so it reruns only what Sonar's main analysis
+# needs (web, web-tests, coverage, sonarcloud) and the quick checks.
 
 on:
   push:
@@ -146,7 +148,7 @@ jobs:
   # which finishes well before this one and lets Sonar start earlier.
   test-race:
     name: test-race
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: ubuntu-latest
     steps:
@@ -172,7 +174,7 @@ jobs:
   # no sign-in, secrets or AI credits. The CLI version is pinned above.
   test-aimock:
     name: test-aimock
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -205,16 +207,16 @@ jobs:
   # The browser regression pack (web/e2e): Chromium drives the built uam with
   # the real Copilot CLI and aimock as the model. No sign-in, secrets or AI credits.
   test-ui:
-    name: test-ui (${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request'
+    name: test-ui (${{ matrix.shard }}/4)
+    if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Three Playwright shards split the cases, so the pack stays inside the timeout as it grows.
+    # Four Playwright shards split the cases, so the pack stays inside the timeout as it grows.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -253,7 +255,7 @@ jobs:
       - name: Run the browser regression pack
         env:
           UAM_E2E_BIN: ${{ github.workspace }}/bin/uam
-        run: npm --prefix web run test:e2e -- --shard=${{ matrix.shard }}/3
+        run: npm --prefix web run test:e2e -- --shard=${{ matrix.shard }}/4
 
       - name: Upload the Playwright report and traces
         if: failure()
@@ -363,7 +365,7 @@ jobs:
   # Static binaries for the distro matrix. Also the module and whole-tree build check.
   build-artifacts:
     name: build static binaries
-    if: github.ref_type != 'tag' && github.event_name != 'pull_request'
+    if: github.ref_type != 'tag' && github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: ubuntu-latest
     steps:
@@ -447,7 +449,7 @@ jobs:
 
   snapshot:
     name: GoReleaser snapshot
-    if: github.ref_type != 'tag' && github.event_name != 'pull_request'
+    if: github.ref_type != 'tag' && github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: ubuntu-latest
     steps:
@@ -546,7 +548,7 @@ jobs:
 
   darwin-native:
     name: Darwin-native lifecycle and version smoke
-    if: github.ref_type != 'tag' && github.event_name != 'pull_request'
+    if: github.ref_type != 'tag' && github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: web
     runs-on: macos-26
     timeout-minutes: 8

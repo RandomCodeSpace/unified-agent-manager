@@ -78,7 +78,10 @@ A pull request runs only the quick jobs: `web`, `lint`, `govulncheck`, `gosec`
 and `dependency-review`. The tests, coverage, Sonar, the builds, the distro
 matrix, the macOS smoke and the snapshot are skipped there and run once, in the
 merge queue, against the `main` they will land on. A failure in one of them
-removes the pull request from the queue; run the tests locally before queueing.
+removes the pull request from the queue; run the tests locally before queueing. A push to
+`main` is the commit the queue already tested, so it runs only `web`, `web-tests`,
+`coverage`, Sonar and the quick checks; the release looks for a passing merge
+queue, scheduled or manual run of its source commit and otherwise runs the whole CI.
 
 The web job typechecks and builds the bundle once; every Go job, the macOS smoke
 and the snapshot embed that artifact instead of rebuilding it. Component tests run
