@@ -42,7 +42,11 @@ func (c *conversation) rewindable() (rewindSession, error) {
 // settleWait bounds how long a call waits for session.idle after a turn
 // ended; a background shell withholds it, and then the CLI's own busy answer
 // stands.
-const settleWait = 3 * time.Second
+var settleWait = 3 * time.Second
+
+// busyRetry is how often a rewind preview asks again while the CLI still
+// answers session-busy, as it may for a moment after session.idle.
+const busyRetry = 100 * time.Millisecond
 
 // awaitSettled waits, bounded, for the session.idle that follows the last
 // turn's end, so a call made right after a turn is not refused as busy.
@@ -65,7 +69,27 @@ func (c *conversation) awaitSettled(ctx context.Context) {
 // PreviewRewind reads the exact persisted owner boundary, its native rewind
 // point and file preview. It sends nothing and never resumes a conversation.
 func (c *conversation) PreviewRewind(ctx context.Context, user string) (agentapi.RewindPreview, error) {
+	deadline := time.Now().Add(settleWait)
 	c.awaitSettled(ctx)
+	for {
+		out, err := c.previewRewindOnce(ctx, user)
+		c.mu.Lock()
+		running := c.turnRunning
+		c.mu.Unlock()
+		if !errors.Is(err, agentapi.ErrBusy) || running || time.Now().Add(busyRetry).After(deadline) {
+			return out, err
+		}
+		t := time.NewTimer(busyRetry)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return out, err
+		}
+	}
+}
+
+func (c *conversation) previewRewindOnce(ctx context.Context, user string) (agentapi.RewindPreview, error) {
 	sess, err := c.rewindable()
 	if err != nil {
 		return agentapi.RewindPreview{}, err

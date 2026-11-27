@@ -17,6 +17,7 @@ import (
 type rewindFakeSession struct {
 	*fakeSession
 	points    *rpc.HistoryListRewindPointsResult
+	busyFor   int // the first ListRewindPoints calls that answer session-busy
 	preview   *rpc.HistoryPreviewRewindResult
 	result    *rpc.HistoryRewindResult
 	err       error
@@ -25,6 +26,11 @@ type rewindFakeSession struct {
 }
 
 func (s *rewindFakeSession) ListRewindPoints(context.Context) (*rpc.HistoryListRewindPointsResult, error) {
+	if s.busyFor > 0 {
+		s.busyFor--
+		busy := rpc.HistoryRewindUnavailableReasonSessionBusy
+		return &rpc.HistoryListRewindPointsResult{UnavailableReason: &busy}, nil
+	}
 	return s.points, nil
 }
 
@@ -93,6 +99,9 @@ func TestNativeRewindPreviewBindsExactSuffix(t *testing.T) {
 		t.Fatalf("untracked = %+v, %v", got, err)
 	}
 	sess.points.FileChangeTrackingEnabled = true
+	// A busy answer that outlasts the settle wait stands.
+	defer func(d time.Duration) { settleWait = d }(settleWait)
+	settleWait = 3 * busyRetry
 	busy := rpc.HistoryRewindUnavailableReasonSessionBusy
 	sess.preview = &rpc.HistoryPreviewRewindResult{Reason: &busy}
 	if _, err := c.PreviewRewind(context.Background(), "message-1"); !errors.Is(err, agentapi.ErrBusy) {
@@ -109,6 +118,20 @@ func TestNativeRewindPreviewBindsExactSuffix(t *testing.T) {
 	}
 	c.turnRunning = true
 	if _, err := c.PreviewRewind(context.Background(), "message-1"); !errors.Is(err, agentapi.ErrBusy) {
+		t.Fatalf("running = %v", err)
+	}
+}
+
+func TestNativeRewindPreviewAsksAgainWhileTheSettledCLIIsBusy(t *testing.T) {
+	c, sess, _ := rewindConversation(t)
+	sess.busyFor = 2
+	got, err := c.PreviewRewind(context.Background(), "message-2")
+	if err != nil || got.UserEventID != "event-2" || sess.busyFor != 0 {
+		t.Fatalf("preview = %+v, %v (busy answers left %d)", got, err, sess.busyFor)
+	}
+	sess.busyFor = 1
+	c.turnRunning = true
+	if _, err := c.PreviewRewind(context.Background(), "message-2"); !errors.Is(err, agentapi.ErrBusy) {
 		t.Fatalf("running = %v", err)
 	}
 }

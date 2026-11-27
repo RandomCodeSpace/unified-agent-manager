@@ -48,7 +48,8 @@ test('the sidebar and the status line tell the model phase from a local tool, an
   model.toolRound('phase check', [{ id: 'call_phase', name: 'bash', arguments: { command: 'printf x > phase.txt && sleep 3', description: 'Write and wait' } }], 'Phases done.', { latency: 3000, chunkSize: 100_000 });
   await startThread(page, project, 'phase check');
   const sidebar = page.getByRole('navigation', { name: 'Threads' });
-  await expect(page.getByText('Waiting for the model', { exact: true })).toBeVisible();
+  // The status line's screen-reader sentence is the same words until its clock ticks; the shown words come first.
+  await expect(page.getByText('Waiting for the model', { exact: true }).first()).toBeVisible();
   await expect(sidebar.getByText(/Model working now/)).toBeVisible();
 
   await expect(threadState(page, 'Needs permission')).toBeVisible();
