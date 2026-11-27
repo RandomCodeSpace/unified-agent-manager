@@ -22,10 +22,22 @@ file you are still working on, or any other file, write its path or use
   paths (`style.css`, `img/logo.png`, `about/`); a root-relative `/assets/…`
   path does not resolve. Build tools need a relative base (Vite
   `base: './'`).
-- The page runs in a sandbox with an opaque origin. Use classic scripts
-  (`<script src="app.js">`) and inline data. ES modules
-  (`<script type="module">`), `fetch` or XHR of its own files,
-  `localStorage`, `sessionStorage`, IndexedDB, `history.pushState`, calls
-  to other hosts and scripts, styles, images or fonts from other hosts do
-  not work. The page's own style sheets, images and fonts load, as do
-  inline scripts and styles and `data:` URLs.
+- The page runs in a sandbox with an opaque origin. Module scripts work
+  because uam bundles them when you publish: each HTML file's
+  `<script type="module">` tags (with `src` or inline), with their relative
+  JavaScript, TypeScript, JSX, JSON and CSS imports, become one classic
+  `<name>.uam-bundle.js` (and `.uam-bundle.css`) beside the page, and the
+  fonts its style sheets name are inlined as `data:` URLs. Your files stay
+  in the snapshot; the original page is kept as `<name>.uam-original.html`.
+  The result says what was bundled and which pages were not, and why.
+- Imports must be relative (`./lib/chart.js`) and stay inside the folder:
+  package imports (`import React from 'react'`) are not bundled, since
+  `node_modules` is left out. Copy the library's browser build into the
+  folder and import it by a relative path, or publish your build tool's
+  output. A page that cannot be bundled is published as it is, and its
+  module scripts do not run.
+- Still unsupported: `fetch` or XHR of its own files, `localStorage`,
+  `sessionStorage`, IndexedDB, `history.pushState`, root-relative `/…`
+  paths, calls to other hosts and scripts, styles, images or fonts from
+  other hosts. The page's own classic scripts, style sheets and images
+  load, as do inline scripts and styles and `data:` URLs.
