@@ -1,10 +1,10 @@
 import { useApi } from '../ApiContext';
 import { planKey } from '../lib/richMarkdown';
 import { AppWindow, ArrowDown, ChartLine, ChevronRight, CircleStop, Ellipsis, ExternalLink, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
-import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { Suspense, lazy, memo, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { Contained } from './VisualBoundary';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace, type TodoView } from '../api';
+import { LIVE, describeError, type Badge, isStatus, newRequestId, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type GitLabItemSummary, type HistoryPage, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace, type TodoView } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { ArtifactsContext, ArtifactsRevisionContext, PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -16,7 +16,7 @@ import { stopWords } from '../lib/stop';
 import { UNKNOWN_FAILURE_SENTENCE, failureNoticeItem, failureWords } from '../lib/failure';
 import type { ChangesPlace, ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { BAR_ROW, BAR_BOX, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, Summary, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
+import { BAR_ROW, BAR_BOX, Dot, DOT_TONE, GitHubMark, GitLabMark, INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ReplyContext, SessionContext, Spinner, STATE_LABELS, StateLabel, Summary, type StatusWord, TaskTitle, TranscriptSkeleton, useApp, useMedia, WorkdirContext } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { PHONE } from './ui/dialog';
@@ -57,8 +57,10 @@ import { Tip } from './ui/tooltip';
 const lazyShown = new Set<'gitlab' | 'changes' | 'charts' | 'artifacts'>();
 const GitLabSheet = lazy(() => import('./GitLabSheet').then((m) => { lazyShown.add('gitlab'); return m; }));
 import type { GitLabOpenItem } from './GitLabSheet';
-import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
-import type { GitLabRef } from '../lib/gitlabRefs';
+import { CHIP_CLASS, GitLabItemsContext, itemLabel, KindGlyph, linkState, plainClick, stateBlocks, URGENCY, useGitLabOrigin, useSummaries, type GitLabItems } from './GitLabStrip';
+import { refKey, refText, sameRef, type GitLabRef } from '../lib/gitlabRefs';
+import { Blocks } from './ui/blocks';
+import { cn } from '../lib/cn';
 // Open surface cards refetch on the `surface` event's version.
 import { SurfaceVersions } from '../lib/surface';
 const NO_SURFACES: Readonly<Record<string, number>> = {};
@@ -236,6 +238,56 @@ function BranchLinkIcon({ href }: Readonly<{ href: string }>) {
   return <ExternalLink />;
 }
 
+/**
+ * The branch link's place once GitLab knows the branch's work: its merge request, the most urgent open one with "+N" for
+ * the others (all merged or closed: the newest), else the branch's pipeline; nothing for neither. It is read as the
+ * reply chips are (the same shared read, live while shown) and opens the side panel on all of them; `compact` (a folded
+ * header) keeps the glyph, the number and one dot in the most urgent tone, its words in the name and tooltip.
+ */
+export function BranchGitLab({ compact }: Readonly<{ compact: boolean }>) {
+  const gl = useContext(GitLabItemsContext);
+  const state = gl?.state;
+  const refs = useMemo<GitLabRef[]>(() => {
+    if (state?.merge_requests?.length) return state.merge_requests.map((mr) => ({ kind: 'mr', id: mr.iid }));
+    return state?.pipeline ? [{ kind: 'pipeline', id: state.pipeline.id }] : [];
+  }, [state]);
+  const read = useSummaries(gl?.sessionId ?? '', refs);
+  if (!gl || !state || !refs.length) return null;
+  // The Thread's own read stands in until the item's summary is read, or when GitLab would not give it.
+  const summary = (r: GitLabRef): GitLabItemSummary => {
+    const known = read.get(refKey(r));
+    if (known && !known.error) return known;
+    const mr = state.merge_requests?.find((m) => m.iid === r.id);
+    if (r.kind === 'mr' && mr) return { ref: refKey(r), kind: 'mr', title: mr.title, state: mr.state, draft: mr.draft, web_url: mr.web_url };
+    return { ref: refKey(r), kind: 'pipeline', state: state.pipeline?.status, web_url: state.pipeline?.web_url };
+  };
+  const rank = (r: GitLabRef) => { const s = summary(r); return s.state === 'opened' ? URGENCY.indexOf(linkState(s)?.tone ?? 'none') : URGENCY.length; };
+  const order = [...refs].sort((a, b) => rank(a) - rank(b) || b.id - a.id);
+  const top = order[0];
+  const item = summary(top);
+  const more = order.length - 1;
+  const words = (s: GitLabItemSummary) => stateBlocks(s).map((b) => b.title).join(', ');
+  const said = words(item);
+  const label = `${itemLabel(top, item, true)}${said ? `: ${said}` : ''}${more ? `. ${more} more merge request${more > 1 ? 's' : ''}` : ''}`;
+  const tip = order.map((r) => { const s = summary(r); return [itemLabel(r, s), r.kind === 'mr' && s.title, words(s)].filter(Boolean).join(' · '); });
+  const dot = compact ? linkState(item) : undefined;
+  const on = order.some((r) => sameRef(gl.current, r));
+  const body = <>
+    <KindGlyph r={top} item={item} className="size-3" />
+    <span className="font-semibold">{refText(top)}</span>
+    {more > 0 && <span className="tabular-nums text-muted">+{more}</span>}
+    {compact ? dot && <Dot tone={DOT_TONE[dot.tone]} className="mr-1.5 size-1.5" /> : <Blocks items={stateBlocks(item)} />}
+  </>;
+  const className = cn(CHIP_CLASS, 'shrink-0', compact && 'pr-0');
+  return (
+    <Tip label={<>{tip.map((line) => <div key={line}>{line}</div>)}</>}>
+      {item.web_url
+        ? <a id="branch-gitlab" href={item.web_url} target="_blank" rel="noreferrer" aria-label={label} aria-current={on || undefined} className={cn(buttonVariants({ size: 'xs' }), className)} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(order, top); }}>{body}</a>
+        : <Button id="branch-gitlab" size="xs" aria-label={label} aria-current={on || undefined} className={className} onClick={() => gl.open(order, top)}>{body}</Button>}
+    </Tip>
+  );
+}
+
 /** The Thread's 44px header: its name and state, the Changes, Branch link, Charts and Terminal controls, and its actions menu. The branch is on the composer's control row (PlaceFoot). */
 /** The header's state chip: a read-only Thread's stage, else the state unless a request's card or the composer's question already says it (`askShown`). */
 function HeaderState({ session, state, shown, phone }: Readonly<{ session: SessionDetail; state: HeaderProps['state']; shown: ReturnType<typeof headerState>; phone: boolean }>) {
@@ -277,7 +329,10 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
   const branchHref = session.branch_link_url;
   const branch = session.branch ?? project?.branch;
   const branchLabel = session.branch_link_branch === branch ? `Open ${branch} on the web` : `${branch} is not pushed: open ${session.branch_link_branch}`;
-  if (fold && branchHref) folded.push({ key: 'branch-link', label: branchLabel, icon: <BranchLinkIcon href={branchHref} />, onSelect: () => window.open(branchHref, '_blank', 'noopener,noreferrer') });
+  // The branch's merge request or pipeline takes the branch link's place (BranchGitLab); the link then moves to the menu.
+  const gitlabState = useContext(GitLabItemsContext)?.state;
+  const gitlabChip = !!(gitlabState?.merge_requests?.length || gitlabState?.pipeline);
+  if ((fold || gitlabChip) && branchHref) folded.push({ key: 'branch-link', label: branchLabel, icon: <BranchLinkIcon href={branchHref} />, onSelect: () => window.open(branchHref, '_blank', 'noopener,noreferrer') });
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
   const published = session.artifacts ?? 0;
   if (fold && published > 0) folded.push({ key: 'artifacts', label: artifactsOpen ? 'Close published pages' : `Published pages, ${published}`, icon: <AppWindow />, onSelect: onToggleArtifacts });
@@ -346,7 +401,7 @@ const TaskHeader = memo(function TaskHeader({ leading, session, project, state, 
             {vcs}
           </div>
         )}
-        {branchHref && !fold && (
+        {gitlabChip ? <BranchGitLab compact={fold} /> : branchHref && !fold && (
           <Tip label={branchLabel}>
             <a id="branch-link" href={branchHref} target="_blank" rel="noopener noreferrer" aria-label={branchLabel} className={buttonVariants({ size: 'icon-md', className: 'text-muted' })}>
               <BranchLinkIcon href={branchHref} />

@@ -2971,6 +2971,23 @@ In the reply's text these names link to the item, as do `issue #14` and
 `job #501` (an issue or a job only with its noun), the project's exact path,
 a full commit SHA and a short one after the word `commit`.
 
+The Thread header shows the Thread's own branch the same way, in the branch
+link's place (the link moves to the "…" menu): once the branch of the
+Thread's last tracked commit has a merge request, a chip with its glyph,
+`!iid` and its state blocks; with no merge request but a pipeline, the
+pipeline's `#id` and state; with neither, the branch link as before. A
+branch with several merge requests (other target branches) shows one chip
+for the most urgent open one (its blocks' most urgent tone; open before
+merged or closed; when none is open, the newest) followed by `+N`; its
+tooltip lists every one as `!iid · title · state`, and pressing it opens the
+side panel on all of them. A folded header (a phone, or a header too narrow
+for its labels) keeps the glyph, `!iid`, `+N` and one dot in the most urgent
+tone; the words stay in its name and tooltip ("Merge request !128: open,
+pipeline running, needs approval. 1 more merge request"). The chip uses the
+merge requests and pipeline UAM already tracks for the Thread and the same
+item reads as the reply chips, so it adds no GitLab call and follows them
+live.
+
 A bar lists at most 20 items. Pressing a chip opens the GitLab side panel
 on that item, with the turn's other items above it to step between; a
 modified click opens it in GitLab instead, and every view has **Open in
