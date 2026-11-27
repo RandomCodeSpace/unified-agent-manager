@@ -11,7 +11,8 @@ import { readableInput, toolKind } from './transcript.ts';
 export type GitLabKind = 'mr' | 'issue' | 'epic' | 'pipeline' | 'job';
 /** `group` is an epic's group when it is not the project's parent group. */
 export interface GitLabRef { kind: GitLabKind; id: number; group?: string }
-export interface GitLabOrigin { host: string; path: string }
+/** `web_url` is the project's web address (scheme, host, port, sub-path and `path`); without it, https on `host`. */
+export interface GitLabOrigin { host: string; path: string; web_url?: string }
 /** The Thread's own tracked commit and its pipeline (the service's receipt). */
 export interface GitLabOwnPipeline { sha: string; pipelineId: number }
 
@@ -47,12 +48,27 @@ function epic(id: number, group: string, origin: GitLabOrigin): GitLabRef | null
   return lower(group) === lower(parentGroup(origin.path)) ? { kind: 'epic', id } : { kind: 'epic', id, group };
 }
 
+/** The GitLab site the project is on: its web address without the project's path. */
+const siteUrl = (origin: GitLabOrigin) => gitLabProjectUrl(origin).slice(0, -(origin.path.length + 1));
+
+/** An address's path on the project's GitLab site (its web address' host and sub-path, or the remote's host), its trailing slashes dropped; null for any other site. */
+function sitePath(url: URL, origin: GitLabOrigin): string | null {
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const path = decodePath(url.pathname).replace(/\/+$/, '');
+  const site = new URL(siteUrl(origin));
+  if (url.protocol === site.protocol && lower(url.host) === lower(site.host)) {
+    const prefix = decodePath(site.pathname).replace(/\/+$/, '');
+    return !prefix || lower(path).startsWith(`${lower(prefix)}/`) ? path.slice(prefix.length) : null;
+  }
+  return lower(url.hostname) === lower(origin.host) ? path : null;
+}
+
 /** A GitLab URL of an item of the Thread's project (or, for an epic, one of its groups). */
 export function parseGitLabUrl(href: string, origin: GitLabOrigin): GitLabRef | null {
   let url: URL;
   try { url = new URL(href); } catch { return null; }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || lower(url.hostname) !== lower(origin.host)) return null;
-  const path = decodePath(url.pathname).replace(/\/+$/, '');
+  const path = sitePath(url, origin);
+  if (path === null) return null;
   const group = /^\/groups\/(.+?)\/-\/(?:epics|work_items)\/(\d+)$/.exec(path);
   if (group) return epic(Number(group[2]), group[1], origin);
   const prefix = `/${origin.path}/-/`;
@@ -191,9 +207,9 @@ const gitWrite = (words: string[]) => words[0] === 'git' && (words[1] === 'push'
  * them whose output the view holds back needs its body read (`needsBody`).
  */
 export function gitLabCandidates(items: Item[], origin: GitLabOrigin): Item[] {
-  const host = lower(origin.host);
+  const hosts = [lower(origin.host), lower(new URL(siteUrl(origin)).host)];
   return items.filter((item) => !item.agent_id && (
-    (item.kind === 'assistant' && (lower(item.text ?? '').includes(host) || proseItems(item.text ?? '', origin).length > 0)) ||
+    (item.kind === 'assistant' && (hosts.some((host) => lower(item.text ?? '').includes(host)) || proseItems(item.text ?? '', origin).length > 0)) ||
     commands(script(item)).some((words) => gitWrite(words) || !!glabCall(words, origin))));
 }
 
@@ -242,29 +258,32 @@ export function turnGitLabRefs(items: Item[], origin: GitLabOrigin, own?: GitLab
  */
 export function gitLabMarkdown(text: string, origin?: GitLabOrigin): string {
   if (!origin) return text;
-  return text.replace(/(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?)\/uploads\//gm, `$1https://${origin.host}/${origin.path}/uploads/`);
+  return text.replace(/(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?)\/uploads\//gm, `$1${gitLabProjectUrl(origin)}/uploads/`);
 }
 
 /** A GitLab item's address in the Thread's project (an epic in its parent group). */
 export function gitLabUrl(r: GitLabRef, origin: GitLabOrigin): string {
-  if (r.kind === 'epic') return `https://${origin.host}/groups/${r.group ?? parentGroup(origin.path)}/-/epics/${r.id}`;
+  if (r.kind === 'epic') return `${siteUrl(origin)}/groups/${r.group ?? parentGroup(origin.path)}/-/epics/${r.id}`;
   const path = { mr: 'merge_requests', issue: 'issues', pipeline: 'pipelines', job: 'jobs' }[r.kind];
-  return `https://${origin.host}/${origin.path}/-/${path}/${r.id}`;
+  return `${gitLabProjectUrl(origin)}/-/${path}/${r.id}`;
 }
 
 const segments = (s: string) => s.split('/').map(encodeURIComponent).join('/');
 /** The Thread's GitLab project, and its places that are not items: a branch, a compare of two branches, a commit. */
-export const gitLabProjectUrl = (origin: GitLabOrigin) => `https://${origin.host}/${origin.path}`;
+export const gitLabProjectUrl = (origin: GitLabOrigin) => origin.web_url ?? `https://${origin.host}/${origin.path}`;
+/** The host (and port) the project's web pages are on. */
+export const gitLabWebHost = (origin: GitLabOrigin) => new URL(gitLabProjectUrl(origin)).host;
 export const gitLabTreeUrl = (origin: GitLabOrigin, branch: string) => `${gitLabProjectUrl(origin)}/-/tree/${segments(branch)}`;
 export const gitLabCompareUrl = (origin: GitLabOrigin, target: string, source: string) => `${gitLabProjectUrl(origin)}/-/compare/${segments(target)}...${segments(source)}`;
 export const gitLabCommitUrl = (origin: GitLabOrigin, sha: string) => `${gitLabProjectUrl(origin)}/-/commit/${encodeURIComponent(sha)}`;
 
-/** What an https address on the Thread's project has after the project's path ('' for the project itself); null for any other address. */
+/** What an address on the Thread's project has after the project's path ('' for the project itself); null for any other address. */
 function projectRest(href: string, origin: GitLabOrigin): string | null {
   let url: URL;
   try { url = new URL(href); } catch { return null; }
-  if (url.protocol !== 'https:' || lower(url.hostname) !== lower(origin.host) || url.search || url.hash) return null;
-  const path = decodePath(url.pathname).replace(/\/+$/, '');
+  if ((url.protocol !== 'https:' && url.protocol !== new URL(siteUrl(origin)).protocol) || url.search || url.hash) return null;
+  const path = sitePath(url, origin);
+  if (path === null) return null;
   const base = `/${origin.path}`;
   if (lower(path) === lower(base)) return '';
   return lower(path).startsWith(`${lower(base)}/`) ? path.slice(base.length) : null;

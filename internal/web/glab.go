@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,23 @@ const glabNegativeTTL = time.Minute
 const glabTimeout = 20 * time.Second
 const glabOutputLimit = 1 << 20
 
-type glabGate struct{ Host, Path, Dir, executable string }
+// glabGate is a checkout's GitLab origin. Web is the project's web address
+// glab read (withWeb); empty until read or when glab cannot read it.
+type glabGate struct{ Host, Path, Dir, Web, remote, executable string }
+
+// webURL is the project's web address: glab's when it read one, else https
+// on the remote's host.
+func (g glabGate) webURL() string {
+	if g.Web != "" {
+		return g.Web
+	}
+	return (&url.URL{Scheme: "https", Host: g.Host, Path: "/" + g.Path}).String()
+}
+
+type glabWeb struct {
+	web string
+	at  time.Time
+}
 type glabCachedGate struct {
 	gate        glabGate
 	at          time.Time
@@ -42,6 +59,8 @@ type glabGovernor struct {
 	mu    sync.Mutex
 	dirs  map[string]glabCachedGate
 	hosts map[string]*glabAuth
+	// webs holds each origin remote URL's project web address (withWeb).
+	webs map[string]glabWeb
 }
 
 func (g *glabGovernor) gate(ctx context.Context, dir string) (glabGate, bool) {
@@ -99,7 +118,64 @@ func glabOrigin(ctx context.Context, dir string) (glabGate, bool) {
 	if !ok || host == "github.com" {
 		return glabGate{}, false
 	}
-	return glabGate{Host: host, Path: path, Dir: dir, executable: bin}, true
+	return glabGate{Host: host, Path: path, Dir: dir, remote: strings.TrimSpace(remote), executable: bin}, true
+}
+
+// withWeb sets gate.Web to the project's web address, read with glab once per
+// origin remote URL, so a new remote reads it again. A failed read, or glab
+// signed out of the host, leaves Web empty and is tried again after
+// glabNegativeTTL.
+func (g *glabGovernor) withWeb(ctx context.Context, gate glabGate) glabGate {
+	g.mu.Lock()
+	e, cached := g.webs[gate.remote]
+	g.mu.Unlock()
+	if cached && (e.web != "" || time.Since(e.at) < glabNegativeTTL) {
+		gate.Web = e.web
+		return gate
+	}
+	var web string
+	if g.authenticated(ctx, gate) {
+		if out, err := glabRun(ctx, gate, glabTimeout, "repo view"); err == nil {
+			web = glabWebURL(gate, out)
+		}
+	}
+	if ctx.Err() != nil {
+		return gate
+	}
+	g.mu.Lock()
+	if g.webs == nil {
+		g.webs = make(map[string]glabWeb)
+	}
+	g.webs[gate.remote] = glabWeb{web: web, at: time.Now()}
+	g.mu.Unlock()
+	gate.Web = web
+	return gate
+}
+
+// glabWebURL reads web_url from `glab repo view -F json` output. It must be
+// http(s) with a host, no user, query or fragment, and end with the origin's
+// project path, so links built from it name the same project; else "".
+func glabWebURL(gate glabGate, out string) string {
+	start := strings.IndexByte(out, '{')
+	if start < 0 {
+		return ""
+	}
+	var project struct {
+		WebURL string `json:"web_url"`
+	}
+	if json.NewDecoder(strings.NewReader(out[start:])).Decode(&project) != nil {
+		return ""
+	}
+	u, err := url.Parse(project.WebURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return ""
+	}
+	path := strings.TrimSuffix(u.Path, "/")
+	suffix := "/" + gate.Path
+	if len(path) < len(suffix) || !strings.EqualFold(path[len(path)-len(suffix):], suffix) {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: strings.ToLower(u.Host), Path: path[:len(path)-len(suffix)] + suffix}).String()
 }
 
 // parseRemote reads a git remote URL (https, http, ssh or git's scp
@@ -161,7 +237,7 @@ func (g *glabGovernor) authenticated(ctx context.Context, gate glabGate) bool {
 	return err == nil
 }
 
-// glabRun has only the two verbs required by the governor. Authentication output
+// glabRun has only the verbs required by the governor. Authentication output
 // is discarded; lint output is bounded before it can enter a tool response.
 func glabRun(ctx context.Context, gate glabGate, timeout time.Duration, verb string, args ...string) (string, error) {
 	var argv []string
@@ -171,6 +247,11 @@ func glabRun(ctx context.Context, gate glabGate, timeout time.Duration, verb str
 			return "", errors.New("unexpected auth arguments")
 		}
 		argv = []string{"auth", "status", "--hostname", gate.Host}
+	case "repo view":
+		if len(args) != 0 {
+			return "", errors.New("unexpected repo arguments")
+		}
+		argv = []string{"repo", "view", "-F", "json"}
 	case "ci lint":
 		argv = append([]string{"ci", "lint", "-R", "https://" + gate.Host + "/" + gate.Path}, args...)
 	default:

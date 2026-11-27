@@ -41,7 +41,7 @@ type Service = {
   apply: () => void;
 };
 
-export type Project = { id: string; name: string; dir: string };
+export type Project = { id: string; name: string; dir: string; branch_link?: string };
 
 type ToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 

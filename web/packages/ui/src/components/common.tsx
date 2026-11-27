@@ -19,7 +19,7 @@ import type { HighlightTree } from '../lib/highlight';
 import { fileLabel, previewClick, tempFile } from '../lib/preview';
 import { FileIcon } from './FileIcon';
 import { hintPath } from '../lib/fileReferences';
-import { gitLabWords, isGitLabCommitUrl, isGitLabProjectUrl, parseGitLabUrl, refKey, remarkGitLabRefs } from '../lib/gitlabRefs';
+import { gitLabWebHost, gitLabWords, isGitLabCommitUrl, isGitLabProjectUrl, parseGitLabUrl, refKey, remarkGitLabRefs } from '../lib/gitlabRefs';
 import { GitLabItemsContext, linkState, plainClick, useSummaries } from './GitLabStrip';
 import { remarkReferences } from '../lib/references';
 import { MdCite, useCites } from './ReferenceCite';
@@ -781,7 +781,8 @@ function httpsUrl(src: string): URL | null {
 
 /** A web image (`img-src https:`): one from a trusted origin loads at once from its host with no referrer, and links to itself; any other waits for a click; one that fails to load is the link card. */
 function RemoteImage({ src, alt }: Readonly<{ src: string; alt: string }>) {
-  const gitlabHost = useContext(GitLabItemsContext)?.origin.host;
+  const gitlabOrigin = useContext(GitLabItemsContext)?.origin;
+  const gitlabHost = gitlabOrigin && gitLabWebHost(gitlabOrigin);
   const machines = useFederation()?.machines;
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(() => loadedImages.has(src));

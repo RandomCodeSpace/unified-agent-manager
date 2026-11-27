@@ -232,3 +232,84 @@ func TestGlabGitUsesTheReadOnlyGitFlags(t *testing.T) {
 		t.Fatal("failing git command reported success")
 	}
 }
+
+func TestGlabWebURL(t *testing.T) {
+	gate := glabGate{Host: "ssh.example.com", Path: "group/sub/repo"}
+	for _, tc := range []struct{ name, out, want string }{
+		{"ssh host differs", `{"web_url":"https://gitlab.example.com/group/sub/repo"}`, "https://gitlab.example.com/group/sub/repo"},
+		{"port", `{"web_url":"https://gitlab.example.com:8443/group/sub/repo"}`, "https://gitlab.example.com:8443/group/sub/repo"},
+		{"sub-path", `{"web_url":"https://example.com/gitlab/group/sub/repo/"}`, "https://example.com/gitlab/group/sub/repo"},
+		{"http", `{"web_url":"http://gitlab.example.com/group/sub/repo"}`, "http://gitlab.example.com/group/sub/repo"},
+		{"case and warning", "warning: update available\n" + `{"web_url":"https://GitLab.Example.com/Group/Sub/Repo"}`, "https://gitlab.example.com/group/sub/repo"},
+		{"other project", `{"web_url":"https://gitlab.example.com/group/other"}`, ""},
+		{"user", `{"web_url":"https://user:secret@gitlab.example.com/group/sub/repo"}`, ""},
+		{"scheme", `{"web_url":"javascript://gitlab.example.com/group/sub/repo"}`, ""},
+		{"no host", `{"web_url":"https:///group/sub/repo"}`, ""},
+		{"query", `{"web_url":"https://gitlab.example.com/group/sub/repo?x=1"}`, ""},
+		{"fragment", `{"web_url":"https://gitlab.example.com/group/sub/repo#x"}`, ""},
+		{"empty", `{}`, ""},
+		{"not json", "glab: not found", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := glabWebURL(gate, tc.out); got != tc.want {
+				t.Fatalf("glabWebURL = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// withWeb reads the web address once per origin remote URL, again when the
+// remote changes, and falls back to the remote's address when glab is signed
+// out or the read fails, retrying after the negative TTL.
+func TestGlabWithWeb(t *testing.T) {
+	bin := glabTestFake(t, "printf '%s\\n' \"$1\" >> \"$0.calls\"\n[ \"$1\" = auth ] && exit \"$(cat \"$0.auth\")\"\ncat \"$0.json\"\n")
+	set := func(auth, out string) {
+		glabTestWrite(t, bin+".auth", auth)
+		glabTestWrite(t, bin+".json", out)
+	}
+	calls := func() int {
+		b, _ := os.ReadFile(bin + ".calls")
+		return strings.Count(string(b), "repo\n")
+	}
+	dir := glabTestRepo(t, "git@ssh.example.com:group/repo.git")
+	var g glabGovernor
+	web := func() glabGate {
+		t.Helper()
+		gate, ok := glabOrigin(t.Context(), dir)
+		if !ok {
+			t.Fatal("no gate")
+		}
+		return g.withWeb(t.Context(), gate)
+	}
+	set("1", "")
+	if gate := web(); gate.Web != "" || gate.webURL() != "https://ssh.example.com/group/repo" || calls() != 0 {
+		t.Fatalf("signed out = %q %q, %d reads", gate.Web, gate.webURL(), calls())
+	}
+	set("0", `{"web_url":"https://gitlab.example.com:8443/gitlab/group/repo"}`)
+	if gate := web(); gate.Web != "" {
+		t.Fatalf("signed-out result not kept for the negative TTL: %q", gate.Web)
+	}
+	g.mu.Lock()
+	g.hosts = nil
+	for k, e := range g.webs {
+		e.at = e.at.Add(-glabNegativeTTL)
+		g.webs[k] = e
+	}
+	g.mu.Unlock()
+	if gate := web(); gate.Web != "https://gitlab.example.com:8443/gitlab/group/repo" || calls() != 1 {
+		t.Fatalf("signed in = %q, %d reads", gate.Web, calls())
+	}
+	set("0", `{"web_url":"https://changed.example.com/group/repo"}`)
+	if gate := web(); gate.Web != "https://gitlab.example.com:8443/gitlab/group/repo" || calls() != 1 {
+		t.Fatalf("cached = %q, %d reads", gate.Web, calls())
+	}
+	glabTestGit(t, dir, "remote", "set-url", "origin", "https://ssh.example.com/group/repo.git")
+	if gate := web(); gate.Web != "https://changed.example.com/group/repo" || calls() != 2 {
+		t.Fatalf("after the remote changed = %q, %d reads", gate.Web, calls())
+	}
+	glabTestGit(t, dir, "remote", "set-url", "origin", "https://ssh.example.com/group/repo")
+	set("0", `{"web_url":"https://other.example.com/group/elsewhere"}`)
+	if gate := web(); gate.Web != "" || gate.webURL() != "https://ssh.example.com/group/repo" || calls() != 3 {
+		t.Fatalf("bad web_url = %q %q, %d reads", gate.Web, gate.webURL(), calls())
+	}
+}

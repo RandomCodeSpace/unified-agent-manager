@@ -176,14 +176,14 @@ func gitLabReviewMR(gate glabGate, mr gitLabReviewMRResponse) GitLabReviewMergeR
 	out := mr.GitLabReviewMergeRequest
 	out.HeadSHA = mr.SHA
 	out.Title = displaytext.Sanitize(mr.Title)
-	out.WebURL = gitLabSafeURL(gate.Host, mr.WebURL)
+	out.WebURL = gitLabSafeURL(gate, mr.WebURL)
 	out.SourceBranch = displaytext.Sanitize(mr.SourceBranch)
 	out.TargetBranch = displaytext.Sanitize(mr.TargetBranch)
 	if out.Author != nil {
 		out.Author = &GitLabReviewAuthor{Name: displaytext.Sanitize(out.Author.Name), Username: displaytext.Sanitize(out.Author.Username)}
 	}
 	if p := out.HeadPipeline; p != nil {
-		out.HeadPipeline = &GitLabPipeline{ID: p.ID, Status: displaytext.Sanitize(p.Status), SHA: displaytext.Sanitize(p.SHA), Ref: displaytext.Sanitize(p.Ref), WebURL: gitLabSafeURL(gate.Host, p.WebURL), CreatedAt: displaytext.Sanitize(p.CreatedAt), UpdatedAt: displaytext.Sanitize(p.UpdatedAt)}
+		out.HeadPipeline = &GitLabPipeline{ID: p.ID, Status: displaytext.Sanitize(p.Status), SHA: displaytext.Sanitize(p.SHA), Ref: displaytext.Sanitize(p.Ref), WebURL: gitLabSafeURL(gate, p.WebURL), CreatedAt: displaytext.Sanitize(p.CreatedAt), UpdatedAt: displaytext.Sanitize(p.UpdatedAt)}
 	}
 	return out
 }

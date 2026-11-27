@@ -154,7 +154,7 @@ func readGitLabPipelineSelection(ctx context.Context, gate glabGate, sha, branch
 	if pipeline.ID != pipelineID || !gitLabMatchingPipeline(pipeline, project.ID, sha, branch) {
 		return result, errors.New("GitLab returned a pipeline outside the requested commit and branch")
 	}
-	pipeline.WebURL = gitLabSafeURL(gate.Host, pipeline.WebURL)
+	pipeline.WebURL = gitLabSafeURL(gate, pipeline.WebURL)
 	result.Pipeline = &pipeline.GitLabPipeline
 	jobs, err := gitLabReadJobs(ctx, gate, base, pipeline)
 	if err != nil {
@@ -192,7 +192,7 @@ func gitLabReadJobs(ctx context.Context, gate glabGate, base string, pipeline gi
 			job.Name = displaytext.Sanitize(job.Name)
 			job.Stage = displaytext.Sanitize(job.Stage)
 			job.FailureReason = displaytext.Sanitize(job.FailureReason)
-			job.WebURL = gitLabSafeURL(gate.Host, job.WebURL)
+			job.WebURL = gitLabSafeURL(gate, job.WebURL)
 			jobs = append(jobs, job.GitLabJob)
 		}
 		if len(batch) < gitLabPageSize {
@@ -224,7 +224,7 @@ func gitLabReadMergeRequests(ctx context.Context, gate glabGate, base, sha, bran
 				continue
 			}
 			mr.Title = displaytext.Sanitize(mr.Title)
-			mr.WebURL = gitLabSafeURL(gate.Host, mr.WebURL)
+			mr.WebURL = gitLabSafeURL(gate, mr.WebURL)
 			mrs = append(mrs, mr.GitLabMergeRequest)
 		}
 		if len(batch) < gitLabPageSize {
@@ -308,9 +308,16 @@ func gitLabValidSHA(sha string) bool {
 	return err == nil
 }
 
-func gitLabSafeURL(host, raw string) string {
+// gitLabSafeURL keeps an address GitLab returned when it is on the
+// project's web host (gate.Web's scheme and host) or https on the remote's.
+func gitLabSafeURL(gate glabGate, raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, host) || u.User != nil {
+	if err != nil || u.User != nil {
+		return ""
+	}
+	web, webErr := url.Parse(gate.Web)
+	onWeb := gate.Web != "" && webErr == nil && u.Scheme == web.Scheme && strings.EqualFold(u.Host, web.Host)
+	if !onWeb && (u.Scheme != "https" || !strings.EqualFold(u.Host, gate.Host)) {
 		return ""
 	}
 	return u.String()

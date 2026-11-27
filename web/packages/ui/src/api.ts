@@ -809,6 +809,9 @@ export interface OutputStyle { name: string; text: string }
 /** The name a Thread or Project picks for the provider's own style; absent (or '') inherits instead. */
 export const PROVIDER_STYLE = 'Copilot';
 
+/** A suggested branch link: `source` says whether it was built from the GitLab project's web address glab read (`gitlab_url`) or from the origin remote; an older server sends neither. */
+export interface BranchLinkDetection { branch_link: string; source?: 'gitlab' | 'remote'; gitlab_url?: string }
+
 export interface Project {
   id: string;
   name: string;
@@ -2200,7 +2203,7 @@ export interface GitLabPipelineState {
   checked_at?: string;
   error?: string;
   /** The Thread's signed-in GitLab project: its items in the conversation open in the side panel. */
-  origin?: { host: string; path: string };
+  origin?: { host: string; path: string; web_url?: string };
 }
 
 /** One GitLab item a conversation names: `ref` is `mr:2`, `issue:14`, `epic:3[:group/path]`, `pipeline:91` or `job:7`. */
@@ -2530,7 +2533,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
     createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
     updateProject: (id: string, body: { name: string; branch_link?: string; output_style?: string; skills?: string[] | null }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
-    detectBranchLink: (id: string) => call<{ branch_link: string }>('POST', `/api/projects/${enc(id)}/branch-link/detect`),
+    detectBranchLink: (id: string) => call<BranchLinkDetection>('POST', `/api/projects/${enc(id)}/branch-link/detect`),
     deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
     /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
     listDirs: (path?: string, hidden = false, filter = '') => call<DirList>('GET', `/api/fs/dirs${dirsQuery(path, hidden, filter)}`),

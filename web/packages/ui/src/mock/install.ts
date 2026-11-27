@@ -1016,7 +1016,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (p.no_git) return fail(422, 'git has no origin remote here that uam can read');
-      return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}` });
+      return json(200, { branch_link: `https://github.com/example/${p.name}/tree/{branch}`, source: 'remote' });
     }
     const unknownStyle = (style: unknown) => typeof style === 'string' && style !== '' && style !== 'Copilot' && ![...(st.meta.output_styles ?? []), ...(st.settings.output_styles ?? [])].some((o) => o.name === style);
     if ((r = m(/^\/api\/projects\/([^/]+)\/skills$/))) {

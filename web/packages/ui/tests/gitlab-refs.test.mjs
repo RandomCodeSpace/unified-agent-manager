@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gitLabCandidates, gitLabCommitUrl, isGitLabCommitUrl, gitLabCompareUrl, gitLabMarkdown, gitLabProjectUrl, gitLabTreeUrl, isGitLabProjectUrl, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
+import { gitLabCandidates, gitLabCommitUrl, isGitLabCommitUrl, gitLabCompareUrl, gitLabMarkdown, gitLabProjectUrl, gitLabTreeUrl, gitLabUrl, gitLabWebHost, isGitLabProjectUrl, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
 
 const origin = { host: 'gitlab.com', path: 'aksops/demo' };
 const P = 'https://gitlab.com/aksops/demo/-';
@@ -91,6 +91,27 @@ test('project places: branches keep their slashes with each segment escaped; onl
   assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops/demo?x=1', origin), false);
   assert.equal(isGitLabProjectUrl('http://gitlab.com/aksops/demo', origin), false);
   assert.equal(isGitLabProjectUrl('https://gitlab.com/aksops', origin), false);
+});
+
+test('the project web address glab read sets the scheme, host, port and sub-path of every link', () => {
+  const web = { host: 'ssh.example.com', path: 'group/repo', web_url: 'http://gitlab.example.com:8080/gitlab/group/repo' };
+  const W = 'http://gitlab.example.com:8080/gitlab/group/repo/-';
+  assert.equal(gitLabProjectUrl(web), 'http://gitlab.example.com:8080/gitlab/group/repo');
+  assert.equal(gitLabWebHost(web), 'gitlab.example.com:8080');
+  assert.equal(gitLabTreeUrl(web, 'feat/a'), `${W}/tree/feat/a`);
+  assert.equal(gitLabCompareUrl(web, 'main', 'feat/a'), `${W}/compare/main...feat/a`);
+  assert.equal(gitLabCommitUrl(web, 'a'.repeat(40)), `${W}/commit/${'a'.repeat(40)}`);
+  assert.equal(gitLabUrl({ kind: 'mr', id: 2 }, web), `${W}/merge_requests/2`);
+  assert.equal(gitLabUrl({ kind: 'epic', id: 3 }, web), 'http://gitlab.example.com:8080/gitlab/groups/group/-/epics/3');
+  assert.equal(gitLabMarkdown('![a](/uploads/x/a.png)', web), '![a](http://gitlab.example.com:8080/gitlab/group/repo/uploads/x/a.png)');
+  assert.deepEqual(parseGitLabUrl(`${W}/merge_requests/2`, web), { kind: 'mr', id: 2 });
+  assert.deepEqual(parseGitLabUrl('http://gitlab.example.com:8080/gitlab/groups/group/-/epics/3', web), { kind: 'epic', id: 3 });
+  assert.deepEqual(parseGitLabUrl('https://ssh.example.com/group/repo/-/issues/4', web), { kind: 'issue', id: 4 });
+  assert.equal(parseGitLabUrl('http://gitlab.example.com:8080/group/repo/-/merge_requests/2', web), null);
+  assert.equal(parseGitLabUrl('http://gitlab.example.com/gitlab/group/repo/-/merge_requests/2', web), null);
+  assert.equal(isGitLabProjectUrl('http://gitlab.example.com:8080/gitlab/group/repo', web), true);
+  assert.equal(isGitLabCommitUrl(`${W}/commit/${'b'.repeat(40)}`, web), true);
+  assert.equal(gitLabCandidates([{ id: 'x', kind: 'assistant', time: at(1), text: 'see gitlab.example.com:8080' }], web).length, 1);
 });
 
 test('a reply\'s prose names merge requests and pipelines for the bar, after its links; issues, jobs, code and other projects do not count', () => {

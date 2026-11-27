@@ -469,9 +469,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   password, at most 2,048 characters. UAM detects it once from the `origin`
   remote when the Project is added, or the first time one of its Threads is
   opened: `github.com` gets GitHub's `/tree/{branch}`, every other host
-  GitLab's `/-/tree/{branch}`. **Detect from git remote** in Edit project
+  GitLab's `/-/tree/{branch}`, on the GitLab project's web address when
+  `glab` reads an https one (see GitLab web addresses below), else on the
+  remote's host. **Detect from git remote** in Edit project
   fills the field again from `origin` without saving it
-  (`POST /api/projects/{id}/branch-link/detect`); clearing the field turns
+  (`POST /api/projects/{id}/branch-link/detect`, which also returns `source`:
+  `gitlab` with the project's `gitlab_url`, or `remote`) and says under the
+  field whether the link was read from GitLab or built from the origin
+  remote; clearing the field turns
   the link off, and it is not detected again. The Thread header then links
   the Thread's branch on the web. A branch with no `origin/<branch>`
   remote-tracking ref (not pushed yet) links origin's default branch
@@ -2938,6 +2943,24 @@ is discarded. This does not add a new setting or guarantee pipeline success.
 
 The gate uses the SDK session directory, not a shell `cd` destination. Shell
 aliases, computed command heads and other wrappers are not interpreted.
+
+## GitLab web addresses
+
+Every GitLab link UAM shows (the project, its merge requests, issues,
+pipelines, jobs, epics, branches, compares and commits, uploads in GitLab
+Markdown, and a Project's detected branch link) starts from the project's
+web address. UAM reads it once per `origin` remote URL with
+`glab repo view -F json` in the checkout, once `glab` is signed in to the
+remote's host, and reads it again only when the remote URL changes, or a
+minute after a failed read. `web_url` must be http or https with a host, no
+user name, query or fragment, and end with the remote's project path;
+anything else is ignored. So an SSH remote on `ssh.example.com` links
+`https://gitlab.example.com:8443/gitlab/group/repo` when that is the
+project's web address. Without it (glab missing, signed out, or the read
+failed) links are built from the remote: https on its host, no port or
+sub-path. Addresses GitLab returns for items are kept only on the web
+address's scheme and host, or https on the remote's host. The address is
+held in memory, never saved.
 
 ## GitLab from the conversation
 

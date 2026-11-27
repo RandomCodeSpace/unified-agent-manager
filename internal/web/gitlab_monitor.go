@@ -64,6 +64,9 @@ type GitLabPipelineState struct {
 type GitLabOrigin struct {
 	Host string `json:"host"`
 	Path string `json:"path"`
+	// WebURL is the project's web address: glab's web_url when it read one,
+	// else https on Host. It always ends with "/" + Path.
+	WebURL string `json:"web_url"`
 }
 
 func gitLabCommitKey(host, path, sha string) string {
@@ -141,6 +144,7 @@ func (m *Manager) gitLabSelection(ctx context.Context, id string) (string, store
 		out.Message = "This Thread has no GitLab origin."
 		return "", store.WebGitLabCommit{}, gate, out, nil
 	}
+	gate = m.glab.withWeb(ctx, gate)
 	out.Supported = true
 	branch, err := glabGit(ctx, t.workdir, "symbolic-ref", "--quiet", "--short", "HEAD")
 	branch = strings.TrimSpace(branch)
@@ -636,7 +640,7 @@ func (s *Server) registerGitLabRoutes(mux *http.ServeMux) {
 			return
 		}
 		if gate, ok := s.m.gitLabOrigin(r.Context(), r.PathValue("id")); ok {
-			out.Origin = &GitLabOrigin{Host: gate.Host, Path: gate.Path}
+			out.Origin = &GitLabOrigin{Host: gate.Host, Path: gate.Path, WebURL: gate.webURL()}
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
