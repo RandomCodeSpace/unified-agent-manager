@@ -12,6 +12,8 @@ async function attach(page: Page, name: string) {
   await page.getByRole('button', { name: /^Attach files/ }).click();
   await (await chooser).setFiles([upload(name)]);
   await expect(chip(page, name)).toBeVisible();
+  // Enter is refused while the upload runs (Wait for the upload to finish).
+  await expect(page.getByText(/^Uploading…/)).toHaveCount(0);
 }
 
 /** The text parts of the last user message, without the CLI's own date stamp. */
