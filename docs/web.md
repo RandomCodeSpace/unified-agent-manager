@@ -1363,7 +1363,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   always opens the latest version, `…/v/<n>/` that version; a deleted
   version's number is never reused. Pages run in the same opaque-origin
   sandbox as the file preview (see File previews), and load scripts, styles,
-  images and fonts only from uam itself, never from other hosts. A branch
+  images and fonts only from uam itself, never from other hosts. Because
+  that origin is opaque, a publish bundles each HTML file's module scripts
+  (`src` or inline, with their relative JavaScript, TypeScript, JSX, JSON and
+  CSS imports) into one classic `<name>.uam-bundle.js` (and
+  `.uam-bundle.css`) beside it with esbuild, and rewrites the page to load
+  it; a linked style sheet that names fonts gets a copy with them inlined
+  as `data:` URLs (up to 2 MiB each). esbuild reads only the snapshot's own
+  files: imports of packages, of files outside the folder and of other file
+  types leave that page as it was, and the tool result names it and why.
+  The original files stay in the snapshot, the page as
+  `<name>.uam-original.html`; bundles count toward its caps, and bundling
+  reads at most 16 MiB and stops after 20 s. `fetch` of its own files,
+  `localStorage` and root-relative `/` paths still do not work. A branch
   copies its source's pages. The
   pages go when the Thread is deleted. On a connected instance the versioned
   links work; the latest link is local only.

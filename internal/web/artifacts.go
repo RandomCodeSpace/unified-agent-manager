@@ -76,7 +76,7 @@ var publishTool = agentapi.HostTool{
 	Description: "Publish a page you built in the thread's directory so the owner can open it from uam: a folder with index.html at its top (with its own CSS, scripts, images and fonts) or one file. " +
 		"uam copies a snapshot of it, so later edits do not change what was published; publish again with the same title or id for a new version. " +
 		fmt.Sprintf("A snapshot leaves out .git, node_modules and .env files, links and hard-linked files and holds at most %d files and folders and %d MiB; an artifact keeps its last %d versions. ", maxArtifactFiles, maxArtifactBytes>>20, maxArtifactVersions) +
-		"The page runs sandboxed: use relative paths and classic scripts. ES modules, fetch of its own files, localStorage, network calls and files from other hosts do not work. " +
+		"The page runs sandboxed: use relative paths. uam bundles its ES module scripts, with their relative JavaScript, TypeScript, JSX, JSON and CSS imports, into classic scripts and inlines the fonts its style sheets name, keeping the original files; imports of packages are not bundled (copy the library into the folder and import it by a relative path). fetch of its own files, localStorage, root-relative / paths, network calls and files from other hosts do not work. " +
 		"To point the owner at a file without publishing it, use uam_show_file.",
 	Parameters: toolSchema([]string{"path", "title"}, map[string]any{
 		"path":  stringProp("The folder or file to publish, relative to the thread's directory or absolute inside it."),
@@ -441,6 +441,7 @@ func (m *Manager) publish(ctx context.Context, taskID string, call agentapi.Host
 	if err != nil {
 		return "", err
 	}
+	bundled, warnings := bundlePages(ctx, staging, &snap)
 	version := a.Last + 1
 	if len(a.Versions) > 0 {
 		version = max(version, a.Versions[len(a.Versions)-1].Version+1)
@@ -488,7 +489,21 @@ func (m *Manager) publish(ctx context.Context, taskID string, call agentapi.Host
 		}
 		text += "."
 	}
+	text += listed(" Bundled module scripts and fonts so they run in the sandbox (the original page is kept beside it as <name>.uam-original.html): ", bundled)
+	text += listed(" Not bundled, so these may not run: ", warnings)
 	return text, nil
+}
+
+// listed is prefix and the first 10 items, or nothing without any.
+func listed(prefix string, items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	text := prefix + strings.Join(items[:min(len(items), 10)], "; ")
+	if len(items) > 10 {
+		text += "; …"
+	}
+	return text + "."
 }
 
 // reconcileArtifacts removes what an interrupted publish left under root

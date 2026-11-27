@@ -61,3 +61,28 @@ test('a published site opens from its card, republishing adds a version, and the
   await panel.getByRole('button', { name: 'Open version 2 of Demo site' }).click();
   await expect(page.getByRole('complementary', { name: 'Preview Demo site' }).locator('iframe').contentFrame().getByText('second build')).toBeVisible();
 });
+
+test('a published module page runs in the preview: its imports, JSON and CSS are bundled and its font is inlined', async ({ page, project, model, workdir }) => {
+  const site = path.join(workdir, 'modsite');
+  fs.mkdirSync(path.join(site, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'index.html'), '<!doctype html><link rel="stylesheet" href="fonts.css"><p id="out"></p><p id="font"></p>' +
+    '<script type="module" src="main.js"></script><script type="module">import { greet } from "./lib/greet.js"; document.getElementById("out").dataset.inline = greet("inline");</script>\n');
+  fs.writeFileSync(path.join(site, 'main.js'), "import { greet } from './lib/greet.js';\nimport data from './data.json';\nimport './style.css';\n" +
+    "document.getElementById('out').textContent = greet(data.name);\n" +
+    "document.fonts.load('16px Published').then(() => { document.getElementById('font').textContent = document.fonts.check('16px Published') ? 'font loaded' : 'font missing'; });\n");
+  fs.writeFileSync(path.join(site, 'lib', 'greet.js'), 'export const greet = (name) => `module says ${name}`;\n');
+  fs.writeFileSync(path.join(site, 'data.json'), '{ "name": "hello from JSON" }\n');
+  fs.writeFileSync(path.join(site, 'style.css'), '#out { color: rgb(0, 120, 0) }\n');
+  fs.writeFileSync(path.join(site, 'fonts.css'), '@font-face { font-family: Published; src: url(face.woff2) format("woff2") }\n');
+  fs.copyFileSync(path.join(import.meta.dirname, '..', 'node_modules', 'katex', 'dist', 'fonts', 'KaTeX_Main-Regular.woff2'), path.join(site, 'face.woff2'));
+  model.toolRound('publish the module site', [{ id: 'call_mod1', name: 'uam_publish', arguments: { path: 'modsite', title: 'Module site' } }], 'Published the module site.');
+  await startThread(page, project, 'publish the module site');
+  const conv = conversation(page);
+  await expect(conv.getByText('Published the module site.')).toBeVisible();
+  await conv.getByRole('region', { name: 'Published: Module site' }).getByRole('button', { name: 'Open' }).click();
+  const frame = page.getByRole('complementary', { name: 'Preview Module site' }).locator('iframe').contentFrame();
+  await expect(frame.locator('#out')).toHaveText('module says hello from JSON');
+  await expect(frame.locator('#out')).toHaveAttribute('data-inline', 'module says inline');
+  await expect.poll(() => frame.locator('#out').evaluate((el) => getComputedStyle(el).color)).toBe('rgb(0, 120, 0)');
+  await expect(frame.locator('#font')).toHaveText('font loaded');
+});
