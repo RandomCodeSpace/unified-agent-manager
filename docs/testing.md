@@ -39,7 +39,7 @@ aimock fails them. `UAM_AIMOCK_CLI` overrides the path of aimock's `cli.js`.
 `uam` serving its web interface, the real `copilot` CLI with no GitHub login,
 and aimock as the model, through a custom model named `mock`. It spends no AI
 credits, needs no secrets and uses only loopback. CI runs it as `test-ui`, in
-three shards, in the merge queue and before a release; it is one of the jobs
+four shards, in the merge queue and before a release; it is one of the jobs
 the required `ci` check waits for.
 
 **The rule:** a fix for a `uam web` bug lands with the spec that reproduces it,
@@ -71,7 +71,9 @@ Each Playwright worker starts its own aimock (in process) and its own service
 loopback ports with a fresh `HOME`, config, session and cache directory, signs
 in and registers the mock model. Each test gets a fresh Project directory (a
 git repository with one commit of `README.md`), so cases are independent and
-run in parallel and in any order. There are no retries: a flaky case fails.
+run in parallel and in any order. Locally there are no retries: a flaky case
+fails. CI retries a failed case once, and the report lists a case that passed
+on its retry as flaky; fix it rather than lean on the retry.
 
 ### Writing a case
 

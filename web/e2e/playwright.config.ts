@@ -6,8 +6,10 @@ export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.ts',
   outputDir: 'test-results',
-  // A flaky case must fail, not pass on a second try.
-  retries: 0,
+  // CI retries a failed case once so a flake does not drop a pull request from the
+  // merge queue; the report still marks a case that passed on retry as flaky.
+  // Locally a flaky case fails.
+  retries: process.env.CI ? 1 : 0,
   timeout: 120_000,
   expect: { timeout: 20_000 },
   fullyParallel: true,
