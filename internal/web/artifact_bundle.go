@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -53,6 +54,7 @@ type bundler struct {
 	ctx      context.Context
 	root     *os.Root
 	snap     *snapshotter
+	mu       sync.Mutex // esbuild loads files on several goroutines: guards read and the build counts
 	read     int64
 	bundled  []string
 	warnings []string
@@ -414,18 +416,24 @@ func (b *bundler) load(build *bundleBuild, args api.OnLoadArgs) (api.OnLoadResul
 	if loader == api.LoaderDataURL && info.Size() > maxInlineFont {
 		return api.OnLoadResult{}, fmt.Errorf("%s is larger than %d MiB, too large to inline", args.Path, maxInlineFont>>20)
 	}
-	if b.read += info.Size(); b.read > maxBundleInput {
+	b.mu.Lock()
+	b.read += info.Size()
+	over := b.read > maxBundleInput
+	b.mu.Unlock()
+	if over {
 		return api.OnLoadResult{}, fmt.Errorf("the page's files pass %d MiB, too much to bundle", maxBundleInput>>20)
 	}
 	data, err := b.root.ReadFile(args.Path)
 	if err != nil {
 		return api.OnLoadResult{}, fmt.Errorf("%s cannot be read", args.Path)
 	}
+	b.mu.Lock()
 	if loader == api.LoaderDataURL {
 		build.fonts++
 	} else {
 		build.files++
 	}
+	b.mu.Unlock()
 	text := string(data)
 	return api.OnLoadResult{Contents: &text, Loader: loader}, nil
 }
