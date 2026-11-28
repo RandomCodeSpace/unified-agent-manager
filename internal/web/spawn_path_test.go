@@ -227,6 +227,9 @@ func TestGitScopeKeepsAWorktreeThreadInItsWorktree(t *testing.T) {
 	run := func(command string) string {
 		return m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "bash", Workdir: s.workdir, Args: map[string]any{"command": command}}).Deny
 	}
+	if deny := run("git switch -q -c feat/d"); deny != "" {
+		t.Fatalf("a Thread in the Project folder may make a branch: %q", deny)
+	}
 	if deny := run("git -C " + main + " status"); deny != "" {
 		t.Fatalf("a Thread in the Project folder was limited: %q", deny)
 	}
@@ -250,8 +253,9 @@ func TestGitScopeKeepsAWorktreeThreadInItsWorktree(t *testing.T) {
 		"git -c core.worktree=" + main + " status":   true,
 		"GIT_DIR=.git git log":                       false,
 		"git -c user.name=x commit -m y":             false,
+		"git switch -c other":                        true,
 	} {
-		if got := run(command); (got != "") != deny || deny && !strings.Contains(got, "uam scope: git ") {
+		if got := run(command); (got != "") != deny || deny && !strings.Contains(got, "uam scope: git ") && !strings.HasPrefix(got, gitGuardLead) {
 			t.Errorf("%q: deny = %q", command, got)
 		}
 	}

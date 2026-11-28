@@ -48,6 +48,10 @@ func gitGuardToolUse(use agentapi.ToolUse, scope string) string {
 			if deny := gitScopeCall(words, assigns, use.Workdir, scope); deny != "" {
 				return deny
 			}
+			// A Thread's own worktree stays on the branch it was made on.
+			if sub, _ := gitSubcommand(words); sub == "switch" {
+				return gitGuardLead + "this thread's worktree stays on its own branch; commit there, and start another thread for work on another branch."
+			}
 		}
 		return gitGuardCall(words)
 	})
@@ -183,8 +187,6 @@ func gitGuardCall(words []string) string {
 		if len(opts) > 0 && opts[0] == "remove" && (short('f') || slices.Contains(opts[1:], "--force")) {
 			return gitGuardLead + "worktrees are uam's to remove; settle the thread or let the owner remove it in Settings instead of git worktree remove --force."
 		}
-	case "switch":
-		return gitGuardLead + "the Project folder's branch is the owner's; ask the owner to switch it from the composer's branch menu."
 	case "push":
 		if short('f') || slices.Contains(opts, "--force") || slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "+") }) {
 			return gitGuardLead + "use git push --force-with-lease, which refuses to overwrite commits you have not seen, not --force, -f or a +refspec."

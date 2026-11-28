@@ -1571,7 +1571,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `git checkout` or `git restore` with a blanket pathspec (`.`, `./`, `:/`,
   `*`; `git restore --staged .` alone stays allowed), `git branch -D` /
   `--delete --force` / `-df`, `git worktree remove -f` / `--force`,
-  `git switch`, a force push without `--force-with-lease`, an unnamed or
+  `git switch` in a Thread's own worktree, a force push without `--force-with-lease`, an unnamed or
   top-of-stack `git stash`, and `--no-verify` — naming the safe alternative
   in each refusal.
 - **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or

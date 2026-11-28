@@ -69,10 +69,6 @@ func TestGitGuard(t *testing.T) {
 		"git worktree remove --force ../wt",
 		"git worktree remove ../wt -f",
 		"git worktree remove --force -- ../wt",
-		"git switch main",
-		"git switch -c feat",
-		"git switch -",
-		"git -C ../repo switch main",
 		"echo $(git stash)",
 		"for b in a b; do git push -f origin $b; done",
 	}
