@@ -1584,9 +1584,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   before they run where they write. A Thread in its own worktree also
   runs git only on it: `git -C`, `--git-dir` and `--work-tree` naming
   another folder are refused (literal words only, as the git guard reads
-  them), and in Allow all or Assisted mode a Copilot request to write or
-  run a shell command on a path outside that folder waits for the owner
-  instead of being approved; requests to read such paths still are.
+  them), and in Allow all or Assisted mode a Copilot request to write a
+  path outside that folder, or to run a shell command on the Project's own
+  folder or another Thread's worktree, waits for the owner instead of being
+  approved; reads, and shell commands on other paths (`/dev/null`, caches),
+  still are.
 - **Blocked web hosts**: the first `web_fetch` of any URL is always made.
   When it fails with status 401, 403, 407 or 451, every Thread on the server
   skips that host and first path segment for 4 days (a 429, for 10

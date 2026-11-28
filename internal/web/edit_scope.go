@@ -46,15 +46,35 @@ func (m *Manager) writableLocked(s *webSession, path string) bool {
 }
 
 // pathOutsideWorktreeLocked reports a request of a Thread in its own
-// worktree to write, or to run a shell command on, a path outside what it
-// may write: never answered automatically, so the owner decides. A shell
-// request does not say whether it reads or writes, so it is not refused.
-// The caller holds m.mu.
+// worktree that is never answered automatically, so the owner decides: to
+// write a path outside what it may write, or to run a shell command on a
+// path in the Project's own folder or another Thread's worktree. A shell
+// request does not say whether it reads or writes, so it is not refused,
+// and one on any other path (/dev/null, a cache) is still answered. The
+// caller holds m.mu.
 func (m *Manager) pathOutsideWorktreeLocked(s *webSession, ix *interaction) bool {
 	if s.place == nil || s.place.Mode != placeWorktree || ix.PathAccess != "write" && ix.PathAccess != "shell" {
 		return false
 	}
-	return slices.ContainsFunc(ix.Paths, func(p string) bool { return !m.writableLocked(s, resolvedPath(rawJoin(s.workdir, p))) })
+	return slices.ContainsFunc(ix.Paths, func(p string) bool {
+		path := resolvedPath(rawJoin(s.workdir, p))
+		return !m.writableLocked(s, path) && (ix.PathAccess == "write" || m.othersFolderLocked(s, path))
+	})
+}
+
+// othersFolderLocked reports whether the resolved path is in the folder of
+// s's Project or in the worktree of another Thread of it: work s must not
+// touch. The caller holds m.mu.
+func (m *Manager) othersFolderLocked(s *webSession, path string) bool {
+	if p := m.projects[s.projectID]; p != nil && withinDir(resolvedPath(p.Dir), path) {
+		return true
+	}
+	for _, o := range m.sessions {
+		if o != s && !o.removed && o.projectID == s.projectID && o.place != nil && o.place.Worktree != "" && withinDir(resolvedPath(o.place.Worktree), path) {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionStateDirLocked is the Copilot session folder of s's conversation;

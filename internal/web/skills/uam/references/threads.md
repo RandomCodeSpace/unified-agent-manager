@@ -5,8 +5,9 @@ Use it when the owner asks for work to run as its own Thread, and for any
 change outside your own Thread's folder: uam refuses edit tools there
 (`uam scope:`), because such a change is tracked by no Thread. In your own
 worktree, uam also refuses `git -C`, `--git-dir` and `--work-tree` naming
-another folder, and asks the owner before a shell command or write on a
-path outside it, even in Allow all. Do not write
+another folder, and asks the owner before a write outside it or a shell
+command on the Project's folder or another Thread's worktree, even in Allow
+all. Do not write
 outside your folder with shell commands either; uam cannot see where they
 write, but the rule is the same. Committing and pushing your own branch is
 not such a write.
