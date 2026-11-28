@@ -531,6 +531,11 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 		_, _ = runGitWrite(ctx, repo.top, nil, "branch", "-D", branch)
 	}
 	workdir := filepath.Join(path, filepath.FromSlash(strings.TrimSpace(string(prefix))))
+	// The Project's folder may be untracked, or not on the base at all.
+	if _, err := os.Stat(workdir); err != nil {
+		undo()
+		return "", nil, none, newError(http.StatusConflict, "the folder %s is not on %s", strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/"), clipRunes(displaytext.Sanitize(cmp.Or(base, start)), maxDetailRunes))
+	}
 	return workdir, &store.WebPlace{Mode: placeWorktree, Branch: branch, Base: base, Worktree: path}, undo, nil
 }
 

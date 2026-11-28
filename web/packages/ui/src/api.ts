@@ -636,7 +636,7 @@ export interface Settings {
   output_styles?: OutputStyle[];
   /** The default style's name; absent for the provider's own. */
   output_style?: string;
-  /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
+  /** A folder servers with `worktree-folder-v1` put new Thread worktrees in; current servers only keep its worktrees listed and place new ones as the Copilot CLI does. PATCH `''` clears it; a leading `~` is the home folder. */
   worktrees_dir?: string;
 }
 

@@ -146,16 +146,7 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	if err != nil || repo == nil {
 		return "", false
 	}
-	// git answers with a command's trimmed output and exit code, -1 when it
-	// could not run or said more than is kept.
-	const limit = 1 << 20
-	git := func(args ...string) (string, int) {
-		out, code, _, err := runGit(ctx, repo.git, repo.top, limit, args...)
-		if err != nil || len(out) >= limit {
-			return "", -1
-		}
-		return strings.TrimSpace(string(out)), code
-	}
+	git := gitAnswer(ctx, repo)
 	ref := "refs/heads/" + branch
 	if head, code := git("symbolic-ref", "--quiet", "HEAD"); code != 0 || head != ref {
 		return "", false
@@ -178,31 +169,8 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 	// Reflogs too long for one command line fail it, which keeps everything.
 	// shortcut: a rebased branch stays unproven, compare patch IDs if those Threads should settle too.
 	wandered, read := git("reflog", "show", "--format=%H", "HEAD")
-	held := strings.Fields(moves + "\n" + wandered)
-	slices.Sort(held)
-	held = slices.Compact(held)
-	if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); read != 0 || code != 0 || lost != "" {
+	if read != 0 || !landed(git, strings.Fields(moves+"\n"+wandered), tip, target) {
 		return "", true
-	}
-	if _, code := git("merge-base", "--is-ancestor", tip, target); code != 0 {
-		if code != 1 {
-			return "", true
-		}
-		base, code := git("merge-base", tip, target)
-		if code != 0 || base == "" {
-			return "", true
-		}
-		// The trees of the merge base, the branch and def.
-		out, code := git("rev-parse", base+"^{tree}", tip+"^{tree}", target+"^{tree}")
-		trees := strings.Fields(out)
-		if code != 0 || len(trees) != 3 || trees[0] == trees[1] {
-			return "", true
-		}
-		// merge-tree writes the merged tree's objects and nothing else: no
-		// ref, index or file changes.
-		if out, code := git("merge-tree", "--write-tree", target, tip); code != 0 || firstLine(out) != trees[2] {
-			return "", true
-		}
 	}
 	if entries, truncated, err := repo.status(ctx); err != nil || truncated || len(entries) > 0 {
 		return "", false
@@ -217,6 +185,51 @@ func mergedTip(ctx context.Context, path, branch, def string) (tip string, unpro
 		}
 	}
 	return tip, false
+}
+
+// gitAnswer runs git in repo and answers with a command's trimmed output
+// and exit code, -1 when it could not run or said more than is kept.
+func gitAnswer(ctx context.Context, repo *gitRepo) func(args ...string) (string, int) {
+	const limit = 1 << 20
+	return func(args ...string) (string, int) {
+		out, code, _, err := runGit(ctx, repo.git, repo.top, limit, args...)
+		if err != nil || len(out) >= limit {
+			return "", -1
+		}
+		return strings.TrimSpace(string(out)), code
+	}
+}
+
+// landed is the part of mergedTip's proof the refs alone give: every commit
+// in held, the ones reflogs name, is in the history of tip or of target,
+// and tip's work is on target (rule 2). Any doubt is false.
+func landed(git func(args ...string) (string, int), held []string, tip, target string) bool {
+	slices.Sort(held)
+	held = slices.Compact(held)
+	if len(held) > 0 {
+		if lost, code := git(append(append([]string{"rev-list", "--max-count=1"}, held...), "--not", tip, target)...); code != 0 || lost != "" {
+			return false
+		}
+	}
+	if _, code := git("merge-base", "--is-ancestor", tip, target); code == 0 {
+		return true
+	} else if code != 1 {
+		return false
+	}
+	base, code := git("merge-base", tip, target)
+	if code != 0 || base == "" {
+		return false
+	}
+	// The trees of the merge base, the branch and def.
+	out, code := git("rev-parse", base+"^{tree}", tip+"^{tree}", target+"^{tree}")
+	trees := strings.Fields(out)
+	if code != 0 || len(trees) != 3 || trees[0] == trees[1] {
+		return false
+	}
+	// merge-tree writes the merged tree's objects and nothing else: no
+	// ref, index or file changes.
+	out, code = git("merge-tree", "--write-tree", target, tip)
+	return code == 0 && firstLine(out) == trees[2]
 }
 
 // sweepSettle settles, as by, every Task settleable reports, then writes

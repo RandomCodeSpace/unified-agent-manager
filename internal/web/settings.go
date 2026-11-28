@@ -73,8 +73,9 @@ type SettingsPatch struct {
 	OutputStyle *string
 	// CoAuthor sets the co-author trailer; a name must fit on one line.
 	CoAuthor *store.WebCoAuthor
-	// WorktreesDir sets the folder new worktrees go in; "" puts the
-	// default back. A leading ~ is the home folder.
+	// WorktreesDir names a folder of earlier worktrees to keep listed
+	// (worktreeRoots), "" for none; new worktrees do not go there. A
+	// leading ~ is the home folder.
 	WorktreesDir *string
 }
 

@@ -944,11 +944,11 @@ type WebSettings struct {
 	OutputStyle  string           `json:"output_style,omitempty"`
 	// CoAuthor is the co-author trailer of agents' commits. Off when absent.
 	CoAuthor WebCoAuthor `json:"coauthor,omitzero"`
-	// WorktreesDir is the absolute folder new Thread worktrees go in;
-	// ~/.uam/worktrees when empty.
+	// WorktreesDir is a folder earlier versions put Thread worktrees in,
+	// still listed; new worktrees do not go there.
 	WorktreesDir string `json:"worktrees_dir,omitempty"`
-	// WorktreeRoots are the folders new worktrees went in before
-	// WorktreesDir last changed; the worktrees left there are still listed.
+	// WorktreeRoots are the folders WorktreesDir named before it last
+	// changed; the worktrees left there are still listed.
 	WorktreeRoots []string `json:"worktree_roots,omitempty"`
 
 	unknown map[string]json.RawMessage

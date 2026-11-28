@@ -572,7 +572,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - A Thread whose branch has landed on the default branch settles itself
     and its `uam/…` branch is removed with the worktree (see Settle below).
     Using that Thread again, or branching from it, starts the branch again
-    from origin's default branch, which holds its work.
+    from origin's default branch, which holds its work. The same hourly
+    check removes the `uam/…` branch of a Thread you settled, archived or
+    deleted yourself, once its worktree is gone and the refs on disk prove
+    its work is on origin's default branch; a branch without that proof, one
+    checked out anywhere, and one an active Thread has are kept.
+  - A Project that is a folder inside its repository needs that folder on
+    the base branch: a worktree without it is refused (409) and taken back.
   - Worktrees earlier versions made in `~/.uam/worktrees` or the folder
     Settings named (`worktrees_dir` in `PATCH /api/settings`, still
     accepted) stay where they are and are still listed, removed on settling
@@ -2467,7 +2473,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or not, to put it away. **Unarchive** restores the same Thread as Finished,
   keeps its conversation and starts no turn. Only
   an archived Thread can be deleted, and a Project can be removed only once
-  every Thread in it is archived. Deleting or removing never deletes the
+  every Thread in it is archived and none of the worktrees uam made for it
+  is still on disk (remove those under Settings → Projects & worktrees
+  first: without the Project nothing would list them). Deleting or removing never deletes the
   provider's copy of the conversation and never touches the directory. It does
   delete the files you attached to the Thread's prompts and the images its
   tools returned, which UAM keeps in
@@ -2481,7 +2489,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   | Archive | an active or settled Thread | for an active Thread, the same as Settle | Put away, read-only until unarchived |
   | Unarchive | an archived Thread | – | Finished and active again; the next message continues the same conversation |
   | Delete Thread | an archived Thread | – | The Thread is removed from UAM |
-  | Remove Project | any Project | every Thread in it archived, or no Threads | The Project, its archived Threads, its routines and the prompts saved for it are removed from UAM |
+  | Remove Project | any Project | every Thread in it archived, or no Threads, and no worktree of it left on disk | The Project, its archived Threads, its routines and the prompts saved for it are removed from UAM |
 
   A settled or archived Thread takes no messages, queue actions, model, effort,
   context-size or mode changes. You can still rename a settled Thread. Stop a

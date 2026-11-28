@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -212,6 +213,43 @@ func (m *Manager) RemoveProject(id string) error {
 	return m.removeProject(id)
 }
 
+// projectWorktrees are the worktrees on disk uam made for Project id: its
+// Threads' own and the uam/… ones of its repository no other Project's
+// Thread has. It waits for the removals archiving started.
+func (m *Manager) projectWorktrees(id string) []string {
+	m.worktrees.ops.Lock()
+	defer m.worktrees.ops.Unlock()
+	var own, others []string
+	m.mu.Lock()
+	dir := m.projects[id].Dir
+	for _, s := range m.sessions {
+		if s.removed || s.place == nil || s.place.Worktree == "" {
+			continue
+		}
+		if s.projectID == id {
+			own = append(own, s.place.Worktree)
+		} else {
+			others = append(others, resolvedPath(s.place.Worktree))
+		}
+	}
+	m.mu.Unlock()
+	for _, path := range uamWorktrees(m.ctx, dir) {
+		if !slices.Contains(others, resolvedPath(path)) {
+			own = append(own, path)
+		}
+	}
+	for i, path := range own {
+		own[i] = resolvedPath(path)
+	}
+	var out []string
+	for _, path := range m.allWorktreeDirs(m.ctx) {
+		if slices.Contains(own, resolvedPath(path)) {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
 func (m *Manager) removeProject(id string) error {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
@@ -242,7 +280,16 @@ func (m *Manager) removeProject(id string) error {
 	case closed:
 		return errShuttingDown
 	case unarchived:
-		return newError(http.StatusConflict, "archive every thread in this project first")
+		return newError(http.StatusConflict, "Archive every thread in this project before removing it.")
+	}
+	// Without the Project nothing lists its worktrees: they go first.
+	if left := m.projectWorktrees(id); len(left) > 0 {
+		shown := strings.Join(left[:min(len(left), 3)], ", ")
+		if len(left) > 3 {
+			shown += ", …"
+		}
+		return newError(http.StatusConflict, "%d %s of this project %s still on disk (%s). Remove %s under Settings → Projects & worktrees first.",
+			len(left), plural(len(left), "worktree", "worktrees"), plural(len(left), "is", "are"), shown, plural(len(left), "it", "them"))
 	}
 	// The Project's routines go with it, in the same write.
 	m.routines.mu.Lock()

@@ -581,6 +581,82 @@ func removeMergedBranch(ctx context.Context, dir, branch, tip string) bool {
 	return true
 }
 
+// removeLandedBranches deletes the uam/… branches Threads left behind when
+// the owner settled, archived or deleted them: the merged-work sweep
+// removes a branch only for a Thread it settles itself. A branch goes only
+// while no worktree has it checked out, no active Thread, Thread with its
+// worktree on disk or Thread outside a worktree of its own has it, and the
+// refs on disk prove its work is on origin's default branch (landed). It
+// runs in the hourly sweep and fetches nothing.
+// shortcut: every unproven branch is read again each hour, remember them per commit if that costs.
+func (m *Manager) removeLandedBranches() {
+	type owned struct{ branch, worktree string }
+	var dirs []string
+	var threads []owned
+	keep := map[string]bool{}
+	m.mu.Lock()
+	for _, p := range m.projects {
+		dirs = append(dirs, p.Dir)
+	}
+	for _, s := range m.sessions {
+		switch {
+		case s.removed || s.place == nil:
+		case s.stage == StageActive || s.place.Worktree == "":
+			keep[s.place.Branch] = true
+		default:
+			threads = append(threads, owned{s.place.Branch, s.place.Worktree})
+		}
+	}
+	m.mu.Unlock()
+	for _, t := range threads {
+		if _, err := os.Lstat(t.worktree); !errors.Is(err, fs.ErrNotExist) {
+			keep[t.branch] = true
+		}
+	}
+	// Recreating a worktree from its branch waits for this.
+	m.worktrees.ops.Lock()
+	defer m.worktrees.ops.Unlock()
+	done := map[string]bool{}
+	for _, dir := range dirs {
+		repo, _, err := openRepo(m.ctx, dir)
+		if err != nil || repo == nil || done[repo.top] {
+			continue
+		}
+		done[repo.top] = true
+		def := readDefaultBranch(m.ctx, repo.top)
+		if def == "" {
+			continue
+		}
+		git := gitAnswer(m.ctx, repo)
+		refs, code := git("for-each-ref", "--format=%(refname) %(objectname) %(worktreepath)", "refs/heads/"+branchPrefix)
+		if code != 0 || refs == "" {
+			continue
+		}
+		target, code := git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+def+"^{commit}")
+		if code != 0 || target == "" {
+			continue
+		}
+		for line := range strings.Lines(refs) {
+			// A third field is the worktree that has the branch checked out.
+			f := strings.Fields(line)
+			if len(f) != 2 {
+				continue
+			}
+			branch := strings.TrimPrefix(f[0], "refs/heads/")
+			if keep[branch] || branch == def {
+				continue
+			}
+			moves, code := git("reflog", "show", "--format=%H", f[0])
+			if code != 0 || !landed(git, strings.Fields(moves), f[1], target) {
+				continue
+			}
+			if removeMergedBranch(m.ctx, repo.top, branch, f[1]) {
+				m.count("merged_removed")
+			}
+		}
+	}
+}
+
 // kickForkWorktreesRemoveLocked removes in the background the worktrees and
 // branches made for branch requests that were dismissed or lost their
 // source. One a Thread uses, or with changes, is kept, and so is a branch
