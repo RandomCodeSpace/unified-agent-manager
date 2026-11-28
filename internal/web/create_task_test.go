@@ -714,4 +714,49 @@ func TestCreateTaskChildMergesIntoCreatorBranch(t *testing.T) {
 	if ins := taskConv(t, ts.prov, explicit.ID).Request().Instructions; strings.Contains(ins, "Do not push,") {
 		t.Fatalf("an explicit base still merges into the creator: %q", ins)
 	}
+
+	wantDeny := fmt.Sprintf("uam: this thread's branch %s is merged by the thread that started it, so it is not pushed; commit and say what you committed.", sum.Worktree.Branch)
+	ts.m.mu.Lock()
+	childSession := ts.m.sessions[sum.ID]
+	explicitSession := ts.m.sessions[explicit.ID]
+	ts.m.mu.Unlock()
+
+	for _, cmd := range []string{
+		"git push",
+		"git push -u origin HEAD",
+		"git -C . push origin HEAD",
+		"git push --force-with-lease origin HEAD",
+		"git commit -m ok && git push",
+		"echo $(git push)",
+		"gh pr create --title x --body y",
+		"/usr/bin/gh pr create",
+		"gh -R org/repo pr create",
+		"gh pr -R org/repo create",
+		"glab mr create --fill",
+		"glab -R grp/proj mr create",
+		"glab mr --repo=grp/proj create",
+	} {
+		got := ts.m.preToolUse(t.Context(), childSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}})
+		if got.Deny != wantDeny {
+			t.Errorf("child %q: deny = %q, want %q", cmd, got.Deny, wantDeny)
+		}
+	}
+	for _, cmd := range []string{
+		"git status",
+		"git commit -m 'never git push or gh pr create'",
+		"gh pr view 12",
+		"gh pr list",
+		"glab mr view 12",
+		"glab mr list",
+		"echo git push",
+	} {
+		if got := ts.m.preToolUse(t.Context(), childSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}}); got.Deny != "" {
+			t.Errorf("child %q unexpectedly refused: %s", cmd, got.Deny)
+		}
+	}
+	for _, cmd := range []string{"git push -u origin HEAD", "gh pr create --fill"} {
+		if got := ts.m.preToolUse(t.Context(), explicitSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}}); got.Deny != "" {
+			t.Errorf("explicit-base child %q refused: %s", cmd, got.Deny)
+		}
+	}
 }

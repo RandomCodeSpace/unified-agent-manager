@@ -281,14 +281,50 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 		}
 		return project.Dir, nil, undo, nil
 	}
+	if req.Mode == placeWorktree {
+		return m.makeNewWorktree(ctx, project, repo, hint, req.Base, req.Remote)
+	}
 	branch, err := freeBranch(ctx, repo, hint)
 	if err != nil {
 		return "", nil, none, err
 	}
-	if req.Mode == placeBranch {
-		return m.makeBranch(ctx, project, repo, branch)
+	return m.makeBranch(ctx, project, repo, branch)
+}
+
+// beforeMakeWorktree is a test hook that runs between freeBranch and
+// makeWorktree, simulating another process taking the chosen branch name.
+var beforeMakeWorktree func(branch string)
+
+// makeNewWorktree picks a free branch name and adds a worktree on it under
+// worktrees.ops (taken before mu, never under it), so concurrent Threads
+// cannot pick the same name. If git still reports the branch exists (another
+// process), it retries once with a fresh name.
+func (m *Manager) makeNewWorktree(ctx context.Context, project Project, repo *gitRepo, hint, base string, remote bool) (string, *store.WebPlace, func(), error) {
+	none := func() {}
+	m.worktrees.ops.Lock()
+	defer m.worktrees.ops.Unlock()
+	for attempt := range 2 {
+		branch, err := freeBranch(ctx, repo, hint)
+		if err != nil {
+			return "", nil, none, err
+		}
+		if beforeMakeWorktree != nil {
+			beforeMakeWorktree(branch)
+		}
+		workdir, place, undo, err := m.makeWorktree(ctx, project, repo, branch, base, remote)
+		if err == nil || attempt == 1 || !isBranchExistsError(err) {
+			return workdir, place, undo, err
+		}
 	}
-	return m.makeWorktree(ctx, project, repo, branch, req.Base, req.Remote)
+	return "", nil, none, newError(http.StatusConflict, "could not make the worktree")
+}
+
+func isBranchExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already exists") && strings.Contains(msg, "branch named")
 }
 
 // freeBranch is a new branch name no local or remote branch has yet:
@@ -411,7 +447,7 @@ func (m *Manager) switchFolder(ctx context.Context, repo *gitRepo, name string, 
 	}
 	log.Info("web project folder switched branch", "branch", local, "created", create)
 	undo := func() {
-		ctx, cancel := context.WithTimeout(m.ctx, gitWriteTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), gitWriteTimeout)
 		defer cancel()
 		if previous != "" {
 			if _, err := runGitWrite(ctx, repo.top, nil, "switch", previous); err != nil {
@@ -464,7 +500,7 @@ func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo
 	}
 	log.Info("web thread branch made", "project", project.ID, "branch", branch)
 	undo := func() {
-		ctx, cancel := context.WithTimeout(m.ctx, gitWriteTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), gitWriteTimeout)
 		defer cancel()
 		if previous != "" {
 			if _, err := runGitWrite(ctx, repo.top, nil, "switch", previous); err != nil {
@@ -522,7 +558,7 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	}
 	log.Info("web thread worktree made", "project", project.ID, "branch", branch)
 	undo := func() {
-		ctx, cancel := context.WithTimeout(m.ctx, gitWriteTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), gitWriteTimeout)
 		defer cancel()
 		if _, err := runGitWrite(ctx, repo.top, nil, "worktree", "remove", "--force", path); err != nil {
 			log.Warn("web thread worktree not removed", "path", path, "error", err)
@@ -589,11 +625,7 @@ func (m *Manager) branchWorktree(ctx context.Context, project Project, source st
 			return "", nil, "", none, newError(http.StatusConflict, "Branch from here can't carry changes inside submodules or nested repositories: %s", clipRunes(displaytext.Sanitize(strings.Join(paths, ", ")), maxDetailRunes))
 		}
 	}
-	branch, err := freeBranch(ctx, repo, hint)
-	if err != nil {
-		return "", nil, "", none, err
-	}
-	folder, place, undo, err := m.makeWorktree(ctx, project, repo, branch, start, false)
+	folder, place, undo, err := m.makeNewWorktree(ctx, project, repo, hint, start, false)
 	if err != nil {
 		return "", nil, "", none, err
 	}
