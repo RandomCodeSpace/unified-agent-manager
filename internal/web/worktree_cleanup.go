@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -481,10 +482,44 @@ func ignoredToKeep(ctx context.Context, git, dir string) (int, error) {
 	return n, nil
 }
 
+// offBranch refuses removing or putting away the worktree at path, made for
+// a Thread on branch, while its HEAD is not on that branch: commits made on
+// a detached HEAD are on no branch and go with the worktree, and reopening
+// would bring back the branch without the work made on another. nil when
+// HEAD is on branch, the folder is gone, or path or branch is empty (not a
+// Thread's worktree). A git failure refuses too.
+func offBranch(ctx context.Context, path, branch string) error {
+	if path == "" || branch == "" {
+		return nil
+	}
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	git, err := lookGit()
+	if err != nil {
+		return err
+	}
+	out, code, stderr, err := runGit(ctx, git, path, 4096, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return err
+	}
+	head := strings.TrimSpace(string(out))
+	switch {
+	case code == 0 && head == "refs/heads/"+branch:
+		return nil
+	case code == 0:
+		return newError(http.StatusConflict, "This Thread's worktree is on %s, not on its branch %s. Switch it back to %s first.", clipRunes(displaytext.Sanitize(strings.TrimPrefix(head, "refs/heads/")), maxNameRunes), branch, branch)
+	case code == 1: // --quiet: HEAD is not a symbolic ref
+		return newError(http.StatusConflict, "This Thread's worktree is on a detached HEAD, not on its branch %s: commits made there are on no branch and would be lost with the worktree. Put them on a branch or switch back to %s first.", branch, branch)
+	}
+	return newError(http.StatusConflict, "git could not tell which branch this Thread's worktree is on: %s", gitMessage(stderr))
+}
+
 // removeWorktree removes the worktree at path and keeps its branch. Without
 // force git refuses one with changed or untracked files, and this refuses
-// one with ignored files to keep.
-func removeWorktree(ctx context.Context, path string, force bool) error {
+// one with ignored files to keep and a Thread's that is not on branch
+// (offBranch); branch is "" for a worktree of no Thread.
+func removeWorktree(ctx context.Context, path, branch string, force bool) error {
 	git, err := lookGit()
 	if err != nil {
 		return err
@@ -499,6 +534,8 @@ func removeWorktree(ctx context.Context, path string, force bool) error {
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
+	} else if err := offBranch(ctx, path, branch); err != nil {
+		return err
 	} else if n, err := ignoredToKeep(ctx, git, path); err != nil {
 		return err
 	} else if n > 0 {
@@ -511,9 +548,10 @@ func removeWorktree(ctx context.Context, path string, force bool) error {
 }
 
 // kickWorktreeRemoveLocked removes s's worktree in the background, as its
-// Thread settled, was archived or deleted. One with changes is kept. The
-// branch goes with it only for a Thread the merged-work sweep is settling,
-// while the branch is still at the commit that sweep proved merged.
+// Thread settled, was archived or deleted. One with changes, or not on the
+// Thread's branch (offBranch), is kept. The branch goes with it only for a
+// Thread the merged-work sweep is settling, while the branch is still at the
+// commit that sweep proved merged.
 func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	if m.closed || s.place == nil || s.place.Worktree == "" {
 		return
@@ -543,7 +581,7 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 		if !known {
 			size.bytes, _ = measureDir(m.ctx, path)
 		}
-		if err := removeWorktree(m.ctx, path, false); err != nil {
+		if err := removeWorktree(m.ctx, path, branch, false); err != nil {
 			log.Info("web thread worktree kept", "session", id, "path", path, "error", err)
 			return
 		}
@@ -583,8 +621,8 @@ func removeMergedBranch(ctx context.Context, dir, branch, tip string) bool {
 
 // kickForkWorktreesRemoveLocked removes in the background the worktrees and
 // branches made for branch requests that were dismissed or lost their
-// source. One a Thread uses, or with changes, is kept, and so is a branch
-// with commits since the fork's start.
+// source. One a Thread uses, with changes, or not on its branch (offBranch)
+// is kept, and so is a branch with commits since the fork's start.
 func (m *Manager) kickForkWorktreesRemoveLocked(forks []store.WebFork) {
 	for _, fork := range forks {
 		if m.closed || fork.Place == nil || fork.Place.Worktree == "" {
@@ -606,7 +644,7 @@ func (m *Manager) kickForkWorktreesRemoveLocked(forks []store.WebFork) {
 			if inUse {
 				return
 			}
-			if err := removeWorktree(m.ctx, path, false); err != nil {
+			if err := removeWorktree(m.ctx, path, branch, false); err != nil {
 				log.Info("branch request worktree kept", "path", path, "error", err)
 				return
 			}
@@ -639,10 +677,14 @@ func commitsSince(ctx context.Context, dir, start, branch string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// errNoWorktree marks an open that failed because the Thread's worktree
+// could not be brought back.
+var errNoWorktree = errors.New("could not restore this Thread's worktree")
+
 // restoreWorktree recreates the worktree of an active Thread from its
-// branch when it was removed, before its conversation opens there. The
-// caller holds s.op.
-func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
+// branch when it was removed, before its conversation opens there, or says
+// why it could not (errNoWorktree). The caller holds s.op.
+func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) error {
 	m.mu.Lock()
 	var path, branch, dir string
 	if s.place != nil && s.place.Worktree != "" && s.stage == StageActive {
@@ -653,17 +695,33 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 	}
 	m.mu.Unlock()
 	if path == "" || dir == "" {
-		return
+		return nil
 	}
 	if err := m.recreateWorktree(ctx, dir, path, branch); err != nil {
 		log.Warn("web thread worktree not recreated", "session", s.id, "path", path, "error", err)
+		return fmt.Errorf("%w: %w", errNoWorktree, err)
 	}
+	return nil
+}
+
+// uamRemovedBranch says whether the newest logged removal of the worktree at
+// path took branch with it (removeMergedBranch).
+// shortcut: the log keeps maxRemovedLog removals, so a branch removed before
+// those reads as not removed by uam; record it on the Thread if that bites.
+func (m *Manager) uamRemovedBranch(path, branch string) bool {
+	for _, r := range m.removedLog() {
+		if r.Path == path && r.Branch == branch {
+			return r.BranchRemoved
+		}
+	}
+	return false
 }
 
 // recreateWorktree adds the worktree at path back on branch, in the
-// repository holding dir, when it was removed. A branch that is gone, as
-// one removed once its work was merged, is made again from origin's default
-// branch, which holds that work.
+// repository holding dir, when it was removed. A branch uam removed once its
+// work was merged (uamRemovedBranch) is made again from origin's default
+// branch, which holds that work. One gone any other way is not: a new branch
+// would stand in for work that may not be merged.
 func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string) error {
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
@@ -681,6 +739,9 @@ func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string
 	_, _ = runGitWrite(ctx, repo.top, nil, "worktree", "prune")
 	args := []string{"worktree", "add", path, branch}
 	if !refExists(ctx, repo, "refs/heads/"+branch) {
+		if !m.uamRemovedBranch(path, branch) {
+			return newError(http.StatusConflict, "branch %s is gone, and uam has no record of removing it. Create it again (git branch %s <commit>) to use this Thread.", branch, branch)
+		}
 		if def := readDefaultBranch(ctx, repo.top); def != "" {
 			args = []string{"worktree", "add", "--no-track", "-b", branch, path, "refs/remotes/origin/" + def}
 		}
@@ -718,7 +779,8 @@ func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.Web
 }
 
 // RemoveWorktree removes a listed worktree on the owner's word. One with
-// changes needs force; one whose Thread is working is refused; the open
+// changes needs force, and so does one not on its Thread's branch
+// (offBranch); one whose Thread is working is refused; the open
 // conversation of its Thread is closed first, and its next use recreates
 // the worktree from the branch.
 func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) error {
@@ -727,6 +789,10 @@ func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) e
 	}
 	m.mu.Lock()
 	users := slices.Clone(m.worktreeThreadsLocked()[path])
+	var branch string
+	if len(users) > 0 && users[0].place != nil {
+		branch = users[0].place.Branch
+	}
 	m.mu.Unlock()
 	// Held in ID order, so two removals cannot wait on each other.
 	slices.SortFunc(users, func(a, b *webSession) int { return strings.Compare(a.id, b.id) })
@@ -758,12 +824,16 @@ func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) e
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
 	if !force {
+		// Before the files: forcing past those must not take commits too.
+		if err := offBranch(ctx, path, branch); err != nil {
+			return err
+		}
 		if _, uncommitted, _ := worktreePending(ctx, path); uncommitted > 0 {
 			return &Error{Status: http.StatusConflict, Code: codeWorktreeUnsaved, Refs: []string{strconv.Itoa(uncommitted)},
 				Message: strconv.Itoa(uncommitted) + " " + plural(uncommitted, "file is", "files are") + " not committed and would be lost."}
 		}
 	}
-	if err := removeWorktree(ctx, path, force); err != nil {
+	if err := removeWorktree(ctx, path, branch, force); err != nil {
 		return err
 	}
 	m.mu.Lock()
