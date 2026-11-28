@@ -67,7 +67,7 @@ func (m *Manager) settleMerged() {
 	var due []candidate
 	for _, s := range m.sessions {
 		p := m.projects[s.projectID]
-		if p != nil && s.place != nil && s.place.Worktree != "" && strings.HasPrefix(s.place.Branch, branchPrefix) && m.unattendedLocked(s) {
+		if p != nil && s.place != nil && s.place.Worktree != "" && !s.place.Existing && strings.HasPrefix(s.place.Branch, branchPrefix) && m.unattendedLocked(s) {
 			due = append(due, candidate{s, s.id, p.Dir, s.place.Worktree, s.place.Branch})
 		}
 	}

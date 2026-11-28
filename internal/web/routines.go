@@ -676,6 +676,9 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 		}
 		switch in.Place.Mode {
 		case placeWorktree:
+			if in.Place.Branch != "" {
+				return newError(http.StatusBadRequest, "a routine's runs work on a new branch, never an existing one")
+			}
 			r.Place = &store.WebPlace{Mode: placeWorktree, Base: in.Place.Base, Remote: in.Place.Remote}
 		case "", placeCurrent:
 			r.Place = nil

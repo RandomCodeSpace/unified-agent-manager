@@ -926,7 +926,7 @@ func TestRoutinePlaceIsStoredAndEdited(t *testing.T) {
 	in := hourly("Deps check")
 	in.Place = &PlaceRequest{Mode: placeWorktree, Base: "origin/main"}
 	r := mustRoutine(t, m, project, in)
-	for _, bad := range []PlaceRequest{{Mode: placeBranch}, {Mode: placeSwitch, Branch: "main"}, {Mode: placeWorktree, Base: "-x"}} {
+	for _, bad := range []PlaceRequest{{Mode: placeBranch}, {Mode: placeSwitch, Branch: "main"}, {Mode: placeWorktree, Base: "-x"}, {Mode: placeWorktree, Branch: "main"}} {
 		if _, err := m.UpdateRoutine(r.ID, RoutineInput{Place: &bad}); statusOf(err) != http.StatusBadRequest {
 			t.Errorf("place %+v: err = %v, want 400", bad, err)
 		}

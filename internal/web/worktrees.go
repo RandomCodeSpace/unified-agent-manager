@@ -45,23 +45,27 @@ const (
 // PlaceRequest is where a new Thread runs (CreateRequest.Place): on the
 // Project's current branch, on a new branch made in the Project's folder,
 // on an existing branch the folder switches to, or on a new branch in a new
-// git worktree started from Base ("" is HEAD). It is also the body of
+// git worktree started from Base ("" is HEAD), or in a new git worktree on
+// an existing Branch. It is also the body of
 // POST /api/sessions/{id}/git/branch (modes branch and switch).
 type PlaceRequest struct {
 	Mode string `json:"mode"`
 	Base string `json:"base,omitempty"`
 	// Branch is the branch mode switch checks out: a local one, or with
 	// Remote a remote-tracking one ("origin/main"), which a new local
-	// branch of the same name then tracks. For a worktree, Remote starts it
-	// from origin's copy of its base branch, fetched first.
+	// branch of the same name then tracks. A worktree checks Branch out the
+	// same way, fetched first when Remote; without Branch, Remote starts its
+	// new branch from origin's copy of its base branch, fetched first.
 	Branch string `json:"branch,omitempty"`
 	Remote bool   `json:"remote,omitempty"`
 }
 
-// WorktreeInfo is the worktree a Thread runs in and the branch made for it.
+// WorktreeInfo is the worktree a Thread runs in and the branch made for it,
+// or the existing branch the owner chose (Existing).
 type WorktreeInfo struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
+	Path     string `json:"path"`
+	Branch   string `json:"branch"`
+	Existing bool   `json:"existing,omitempty"`
 	// Base is the branch the worktree's branch started from, when known.
 	Base string `json:"base,omitempty"`
 	// SizeBytes is its size on disk once measured in the background.
@@ -99,8 +103,8 @@ func checkPlace(p *PlaceRequest) error {
 	if p == nil {
 		return nil
 	}
-	if p.Mode != placeSwitch && (p.Branch != "" || p.Remote && p.Mode != placeWorktree) {
-		return newError(http.StatusBadRequest, "branch is only for switching the folder's branch")
+	if p.Mode != placeSwitch && p.Mode != placeWorktree && (p.Branch != "" || p.Remote) {
+		return newError(http.StatusBadRequest, "branch is only for switching the folder's branch or a new worktree")
 	}
 	switch p.Mode {
 	case "", placeCurrent, placeBranch, placeSwitch:
@@ -113,6 +117,9 @@ func checkPlace(p *PlaceRequest) error {
 	case placeWorktree:
 		if p.Base != "" && !validBase(p.Base) {
 			return newError(http.StatusBadRequest, "base must be a branch or commit name")
+		}
+		if p.Branch != "" && (p.Base != "" || !validBase(p.Branch)) {
+			return newError(http.StatusBadRequest, "branch must be a branch name, without a base")
 		}
 	default:
 		return newError(http.StatusBadRequest, "place mode must be current, branch, switch or worktree")
@@ -280,6 +287,9 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 			return "", nil, none, err
 		}
 		return project.Dir, nil, undo, nil
+	}
+	if req.Mode == placeWorktree && req.Branch != "" {
+		return m.existingWorktree(ctx, project, repo, req.Branch, req.Remote)
 	}
 	if req.Mode == placeWorktree {
 		return m.makeNewWorktree(ctx, project, repo, hint, req.Base, req.Remote)
@@ -513,14 +523,12 @@ func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo
 	return project.Dir, &store.WebPlace{Mode: placeBranch, Branch: branch, Base: previous}, undo, nil
 }
 
-// makeWorktree adds a worktree on branch, a new branch from base, where the
-// Copilot CLI puts its own (worktreePath). With remote it starts from
-// origin's copy of the base branch, fetched first. The Thread's folder is
-// the Project's folder inside it, as the Project may be a folder inside its
-// repository.
+// makeWorktree adds a worktree (addWorktree) on branch, a new branch from
+// base. With remote it starts from origin's copy of the base branch,
+// fetched first.
 func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRepo, branch, base string, remote bool) (string, *store.WebPlace, func(), error) {
 	none := func() {}
-	pathTemplate, baseRef := m.copilotWorktreeSettings(repo.top)
+	_, baseRef := m.copilotWorktreeSettings(repo.top)
 	start, base := worktreeStart(ctx, repo, base, baseRef)
 	if remote {
 		// shortcut: origin only; a repository whose branches track another remote starts from origin's copy.
@@ -536,6 +544,65 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	if !refExists(ctx, repo, start+"^{commit}") {
 		return "", nil, none, newError(http.StatusBadRequest, "%q is not a branch or commit of this repository", clipRunes(displaytext.Sanitize(start), maxDetailRunes))
 	}
+	return m.addWorktree(ctx, project, repo, store.WebPlace{Mode: placeWorktree, Branch: branch, Base: base}, []string{"--no-track", "-b", branch}, start)
+}
+
+// existingWorktree adds a worktree on name, an existing branch: a local
+// one, or with remote a remote-tracking one ("origin/x"), fetched first,
+// which a new local branch of the same name then tracks. uam never deletes
+// that branch (WebPlace.Existing).
+func (m *Manager) existingWorktree(ctx context.Context, project Project, repo *gitRepo, name string, remote bool) (string, *store.WebPlace, func(), error) {
+	none := func() {}
+	shown := clipRunes(displaytext.Sanitize(name), maxDetailRunes)
+	if !remote {
+		if !refExists(ctx, repo, "refs/heads/"+name) {
+			return "", nil, none, newError(http.StatusBadRequest, "%q is not a branch of this repository", shown)
+		}
+		if at := checkedOutAt(ctx, repo, name); at != "" {
+			return "", nil, none, newError(http.StatusConflict, "%s is checked out in %s; a worktree cannot check it out again. Pick “New branch from” instead.", shown, clipRunes(displaytext.Sanitize(at), maxDetailRunes))
+		}
+		return m.addWorktree(ctx, project, repo, store.WebPlace{Mode: placeWorktree, Branch: name, Existing: true}, nil, name)
+	}
+	local := remoteBranchName(ctx, repo, name)
+	if !validBase(local) {
+		return "", nil, none, newError(http.StatusBadRequest, "%q is not a remote branch of this repository", shown)
+	}
+	if refExists(ctx, repo, "refs/heads/"+local) {
+		return "", nil, none, newError(http.StatusConflict, "a local branch %s already exists; choose it under Local", clipRunes(displaytext.Sanitize(local), maxDetailRunes))
+	}
+	remoteName := strings.TrimSuffix(name, "/"+local)
+	if _, err := runGitWrite(ctx, repo.top, nil, "fetch", "--no-tags", remoteName, "+refs/heads/"+local+":refs/remotes/"+name); err != nil {
+		return "", nil, none, gitFailed("Could not fetch "+shown, err)
+	}
+	return m.addWorktree(ctx, project, repo, store.WebPlace{Mode: placeWorktree, Branch: local, Existing: true}, []string{"--track", "-b", local}, "refs/remotes/"+name)
+}
+
+// checkedOutAt is the folder of the worktree of repo that has branch
+// checked out, "" when none has.
+func checkedOutAt(ctx context.Context, repo *gitRepo, branch string) string {
+	raw, code, _, err := runGit(ctx, repo.git, repo.top, maxStatusBytes, "worktree", "list", "--porcelain", "-z")
+	if err != nil || code != 0 {
+		return ""
+	}
+	path := ""
+	for field := range strings.SplitSeq(string(raw), "\x00") {
+		if p, ok := strings.CutPrefix(field, "worktree "); ok {
+			path = p
+		} else if field == "branch refs/heads/"+branch {
+			return path
+		}
+	}
+	return ""
+}
+
+// addWorktree adds the worktree of place.Branch where the Copilot CLI puts
+// its own (worktreePath): git worktree add opts <path> start. The Thread's
+// folder is the Project's folder inside it, as the Project may be a folder
+// inside its repository. Its undo deletes the branch only when uam made it.
+func (m *Manager) addWorktree(ctx context.Context, project Project, repo *gitRepo, place store.WebPlace, opts []string, start string) (string, *store.WebPlace, func(), error) {
+	none := func() {}
+	branch := place.Branch
+	pathTemplate, _ := m.copilotWorktreeSettings(repo.top)
 	prefix, code, stderr, err := runGit(ctx, repo.git, project.Dir, 4096, "rev-parse", "--show-prefix")
 	if err != nil {
 		return "", nil, none, err
@@ -553,7 +620,7 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		return "", nil, none, newError(http.StatusConflict, "the worktree folder %s already exists", path)
 	}
-	if _, err := runGitWrite(ctx, repo.top, nil, "worktree", "add", "--no-track", "-b", branch, path, start); err != nil {
+	if _, err := runGitWrite(ctx, repo.top, nil, append(append([]string{"worktree", "add"}, opts...), path, start)...); err != nil {
 		return "", nil, none, gitFailed("Could not make the worktree", err)
 	}
 	log.Info("web thread worktree made", "project", project.ID, "branch", branch)
@@ -564,15 +631,18 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 			log.Warn("web thread worktree not removed", "path", path, "error", err)
 			return
 		}
-		_, _ = runGitWrite(ctx, repo.top, nil, "branch", "-D", branch)
+		if !place.Existing {
+			_, _ = runGitWrite(ctx, repo.top, nil, "branch", "-D", branch)
+		}
 	}
 	workdir := filepath.Join(path, filepath.FromSlash(strings.TrimSpace(string(prefix))))
-	// The Project's folder may be untracked, or not on the base at all.
+	// The Project's folder may be untracked, or not on the branch at all.
 	if _, err := os.Stat(workdir); err != nil {
 		undo()
-		return "", nil, none, newError(http.StatusConflict, "the folder %s is not on %s", strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/"), clipRunes(displaytext.Sanitize(cmp.Or(base, start)), maxDetailRunes))
+		return "", nil, none, newError(http.StatusConflict, "the folder %s is not on %s", strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/"), clipRunes(displaytext.Sanitize(cmp.Or(place.Base, branch, start)), maxDetailRunes))
 	}
-	return workdir, &store.WebPlace{Mode: placeWorktree, Branch: branch, Base: base, Worktree: path}, undo, nil
+	place.Worktree = path
+	return workdir, &place, undo, nil
 }
 
 // branchWorktree makes the worktree of a branch of a Thread that runs in its
@@ -797,6 +867,10 @@ func (m *Manager) placeInstructionsLocked(s *webSession) string {
 		return fmt.Sprintf("uam place: you work in %s on the branch %s, started from %s, the branch of the Thread that started you, made for this Thread. Commit there. Do not push, open a pull or merge request, merge or switch branches, even when your first message asks: that Thread merges %s into %s and pushes it. Say in your reply what you committed.",
 			where, branch, base, branch, base)
 	}
+	if p.Existing {
+		return fmt.Sprintf("uam place: you work in %s on the existing branch %s the owner chose. Commit there. When the owner asks you to push, run `git push -u origin HEAD`: that pushes %s. When the owner asks for a pull or merge request, open it from %s into the repository's default branch, following the git rules above. Do not switch branches unless the owner asks for exactly that, and do not ask which branch to push.",
+			where, p.Branch, p.Branch, p.Branch)
+	}
 	base, into := "", "the repository's default branch"
 	if p.Base != "" {
 		base, into = ", started from "+p.Base, p.Base
@@ -989,7 +1063,7 @@ func (s *Server) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 // loadedPlace is a stored place, or nil when it is not one this version
 // can act on.
 func loadedPlace(p *store.WebPlace) *store.WebPlace {
-	if p == nil || (p.Mode != placeBranch && p.Mode != placeWorktree) || !strings.HasPrefix(p.Branch, branchPrefix) {
+	if p == nil || (p.Mode != placeBranch && p.Mode != placeWorktree) || !strings.HasPrefix(p.Branch, branchPrefix) && !(p.Existing && p.Mode == placeWorktree) {
 		return nil
 	}
 	clone := *p

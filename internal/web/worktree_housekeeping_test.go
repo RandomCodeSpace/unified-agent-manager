@@ -123,3 +123,35 @@ func TestLandedBranchesOfThreadsSettledByHandAreRemoved(t *testing.T) {
 		})
 	}
 }
+
+// A Thread whose branch the hourly sweep removed reopens: the branch starts
+// again from origin's default branch, which holds its work, however many
+// removals the log has seen since.
+func TestReopenAfterTheSweepRemovedTheBranch(t *testing.T) {
+	ts, repo, sum, land := mergedThread(t)
+	gitIn(t, repo, "merge", "-q", "--no-ff", "-m", "merge", sum.Worktree.Branch)
+	if _, err := ts.m.Settle(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "worktree removed", func() bool { return worktreeGone(sum.Worktree.Path) })
+	land()
+	ts.m.removeLandedBranches()
+	if branchExists(t, repo, sum.Worktree.Branch) {
+		t.Fatal("the landed branch was kept")
+	}
+	ts.m.mu.Lock()
+	ts.m.worktrees.removed = nil // as if the log had rolled past this removal
+	ts.m.mu.Unlock()
+	if _, err := ts.m.Reopen(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if sub, err := ts.m.Submit(sum.ID, PromptRequest{Text: "again", RequestID: mustUUID(t)}); err != nil || sub.Status == SubmissionRejected {
+		t.Fatalf("submit = %+v, %v", sub, err)
+	}
+	ts.m.mu.Lock()
+	removed := ts.m.sessions[sum.ID].place.BranchRemoved
+	ts.m.mu.Unlock()
+	if worktreeGone(sum.Worktree.Path) || !branchExists(t, repo, sum.Worktree.Branch) || removed {
+		t.Fatalf("worktree gone %v, branch %v, still marked removed %v", worktreeGone(sum.Worktree.Path), branchExists(t, repo, sum.Worktree.Branch), removed)
+	}
+}

@@ -511,12 +511,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     branch. A new branch made this way is named from the Thread's name or
     title like any other. Connected instances advertise `branch-switch-v1`.
   - **New worktree** follows the Copilot CLI's own worktrees, whose
-    worktree commands the SDK does not expose. It runs
-    `git worktree add -b <branch>` from the chosen base branch, local or
-    remote. The **Local** / **Remote** toggle beside the branch menu
-    (Local by default; picking a Remote row turns it to Remote) starts from
-    origin's copy of the branch instead, after `git fetch origin <branch>`;
-    a failed fetch stops the create. Without a base, from the CLI's `worktreeBaseRef` setting
+    worktree commands the SDK does not expose. Its branch menu offers
+    **New branch from <current branch>** on top (the default), then the
+    Local and Remote branches. New branch runs
+    `git worktree add -b <branch>` from the Project's current branch; the
+    **Local** / **Remote** toggle beside the branch menu (Local by default)
+    starts from origin's copy of that branch instead, after
+    `git fetch origin <branch>`; a failed fetch stops the create.
+    `uam_create_task`'s `base` still starts the new branch from another
+    branch. Picking an existing branch works on that branch: the place is
+    `{"mode": "worktree", "branch": …}`, `git worktree add <path> <branch>`
+    checks it out and commits land on it, with no `uam/` branch. A Remote
+    row (`"remote": true`, `"origin/x"`) is fetched first and checked out
+    with `git worktree add --track -b x <path> origin/x`; a local branch of
+    that name is refused ("choose it under Local"). A branch checked out in
+    another folder (as the Project's own branch is in the Project's folder)
+    is refused with 409, naming that folder. The toggle hides while an
+    existing branch is picked, and routines offer New branch only. uam never
+    deletes or recreates such a branch: a failed create, settling,
+    archiving and deleting remove only the worktree, auto-settle leaves it
+    alone, and a reopen whose branch is gone fails saying so. Without a base, from the CLI's `worktreeBaseRef` setting
     (`defaultBranch`: the remote's default branch; otherwise the current
     `HEAD`). The worktree goes where the CLI puts its own: the owner's
     `worktreePathTemplate` (`{repoPath}`, `{repo}`, `{branch}`,
@@ -528,13 +542,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     out. For a Project in a folder of its repository, the Thread runs in the
     same folder of the worktree. Other Threads keep working in the Project's
     folder.
-  - Neither branch tracks an upstream. The branch is named once, when it is
+  - Neither new branch tracks an upstream. The branch is named once, when it is
     made, as `uam/<slug of the Thread's name or first message>` (random hex
     digits added when a local or remote branch has that name, or the text
     leaves no slug) and never renamed. The agent's system message names the
     branch and its base (`uam place:`) and says to push with
     `git push -u origin HEAD` and open pull or merge requests into the base,
-    so it never asks which branch to push.
+    so it never asks which branch to push. On an existing branch it says
+    the owner chose that branch, to commit there, push it with
+    `git push -u origin HEAD`, open requests into the default branch, and
+    not switch branches.
   - Everything of the Thread follows its folder: Files, `@` references,
     file links and previews, images, Changes, the GitLab
     panel, receipts, and the terminal opened from the Thread. A draft
@@ -665,10 +682,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   filter, arrow keys and Enter to choose; Local and Remote branches with
   their last commit's age). In Current branch it switches the Project
   folder: **New branch from <branch>** on top, or an existing branch. In
-  New worktree it picks the worktree's source branch, and the Local /
-  Remote toggle beside it says whether that is the local branch or
-  origin's copy, fetched first; the worktree's name
-  shows only once the first message made it. While a Thread in the folder
+  New worktree, **New branch from <branch>** on top makes the worktree's
+  new branch, and the Local / Remote toggle beside it says whether it
+  starts from the local branch or origin's copy, fetched first; an
+  existing branch is checked out in the worktree, and the toggle hides.
+  The new branch's name shows only once the first message made it. While a Thread in the folder
   has not finished, the branch menu says which one ("… is working") and
   turns every row off; while changed files are not committed it says how
   many and turns off the existing branches only. The choice applies with
@@ -676,7 +694,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   branch** and the same branch menu, which switches the folder at once; a
   Thread in its own worktree shows the worktree icon and the branch it
   started from as plain text (its own `uam/…` branch and the path on hover
-  or focus; a worktree whose base is unknown shows `Worktree <branch>`). When the toolbar
+  or focus; a worktree on an existing branch shows that branch; one whose
+  base is unknown shows `Worktree <branch>`). When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes

@@ -558,7 +558,7 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	}
 	path, branch, project, id := s.place.Worktree, s.place.Branch, s.projectID, s.id
 	var merged, dir string
-	if p := m.projects[project]; p != nil && s.stage == StageSettled && s.settledBy == settledByMerged {
+	if p := m.projects[project]; p != nil && s.stage == StageSettled && s.settledBy == settledByMerged && !s.place.Existing {
 		merged, dir = m.worktrees.merged[path], p.Dir
 	}
 	thread := clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title)), maxNameRunes)
@@ -592,9 +592,40 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 		gone := merged != "" && removeMergedBranch(m.ctx, dir, branch, merged)
 		if gone {
 			m.count("merged_removed")
+			if repo, _, err := openRepo(m.ctx, dir); err == nil && repo != nil {
+				m.markBranchRemoved(repo.top, branch)
+			}
 		}
 		m.logRemoved(RemovedWorktree{Path: path, Branch: branch, BranchRemoved: gone, ProjectID: project, TaskID: id, Thread: thread, SizeBytes: size.bytes, At: m.now()})
 	}()
+}
+
+// markBranchRemoved records on the Threads of the repository at top whose
+// place is branch that uam deleted it (store.WebPlace.BranchRemoved).
+func (m *Manager) markBranchRemoved(top, branch string) {
+	m.mu.Lock()
+	var dirs []string
+	for _, s := range m.sessions {
+		if p := m.projects[s.projectID]; p != nil && !s.removed && s.place != nil && s.place.Branch == branch && !s.place.Existing {
+			dirs = append(dirs, p.Dir)
+		}
+	}
+	m.mu.Unlock()
+	same := map[string]bool{}
+	for _, dir := range dirs {
+		if repo, _, err := openRepo(m.ctx, dir); err == nil && repo != nil && repo.top == top {
+			same[dir] = true
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.sessions {
+		if p := m.projects[s.projectID]; p != nil && same[p.Dir] && !s.removed && s.place != nil && s.place.Branch == branch && !s.place.Existing {
+			before := m.summaryLocked(s)
+			s.place.BranchRemoved = true
+			m.changedLocked(s, before)
+		}
+	}
 }
 
 // removeMergedBranch deletes branch, one uam made for a Thread, in the
@@ -639,7 +670,7 @@ func (m *Manager) removeLandedBranches() {
 	for _, s := range m.sessions {
 		switch {
 		case s.removed || s.place == nil:
-		case s.stage == StageActive || s.place.Worktree == "":
+		case s.stage == StageActive || s.place.Worktree == "" || s.place.Existing:
 			keep[s.place.Branch] = true
 		default:
 			threads = append(threads, owned{s.place.Branch, s.place.Worktree})
@@ -690,6 +721,7 @@ func (m *Manager) removeLandedBranches() {
 			}
 			if removeMergedBranch(m.ctx, repo.top, branch, f[1]) {
 				m.count("merged_removed")
+				m.markBranchRemoved(repo.top, branch)
 			}
 		}
 	}
@@ -763,8 +795,9 @@ var errNoWorktree = errors.New("could not restore this Thread's worktree")
 func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) error {
 	m.mu.Lock()
 	var path, branch, dir string
+	existing, removed := false, false
 	if s.place != nil && s.place.Worktree != "" && s.stage == StageActive {
-		path, branch = s.place.Worktree, s.place.Branch
+		path, branch, existing, removed = s.place.Worktree, s.place.Branch, s.place.Existing, s.place.BranchRemoved
 		if p := m.projects[s.projectID]; p != nil {
 			dir = p.Dir
 		}
@@ -773,9 +806,19 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) error {
 	if path == "" || dir == "" {
 		return nil
 	}
-	if err := m.recreateWorktree(ctx, dir, path, branch); err != nil {
+	if err := m.recreateWorktree(ctx, dir, path, branch, existing, removed); err != nil {
 		log.Warn("web thread worktree not recreated", "session", s.id, "path", path, "error", err)
 		return fmt.Errorf("%w: %w", errNoWorktree, err)
+	}
+	if removed {
+		// The branch exists again; a later loss is no longer uam's doing.
+		m.mu.Lock()
+		if s.place != nil && s.place.BranchRemoved {
+			before := m.summaryLocked(s)
+			s.place.BranchRemoved = false
+			m.changedLocked(s, before)
+		}
+		m.mu.Unlock()
 	}
 	return nil
 }
@@ -796,9 +839,10 @@ func (m *Manager) uamRemovedBranch(path, branch string) bool {
 // recreateWorktree adds the worktree at path back on branch, in the
 // repository holding dir, when it was removed. A branch uam removed once its
 // work was merged (uamRemovedBranch) is made again from origin's default
-// branch, which holds that work. One gone any other way is not: a new branch
-// would stand in for work that may not be merged.
-func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string) error {
+// branch, which holds that work. One gone any other way is not, nor an
+// existing branch the owner chose: a new branch would stand in for work that
+// may not be merged.
+func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string, existing, removed bool) error {
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
@@ -815,7 +859,10 @@ func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string
 	_, _ = runGitWrite(ctx, repo.top, nil, "worktree", "prune")
 	args := []string{"worktree", "add", path, branch}
 	if !refExists(ctx, repo, "refs/heads/"+branch) {
-		if !m.uamRemovedBranch(path, branch) {
+		if existing {
+			return newError(http.StatusConflict, "the branch %s is gone, so its worktree cannot be recreated", clipRunes(displaytext.Sanitize(branch), maxDetailRunes))
+		}
+		if !removed && !m.uamRemovedBranch(path, branch) {
 			return newError(http.StatusConflict, "branch %s is gone, and uam has no record of removing it. Create it again (git branch %s <commit>) to use this Thread.", branch, branch)
 		}
 		if def := readDefaultBranch(ctx, repo.top); def != "" {
@@ -847,7 +894,7 @@ func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.Web
 			delete(m.worktrees.keep, path)
 		}
 	}
-	if err := m.recreateWorktree(ctx, dir, path, place.Branch); err != nil {
+	if err := m.recreateWorktree(ctx, dir, path, place.Branch, place.Existing, place.BranchRemoved); err != nil {
 		release()
 		return nil, err
 	}

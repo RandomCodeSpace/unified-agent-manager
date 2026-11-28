@@ -13,7 +13,10 @@ worktree. The branch is named once and never renamed; your instructions
 `git push -u origin HEAD`, which pushes your branch, never the base; when
 asked for a pull or merge request, open it from your branch into the base.
 Do not push to the base, merge into it or switch branches unless the owner
-asks for exactly that, and do not ask which branch to push. A Thread started
+asks for exactly that, and do not ask which branch to push. In a worktree
+on an existing branch the owner chose, `uam place:` says so: commit there,
+push it with `git push -u origin HEAD`, open requests from it into the
+default branch, and do not switch branches. A Thread started
 by another Thread from that Thread's branch does not push at all (uam
 refuses `git push`, `gh pr create` and `glab mr create` for it): the
 Thread that started it merges its branch.
