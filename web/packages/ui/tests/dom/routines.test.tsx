@@ -218,20 +218,24 @@ describe('routines', () => {
     await user.click(where.getByRole('radio', { name: 'New worktree' }));
     expect(await dialog.findByText(/gets its own worktree and branch/)).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: /^Branch / }));
-    const menu = within(await screen.findByRole('dialog', { name: 'Worktree from' }));
-    await user.click(await menu.findByRole('option', { name: /^origin\/main/ }));
+    const menu = within(await screen.findByRole('dialog', { name: 'Worktree branch' }));
+    // A run never takes over an existing branch: New branch is the only row.
+    await waitFor(() => expect(menu.queryByText('Reading branches…')).toBeNull());
+    expect(menu.getAllByRole('option').map((o) => o.textContent)).toEqual(['New branch from feat/web-project-defaults-and-sidebar-revamp']);
+    await user.keyboard('{Escape}');
+    await user.click(dialog.getByRole('button', { name: /^Local: / }));
     await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Nightly smoke');
     await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Run the smoke tests and report failures.');
     await user.click(dialog.getByRole('button', { name: 'Create routine' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New routine' })).toBeNull());
-    expect(create.mock.calls[0][1].place).toEqual({ mode: 'worktree', base: 'origin/main', remote: true });
+    expect(create.mock.calls[0][1].place).toEqual({ mode: 'worktree', base: 'feat/web-project-defaults-and-sidebar-revamp', remote: true });
     const card = within(await screen.findByRole('region', { name: 'Nightly smoke' }));
-    expect(card.getByText('New worktree from origin/main')).toBeTruthy();
+    expect(card.getByText('New worktree from feat/web-project-defaults-and-sidebar-revamp')).toBeTruthy();
     // Its form opens on the saved choice, and saves a change back to the Project folder.
     await user.click(card.getByRole('button', { name: 'Edit' }));
     const edit = within(await screen.findByRole('dialog', { name: 'Edit routine' }));
     expect(edit.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-checked')).toBe('true');
-    expect(edit.getByRole('button', { name: 'Branch origin/main' })).toBeTruthy();
+    expect(edit.getByRole('button', { name: 'Branch New branch from origin/feat/web-project-defaults-and-sidebar-revamp' })).toBeTruthy();
     await user.click(edit.getByRole('radio', { name: 'Project folder' }));
     await user.click(edit.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit routine' })).toBeNull());

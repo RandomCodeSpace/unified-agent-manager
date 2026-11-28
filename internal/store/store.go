@@ -679,6 +679,9 @@ type WebPlace struct {
 	// Remote is a routine's choice to start each run's worktree from
 	// origin's copy of Base, fetched first.
 	Remote bool `json:"remote,omitempty"`
+	// Existing marks a worktree on a branch the owner chose, not one uam
+	// made: uam never deletes or recreates that branch.
+	Existing bool `json:"existing,omitempty"`
 }
 
 // Update sets every field this version models to v's and keeps the fields a

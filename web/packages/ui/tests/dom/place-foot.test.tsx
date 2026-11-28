@@ -24,7 +24,7 @@ const strip = () => screen.getByRole('button', { name: /^Branch / }).parentEleme
 
 async function openBranches(user: User) {
   await user.click(screen.getByRole('button', { name: /^Branch / }));
-  const menu = within(await screen.findByRole('dialog', { name: /^(Switch the branch|Worktree from)$/ }));
+  const menu = within(await screen.findByRole('dialog', { name: /^(Switch the branch|Worktree branch)$/ }));
   await waitFor(() => expect(menu.queryByText('Reading branches…')).toBeNull());
   return menu;
 }
@@ -124,26 +124,48 @@ describe('a draft Thread', () => {
     expect(create.mock.calls[0][0].place).toEqual({ mode: 'switch', branch: 'origin/release/1.4', remote: true });
   });
 
-  test('a new worktree picks its source branch, shows no name before the first message, and its Thread shows it after', async () => {
+  test('a new worktree makes a new branch from the folder\'s branch, shows no name before the first message, and its Thread shows it after', async () => {
     const create = vi.spyOn(api, 'createSession');
     const { user } = await draft(/unified-agent-manager/);
     await user.click(screen.getByRole('radio', { name: 'New worktree' }));
     await waitFor(() => expect(screen.getByRole('radio', { name: 'New worktree' }).getAttribute('aria-checked')).toBe('true'));
+    expect(strip().textContent).toBe(`Project folderNew worktree${FOLDER}Local`);
     const menu = await openBranches(user);
-    // A source branch: no New branch row, no guard.
-    expect(menu.queryByText(/^New branch/)).toBeNull();
+    // New branch first and checked, then the existing branches; no guard.
+    const options = menu.getAllByRole('option');
+    expect(options[0].textContent).toBe(`New branch from ${FOLDER}`);
+    expect(options[0].getAttribute('aria-selected')).toBe('true');
+    expect(menu.getByRole('option', { name: /^origin\/main/ })).toBeTruthy();
     expect(menu.queryByText(/is working/)).toBeNull();
-    await user.click(menu.getByRole('option', { name: /^origin\/main/ }));
-    // A remote row turns the toggle to Remote; the toggle turns it back to the local branch of that name.
-    expect(strip().textContent).toBe('Project folderNew worktreeorigin/mainRemote');
-    await user.click(screen.getByRole('button', { name: /^Remote: / }));
-    expect(strip().textContent).toBe('Project folderNew worktreemainLocal');
+    await user.keyboard('{Escape}');
+    // The toggle applies to the new branch: origin's copy of the folder's branch, fetched first.
     await user.click(screen.getByRole('button', { name: /^Local: / }));
+    expect(screen.getByRole('button', { name: `Branch New branch from origin/${FOLDER}` }).textContent).toBe(`origin/${FOLDER}`);
     await send(user, 'Try the new parser');
-    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: 'main', remote: true });
+    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: FOLDER, remote: true });
     // Once it exists: the worktree icon and the branch it started from; its own branch is in the name and tip.
-    const wt = await screen.findByLabelText(/^Worktree from main, branch uam\/[0-9a-f]{8}$/);
-    expect(wt.textContent).toBe('main');
+    const wt = await screen.findByLabelText(new RegExp(`^Worktree from ${FOLDER}, branch uam/[0-9a-f]{8}$`));
+    expect(wt.textContent).toBe(FOLDER);
+  });
+
+  test('a new worktree on an existing branch checks it out, hides the toggle, and its Thread shows that branch', async () => {
+    const create = vi.spyOn(api, 'createSession');
+    const { user } = await draft(/unified-agent-manager/);
+    await user.click(screen.getByRole('radio', { name: 'New worktree' }));
+    let menu = await openBranches(user);
+    await user.click(menu.getByRole('option', { name: /^origin\/main/ }));
+    expect(strip().textContent).toBe('Project folderNew worktreeorigin/main');
+    expect(screen.queryByRole('button', { name: /^(Local|Remote): / })).toBeNull();
+    // New branch takes the toggle back.
+    menu = await openBranches(user);
+    await user.click(menu.getByRole('option', { name: /^New branch/ }));
+    expect(strip().textContent).toBe(`Project folderNew worktree${FOLDER}Local`);
+    menu = await openBranches(user);
+    await user.click(menu.getByRole('option', { name: /^fix\/vterm-focus-replay/ }));
+    await send(user, 'Finish the replay fix');
+    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', branch: 'fix/vterm-focus-replay' });
+    const wt = await screen.findByRole('button', { name: 'Worktree on fix/vterm-focus-replay' });
+    expect(wt.textContent).toBe('fix/vterm-focus-replay');
   });
 
   test('a new worktree starts from the local branch unless the toggle says Remote', async () => {

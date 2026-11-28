@@ -520,7 +520,7 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 	}
 	path, branch, project, id := s.place.Worktree, s.place.Branch, s.projectID, s.id
 	var merged, dir string
-	if p := m.projects[project]; p != nil && s.stage == StageSettled && s.settledBy == settledByMerged {
+	if p := m.projects[project]; p != nil && s.stage == StageSettled && s.settledBy == settledByMerged && !s.place.Existing {
 		merged, dir = m.worktrees.merged[path], p.Dir
 	}
 	thread := clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title)), maxNameRunes)
@@ -645,8 +645,9 @@ func commitsSince(ctx context.Context, dir, start, branch string) string {
 func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 	m.mu.Lock()
 	var path, branch, dir string
+	existing := false
 	if s.place != nil && s.place.Worktree != "" && s.stage == StageActive {
-		path, branch = s.place.Worktree, s.place.Branch
+		path, branch, existing = s.place.Worktree, s.place.Branch, s.place.Existing
 		if p := m.projects[s.projectID]; p != nil {
 			dir = p.Dir
 		}
@@ -655,7 +656,7 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 	if path == "" || dir == "" {
 		return
 	}
-	if err := m.recreateWorktree(ctx, dir, path, branch); err != nil {
+	if err := m.recreateWorktree(ctx, dir, path, branch, existing); err != nil {
 		log.Warn("web thread worktree not recreated", "session", s.id, "path", path, "error", err)
 	}
 }
@@ -663,8 +664,8 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 // recreateWorktree adds the worktree at path back on branch, in the
 // repository holding dir, when it was removed. A branch that is gone, as
 // one removed once its work was merged, is made again from origin's default
-// branch, which holds that work.
-func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string) error {
+// branch, which holds that work; an existing branch the owner chose is not.
+func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string, existing bool) error {
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
@@ -681,6 +682,9 @@ func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string
 	_, _ = runGitWrite(ctx, repo.top, nil, "worktree", "prune")
 	args := []string{"worktree", "add", path, branch}
 	if !refExists(ctx, repo, "refs/heads/"+branch) {
+		if existing {
+			return newError(http.StatusConflict, "the branch %s is gone, so its worktree cannot be recreated", clipRunes(displaytext.Sanitize(branch), maxDetailRunes))
+		}
 		if def := readDefaultBranch(ctx, repo.top); def != "" {
 			args = []string{"worktree", "add", "--no-track", "-b", branch, path, "refs/remotes/origin/" + def}
 		}
@@ -710,7 +714,7 @@ func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.Web
 			delete(m.worktrees.keep, path)
 		}
 	}
-	if err := m.recreateWorktree(ctx, dir, path, place.Branch); err != nil {
+	if err := m.recreateWorktree(ctx, dir, path, place.Branch, place.Existing); err != nil {
 		release()
 		return nil, err
 	}
