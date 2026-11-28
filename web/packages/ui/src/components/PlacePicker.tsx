@@ -1,6 +1,6 @@
 import { Combobox } from '@base-ui/react/combobox';
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Check, ChevronDown, Folder, FolderGit2, GitBranch, GitBranchPlus, Lock, Search } from 'lucide-react';
+import { Check, ChevronDown, Cloud, Folder, FolderGit2, GitBranch, GitBranchPlus, Laptop, Lock, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, LIVE, readOnly, type BranchList, type Project, type SessionSummary, type ThreadPlace } from '../api';
@@ -168,13 +168,18 @@ export function DraftPlaceFoot({ project, place, onPlace, routine }: Readonly<{ 
   const [open, setOpen] = useState(false);
   const worktree = place.mode === 'worktree';
   const from = project.branch ?? 'HEAD';
+  const remote = worktree && !!place.remote;
+  // A worktree from the remote starts from origin's copy of the branch, so the button names that copy.
+  const source = place.base ?? from;
   const value: { name: string; remote?: boolean } | 'new' = place.mode === 'branch' ? 'new'
     : place.mode === 'switch' ? { name: place.branch ?? '', remote: !!place.remote }
-      : worktree && place.base ? { name: place.base } : { name: from, remote: false };
+      : remote ? { name: source.startsWith('origin/') ? source : `origin/${source}` }
+        : worktree && place.base ? { name: place.base } : { name: from, remote: false };
   const pick = (p: Pick) => {
     setOpen(false);
     if (worktree) {
-      if (p.kind === 'existing') onPlace({ mode: 'worktree', base: p.branch.name });
+      // A remote row turns the toggle to Remote; a local row keeps it.
+      if (p.kind === 'existing') onPlace({ mode: 'worktree', base: p.branch.name, ...(remote || p.branch.remote ? { remote: true } : {}) });
     } else if (p.kind === 'new') onPlace({ mode: 'branch' });
     else if (!p.branch.remote && p.branch.name === project.branch) onPlace({ mode: 'current' });
     else onPlace({ mode: 'switch', branch: p.branch.name, ...(p.branch.remote ? { remote: true } : {}) });
@@ -196,13 +201,26 @@ export function DraftPlaceFoot({ project, place, onPlace, routine }: Readonly<{ 
         <BranchMenu anchor={anchor} open={open} onClose={() => setOpen(false)} projectId={project.id} from={from} switching={!worktree}
           existing={worktree || api.supports(SWITCH_CAPABILITY)} value={value} onPick={pick} />
       </>}
+      {worktree && (
+        <Tip label={remote ? 'From origin, fetched first. Press for the local branch.' : 'From the local branch. Press for origin, fetched first.'}>
+          <Button size="sm" aria-label={remote ? 'Remote: start from origin' : 'Local: start from the local branch'} className={cn('shrink-0 text-caption font-normal pointer-coarse:h-9 [&_svg]:size-3.5', remote ? 'text-ink' : 'text-muted')}
+            onClick={() => {
+              // Either way the place names the branch the button shows: its local branch, or origin's copy of it.
+              const name = source.replace(/^origin\//, '');
+              onPlace(remote ? { mode: 'worktree', ...(place.base ? { base: name } : {}) } : { mode: 'worktree', ...(name !== 'HEAD' ? { base: name } : {}), remote: true });
+            }}>
+            {remote ? <Cloud aria-hidden="true" /> : <Laptop aria-hidden="true" />}
+            {remote ? 'Remote' : 'Local'}
+          </Button>
+        </Tip>
+      )}
     </div>
   );
 }
 
 /**
- * A Thread's place on the composer's control row once it exists. In its own worktree: one read-only run, `Worktree branch`, the
- * whole branch and the path in a tooltip (its folder is named for the branch, so the row leaves it out). In the Project folder: the branch
+ * A Thread's place on the composer's control row once it exists. In its own worktree: one read-only run, the worktree icon and the
+ * branch it started from (its own `uam/…` branch says nothing), with its own branch and the path in a tooltip. In the Project folder: the branch
  * dropdown alone, which switches the folder at once under the same rule as a draft (the Thread itself must have
  * finished too); read-only text when the Thread is settled or archived, or the service cannot switch. A draft on a
  * service without places shows its branch. The row caps its width (Composer), so the whole name is also in its tip or title.
@@ -217,14 +235,17 @@ export function PlaceFoot({ session, project }: Readonly<{ session: SessionSumma
   const branch = worktree?.branch ?? session.branch ?? project?.branch;
   if (!branch || !project || project.no_git) return null;
   if (worktree) {
+    const base = worktree.base;
     return (
       <div data-place="" className="flex min-w-0 items-center">
-        {/* Read-only: it only shows the path, on hover, focus or a press. */}
-        <Tip openOnClick label={<span className="break-all">{branch}<span className="block text-on-primary/70">{worktree.path}</span></span>}>
-          <button type="button" aria-label={`Worktree, branch ${branch}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
+        {/* Read-only: it only shows its branch and path, on hover, focus or a press. */}
+        <Tip openOnClick label={<span className="break-all">{base && <span className="block">Worktree from {base}</span>}{branch}<span className="block text-on-primary/70">{worktree.path}</span></span>}>
+          <button type="button" aria-label={base ? `Worktree from ${base}, branch ${branch}` : `Worktree, branch ${branch}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
             <FolderGit2 aria-hidden="true" className="text-muted" />
-            <span className="shrink-0 text-muted">Worktree</span>
-            <span className="min-w-0 truncate font-medium text-ink">{branch}</span>
+            {base ? <span className="min-w-0 truncate font-medium text-ink">{base}</span> : <>
+              <span className="shrink-0 text-muted">Worktree</span>
+              <span className="min-w-0 truncate font-medium text-ink">{branch}</span>
+            </>}
           </button>
         </Tip>
       </div>

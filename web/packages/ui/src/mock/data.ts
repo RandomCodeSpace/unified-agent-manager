@@ -1161,7 +1161,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'completed',
       // Runs in its own worktree, with work saved nowhere else (the composer's strip).
       branch: 'uam/remove-unused-exports',
-      worktree: { path: '/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports', branch: 'uam/remove-unused-exports' },
+      worktree: { path: '/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports', branch: 'uam/remove-unused-exports', base: 'main' },
       git_pending: { uncommitted: 2, unpushed: 3 },
       representation: 'compact-v1',
       detail_stream: true,

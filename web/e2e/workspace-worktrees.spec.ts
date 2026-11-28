@@ -27,7 +27,7 @@ test("a Thread in a new worktree works on its own uam/ branch, and the Project f
   expect(fs.existsSync(path.join(workdir, 'where.txt'))).toBe(false);
   expect(git(workdir, 'branch', '--show-current')).toBe('main');
 
-  await expect(page.getByRole('button', { name: `Worktree, branch ${tree.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${tree.branch}`, exact: true })).toBeVisible();
   await page.getByRole('button', { name: /^Open changes, 2 files/ }).click();
   const files = page.getByRole('complementary', { name: 'Changes' }).getByRole('navigation', { name: 'Changed files' }).getByRole('button');
   await expect(files).toHaveCount(2);
@@ -78,7 +78,7 @@ test('settling a worktree Thread asks over uncommitted work; once committed it s
   expect(fs.readFileSync(path.join(tree.path, 'br.txt'), 'utf8')).toBe(`${tree.branch}\n${tree.path}\n`);
   expect(fs.readFileSync(path.join(tree.path, 'README.md'), 'utf8')).toBe('# Fixture\ndirty\n');
   expect(git(project.dir, 'branch', '--list', 'uam/*').split('\n')).toHaveLength(1);
-  await expect(page.getByRole('button', { name: `Worktree, branch ${tree.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${tree.branch}`, exact: true })).toBeVisible();
 });
 
 test('Settle anyway on a worktree with uncommitted work keeps its folder', async ({ page, project, model }) => {
@@ -195,7 +195,7 @@ test('Branch from here on a worktree Thread makes a new worktree on a new branch
   expect(fs.readFileSync(path.join(branched.path, 'README.md'), 'utf8')).toBe('# Fixture\ndirty\n');
   expect(fs.readFileSync(path.join(branched.path, 'u.txt'), 'utf8')).toBe('u\n');
   expect(fs.existsSync(path.join(branched.path, 'x.log'))).toBe(false);
-  await expect(page.getByRole('button', { name: `Worktree, branch ${branched.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${branched.branch}`, exact: true })).toBeVisible();
   // The source is as it was.
   expect(git(source.path, 'rev-parse', 'HEAD')).toBe(head);
   expect(git(source.path, 'status', '--porcelain')).toBe(status);

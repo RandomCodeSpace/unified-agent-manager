@@ -25,7 +25,7 @@ func TestWebPermissionDetailsAndSessionScope(t *testing.T) {
 		{"write", "Write file", &rpc.PermissionPromptRequestWrite{FileName: "app.go", Diff: "-old\n+new", CanOfferSessionApproval: true}, []string{"app.go", "-old\n+new"}, &rpc.PermissionDecisionApproveForSessionApprovalWrite{}},
 		{"write without session approval", "Write file", &rpc.PermissionPromptRequestWrite{FileName: "app.go", Diff: "+new"}, []string{"app.go", "+new"}, nil},
 		{"read", "Read file", &rpc.PermissionPromptRequestRead{Path: "/work/config"}, []string{"/work/config"}, &rpc.PermissionDecisionApproveForSessionApprovalRead{}},
-		{"external paths", "Access paths outside the workspace", &rpc.PermissionPromptRequestPath{Paths: []string{"/outside/a", "/outside/b"}}, []string{"/outside/a\n/outside/b"}, nil},
+		{"external paths", "Access paths outside the workspace", &rpc.PermissionPromptRequestPath{AccessKind: rpc.PermissionPromptRequestPathAccessKindShell, Paths: []string{"/outside/a", "/outside/b"}}, []string{"/outside/a\n/outside/b"}, nil},
 		{"URL escalation", "Fetch URL", &rpc.PermissionPromptRequestURL{URL: "https://example.com", RequestSandboxBypass: option(true)}, []string{"https://example.com", "outside the sandbox"}, nil},
 		{"MCP tool", "Run MCP tool project/search", &rpc.PermissionPromptRequestMCP{ServerName: "project", ToolName: "search", Args: map[string]string{"query": "needle"}}, []string{"query", "needle"}, &rpc.PermissionDecisionApproveForSessionApprovalMCP{ServerName: "project", ToolName: option("search")}},
 		{"MCP tool with a display name", "Run MCP tool Project Search/search", &rpc.PermissionPromptRequestMCP{ServerName: "project", ServerDisplayName: option("Project Search"), ToolName: "search", Args: map[string]string{"query": "needle"}}, []string{"query", "needle"}, &rpc.PermissionDecisionApproveForSessionApprovalMCP{ServerName: "project", ToolName: option("search")}},
@@ -41,6 +41,9 @@ func TestWebPermissionDetailsAndSessionScope(t *testing.T) {
 			ix := h.sink.interaction(req.RequestID)
 			if ix == nil || ix.Title != tc.title || ix.State != agentapi.InteractionPending {
 				t.Fatalf("permission = %+v", ix)
+			}
+			if _, path := tc.prompt.(*rpc.PermissionPromptRequestPath); path != (ix.PathAccess == "shell" && len(ix.Paths) == 2) {
+				t.Fatalf("path access = %q %q", ix.PathAccess, ix.Paths)
 			}
 			for _, detail := range tc.details {
 				if !strings.Contains(ix.Detail, detail) {

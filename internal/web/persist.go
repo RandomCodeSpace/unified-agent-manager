@@ -60,6 +60,9 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
 	m.noticeLocked(s, before, summary)
 	m.childEndLocked(s, before, summary)
+	if busy(before.State) && !busy(summary.State) {
+		m.wakeCreatorLocked(s)
+	}
 	if durable || queue {
 		if durable {
 			s.persisted = key
@@ -171,7 +174,7 @@ func (m *Manager) flushParts() (err, ledgerErr error) {
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, OutputStyle: key.style, Skills: keySkills(key.skills), Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
+				SpawnedBy: s.spawnedBy, WakeCreator: s.wakeCreator, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd, InterruptedAt: s.interruptedAt,
 				StopReason: key.stopReason, FailureKind: string(key.failKind), NativeChanges: s.nativeChanges, Place: s.clonedPlace(), Budget: budgetRecord(key.budget), Handoff: handoffRecord(key.handoff), Context: (*store.WebContext)(s.context),
 				MemoryNotes: slices.Clone(s.memoryNotes), SubagentLabels: maps.Clone(s.subagentLabels), NativePaths: nativePathsRecord(s), MessageOutcomes: slices.Clone(s.messageOutcomes),
 			},

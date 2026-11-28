@@ -128,6 +128,15 @@ func (m *Manager) drain(s *webSession) {
 		return
 	}
 	before := m.summaryLocked(s)
+	if strings.HasPrefix(s.queue[0].RequestID, wakeRequestPrefix) && !hasWakeNote(s) {
+		// An earlier turn delivered the notes this wake turn was for.
+		s.queue = slices.Delete(s.queue, 0, 1)
+		s.queueChanged = true
+		m.changedLocked(s, before)
+		m.kickDrainLocked(s)
+		m.mu.Unlock()
+		return
+	}
 	head := s.queue[0]
 	s.queueSending = &head
 	s.queue = slices.Delete(s.queue, 0, 1)

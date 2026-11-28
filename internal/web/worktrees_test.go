@@ -438,3 +438,42 @@ func TestWorktreeThreadSurvivesRestart(t *testing.T) {
 		}
 	}
 }
+
+// A worktree from the remote fetches origin's copy of its base first; the
+// default stays the local branch.
+func TestWorktreeFromRemoteFetchesTheBase(t *testing.T) {
+	repo := worktreeRepo(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	gitIn(t, repo, "init", "-q", "--bare", origin)
+	gitIn(t, repo, "remote", "add", "origin", origin)
+	writeRepoFile(t, repo, "pushed.txt", "only on origin\n")
+	gitIn(t, repo, "add", "pushed.txt")
+	gitIn(t, repo, "commit", "-q", "-m", "pushed")
+	gitIn(t, repo, "push", "-q", "origin", "main")
+	gitIn(t, repo, "reset", "-q", "--hard", "HEAD~1")
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "main") // a stale copy, as before a fetch
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+
+	code, local, no := createWithPlace(t, ts, project, `{"mode":"worktree"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("local = %d %+v", code, no)
+	}
+	if _, err := os.Stat(filepath.Join(local.Workdir, "pushed.txt")); err == nil || local.Worktree.Base != "main" {
+		t.Fatalf("the local worktree = %+v, holds the remote commit: %v", local.Worktree, err)
+	}
+	code, remote, no := createWithPlace(t, ts, project, `{"mode":"worktree","remote":true}`)
+	if code != http.StatusCreated {
+		t.Fatalf("remote = %d %+v", code, no)
+	}
+	if _, err := os.Stat(filepath.Join(remote.Workdir, "pushed.txt")); err != nil || remote.Worktree.Base != "main" {
+		t.Fatalf("the remote worktree = %+v, lacks the remote commit: %v", remote.Worktree, err)
+	}
+	if code, _, _ := createWithPlace(t, ts, project, `{"mode":"worktree","base":"feature","remote":true}`); code == http.StatusCreated {
+		t.Fatal("a base origin does not have made a worktree")
+	}
+	if code, _, _ := createWithPlace(t, ts, project, `{"mode":"current","remote":true}`); code != http.StatusBadRequest {
+		t.Fatalf("remote outside a worktree = %d", code)
+	}
+}

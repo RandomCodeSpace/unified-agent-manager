@@ -1,6 +1,8 @@
 package web
 
 import (
+	"cmp"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -13,9 +15,11 @@ import (
 const gitGuardLead = "uam git guard: "
 
 // gitGuardToolUse refuses a shell call whose git command loses work or skips
-// checks with no undo. It is a seatbelt for mistakes, not a sandbox: scripts,
-// aliases, eval and non-literal words are not read.
-func gitGuardToolUse(use agentapi.ToolUse) string {
+// checks with no undo, and, with scope (a Thread's own worktree), one whose
+// -C, --git-dir or --work-tree points outside it. It is a seatbelt for
+// mistakes, not a sandbox: scripts, aliases, eval and non-literal words are
+// not read.
+func gitGuardToolUse(use agentapi.ToolUse, scope string) string {
 	command, _ := use.Args["command"].(string)
 	if permissionToolKind(use.Tool) != "shell" || command == "" {
 		return ""
@@ -32,6 +36,9 @@ func gitGuardToolUse(use agentapi.ToolUse) string {
 				words[i] = glabLiteral(w.Parts)
 			}
 			deny = gitGuardCall(words)
+			if deny == "" && scope != "" {
+				deny = gitScopeCall(words, c.Assigns, use.Workdir, scope)
+			}
 		}
 		return deny == ""
 	})
@@ -46,7 +53,7 @@ func gitGuardCall(words []string) string {
 	}
 	i := 1
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
-		if words[i] == "-C" || words[i] == "-c" {
+		if gitGlobalTakesValue(words[i]) {
 			i++
 		}
 		i++
@@ -79,6 +86,84 @@ func gitGuardCall(words []string) string {
 	case "stash":
 		if gitGuardStash(args) {
 			return gitGuardLead + "the stash stack is shared by every worktree of the repository: use git stash push -m <unique tag>, then git stash apply and drop by its ref, or make a WIP commit."
+		}
+	}
+	return ""
+}
+
+// gitGlobalTakesValue reports a git option before the command whose value
+// is the next word.
+func gitGlobalTakesValue(word string) bool {
+	switch word {
+	case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path", "--super-prefix":
+		return true
+	}
+	return false
+}
+
+// gitScopeEnv are the environment variables that point git at another
+// repository or working tree.
+var gitScopeEnv = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
+
+// gitScopeCall refuses a git command whose -C, --git-dir, --work-tree,
+// -c core.worktree or GIT_DIR-like assignment names a folder outside scope,
+// the Thread's worktree; relative values are read from dir (scope when
+// unknown), after any earlier -C. A value starting with ~ is taken as
+// outside: the shell expands it to the home folder.
+func gitScopeCall(words []string, assigns []*syntax.Assign, dir, scope string) string {
+	if len(words) == 0 || path.Base(words[0]) != "git" {
+		return ""
+	}
+	scope = resolvedPath(scope)
+	dir = cmp.Or(dir, scope)
+	outside := func(flag, value string) string {
+		if value == "" {
+			return ""
+		}
+		target := value
+		if !strings.HasPrefix(value, "~") {
+			if target = resolvedPath(rawJoin(dir, target)); withinDir(scope, target) {
+				return ""
+			}
+		}
+		return fmt.Sprintf("uam scope: git %s %s is outside this thread's worktree %s. Run git in your own worktree; to change another folder, start a thread there with %s.", flag, value, scope, createTaskToolName)
+	}
+	for _, a := range assigns {
+		if a.Name != nil && slices.Contains(gitScopeEnv, a.Name.Value) && a.Value != nil {
+			if deny := outside(a.Name.Value+"=", glabLiteral(a.Value.Parts)); deny != "" {
+				return deny
+			}
+		}
+	}
+	for i := 1; i < len(words) && strings.HasPrefix(words[i], "-"); i++ {
+		flag, value, inline := strings.Cut(words[i], "=")
+		if flag == "-c" && i+1 < len(words) {
+			i++
+			if key, v, ok := strings.Cut(words[i], "="); ok && strings.EqualFold(key, "core.worktree") {
+				if deny := outside("-c core.worktree=", v); deny != "" {
+					return deny
+				}
+			}
+			continue
+		}
+		if flag != "-C" && flag != "--git-dir" && flag != "--work-tree" {
+			if gitGlobalTakesValue(words[i]) {
+				i++
+			}
+			continue
+		}
+		if !inline {
+			if i+1 >= len(words) {
+				return ""
+			}
+			i++
+			value = words[i]
+		}
+		if deny := outside(flag, value); deny != "" {
+			return deny
+		}
+		if flag == "-C" && value != "" {
+			dir = resolvedPath(rawJoin(dir, value))
 		}
 	}
 	return ""

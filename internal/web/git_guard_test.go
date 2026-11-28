@@ -15,6 +15,8 @@ func TestGitGuard(t *testing.T) {
 		"git -C ../other add -Av",
 		"cd repo; git add *",
 		"git reset --hard origin/main",
+		"git --git-dir /tmp/x/.git reset --hard",
+		"git --work-tree ../w --git-dir ../w/.git reset --hard",
 		"/usr/bin/git reset --hard",
 		"git push -f",
 		"git push --force origin HEAD",
@@ -36,7 +38,7 @@ func TestGitGuard(t *testing.T) {
 		"for b in a b; do git push -f origin $b; done",
 	}
 	for _, command := range denied {
-		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}); !strings.HasPrefix(got, gitGuardLead) {
+		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}, ""); !strings.HasPrefix(got, gitGuardLead) {
 			t.Errorf("%q not refused", command)
 		}
 	}
@@ -62,11 +64,11 @@ func TestGitGuard(t *testing.T) {
 		"gh pr merge 12 --squash",
 	}
 	for _, command := range allowed {
-		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}); got != "" {
+		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}, ""); got != "" {
 			t.Errorf("%q refused: %s", command, got)
 		}
 	}
-	if got := gitGuardToolUse(agentapi.ToolUse{Tool: "edit", Args: map[string]any{"command": "git add -A"}}); got != "" {
+	if got := gitGuardToolUse(agentapi.ToolUse{Tool: "edit", Args: map[string]any{"command": "git add -A"}}, ""); got != "" {
 		t.Errorf("non-shell tool refused: %s", got)
 	}
 

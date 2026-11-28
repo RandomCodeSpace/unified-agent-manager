@@ -50,7 +50,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	out.BranchLinkURL, out.BranchLinkBranch = m.branchLinkLocked(s)
 	if s.place != nil && s.place.Worktree != "" {
-		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch, SizeBytes: m.worktrees.sizes[s.place.Worktree].bytes}
+		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch, Base: s.place.Base, SizeBytes: m.worktrees.sizes[s.place.Worktree].bytes}
 	}
 	return out
 }

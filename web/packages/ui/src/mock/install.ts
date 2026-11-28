@@ -1127,7 +1127,7 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       const place = (body.place ?? {}) as { mode?: string; base?: string; branch?: string; remote?: boolean };
       let where: Partial<MockTask> = {};
       if (place.base && place.mode !== 'worktree') return fail(400, 'base is only for a new worktree');
-      if ((place.branch || place.remote) && place.mode !== 'switch') return fail(400, "branch is only for switching the folder's branch");
+      if ((place.branch || place.remote && place.mode !== 'worktree') && place.mode !== 'switch') return fail(400, "branch is only for switching the folder's branch");
       if (place.mode === 'branch' || place.mode === 'switch') {
         const working = st.tasks.find((x) => x.project_id === p.id && x.workdir === p.dir && LIVE.includes(x.state) && (x.stage ?? 'active') === 'active');
         if (working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder. Wait for it to finish.`, { code: 'branch_busy', refs: [working.id] });
@@ -1141,7 +1141,8 @@ export function install(): { received: Received[]; broadcast: (name: string, pay
       } else if (place.mode === 'worktree') {
         const branch = `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}`;
         const path = `/home/user/.uam/worktrees/${p.name}/${branch.replace('/', '-')}`;
-        where = { branch, worktree: { path, branch }, workdir: path };
+        const base = String(place.base ?? p.branch ?? '');
+        where = { branch, worktree: { path, branch, ...(base ? { base: place.remote ? base.replace(/^origin\//, '') : base } : {}) }, workdir: path };
       }
       const t: MockTask = {
         id: nextId('t'),

@@ -224,7 +224,7 @@ describe('routines', () => {
     await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Run the smoke tests and report failures.');
     await user.click(dialog.getByRole('button', { name: 'Create routine' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New routine' })).toBeNull());
-    expect(create.mock.calls[0][1].place).toEqual({ mode: 'worktree', base: 'origin/main' });
+    expect(create.mock.calls[0][1].place).toEqual({ mode: 'worktree', base: 'origin/main', remote: true });
     const card = within(await screen.findByRole('region', { name: 'Nightly smoke' }));
     expect(card.getByText('New worktree from origin/main')).toBeTruthy();
     // Its form opens on the saved choice, and saves a change back to the Project folder.

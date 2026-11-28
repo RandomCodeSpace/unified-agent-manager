@@ -741,6 +741,11 @@ func folderRuns(m *Manager) string {
 func TestRoutineRunsInItsOwnWorktree(t *testing.T) {
 	m, prov, _, project, repo, root := worktreeRoutineManager(t)
 	in := hourly("Deps check")
+	in.Place = &PlaceRequest{Mode: placeWorktree, Base: "feature", Remote: true}
+	if r := mustRoutine(t, m, project, in); r.Place == nil || !r.Place.Remote {
+		t.Fatalf("a routine dropped its remote start: %+v", r.Place)
+	}
+	in = hourly("Deps check")
 	in.Place = &PlaceRequest{Mode: placeWorktree, Base: "feature"}
 	r := mustRoutine(t, m, project, in)
 	if r.Place == nil || *r.Place != (PlaceRequest{Mode: placeWorktree, Base: "feature"}) || routinePlaceText(r.Place) != "New worktree from feature" {

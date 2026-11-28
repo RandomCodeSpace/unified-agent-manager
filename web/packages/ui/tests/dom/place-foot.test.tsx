@@ -134,12 +134,29 @@ describe('a draft Thread', () => {
     expect(menu.queryByText(/^New branch/)).toBeNull();
     expect(menu.queryByText(/is working/)).toBeNull();
     await user.click(menu.getByRole('option', { name: /^origin\/main/ }));
-    expect(strip().textContent).toBe('Project folderNew worktreeorigin/main');
+    // A remote row turns the toggle to Remote; the toggle turns it back to the local branch of that name.
+    expect(strip().textContent).toBe('Project folderNew worktreeorigin/mainRemote');
+    await user.click(screen.getByRole('button', { name: /^Remote: / }));
+    expect(strip().textContent).toBe('Project folderNew worktreemainLocal');
+    await user.click(screen.getByRole('button', { name: /^Local: / }));
     await send(user, 'Try the new parser');
-    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: 'origin/main' });
-    // Once it exists: the worktree and its branch, without the folder named for that branch.
-    const wt = await screen.findByLabelText(/^Worktree, branch uam\/[0-9a-f]{8}$/);
-    expect(wt.textContent).toMatch(/^Worktreeuam\/[0-9a-f]{8}$/);
+    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: 'main', remote: true });
+    // Once it exists: the worktree icon and the branch it started from; its own branch is in the name and tip.
+    const wt = await screen.findByLabelText(/^Worktree from main, branch uam\/[0-9a-f]{8}$/);
+    expect(wt.textContent).toBe('main');
+  });
+
+  test('a new worktree starts from the local branch unless the toggle says Remote', async () => {
+    const create = vi.spyOn(api, 'createSession');
+    const { user } = await draft(/unified-agent-manager/);
+    await user.click(screen.getByRole('radio', { name: 'New worktree' }));
+    const toggle = await screen.findByRole('button', { name: /^Local: / });
+    await user.click(toggle);
+    const shown = screen.getByRole('button', { name: /^Branch / }).textContent ?? '';
+    expect(shown).toMatch(/^origin\//);
+    await send(user, 'Fetch and branch');
+    // The place names the branch the button shows, not whatever the server would pick without one.
+    expect(create.mock.calls[0][0].place).toEqual({ mode: 'worktree', base: shown.slice('origin/'.length), remote: true });
   });
 
   test('the current branch sends no place', async () => {
@@ -158,14 +175,14 @@ describe('a draft Thread', () => {
 });
 
 describe('a started Thread', () => {
-  test('in its own worktree: worktree and branch as plain text, the folder that repeats the branch left out, the whole branch and the path on hover', async () => {
+  test('in its own worktree: the worktree icon and the branch it started from, its own branch and the path on hover', async () => {
     const { user } = await openTask('t15');
-    const wt = screen.getByRole('button', { name: 'Worktree, branch uam/remove-unused-exports' });
-    expect(wt.textContent).toBe('Worktreeuam/remove-unused-exports');
+    const wt = screen.getByRole('button', { name: 'Worktree from main, branch uam/remove-unused-exports' });
+    expect(wt.textContent).toBe('main');
     expect(wt.parentElement!.textContent).toBe(wt.textContent);
     expect(screen.queryByRole('button', { name: /^Branch / })).toBeNull();
     await user.hover(wt);
-    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBe('uam/remove-unused-exports/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports'));
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toBe('Worktree from mainuam/remove-unused-exports/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports'));
   });
 
   test('in the Project folder: the branch alone, and a switch that waits for the folder', async () => {

@@ -11,6 +11,16 @@ import (
 )
 
 func trailPaths(use agentapi.ToolUse) []string {
+	paths := toolPaths(use)
+	for i, path := range paths {
+		paths[i] = editPath(use.Workdir, path)
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths)
+}
+
+// toolPaths are the paths an edit-tool call writes, as the call gives them.
+func toolPaths(use agentapi.ToolUse) []string {
 	var paths []string
 	switch use.Tool {
 	case "edit", "create":
@@ -20,18 +30,14 @@ func trailPaths(use agentapi.ToolUse) []string {
 	case "apply_patch":
 		patch, _ := use.Args["patch"].(string)
 		for line := range strings.SplitSeq(patch, "\n") {
-			for _, prefix := range []string{"*** Update File: ", "*** Add File: "} {
+			for _, prefix := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
 				if path, ok := strings.CutPrefix(line, prefix); ok && strings.TrimSpace(path) != "" {
 					paths = append(paths, strings.TrimSpace(path))
 				}
 			}
 		}
 	}
-	for i, path := range paths {
-		paths[i] = editPath(use.Workdir, path)
-	}
-	slices.Sort(paths)
-	return slices.Compact(paths)
+	return paths
 }
 
 // trailContextLocked reads sibling edits under the Manager lock.

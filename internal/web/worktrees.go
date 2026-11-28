@@ -52,7 +52,8 @@ type PlaceRequest struct {
 	Base string `json:"base,omitempty"`
 	// Branch is the branch mode switch checks out: a local one, or with
 	// Remote a remote-tracking one ("origin/main"), which a new local
-	// branch of the same name then tracks.
+	// branch of the same name then tracks. For a worktree, Remote starts it
+	// from origin's copy of its base branch, fetched first.
 	Branch string `json:"branch,omitempty"`
 	Remote bool   `json:"remote,omitempty"`
 }
@@ -61,6 +62,8 @@ type PlaceRequest struct {
 type WorktreeInfo struct {
 	Path   string `json:"path"`
 	Branch string `json:"branch"`
+	// Base is the branch the worktree's branch started from, when known.
+	Base string `json:"base,omitempty"`
 	// SizeBytes is its size on disk once measured in the background.
 	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
@@ -96,7 +99,7 @@ func checkPlace(p *PlaceRequest) error {
 	if p == nil {
 		return nil
 	}
-	if p.Mode != placeSwitch && (p.Branch != "" || p.Remote) {
+	if p.Mode != placeSwitch && (p.Branch != "" || p.Remote && p.Mode != placeWorktree) {
 		return newError(http.StatusBadRequest, "branch is only for switching the folder's branch")
 	}
 	switch p.Mode {
@@ -285,7 +288,7 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 	if req.Mode == placeBranch {
 		return m.makeBranch(ctx, project, repo, branch)
 	}
-	return m.makeWorktree(ctx, project, repo, branch, req.Base)
+	return m.makeWorktree(ctx, project, repo, branch, req.Base, req.Remote)
 }
 
 // freeBranch is a new branch name no local or remote branch has yet:
@@ -475,13 +478,25 @@ func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo
 }
 
 // makeWorktree adds a worktree on branch, a new branch from base, where the
-// Copilot CLI puts its own (worktreePath). The Thread's folder is the
-// Project's folder inside it, as the Project may be a folder inside its
+// Copilot CLI puts its own (worktreePath). With remote it starts from
+// origin's copy of the base branch, fetched first. The Thread's folder is
+// the Project's folder inside it, as the Project may be a folder inside its
 // repository.
-func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRepo, branch, base string) (string, *store.WebPlace, func(), error) {
+func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRepo, branch, base string, remote bool) (string, *store.WebPlace, func(), error) {
 	none := func() {}
 	pathTemplate, baseRef := m.copilotWorktreeSettings(repo.top)
 	start, base := worktreeStart(ctx, repo, base, baseRef)
+	if remote {
+		// shortcut: origin only; a repository whose branches track another remote starts from origin's copy.
+		base = strings.TrimPrefix(base, "origin/")
+		if base == "" || base == "HEAD" {
+			return "", nil, none, newError(http.StatusBadRequest, "a worktree from the remote needs a base branch")
+		}
+		if _, err := runGitWrite(ctx, repo.top, nil, "fetch", "--no-tags", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base); err != nil {
+			return "", nil, none, gitFailed("Could not fetch origin/"+base, err)
+		}
+		start = "refs/remotes/origin/" + base
+	}
 	if !refExists(ctx, repo, start+"^{commit}") {
 		return "", nil, none, newError(http.StatusBadRequest, "%q is not a branch or commit of this repository", clipRunes(displaytext.Sanitize(start), maxDetailRunes))
 	}
@@ -573,7 +588,7 @@ func (m *Manager) branchWorktree(ctx context.Context, project Project, source st
 	if err != nil {
 		return "", nil, "", none, err
 	}
-	folder, place, undo, err := m.makeWorktree(ctx, project, repo, branch, start)
+	folder, place, undo, err := m.makeWorktree(ctx, project, repo, branch, start, false)
 	if err != nil {
 		return "", nil, "", none, err
 	}
@@ -740,6 +755,10 @@ func (m *Manager) placeInstructionsLocked(s *webSession) string {
 		if project := m.projects[s.projectID]; project != nil {
 			where += " (main checkout " + project.Dir + ")"
 		}
+	}
+	if branch, base := m.mergesIntoCreatorLocked(s); branch != "" {
+		return fmt.Sprintf("uam place: you work in %s on the branch %s, started from %s, the branch of the Thread that started you, made for this Thread. Commit there. Do not push, open a pull or merge request, merge or switch branches, even when your first message asks: that Thread merges %s into %s and pushes it. Say in your reply what you committed.",
+			where, branch, base, branch, base)
 	}
 	base, into := "", "the repository's default branch"
 	if p.Base != "" {

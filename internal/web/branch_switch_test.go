@@ -68,7 +68,7 @@ func TestDraftSwitchAppliesAtSend(t *testing.T) {
 	})
 	for _, bad := range []string{
 		`{"mode":"switch"}`, `{"mode":"switch","branch":"-f"}`, `{"mode":"current","branch":"feature"}`,
-		`{"mode":"worktree","remote":true}`, `{"mode":"switch","branch":"feature","base":"main"}`,
+		`{"mode":"current","remote":true}`, `{"mode":"switch","branch":"feature","base":"main"}`,
 	} {
 		if code, _, no := createWithPlace(t, ts, project, bad); code != http.StatusBadRequest {
 			t.Fatalf("place %s = %d %+v", bad, code, no)

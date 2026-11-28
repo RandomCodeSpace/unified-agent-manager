@@ -562,6 +562,10 @@ type WebState struct {
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; empty for a Task the owner created or imported.
 	SpawnedBy string `json:"spawned_by,omitempty"`
+	// WakeCreator is set when that call asked uam to start a turn in its
+	// creator, when the creator is not running, to deliver this Task's end
+	// notes.
+	WakeCreator bool `json:"wake_creator,omitempty"`
 	// RoutineID is the routine whose run created this Task; empty
 	// otherwise.
 	RoutineID string `json:"routine_id,omitempty"`
@@ -672,6 +676,9 @@ type WebPlace struct {
 	Base     string `json:"base,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
 	Named    bool   `json:"named,omitempty"`
+	// Remote is a routine's choice to start each run's worktree from
+	// origin's copy of Base, fetched first.
+	Remote bool `json:"remote,omitempty"`
 }
 
 // Update sets every field this version models to v's and keeps the fields a
@@ -712,6 +719,7 @@ var knownWebStateFields = map[string]struct{}{
 	"terminal_session":    {},
 	"imported":            {},
 	"spawned_by":          {},
+	"wake_creator":        {},
 	"routine_id":          {},
 	"rerun_of":            {},
 	"fork":                {},

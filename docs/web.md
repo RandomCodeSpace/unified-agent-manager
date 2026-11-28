@@ -513,7 +513,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - **New worktree** follows the Copilot CLI's own worktrees, whose
     worktree commands the SDK does not expose. It runs
     `git worktree add -b <branch>` from the chosen base branch, local or
-    remote; without one, from the CLI's `worktreeBaseRef` setting
+    remote. The **Local** / **Remote** toggle beside the branch menu
+    (Local by default; picking a Remote row turns it to Remote) starts from
+    origin's copy of the branch instead, after `git fetch origin <branch>`;
+    a failed fetch stops the create. Without a base, from the CLI's `worktreeBaseRef` setting
     (`defaultBranch`: the remote's default branch; otherwise the current
     `HEAD`). The worktree goes where the CLI puts its own: the owner's
     `worktreePathTemplate` (`{repoPath}`, `{repo}`, `{branch}`,
@@ -643,15 +646,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   filter, arrow keys and Enter to choose; Local and Remote branches with
   their last commit's age). In Current branch it switches the Project
   folder: **New branch from <branch>** on top, or an existing branch. In
-  New worktree it picks the worktree's source branch; the worktree's name
+  New worktree it picks the worktree's source branch, and the Local /
+  Remote toggle beside it says whether that is the local branch or
+  origin's copy, fetched first; the worktree's name
   shows only once the first message made it. While a Thread in the folder
   has not finished, the branch menu says which one ("… is working") and
   turns every row off; while changed files are not committed it says how
   many and turns off the existing branches only. The choice applies with
   the first message. A started Thread in the Project folder shows **Current
   branch** and the same branch menu, which switches the folder at once; a
-  Thread in its own worktree shows `Worktree · <branch> · <folder>` as
-  plain text, the path on hover or focus. When the toolbar
+  Thread in its own worktree shows the worktree icon and the branch it
+  started from as plain text (its own `uam/…` branch and the path on hover
+  or focus; a worktree whose base is unknown shows `Worktree <branch>`). When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes
@@ -1422,7 +1428,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Settings, which the `uam` read tool's `models` op lists with their efforts
   and cost tier). The Thread starts on a new branch in its own git worktree
   of the Project (from an optional `base` branch or commit) unless the call
-  passes `worktree: false` or the Project is outside git.
+  passes `worktree: false` or the Project is outside git. Without `base`,
+  a calling Thread on its own branch in the same Project gives that branch:
+  the new Thread is told to commit, not to push, open a pull or merge
+  request or merge, and its end notes tell the caller to run
+  `git merge <its branch>` in its own folder, so the work leaves once,
+  with the caller's branch.
   A name several Projects share is refused with
   their IDs. A `path` (absolute, `~/...`, or relative to the calling Thread's
   folder) inside a Project's folder starts the Thread in the Project with the
@@ -1452,7 +1463,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   what it asks, cut to 300 bytes; when the owner answers, a note gives the
   question and the answer or decision, replacing the waiting note if it has
   not been delivered yet. The agent gets the note with its next tool call, or as its next turn starts
-  when it is idle; the note then shows in that Thread's conversation as a uam
+  when it is idle. A call with `wake: true` (stored with the started Thread)
+  also starts that turn: when an end note of the started Thread waits and the
+  Thread that started it is not running, or once its running turn ends, uam
+  queues a prompt there from uam (not the owner), behind the owner's queued
+  prompts, that the note comes with; it is dropped if an earlier turn took
+  the note first. Question and answer notes never wake it; the note then shows in that Thread's conversation as a uam
   notice of one line linking the Thread (an end note without its reply),
   not as your message. Notes wait only in memory, so a service
   restart drops those not yet delivered, and nothing is sent to a Thread
@@ -1513,10 +1529,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or
   `apply_patch` call that writes outside the Thread's folder (its worktree
   for a Thread in one), its Copilot session folder or the temporary
-  directory, judging links by their target. The refusal tells the agent to
+  directory, judging links by their target; a patch's Add, Update, Delete
+  and Move to headers all count. The refusal tells the agent to
   start a Thread there with `uam_create_task`, so the change is tracked in
   that folder's Project. Shell commands are not checked: uam cannot tell
-  before they run where they write.
+  before they run where they write. A Thread in its own worktree also
+  runs git only on it: `git -C`, `--git-dir` and `--work-tree` naming
+  another folder are refused (literal words only, as the git guard reads
+  them), and in Allow all or Assisted mode a Copilot request to write or
+  run a shell command on a path outside that folder waits for the owner
+  instead of being approved; requests to read such paths still are.
 - **Blocked web hosts**: the first `web_fetch` of any URL is always made.
   When it fails with status 401, 403, 407 or 451, every Thread on the server
   skips that host and first path segment for 4 days (a 429, for 10

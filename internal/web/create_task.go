@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -55,7 +56,7 @@ var createTaskTool = agentapi.HostTool{
 	Description: fmt.Sprintf("Start a new uam thread with prompt as its first message, in a project or in the project of a folder. "+
 		"Use it for any change outside your own thread's folder; committing and pushing your own branch is not such a change. Give project or path, not both. "+
 		"A path inside an existing project starts the thread there; a folder in no project needs the owner's confirmation in uam before it is added as a project (inside the home folder only; uam makes a missing folder). "+
-		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and the start of its last reply (the uam tool's history op reads the rest), at your next tool call or turn; wait for it instead of checking. Its questions and permission requests to the owner, and the owner's answers, come as notes too. "+
+		"The thread starts in yolo mode when you are in yolo, else in safe mode, and runs on its own: the owner sees it in the uam sidebar. Each time its turn ends, or it is settled, you get a 'uam thread:' note with its end state and the start of its last reply (the uam tool's history op reads the rest), at your next tool call or turn; wait for it instead of checking. With wake true, uam also starts a turn here to deliver the note when you are not running, so you can end your turn and carry on when the thread reports. Its questions and permission requests to the owner, and the owner's answers, come as notes too. "+
 		"Pick model and effort for the work (a hard change: a stronger model or more effort; a small one: a cheaper model); uam op models lists the owner's enabled models with their efforts and cost tier. "+
 		"It starts on a new branch in its own git worktree of the project, so its changes stay apart until merged; pass worktree false only when the owner asks for the project's own folder. "+
 		"You can start at most %d threads.", maxSpawns),
@@ -67,7 +68,8 @@ var createTaskTool = agentapi.HostTool{
 		"model":    stringProp("A model ID the owner enabled (uam op models). Without one, the owner's default for new threads."),
 		"effort":   stringProp("A reasoning effort the model offers (uam op models). Without one, the model's default."),
 		"worktree": map[string]any{"type": "boolean", "description": "Default true: the thread runs on a new branch in its own git worktree of the project (a project outside git runs in its folder). false only when the owner asks for the project's own folder."},
-		"base":     stringProp("For the worktree: the branch or commit its new branch starts from. Without one, the project's current branch."),
+		"base":     stringProp("For the worktree: the branch or commit its new branch starts from. Without one, your own branch when you work on one in that project (the thread then does not push; you merge its branch into yours), else the project's current branch."),
+		"wake":     map[string]any{"type": "boolean", "description": "Default false: its end notes wait for your next tool call or turn. true: when its turn ends or it is settled and you are not running, uam starts a turn here with the note."},
 	}),
 }
 
@@ -80,6 +82,7 @@ type createTaskArgs struct {
 	Effort   string `json:"effort"`
 	Worktree *bool  `json:"worktree"`
 	Base     string `json:"base"`
+	Wake     bool   `json:"wake"`
 }
 
 // taskToolsLocked is the Manager's hostTools: uam_create_task unless
@@ -249,7 +252,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		return "", err
 	}
 	defer end()
-	req := CreateRequest{Name: in.Name, Model: in.Model, Effort: in.Effort, Prompt: in.Prompt, Mode: string(store.ModeSafe), spawnedBy: taskID}
+	req := CreateRequest{Name: in.Name, Model: in.Model, Effort: in.Effort, Prompt: in.Prompt, Mode: string(store.ModeSafe), spawnedBy: taskID, wakeCreator: in.Wake}
 	var folder string
 	if in.Path != "" {
 		if in.Project, folder, err = m.spawnPathProject(ctx, taskID, call.CallID, in.Path); err != nil {
@@ -257,11 +260,18 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		}
 	}
 	m.mu.Lock()
-	if caller := m.sessions[taskID]; caller != nil && caller.mode == store.ModeYolo && !caller.modeUnknown {
+	caller := m.sessions[taskID]
+	if caller != nil && caller.mode == store.ModeYolo && !caller.modeUnknown {
 		req.Mode = string(store.ModeYolo)
 	}
 	var projectName, projectDir string
 	req.ProjectID, projectName, err = m.spawnProjectLocked(in.Project)
+	// A caller on a branch uam made shares it with its child: the child
+	// starts from it and the caller merges the child's branch back.
+	callerBranch := ""
+	if caller != nil && caller.projectID == req.ProjectID && caller.place != nil && (caller.place.Mode == placeWorktree || caller.place.Mode == placeBranch) {
+		callerBranch = caller.place.Branch
+	}
 	if p := m.projects[req.ProjectID]; p != nil {
 		projectDir = p.Dir
 	}
@@ -279,7 +289,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		return "", errors.New("base is only for a worktree")
 	}
 	if worktree {
-		req.Place = &PlaceRequest{Mode: placeWorktree, Base: in.Base}
+		req.Place = &PlaceRequest{Mode: placeWorktree, Base: cmp.Or(in.Base, callerBranch)}
 	}
 	switch {
 	case folder != "" && worktree:
@@ -369,6 +379,12 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	}
 	tail := fmt.Sprintf("It starts in %s mode and runs on its own: the owner sees it in the uam sidebar. When its turn ends, or it waits for the owner, you get a 'uam thread:' note. "+
 		"You can start %d more.", req.Mode, maxSpawns-n-1)
+	if in.Wake {
+		tail += " When it ends a turn while you are not running, uam starts a turn here with its note."
+	}
+	if worktree && callerBranch != "" && req.Place.Base == callerBranch {
+		tail += fmt.Sprintf(" Its branch starts from yours (%s) and it does not push: when its work is done, merge its branch into yours (the note names it), then push yours when the owner asks.", callerBranch)
+	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
@@ -540,19 +556,41 @@ func (m *Manager) childEndLocked(s *webSession, before, after SessionSummary) {
 		reply = strings.ToValidUTF8(reply[:maxChildReply], "") + fmt.Sprintf("… (cut; the uam tool's history {\"id\": %q} reads more)", s.id)
 	}
 	text := childNoteHead(s) + end + "." + files
+	if branch, base := m.mergesIntoCreatorLocked(s); branch != "" {
+		text += fmt.Sprintf(" Its branch %s starts from yours (%s) and is not pushed: when its work is done, run `git merge %s` in your folder.", branch, base, branch)
+	}
 	if reply != "" {
 		// A settled Thread's transcript may already be out of memory.
 		text += " Its last reply:\n" + reply
 	}
-	if m.queueChildNoteLocked(s, "", text) {
+	if m.queueChildNoteLocked(s, "", text, s.wakeCreator) {
 		m.count("child_end_notes")
+		m.wakeCreatorLocked(m.sessions[s.spawnedBy])
 	}
 }
 
 // childNote is a note waiting for a creator. key names the child's
 // interaction an owner note is about, so its answer replaces it while it
 // waits; it is empty for end notes.
-type childNote struct{ key, text string }
+type childNote struct {
+	key, text string
+	// wake is set on the end note of a Thread started with wake.
+	wake bool
+}
+
+// mergesIntoCreatorLocked returns the branch of s and its base when s works
+// in a worktree started from the branch of the Thread that started it, so
+// that Thread merges it back; "" otherwise. The caller holds mu.
+func (m *Manager) mergesIntoCreatorLocked(s *webSession) (branch, base string) {
+	p := s.place
+	if p == nil || p.Mode != placeWorktree || p.Branch == "" || p.Base == "" {
+		return "", ""
+	}
+	if c := m.sessions[s.spawnedBy]; c != nil && !c.removed && c.place != nil && c.place.Branch == p.Base {
+		return p.Branch, p.Base
+	}
+	return "", ""
+}
 
 func childNoteHead(s *webSession) string {
 	return fmt.Sprintf("uam thread: Thread %q (%s), which you started, ", firstNonEmpty(s.name, s.title, "New thread"), s.id)
@@ -562,7 +600,7 @@ func childNoteHead(s *webSession) string {
 // queued for a creator that is no longer active. A note with key replaces
 // the waiting one with the same key. It reports whether it queued text.
 // The caller holds mu.
-func (m *Manager) queueChildNoteLocked(s *webSession, key, text string) bool {
+func (m *Manager) queueChildNoteLocked(s *webSession, key, text string, wake bool) bool {
 	parent := m.sessions[s.spawnedBy]
 	if s.spawnedBy == "" || parent == nil || parent.removed || parent.stage != StageActive {
 		return false
@@ -573,7 +611,7 @@ func (m *Manager) queueChildNoteLocked(s *webSession, key, text string) bool {
 	}
 	// shortcut: the oldest notes go past maxChildNotes; key them by Thread if
 	// a creator ever needs every note of a long idle wait.
-	parent.childNotes = append(parent.childNotes, childNote{key, text})
+	parent.childNotes = append(parent.childNotes, childNote{key, text, wake})
 	if n := len(parent.childNotes); n > maxChildNotes {
 		parent.childNotes = parent.childNotes[n-maxChildNotes:]
 	}
@@ -584,7 +622,7 @@ func (m *Manager) queueChildNoteLocked(s *webSession, key, text string) bool {
 // question or a permission request yolo mode did not claim. The caller
 // holds mu.
 func (m *Manager) childAskLocked(s *webSession, ix *interaction) {
-	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"waits for the owner: "+childAsk(ix.Interaction)+".") {
+	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"waits for the owner: "+childAsk(ix.Interaction)+".", false) {
 		m.count("child_owner_notes")
 	}
 }
@@ -600,7 +638,7 @@ func (m *Manager) childAnswerLocked(s *webSession, ix *interaction, answer agent
 		}
 		got = strings.Join(parts, "; ")
 	}
-	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"got the owner's answer to "+childAsk(ix.Interaction)+": "+clipLine(got)+".") {
+	if m.queueChildNoteLocked(s, s.id+"/"+ix.ID, childNoteHead(s)+"got the owner's answer to "+childAsk(ix.Interaction)+": "+clipLine(got)+".", false) {
 		m.count("child_owner_notes")
 	}
 }
@@ -644,4 +682,37 @@ func (m *Manager) takeChildNotesLocked(s *webSession) string {
 	}
 	s.childNotes = nil
 	return strings.Join(texts, "\n\n")
+}
+
+// wakePrompt starts the turn wakeCreatorLocked queues; the prompt hook adds
+// the waiting notes to it.
+const wakePrompt = "[uam] A thread you started with wake ended a turn or was settled, so uam started this turn to deliver its 'uam thread:' note. " +
+	"It comes from uam, not from the owner. Carry on with the work you started it for."
+
+func hasWakeNote(s *webSession) bool {
+	return slices.ContainsFunc(s.childNotes, func(n childNote) bool { return n.wake })
+}
+
+// wakeCreatorLocked queues a turn in s when an end note of a Thread started
+// with wake waits for it and s is not running; a running s gets the note with
+// its next tool call, or this check again when its turn ends. The drain drops
+// the turn if another turn took the notes first. The caller holds mu.
+func (m *Manager) wakeCreatorLocked(s *webSession) {
+	// A creator the owner stopped stays stopped: its notes wait for the owner's next message.
+	if s == nil || s.removed || s.stage != StageActive || busy(s.state()) || s.state() == StateCancelled || !hasWakeNote(s) || len(s.queue) >= maxQueue ||
+		slices.ContainsFunc(s.queue, func(q QueuedPrompt) bool { return strings.HasPrefix(q.RequestID, wakeRequestPrefix) }) {
+		return
+	}
+	id, err := newUUID()
+	if err != nil {
+		log.Warn("wake creator: generate request id", "session", s.id, "error", err)
+		return
+	}
+	before := m.summaryLocked(s)
+	s.queue = append(s.queue, QueuedPrompt{RequestID: wakeRequestPrefix + id, Text: wakePrompt, QueuedAt: m.now(),
+		Settings: PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}})
+	s.queueChanged = true
+	m.changedLocked(s, before)
+	m.kickDrainLocked(s)
+	m.count("child_wakes")
 }
