@@ -11,7 +11,7 @@ require (
 	github.com/dustin/go-humanize v1.1.0
 	github.com/evanw/esbuild v0.25.0
 	github.com/google/uuid v1.6.0
-	github.com/microsoft/copilot-sdk/go/v2 v2.0.3
+	github.com/microsoft/copilot-sdk/go/v2 v2.0.4
 	github.com/sourcegraph/go-diff v0.9.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.62.0
@@ -28,7 +28,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
-	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

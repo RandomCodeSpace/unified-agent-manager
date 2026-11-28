@@ -159,7 +159,7 @@ func assistedReview(d *rpc.PermissionRequestedData) agentapi.AssistedReview {
 		a = r.AssistedApproval
 	case *rpc.PermissionPromptRequestExtensionManagement:
 		a = r.AssistedApproval
-	case *rpc.PermissionPromptRequestExtensionPermissionAccess:
+	case *rpc.PermissionPromptRequestExtensionLaunch:
 		a = r.AssistedApproval
 	case *rpc.PermissionPromptRequestHook:
 		a = r.AssistedApproval
