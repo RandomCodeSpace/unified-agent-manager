@@ -552,7 +552,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     was removed, the new one starts from the source's branch. If the copy
     fails, the new worktree and branch are removed and nothing is branched.
     Dismissing an unresolved branch request, or deleting its source Thread,
-    removes its worktree too, unless a Thread uses it or it has changes,
+    removes its worktree too, unless a Thread uses it, it has changes or
+    its `HEAD` is not on its branch,
     and its branch, unless the branch has commits since the fork.
   - Settling, archiving or deleting a Thread removes its worktree with
     `git worktree remove`; the branch stays, so its commits do too, and the
@@ -566,13 +567,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     `.DS_Store`): git would delete an ignored `.env` or `out/` with the
     worktree without asking. Ignored content inside the named folders is
     deleted with the worktree. A kept worktree is listed in Settings with
-    those files counted as not committed. Using the Thread
+    those files counted as not committed. A worktree whose `HEAD` is not on
+    the Thread's branch is kept too: a detached `HEAD` (a checked-out commit,
+    a rebase stopped midway) or another branch. Commits made on a detached
+    `HEAD` are on no branch and would go with the worktree; if git cannot
+    say where `HEAD` is, the worktree stays. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
-    from the branch.
+    from the branch. If it cannot be brought back, the conversation does not
+    open: the message is rejected and the Thread fails with "could not
+    restore this Thread's worktree" and the reason. A branch that is gone
+    is not made again ("branch … is gone, and uam has no record of removing
+    it"), since a new one would stand in for work that may not be merged;
+    create the branch again and send the message again.
   - A Thread whose branch has landed on the default branch settles itself
     and its `uam/…` branch is removed with the worktree (see Settle below).
     Using that Thread again, or branching from it, starts the branch again
-    from origin's default branch, which holds its work. The same hourly
+    from origin's default branch, which holds its work. Using it again does
+    so only while the newest removal of that worktree in the removed list
+    (the last 20) says uam removed the branch. The same hourly
     check removes the `uam/…` branch of a Thread you settled, archived or
     deleted yourself, once its worktree is gone and the refs on disk prove
     its work is on origin's default branch; a branch without that proof, one
@@ -596,7 +608,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     with the others), each with its Thread and branch; "merged, branch
     removed" (`branch_removed`) marks one whose branch went too. Sizes are measured in the background.
     Remove takes a worktree with nothing uncommitted at once and asks first
-    when changes would be lost; it is refused while the Thread works.
+    when changes would be lost; it is refused while the Thread works, and,
+    without `force`, while the worktree is not on its Thread's branch.
   - Below 10% free space the Worktrees page in the Settings rail and the
     Settings button carry a warning dot (`disk` in `GET /api/meta`).
 - **Names and titles**: the name is optional. Without one, the Thread takes
@@ -2525,13 +2538,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes), Cancel and
   **Settle anyway** or **Archive anyway**. A clean Thread settles at once.
+  A Thread whose own worktree is not on its branch (a detached `HEAD` or
+  another branch, see **Branches and worktrees**) is refused first, with a
+  plain 409 that says where the worktree is and to switch it back; the
+  notice shows it. `{"force": true}` settles or archives it anyway and its
+  worktree is kept.
   Each confirmation says how to undo it: Reopen for Settle, Unarchive for
   Archive; Delete says it cannot be undone.
 
   A Thread with no activity for 7 days settles itself. The check runs every
   hour and skips any Thread that Settle would refuse, that has an unanswered
   request, an unreconciled rewind or an unseen failure, that a page has
-  open, or that has unsaved git work of its own by Settle's rule, read
+  open, or that has unsaved git work of its own by Settle's rule or its
+  own worktree off its branch, read
   again before each check; for a Thread in its own worktree, that row's tip
   says "Quiet N days; stays active until this work is saved". This settle
   doesn't count as activity, so the Thread keeps its last activity time. Its record says `settled_by: "auto"`; Reopen clears that and

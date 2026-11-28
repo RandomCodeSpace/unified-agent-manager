@@ -166,7 +166,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
-	m.restoreWorktree(m.ctx, s)
+	worktreeErr := m.restoreWorktree(m.ctx, s)
 	// A worktree missing at Start was not located; restoring brings it back.
 	m.mu.Lock()
 	located := s.checkout.Common != ""
@@ -180,7 +180,8 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	defer cancel()
 	var conv agentapi.Conversation
-	err := selectionErr
+	// A worktree that is not back fails the open: the folder may not exist.
+	err := cmp.Or(worktreeErr, selectionErr)
 	if err == nil {
 		conv, err = prov.Open(ctx, req)
 	}
@@ -256,7 +257,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		if errors.Is(err, agentapi.ErrUnsupported) {
 			m.syncAssisted(s.provider)
 		}
-		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) {
+		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) || errors.Is(err, errNoWorktree) {
 			return newError(http.StatusConflict, "%s", openFailureDetail(err, req.ConversationID))
 		}
 		return newError(http.StatusBadGateway, "%s", openFailureDetail(err, req.ConversationID))
@@ -274,6 +275,9 @@ func openFailureDetail(err error, convID string) string {
 	}
 	if errors.Is(err, agentapi.ErrAgentUnavailable) {
 		return shortError(err) + "; choose another agent or the default agent for this Thread"
+	}
+	if errors.Is(err, errNoWorktree) {
+		return shortError(err)
 	}
 	return "could not open the provider conversation: " + shortError(err)
 }

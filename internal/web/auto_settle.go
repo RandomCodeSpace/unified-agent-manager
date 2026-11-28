@@ -28,8 +28,9 @@ var autoSettleAfter = 7 * 24 * time.Hour
 // restarts its week. The settle is not activity, so updated_at keeps the
 // Task's last message.
 //
-// A Task with unsaved work, by Settle's rule (putAwayWork), stays active:
-// each due Task's work is read first.
+// A Task with unsaved work, by Settle's rule (putAwayWork), or whose own
+// worktree is not on its branch (strayed), stays active: each due Task's
+// work is read first.
 func (m *Manager) autoSettle() {
 	m.mu.Lock()
 	var due []*webSession
@@ -41,7 +42,7 @@ func (m *Manager) autoSettle() {
 	m.mu.Unlock()
 	saved := make(map[*webSession]bool, len(due))
 	for _, s := range due {
-		if p, _, _ := m.putAwayWork(m.ctx, s); p == nil {
+		if p, _, _ := m.putAwayWork(m.ctx, s); p == nil && m.strayed(m.ctx, s) == nil {
 			saved[s] = true
 		}
 	}
