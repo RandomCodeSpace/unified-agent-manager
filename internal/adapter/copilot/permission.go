@@ -218,7 +218,7 @@ func permissionToolCallID(pr rpc.PermissionRequest) string {
 		id = r.ToolCallID
 	case *rpc.PermissionRequestExtensionManagement:
 		id = r.ToolCallID
-	case *rpc.PermissionRequestExtensionPermissionAccess:
+	case *rpc.PermissionRequestExtensionLaunch:
 		id = r.ToolCallID
 	case *rpc.RawPermissionRequest:
 		var v struct {

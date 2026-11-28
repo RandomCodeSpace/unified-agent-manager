@@ -1314,7 +1314,7 @@ func TestWebPermissionNamesItsToolCall(t *testing.T) {
 		{"workflow", &rpc.PermissionRequestWorkflow{ToolCallID: id("call_workflow")}, "call_workflow"},
 		{"env", &rpc.PermissionRequestExtensionEnvAccess{ToolCallID: id("call_env")}, "call_env"},
 		{"extension", &rpc.PermissionRequestExtensionManagement{ToolCallID: id("call_ext")}, "call_ext"},
-		{"extension-permission", &rpc.PermissionRequestExtensionPermissionAccess{ToolCallID: id("call_extp")}, "call_extp"},
+		{"extension-launch", &rpc.PermissionRequestExtensionLaunch{ToolCallID: id("call_extp")}, "call_extp"},
 		{"raw", &rpc.RawPermissionRequest{Discriminator: "future-kind", Raw: []byte(`{"kind":"future-kind","toolCallId":" call_raw "}`)}, "call_raw"},
 		{"shell-without", &rpc.PermissionRequestShell{FullCommandText: "ls"}, ""},
 		{"url-blank", &rpc.PermissionRequestURL{URL: "https://example.com", ToolCallID: id("  ")}, ""},
