@@ -511,9 +511,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     branch. A new branch made this way is named from the Thread's name or
     title like any other. Connected instances advertise `branch-switch-v1`.
   - **New worktree** follows the Copilot CLI's own worktrees, whose
-    worktree commands the SDK does not expose. It runs
-    `git worktree add -b <branch>` from the chosen base branch, local or
-    remote; without one, from the CLI's `worktreeBaseRef` setting
+    worktree commands the SDK does not expose. Its branch menu offers
+    **New branch from <current branch>** on top (the default), then the
+    Local and Remote branches. New branch runs
+    `git worktree add -b <branch>` from the Project's current branch; the
+    **Local** / **Remote** toggle beside the branch menu (Local by default)
+    starts from origin's copy of that branch instead, after
+    `git fetch origin <branch>`; a failed fetch stops the create.
+    `uam_create_task`'s `base` still starts the new branch from another
+    branch. Picking an existing branch works on that branch: the place is
+    `{"mode": "worktree", "branch": …}`, `git worktree add <path> <branch>`
+    checks it out and commits land on it, with no `uam/` branch. A Remote
+    row (`"remote": true`, `"origin/x"`) is fetched first and checked out
+    with `git worktree add --track -b x <path> origin/x`; a local branch of
+    that name is refused ("choose it under Local"). A branch checked out in
+    another folder (as the Project's own branch is in the Project's folder)
+    is refused with 409, naming that folder. The toggle hides while an
+    existing branch is picked, and routines offer New branch only. uam never
+    deletes or recreates such a branch: a failed create, settling,
+    archiving and deleting remove only the worktree, auto-settle leaves it
+    alone, and a reopen whose branch is gone fails saying so. Without a base, from the CLI's `worktreeBaseRef` setting
     (`defaultBranch`: the remote's default branch; otherwise the current
     `HEAD`). The worktree goes where the CLI puts its own: the owner's
     `worktreePathTemplate` (`{repoPath}`, `{repo}`, `{branch}`,
@@ -525,13 +542,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     out. For a Project in a folder of its repository, the Thread runs in the
     same folder of the worktree. Other Threads keep working in the Project's
     folder.
-  - Neither branch tracks an upstream. The branch is named once, when it is
+  - Neither new branch tracks an upstream. The branch is named once, when it is
     made, as `uam/<slug of the Thread's name or first message>` (random hex
     digits added when a local or remote branch has that name, or the text
     leaves no slug) and never renamed. The agent's system message names the
     branch and its base (`uam place:`) and says to push with
     `git push -u origin HEAD` and open pull or merge requests into the base,
-    so it never asks which branch to push.
+    so it never asks which branch to push. On an existing branch it says
+    the owner chose that branch, to commit there, push it with
+    `git push -u origin HEAD`, open requests into the default branch, and
+    not switch branches.
   - Everything of the Thread follows its folder: Files, `@` references,
     file links and previews, images, Changes, the GitLab
     panel, receipts, and the terminal opened from the Thread. A draft
@@ -549,7 +569,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     was removed, the new one starts from the source's branch. If the copy
     fails, the new worktree and branch are removed and nothing is branched.
     Dismissing an unresolved branch request, or deleting its source Thread,
-    removes its worktree too, unless a Thread uses it or it has changes,
+    removes its worktree too, unless a Thread uses it, it has changes or
+    its `HEAD` is not on its branch,
     and its branch, unless the branch has commits since the fork.
   - Settling, archiving or deleting a Thread removes its worktree with
     `git worktree remove`; the branch stays, so its commits do too, and the
@@ -563,13 +584,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     `.DS_Store`): git would delete an ignored `.env` or `out/` with the
     worktree without asking. Ignored content inside the named folders is
     deleted with the worktree. A kept worktree is listed in Settings with
-    those files counted as not committed. Using the Thread
+    those files counted as not committed. A worktree whose `HEAD` is not on
+    the Thread's branch is kept too: a detached `HEAD` (a checked-out commit,
+    a rebase stopped midway) or another branch. Commits made on a detached
+    `HEAD` are on no branch and would go with the worktree; if git cannot
+    say where `HEAD` is, the worktree stays. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
-    from the branch.
+    from the branch. If it cannot be brought back, the conversation does not
+    open: the message is rejected and the Thread fails with "could not
+    restore this Thread's worktree" and the reason. A branch that is gone
+    is not made again ("branch … is gone, and uam has no record of removing
+    it"), since a new one would stand in for work that may not be merged;
+    create the branch again and send the message again.
   - A Thread whose branch has landed on the default branch settles itself
     and its `uam/…` branch is removed with the worktree (see Settle below).
     Using that Thread again, or branching from it, starts the branch again
-    from origin's default branch, which holds its work.
+    from origin's default branch, which holds its work. Using it again does
+    so only while the newest removal of that worktree in the removed list
+    (the last 20) says uam removed the branch. The same hourly
+    check removes the `uam/…` branch of a Thread you settled, archived or
+    deleted yourself, once its worktree is gone and the refs on disk prove
+    its work is on origin's default branch; a branch without that proof, one
+    checked out anywhere, and one an active Thread has are kept.
+  - A Project that is a folder inside its repository needs that folder on
+    the base branch: a worktree without it is refused (409) and taken back.
   - Worktrees earlier versions made in `~/.uam/worktrees` or the folder
     Settings named (`worktrees_dir` in `PATCH /api/settings`, still
     accepted) stay where they are and are still listed, removed on settling
@@ -587,7 +625,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     with the others), each with its Thread and branch; "merged, branch
     removed" (`branch_removed`) marks one whose branch went too. Sizes are measured in the background.
     Remove takes a worktree with nothing uncommitted at once and asks first
-    when changes would be lost; it is refused while the Thread works.
+    when changes would be lost; it is refused while the Thread works, and,
+    without `force`, while the worktree is not on its Thread's branch.
   - Below 10% free space the Worktrees page in the Settings rail and the
     Settings button carry a warning dot (`disk` in `GET /api/meta`).
 - **Names and titles**: the name is optional. Without one, the Thread takes
@@ -643,15 +682,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   filter, arrow keys and Enter to choose; Local and Remote branches with
   their last commit's age). In Current branch it switches the Project
   folder: **New branch from <branch>** on top, or an existing branch. In
-  New worktree it picks the worktree's source branch; the worktree's name
-  shows only once the first message made it. While a Thread in the folder
+  New worktree, **New branch from <branch>** on top makes the worktree's
+  new branch, and the Local / Remote toggle beside it says whether it
+  starts from the local branch or origin's copy, fetched first; an
+  existing branch is checked out in the worktree, and the toggle hides.
+  The new branch's name shows only once the first message made it. While a Thread in the folder
   has not finished, the branch menu says which one ("… is working") and
   turns every row off; while changed files are not committed it says how
   many and turns off the existing branches only. The choice applies with
   the first message. A started Thread in the Project folder shows **Current
   branch** and the same branch menu, which switches the folder at once; a
-  Thread in its own worktree shows `Worktree · <branch> · <folder>` as
-  plain text, the path on hover or focus. When the toolbar
+  Thread in its own worktree shows the worktree icon and the branch it
+  started from as plain text (its own `uam/…` branch and the path on hover
+  or focus; a worktree on an existing branch shows that branch; one whose
+  base is unknown shows `Worktree <branch>`). When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes
@@ -1422,7 +1466,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Settings, which the `uam` read tool's `models` op lists with their efforts
   and cost tier). The Thread starts on a new branch in its own git worktree
   of the Project (from an optional `base` branch or commit) unless the call
-  passes `worktree: false` or the Project is outside git.
+  passes `worktree: false` or the Project is outside git. Without `base`,
+  a calling Thread on its own branch in the same Project gives that branch:
+  the new Thread is told to commit, not to push, open a pull or merge
+  request or merge (and uam refuses `git push`, `gh pr create` and
+  `glab mr create` for it), and its end notes tell the caller to run
+  `git merge <its branch>` in its own folder, so the work leaves once,
+  with the caller's branch.
   A name several Projects share is refused with
   their IDs. A `path` (absolute, `~/...`, or relative to the calling Thread's
   folder) inside a Project's folder starts the Thread in the Project with the
@@ -1452,7 +1502,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   what it asks, cut to 300 bytes; when the owner answers, a note gives the
   question and the answer or decision, replacing the waiting note if it has
   not been delivered yet. The agent gets the note with its next tool call, or as its next turn starts
-  when it is idle; the note then shows in that Thread's conversation as a uam
+  when it is idle. A call with `wake: true` (stored with the started Thread)
+  also starts that turn: when an end note of the started Thread waits and the
+  Thread that started it is not running, or once its running turn ends, uam
+  queues a prompt there from uam (not the owner), behind the owner's queued
+  prompts, that the note comes with; it is dropped if an earlier turn took
+  the note first. Question and answer notes never wake it; the note then shows in that Thread's conversation as a uam
   notice of one line linking the Thread (an end note without its reply),
   not as your message. Notes wait only in memory, so a service
   restart drops those not yet delivered, and nothing is sent to a Thread
@@ -1510,13 +1565,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   newest 20 messages of each, and refuses a send when the other Thread is not
   active, is at its spending limit, has a full queue, already runs or queues
   3 of the sender's messages, or 32 messages wait across uam.
+- **Git guard**: uam refuses literal shell calls that run risky git commands
+  — staging everything (`git add -A`, `.`, `./`, `:/`, `*`, `--all`),
+  `git reset --hard`, `git clean` with force (`-f`, `--force`),
+  `git checkout` or `git restore` with a blanket pathspec (`.`, `./`, `:/`,
+  `*`; `git restore --staged .` alone stays allowed), `git branch -D` /
+  `--delete --force` / `-df`, `git worktree remove -f` / `--force`,
+  `git switch` in a Thread's own worktree, a force push without `--force-with-lease`, an unnamed or
+  top-of-stack `git stash`, and `--no-verify` — naming the safe alternative
+  in each refusal.
 - **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or
   `apply_patch` call that writes outside the Thread's folder (its worktree
   for a Thread in one), its Copilot session folder or the temporary
-  directory, judging links by their target. The refusal tells the agent to
+  directory, judging links by their target; a patch's Add, Update, Delete
+  and Move to headers all count. The refusal tells the agent to
   start a Thread there with `uam_create_task`, so the change is tracked in
   that folder's Project. Shell commands are not checked: uam cannot tell
-  before they run where they write.
+  before they run where they write. A Thread in its own worktree also
+  runs git only on it: `git -C`, `--git-dir` and `--work-tree` naming
+  another folder are refused (literal words only, as the git guard reads
+  them), and in Allow all or Assisted mode a Copilot request to write a
+  path outside that folder, or to run a shell command on the Project's own
+  folder or another Thread's worktree, waits for the owner instead of being
+  approved; reads, and shell commands on other paths (`/dev/null`, caches),
+  still are.
 - **Blocked web hosts**: the first `web_fetch` of any URL is always made.
   When it fails with status 401, 403, 407 or 451, every Thread on the server
   skips that host and first path segment for 4 days (a 429, for 10
@@ -2445,7 +2517,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or not, to put it away. **Unarchive** restores the same Thread as Finished,
   keeps its conversation and starts no turn. Only
   an archived Thread can be deleted, and a Project can be removed only once
-  every Thread in it is archived. Deleting or removing never deletes the
+  every Thread in it is archived and none of the worktrees uam made for it
+  is still on disk (remove those under Settings → Projects & worktrees
+  first: without the Project nothing would list them). Deleting or removing never deletes the
   provider's copy of the conversation and never touches the directory. It does
   delete the files you attached to the Thread's prompts and the images its
   tools returned, which UAM keeps in
@@ -2459,7 +2533,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   | Archive | an active or settled Thread | for an active Thread, the same as Settle | Put away, read-only until unarchived |
   | Unarchive | an archived Thread | – | Finished and active again; the next message continues the same conversation |
   | Delete Thread | an archived Thread | – | The Thread is removed from UAM |
-  | Remove Project | any Project | every Thread in it archived, or no Threads | The Project, its archived Threads, its routines and the prompts saved for it are removed from UAM |
+  | Remove Project | any Project | every Thread in it archived, or no Threads, and no worktree of it left on disk | The Project, its archived Threads, its routines and the prompts saved for it are removed from UAM |
 
   A settled or archived Thread takes no messages, queue actions, model, effort,
   context-size or mode changes. You can still rename a settled Thread. Stop a
@@ -2495,13 +2569,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes), Cancel and
   **Settle anyway** or **Archive anyway**. A clean Thread settles at once.
+  A Thread whose own worktree is not on its branch (a detached `HEAD` or
+  another branch, see **Branches and worktrees**) is refused first, with a
+  plain 409 that says where the worktree is and to switch it back; the
+  notice shows it. `{"force": true}` settles or archives it anyway and its
+  worktree is kept.
   Each confirmation says how to undo it: Reopen for Settle, Unarchive for
   Archive; Delete says it cannot be undone.
 
   A Thread with no activity for 7 days settles itself. The check runs every
   hour and skips any Thread that Settle would refuse, that has an unanswered
   request, an unreconciled rewind or an unseen failure, that a page has
-  open, or that has unsaved git work of its own by Settle's rule, read
+  open, or that has unsaved git work of its own by Settle's rule or its
+  own worktree off its branch, read
   again before each check; for a Thread in its own worktree, that row's tip
   says "Quiet N days; stays active until this work is saved". This settle
   doesn't count as activity, so the Thread keeps its last activity time. Its record says `settled_by: "auto"`; Reopen clears that and

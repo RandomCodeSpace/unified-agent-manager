@@ -50,9 +50,19 @@ func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.To
 		return agentapi.ToolVerdict{}
 	}
 	out := m.localPreToolUseLocked(s, use)
+	scope := ""
+	if s.place != nil && s.place.Mode == placeWorktree {
+		scope = s.place.Worktree
+	}
+	mergeBranch, _ := m.mergesIntoCreatorLocked(s)
 	m.mu.Unlock()
+	if out.Deny == "" && mergeBranch != "" {
+		if out.Deny = noPushToolUse(use, mergeBranch); out.Deny != "" {
+			m.count("git_guard")
+		}
+	}
 	if out.Deny == "" {
-		if out.Deny = gitGuardToolUse(use); out.Deny != "" {
+		if out.Deny = gitGuardToolUse(use, scope); out.Deny != "" {
 			m.count("git_guard")
 		}
 	}

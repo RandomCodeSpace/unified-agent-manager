@@ -128,7 +128,7 @@ func TestSettleKeepsAWorktreeWithIgnoredFiles(t *testing.T) {
 	}
 	waitUntil(t, "regenerable-only worktree removed", func() bool { return worktreeGone(clean.Worktree.Path) })
 	// What settling runs, called here so the refusal does not depend on timing.
-	if err := removeWorktree(t.Context(), kept.Worktree.Path, false); err == nil || !strings.Contains(err.Error(), "2 ignored files or folders would be lost") {
+	if err := removeWorktree(t.Context(), kept.Worktree.Path, kept.Worktree.Branch, false); err == nil || !strings.Contains(err.Error(), "2 ignored files or folders would be lost") {
 		t.Fatalf("unforced removal = %v", err)
 	}
 	for _, name := range []string{".env", "out/report.csv"} {
@@ -326,5 +326,117 @@ func TestWorktreeWithAnOpenTerminalIsInUse(t *testing.T) {
 	ts.m.mu.Unlock()
 	if inUse {
 		t.Fatal("a settled worktree is in use after its Terminal closed")
+	}
+}
+
+// A worktree whose HEAD left the Thread's branch is never removed without
+// force: a commit made on a detached HEAD is on no branch and would go with
+// it. Settle, Archive and the quiet-week sweep refuse first, naming why.
+func TestAWorktreeOffItsBranchIsKept(t *testing.T) {
+	for name, tc := range map[string]struct {
+		leave func(t *testing.T, wt string)
+		says  string
+	}{
+		"commit on a detached HEAD": {leave: func(t *testing.T, wt string) {
+			gitIn(t, wt, "switch", "-q", "--detach")
+			commitFile(t, wt, "side.txt", "side\n")
+		}, says: "is on a detached HEAD, not on its branch "},
+		"commit on another branch": {leave: func(t *testing.T, wt string) {
+			gitIn(t, wt, "switch", "-q", "-c", "other")
+			commitFile(t, wt, "side.txt", "side\n")
+		}, says: "is on other, not on its branch "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := worktreeRepo(t)
+			ts := newTestServer(t, ServerConfig{})
+			sum, _ := worktreeThread(t, ts, repo, "")
+			path, branch := sum.Worktree.Path, sum.Worktree.Branch
+			tc.leave(t, path)
+			commit := gitOutput(t, path, "rev-parse", "HEAD")
+			refused := func(what string, err error) {
+				t.Helper()
+				var e *Error
+				if !errors.As(err, &e) || e.Status != http.StatusConflict || !strings.Contains(e.Message, tc.says+branch) {
+					t.Fatalf("%s = %v", what, err)
+				}
+			}
+			refused("settle check", ts.m.checkUnsaved(t.Context(), sum.ID))
+			refused("owner's unforced remove", ts.m.RemoveWorktree(t.Context(), path, false))
+			setNow(ts.m, summaryOf(t, ts.m, sum.ID).UpdatedAt.Add(autoSettleAfter))
+			ts.m.autoSettle()
+			if got := summaryOf(t, ts.m, sum.ID); got.Stage != StageActive {
+				t.Fatalf("settled by the quiet-week sweep: %+v", got)
+			}
+			// Settle anyway: the Thread settles and its worktree stays.
+			if _, err := ts.m.Settle(sum.ID); err != nil {
+				t.Fatal(err)
+			}
+			// What settling runs, called here so the refusal does not depend on timing.
+			refused("removal on settling", removeWorktree(t.Context(), path, branch, false))
+			// Taking the lock waits for the settle's own removal to finish.
+			ts.m.worktrees.ops.Lock()
+			ts.m.worktrees.ops.Unlock() //nolint:staticcheck // SA2001: the empty section is the wait
+			if worktreeGone(path) || gitOutput(t, path, "rev-parse", "HEAD") != commit || len(ts.m.removedLog()) != 0 {
+				t.Fatalf("worktree gone %v, removed %+v", worktreeGone(path), ts.m.removedLog())
+			}
+			// Back on its branch, it goes as any clean worktree does.
+			gitIn(t, path, "switch", "-q", branch)
+			if err := ts.m.RemoveWorktree(t.Context(), path, false); err != nil || !worktreeGone(path) {
+				t.Fatalf("remove on its branch = %v", err)
+			}
+		})
+	}
+}
+
+// offBranch lets a missing folder and a worktree of no Thread through, and
+// refuses when git cannot say where HEAD is.
+func TestOffBranchEdges(t *testing.T) {
+	plain := t.TempDir()
+	if err := offBranch(t.Context(), filepath.Join(plain, "gone"), "uam/x"); err != nil {
+		t.Fatalf("missing folder = %v", err)
+	}
+	if err := offBranch(t.Context(), plain, ""); err != nil {
+		t.Fatalf("no branch = %v", err)
+	}
+	if err := offBranch(t.Context(), plain, "uam/x"); err == nil {
+		t.Fatalf("not a repository = %v", err)
+	}
+}
+
+// A branch that went without uam removing it is not made again from the
+// default branch: the open fails and says so, and works once it is back.
+func TestReopenFailsWhenTheBranchIsGone(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := worktreeThread(t, ts, repo, "")
+	path, branch := sum.Worktree.Path, sum.Worktree.Branch
+	commitFile(t, path, "work.txt", "work\n")
+	tip := gitOutput(t, path, "rev-parse", "HEAD")
+	if _, err := ts.m.Settle(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "removal logged", func() bool { return len(ts.m.removedLog()) == 1 })
+	gitIn(t, repo, "branch", "-q", "-D", branch)
+	if _, err := ts.m.Reopen(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	opens := len(ts.prov.Opens())
+	sub, err := ts.m.Submit(sum.ID, PromptRequest{Text: "again", RequestID: mustUUID(t)})
+	want := "could not restore this Thread's worktree: branch " + branch + " is gone, and uam has no record of removing it"
+	if err != nil || sub.Status != SubmissionRejected || !strings.Contains(sub.Error, want) {
+		t.Fatalf("submit = %+v, %v", sub, err)
+	}
+	if got := summaryOf(t, ts.m, sum.ID); got.State != StateFailed || !strings.Contains(got.StateDetail, want) {
+		t.Fatalf("summary = %+v", got)
+	}
+	if !worktreeGone(path) || branchExists(t, repo, branch) || len(ts.prov.Opens()) != opens {
+		t.Fatalf("worktree gone %v, branch %v, opens %d -> %d", worktreeGone(path), branchExists(t, repo, branch), opens, len(ts.prov.Opens()))
+	}
+	gitIn(t, repo, "branch", "-q", branch, tip)
+	if sub, err := ts.m.Submit(sum.ID, PromptRequest{Text: "again", RequestID: mustUUID(t)}); err != nil || sub.Status == SubmissionRejected {
+		t.Fatalf("submit with the branch back = %+v, %v", sub, err)
+	}
+	if got := gitOutput(t, path, "rev-parse", "HEAD"); got != tip {
+		t.Fatalf("recreated at %s, want %s", got, tip)
 	}
 }

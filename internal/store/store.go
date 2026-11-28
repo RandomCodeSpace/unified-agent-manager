@@ -562,6 +562,10 @@ type WebState struct {
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; empty for a Task the owner created or imported.
 	SpawnedBy string `json:"spawned_by,omitempty"`
+	// WakeCreator is set when that call asked uam to start a turn in its
+	// creator, when the creator is not running, to deliver this Task's end
+	// notes.
+	WakeCreator bool `json:"wake_creator,omitempty"`
 	// RoutineID is the routine whose run created this Task; empty
 	// otherwise.
 	RoutineID string `json:"routine_id,omitempty"`
@@ -672,6 +676,15 @@ type WebPlace struct {
 	Base     string `json:"base,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
 	Named    bool   `json:"named,omitempty"`
+	// Remote is a routine's choice to start each run's worktree from
+	// origin's copy of Base, fetched first.
+	Remote bool `json:"remote,omitempty"`
+	// Existing marks a worktree on a branch the owner chose, not one uam
+	// made: uam never deletes or recreates that branch.
+	Existing bool `json:"existing,omitempty"`
+	// BranchRemoved marks a uam/ branch uam deleted once its work was proven
+	// on origin's default branch, so a reopen may start it again from there.
+	BranchRemoved bool `json:"branch_removed,omitempty"`
 }
 
 // Update sets every field this version models to v's and keeps the fields a
@@ -712,6 +725,7 @@ var knownWebStateFields = map[string]struct{}{
 	"terminal_session":    {},
 	"imported":            {},
 	"spawned_by":          {},
+	"wake_creator":        {},
 	"routine_id":          {},
 	"rerun_of":            {},
 	"fork":                {},
@@ -936,11 +950,11 @@ type WebSettings struct {
 	OutputStyle  string           `json:"output_style,omitempty"`
 	// CoAuthor is the co-author trailer of agents' commits. Off when absent.
 	CoAuthor WebCoAuthor `json:"coauthor,omitzero"`
-	// WorktreesDir is the absolute folder new Thread worktrees go in;
-	// ~/.uam/worktrees when empty.
+	// WorktreesDir is a folder earlier versions put Thread worktrees in,
+	// still listed; new worktrees do not go there.
 	WorktreesDir string `json:"worktrees_dir,omitempty"`
-	// WorktreeRoots are the folders new worktrees went in before
-	// WorktreesDir last changed; the worktrees left there are still listed.
+	// WorktreeRoots are the folders WorktreesDir named before it last
+	// changed; the worktrees left there are still listed.
 	WorktreeRoots []string `json:"worktree_roots,omitempty"`
 
 	unknown map[string]json.RawMessage

@@ -221,8 +221,8 @@ type Settings struct {
 	// CoAuthor is the Co-authored-by trailer of agents' commits; omitted
 	// while off, the default.
 	CoAuthor store.WebCoAuthor `json:"coauthor,omitzero"`
-	// WorktreesDir is the absolute folder new Thread worktrees go in;
-	// omitted while the default, ~/.uam/worktrees, is used.
+	// WorktreesDir is a folder earlier versions put Thread worktrees in,
+	// still listed (worktreeRoots); new worktrees do not go there.
 	WorktreesDir string `json:"worktrees_dir,omitempty"`
 }
 

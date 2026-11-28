@@ -3,7 +3,11 @@
 `uam_create_task` starts a new Thread with your prompt as its first message.
 Use it when the owner asks for work to run as its own Thread, and for any
 change outside your own Thread's folder: uam refuses edit tools there
-(`uam scope:`), because such a change is tracked by no Thread. Do not write
+(`uam scope:`), because such a change is tracked by no Thread. In your own
+worktree, uam also refuses `git -C`, `--git-dir` and `--work-tree` naming
+another folder, and asks the owner before a write outside it or a shell
+command on the Project's folder or another Thread's worktree, even in Allow
+all. Do not write
 outside your folder with shell commands either; uam cannot see where they
 write, but the rule is the same. Committing and pushing your own branch is
 not such a write.
@@ -30,7 +34,11 @@ not such a write.
   worktree of the Project, so its changes stay apart from the Project's
   folder until merged (a Project outside git runs in its folder). Pass
   `false` only when the owner asks for the Project's own folder. `base` is
-  the branch or commit the new branch starts from, else the Copilot CLI's
+  the branch or commit the new branch starts from. Without it, a Thread you
+  start in your own Project starts from your branch when you work on one
+  (`uam place:`): it commits and does not push, and when its work is done
+  you merge its branch into yours (`git merge <its branch>`; its end note
+  names it) and push yours when the owner asks. Otherwise the Copilot CLI's
   `worktreeBaseRef` setting decides (the Project's current branch unless it
   says `defaultBranch`).
 
@@ -43,7 +51,10 @@ when known and the start of its last reply (up to 600 bytes; `history {id}`
 reads the rest): with your next tool call, or as your next turn starts if you
 are idle. When it waits for the owner on a question or permission request,
 and when the owner answers, you get a note with the question and the answer.
-Wait for these notes instead of polling the Thread with `uam`. Once its
+Wait for these notes instead of polling the Thread with `uam`. Pass `wake: true`
+when you want to end your turn and carry on once it reports: when its turn ends,
+or it is settled, while you are not running, uam starts a turn here with the
+note (a turn you or the owner already started gets it first). Once its
 work is saved, you may settle or archive it with `uam` op `settle` or
 `archive` (`references/uam-tool.md`). A Thread can start at most 5; deleting
 one frees its place. A Thread started this way, or by one of the owner's

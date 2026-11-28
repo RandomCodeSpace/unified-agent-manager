@@ -1324,7 +1324,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
   const [place, setPlace] = useState<ThreadPlace>({ mode: 'current' });
   const placed = placeable && place.mode !== 'current';
   // The @ picker lists the branch the Thread will run on.
-  const filesBase = !placed ? undefined : place.mode === 'worktree' ? place.base : place.mode === 'switch' ? place.branch : undefined;
+  const filesBase = !placed ? undefined : place.mode === 'worktree' ? place.branch ?? place.base : place.mode === 'switch' ? place.branch : undefined;
   const newTask = useMemo(() => ({
     projectId: project.id,
     ...(filesBase ? { filesBase } : {}),

@@ -40,6 +40,8 @@ type CreateRequest struct {
 	// spawnedBy is the Task whose uam_create_task call creates this one, and
 	// id the new Task's ID that call chose. Only that call sets them.
 	id, spawnedBy string
+	// wakeCreator is that call's wake argument.
+	wakeCreator bool
 	// routineID is the routine whose run creates this Task, and autopilot
 	// whether the run turns autopilot on before the first message; only a
 	// run sets them.
@@ -202,7 +204,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	m.pinSkillsLocked(s, req.ProjectID)
 	m.mu.Unlock()
 	s.createReq = reqID
-	s.spawnedBy = req.spawnedBy
+	s.spawnedBy, s.wakeCreator = req.spawnedBy, req.wakeCreator
 	s.routineID = req.routineID
 	s.rerunOf = req.rerunOf
 	s.nativeChanges = prov.Capabilities().SessionDiffNeedsTracking
@@ -243,7 +245,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, OutputStyle: s.style, Skills: s.skillChoice, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, OutputStyle: s.style, Skills: s.skillChoice, SpawnedBy: req.spawnedBy, WakeCreator: req.wakeCreator, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
 	}
 	check := req.gitlabRegister
 	if req.spawnedBy != "" {

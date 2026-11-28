@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Edit tools may write only in the Thread's folder, its Copilot session
@@ -42,6 +43,9 @@ func TestEditScopeKeepsEditToolsInTheThreadFolder(t *testing.T) {
 		"climbs out":         {agentapi.ToolUse{Tool: "edit", Args: map[string]any{"path": "../elsewhere/c.go"}}, true},
 		"patch outside":      {agentapi.ToolUse{Tool: "apply_patch", Args: map[string]any{"patch": "*** Begin Patch\n*** Update File: a.go\n*** Add File: " + filepath.Join(outside, "d.go") + "\n*** End Patch"}}, true},
 		"link out":           {agentapi.ToolUse{Tool: "create", Args: map[string]any{"path": "escape/e.go"}}, true},
+		"climbs from a link": {agentapi.ToolUse{Tool: "create", Args: map[string]any{"path": "escape/../h.go"}}, true},
+		"patch deletes out":  {agentapi.ToolUse{Tool: "apply_patch", Args: map[string]any{"patch": "*** Begin Patch\n*** Delete File: " + filepath.Join(outside, "f.go") + "\n*** End Patch"}}, true},
+		"patch moves out":    {agentapi.ToolUse{Tool: "apply_patch", Args: map[string]any{"patch": "*** Begin Patch\n*** Update File: a.go\n*** Move to: ../g.go\n*** End Patch"}}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tc.use.Workdir = s.workdir
@@ -207,4 +211,59 @@ func TestCreateTaskPathAsksBeforeAddingAProject(t *testing.T) {
 	}
 
 	spawnRefused(t, m, prov, conv, fmt.Sprintf(`{"path":%q,"prompt":"p"}`, t.TempDir()), "only inside the home folder")
+}
+
+// A Thread in its own worktree runs git only on that worktree: -C,
+// --git-dir and --work-tree naming another folder are refused. A Thread in
+// the Project's folder is not limited.
+func TestGitScopeKeepsAWorktreeThreadInItsWorktree(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	s := budgetSession(t, m, sum.ID)
+	if err := os.MkdirAll(filepath.Join(s.workdir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := t.TempDir()
+	run := func(command string) string {
+		return m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "bash", Workdir: s.workdir, Args: map[string]any{"command": command}}).Deny
+	}
+	if deny := run("git switch -q -c feat/d"); deny != "" {
+		t.Fatalf("a Thread in the Project folder may make a branch: %q", deny)
+	}
+	if deny := run("git -C " + main + " status"); deny != "" {
+		t.Fatalf("a Thread in the Project folder was limited: %q", deny)
+	}
+	m.mu.Lock()
+	s.place = &store.WebPlace{Mode: placeWorktree, Branch: "uam/x", Worktree: s.workdir}
+	m.mu.Unlock()
+	for command, deny := range map[string]bool{
+		"git status":                                 false,
+		"git -C sub status":                          false,
+		"git -C sub -C .. log":                       false,
+		"git -C " + s.workdir + " commit -m 'a b'":   false,
+		"cd " + main + " && git status":              false, // shell is not followed
+		"git -C " + main + " status":                 true,
+		"git -C sub -C ../.. status":                 true,
+		"git --git-dir=" + main + "/.git log":        true,
+		"git --work-tree " + main + " checkout -- .": true,
+		"echo ok; git -C ../ switch other":           true,
+		"git -C ~/elsewhere status":                  true,
+		"GIT_DIR=" + main + "/.git git log":          true,
+		"GIT_WORK_TREE=" + main + " git status":      true,
+		"git -c core.worktree=" + main + " status":   true,
+		"GIT_DIR=.git git log":                       false,
+		"git -c user.name=x commit -m y":             false,
+		"git switch -c other":                        true,
+	} {
+		if got := run(command); (got != "") != deny || deny && !strings.Contains(got, "uam scope: git ") && !strings.HasPrefix(got, gitGuardLead) {
+			t.Errorf("%q: deny = %q", command, got)
+		}
+	}
+	// Without the call's folder, relative values are read from the worktree.
+	noDir := func(command string) string {
+		return m.preToolUse(t.Context(), s, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}).Deny
+	}
+	if noDir("git -C sub status") != "" || noDir("git -C .. status") == "" {
+		t.Fatal("a call without its folder is not read from the worktree")
+	}
 }

@@ -111,7 +111,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
 		s.nativeChanges = web.NativeChanges
-		s.spawnedBy = web.SpawnedBy
+		s.spawnedBy, s.wakeCreator = web.SpawnedBy, web.WakeCreator
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
 		s.fork = web.Fork

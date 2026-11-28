@@ -66,7 +66,7 @@ func TestTrailPatchAndSiblingCap(t *testing.T) {
 	}
 	use := agentapi.ToolUse{Tool: "apply_patch", Workdir: "/repo", Args: map[string]any{"patch": "*** Begin Patch\n*** Update File: auth.go\n@@\n-a\n+b\n*** Add File: new.go\n+x\n*** Delete File: old.go\n*** End Patch"}}
 	paths := trailPaths(use)
-	if len(paths) != 2 || paths[0] != filepath.Join("/repo", "auth.go") || paths[1] != "/repo/new.go" {
+	if len(paths) != 3 || paths[0] != filepath.Join("/repo", "auth.go") || paths[1] != "/repo/new.go" || paths[2] != "/repo/old.go" {
 		t.Fatalf("paths=%v", paths)
 	}
 	if got := m.preToolUse(t.Context(), caller, use).Context; strings.Count(got, "uam trail:") != 3 || strings.Contains(got, `Task "d"`) {

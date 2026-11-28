@@ -83,7 +83,7 @@ func (m *Manager) syncAssisted(provider string) {
 func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 	assisted := s.mode == store.ModeAssisted && !s.leavingAssisted && ix.Assisted.Recommendation == "approve" && ix.Assisted.Model == assistedApprovalModel
 	if s.mode != store.ModeYolo && !assisted || s.modeUnknown || m.closed || s.removed || s.conv == nil ||
-		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
+		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering || m.pathOutsideWorktreeLocked(s, ix) {
 		return false
 	}
 	i := slices.IndexFunc(ix.Options, func(o agentapi.Option) bool { return o.AllowOnce && !o.Reject })

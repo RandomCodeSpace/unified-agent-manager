@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -436,5 +437,142 @@ func TestWorktreeThreadSurvivesRestart(t *testing.T) {
 		if dir == sum.Workdir {
 			t.Fatal("a worktree is offered as a Project folder")
 		}
+	}
+}
+
+// A worktree from the remote fetches origin's copy of its base first; the
+// default stays the local branch.
+func TestWorktreeFromRemoteFetchesTheBase(t *testing.T) {
+	repo := worktreeRepo(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	gitIn(t, repo, "init", "-q", "--bare", origin)
+	gitIn(t, repo, "remote", "add", "origin", origin)
+	writeRepoFile(t, repo, "pushed.txt", "only on origin\n")
+	gitIn(t, repo, "add", "pushed.txt")
+	gitIn(t, repo, "commit", "-q", "-m", "pushed")
+	gitIn(t, repo, "push", "-q", "origin", "main")
+	gitIn(t, repo, "reset", "-q", "--hard", "HEAD~1")
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "main") // a stale copy, as before a fetch
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+
+	code, local, no := createWithPlace(t, ts, project, `{"mode":"worktree"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("local = %d %+v", code, no)
+	}
+	if _, err := os.Stat(filepath.Join(local.Workdir, "pushed.txt")); err == nil || local.Worktree.Base != "main" {
+		t.Fatalf("the local worktree = %+v, holds the remote commit: %v", local.Worktree, err)
+	}
+	code, remote, no := createWithPlace(t, ts, project, `{"mode":"worktree","remote":true}`)
+	if code != http.StatusCreated {
+		t.Fatalf("remote = %d %+v", code, no)
+	}
+	if _, err := os.Stat(filepath.Join(remote.Workdir, "pushed.txt")); err != nil || remote.Worktree.Base != "main" {
+		t.Fatalf("the remote worktree = %+v, lacks the remote commit: %v", remote.Worktree, err)
+	}
+	if code, _, _ := createWithPlace(t, ts, project, `{"mode":"worktree","base":"feature","remote":true}`); code == http.StatusCreated {
+		t.Fatal("a base origin does not have made a worktree")
+	}
+	if code, _, _ := createWithPlace(t, ts, project, `{"mode":"current","remote":true}`); code != http.StatusBadRequest {
+		t.Fatalf("remote outside a worktree = %d", code)
+	}
+}
+
+// Concurrent worktree creates with the same title serialize branch picking and
+// worktree add, so both succeed with distinct branches and folders.
+func TestConcurrentWorktreeCreateSameTitle(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+
+	const n = 4
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		sums []SessionSummary
+		errs []error
+	)
+	start := make(chan struct{})
+	for range n {
+		wg.Go(func() {
+			<-start
+			sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Name: "Same title", Place: &PlaceRequest{Mode: placeWorktree}})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				sums = append(sums, sum)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	if len(errs) != 0 {
+		t.Fatalf("concurrent create errors: %v", errs)
+	}
+	branches := map[string]bool{}
+	paths := map[string]bool{}
+	for _, s := range sums {
+		if branches[s.Worktree.Branch] || paths[s.Worktree.Path] {
+			t.Fatalf("duplicate branch or path: %+v", sums)
+		}
+		branches[s.Worktree.Branch] = true
+		paths[s.Worktree.Path] = true
+	}
+}
+
+// If another process takes the chosen branch name between freeBranch and
+// git worktree add, makePlace retries once with a fresh name.
+func TestWorktreeCreateRetriesWhenBranchTakenExternally(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+
+	var seen []string
+	prev := beforeMakeWorktree
+	beforeMakeWorktree = func(branch string) {
+		seen = append(seen, branch)
+		if len(seen) == 1 {
+			gitIn(t, repo, "branch", branch)
+		}
+	}
+	t.Cleanup(func() { beforeMakeWorktree = prev })
+
+	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Name: "Raced branch", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
+		t.Fatalf("create failed after external race: %v", err)
+	}
+	if len(seen) != 2 || seen[0] != "uam/raced-branch" || sum.Worktree.Branch == seen[0] || !strings.HasPrefix(sum.Worktree.Branch, "uam/raced-branch-") {
+		t.Fatalf("attempts = %v, branch = %q", seen, sum.Worktree.Branch)
+	}
+}
+
+// Undoing a half-made worktree still removes the worktree and branch when m.ctx
+// has already been cancelled for shutdown.
+func TestShutdownUndoRemovesWorktreeAndBranch(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+
+	_, place, undo, err := ts.m.makePlace(t.Context(), Project{ID: project, Dir: repo}, &PlaceRequest{Mode: placeWorktree}, "Shutdown undo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts.m.cancel()
+	undo()
+
+	if _, err := os.Stat(place.Worktree); !os.IsNotExist(err) {
+		t.Fatalf("worktree still exists after cancelled-ctx undo: %v", err)
+	}
+	if out := gitOutput(t, repo, "worktree", "list", "--porcelain"); strings.Count(out, "worktree ") != 1 {
+		t.Fatalf("worktrees = %q", out)
+	}
+	if out := gitOutput(t, repo, "branch", "--list", "uam/*"); out != "" {
+		t.Fatalf("branches = %q", out)
 	}
 }

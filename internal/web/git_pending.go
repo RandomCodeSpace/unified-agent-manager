@@ -247,9 +247,10 @@ const maxUnsavedPaths = 3
 // unsaved work (putAwayWork).
 const codeUnsavedWork = "unsaved_work"
 
-// checkUnsaved refuses putting away the Task id while it has unsaved work
-// (putAwayWork), read now: the refusal carries the counts and the first
-// changed files. The folder's cached count is read again too.
+// checkUnsaved refuses putting away the Task id while its own worktree is
+// not on its branch (strayed) or it has unsaved work (putAwayWork), read
+// now: the latter refusal carries the counts and the first changed files.
+// The folder's cached count is read again too.
 func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -258,6 +259,9 @@ func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
 	m.mu.Lock()
 	m.kickGitPendingLocked([]string{s.workdir})
 	m.mu.Unlock()
+	if err := m.strayed(ctx, s); err != nil {
+		return err
+	}
 	p, paths, own := m.putAwayWork(ctx, s)
 	if p == nil {
 		return nil
@@ -274,6 +278,17 @@ func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
 		message = "This Thread's worktree has unsaved git work (" + strings.Join(parts, ", ") + ") that is not saved anywhere else."
 	}
 	return &Error{Status: http.StatusConflict, Code: codeUnsavedWork, Pending: p, Refs: paths, Message: message}
+}
+
+// strayed is offBranch for s's own worktree: nil for a Thread without one.
+func (m *Manager) strayed(ctx context.Context, s *webSession) error {
+	m.mu.Lock()
+	var path, branch string
+	if s.place != nil {
+		path, branch = s.place.Worktree, s.place.Branch
+	}
+	m.mu.Unlock()
+	return offBranch(ctx, path, branch)
 }
 
 // putAwayWork is the unsaved git work that keeps s from being settled or

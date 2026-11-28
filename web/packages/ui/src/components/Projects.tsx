@@ -404,12 +404,8 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
     setBusy(true);
     setError(null);
     try {
-      try {
-        await api.deleteProject(project.id);
-      } catch (e) {
-        if (isStatus(e, 409)) throw new Error('Archive every thread in this project before removing it.', { cause: e });
-        throw e;
-      }
+      // A 409 says what is in the way: an unarchived thread, or worktrees still on disk.
+      await api.deleteProject(project.id);
       onRemoved(project.id);
       onClose();
     } catch (e) {

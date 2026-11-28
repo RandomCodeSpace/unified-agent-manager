@@ -13,6 +13,12 @@ worktree. The branch is named once and never renamed; your instructions
 `git push -u origin HEAD`, which pushes your branch, never the base; when
 asked for a pull or merge request, open it from your branch into the base.
 Do not push to the base, merge into it or switch branches unless the owner
-asks for exactly that, and do not ask which branch to push.
+asks for exactly that, and do not ask which branch to push. In a worktree
+on an existing branch the owner chose, `uam place:` says so: commit there,
+push it with `git push -u origin HEAD`, open requests from it into the
+default branch, and do not switch branches. A Thread started
+by another Thread from that Thread's branch does not push at all (uam
+refuses `git push`, `gh pr create` and `glab mr create` for it): the
+Thread that started it merges its branch.
 
-uam refuses git commands that lose work or skip checks: staging everything (`git add -A`, `.`, `--all`), `git reset --hard`, a force push without `--force-with-lease`, an unnamed or top-of-stack `git stash`, and `--no-verify`. Do what the refusal says: name the files, push with `--force-with-lease`, use `git stash push -m <tag>` and apply or drop by ref.
+uam refuses git commands that lose work or skip checks: staging everything (`git add -A`, `.`, `--all`), `git reset --hard`, `git clean` with force (`-f`, `--force`), `git checkout` or `git restore` discarding everything (`.`, `./`, `:/`, `*`; `git restore --staged .` stays allowed), `git branch -D` / `--delete --force` / `-df`, `git worktree remove -f` / `--force`, `git switch` in your own worktree, a force push without `--force-with-lease`, an unnamed or top-of-stack `git stash`, and `--no-verify`. Do what the refusal says: name the files, preview with `git clean -n`, use `git branch -d`, start another Thread for work on another branch, push with `--force-with-lease`, and use `git stash push -m <tag>` and apply or drop by ref.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -346,4 +347,41 @@ func TestYoloModeSurvivesARestart(t *testing.T) {
 	conv := prov2.Last()
 	conv.EmitInteraction(onceRequest("p1", ""))
 	waitAllowed(t, m2, yolo.ID, "p1")
+}
+
+// In its own worktree, a yolo Thread's request to write outside it, or to
+// run a shell command on the Project's folder, waits for the owner; reads,
+// paths inside and shell paths elsewhere (/dev/zero) are still answered.
+func TestYoloLeavesPathsOutsideTheWorktreeToTheOwner(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createTask(t, m, prov, "yolo")
+	s := budgetSession(t, m, sum.ID)
+	main := s.workdir
+	m.mu.Lock()
+	s.workdir = t.TempDir()
+	s.place = &store.WebPlace{Mode: placeWorktree, Branch: "uam/x", Worktree: s.workdir}
+	m.mu.Unlock()
+	mustSubmit(t, m, sum.ID, "work", mustUUID(t), ModeSend, SubmissionAccepted)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	t.Setenv("TMPDIR", t.TempDir())
+	outside := filepath.Join(main, "a.go")
+	path := func(id, access, p string) agentapi.Interaction {
+		ix := onceRequest(id, "")
+		ix.PathAccess, ix.Paths = access, []string{p}
+		return ix
+	}
+	conv.EmitInteraction(path("shell-out", "shell", outside))
+	conv.EmitInteraction(path("write-out", "write", outside))
+	conv.EmitInteraction(path("read-out", "read", outside))
+	conv.EmitInteraction(path("shell-in", "shell", "sub/b.go"))
+	conv.EmitInteraction(path("shell-dev", "shell", "/dev/zero"))
+	waitAllowed(t, m, sum.ID, "read-out")
+	waitAllowed(t, m, sum.ID, "shell-in")
+	waitAllowed(t, m, sum.ID, "shell-dev")
+	time.Sleep(30 * time.Millisecond)
+	for _, id := range []string{"shell-out", "write-out"} {
+		if ix := interactionOf(t, m, sum.ID, id); ix.State != agentapi.InteractionPending || ix.Auto {
+			t.Fatalf("%s = %+v", id, ix)
+		}
+	}
 }

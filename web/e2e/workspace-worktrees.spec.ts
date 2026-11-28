@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type Page } from '@playwright/test';
-import { conversation, expect, send, test, threadState } from './harness';
+import { conversation, expect, newThread, openHome, send, test, threadState } from './harness';
 import { openSettings } from './settings-helpers';
 import { allowEach, bash, capturedTurn, commit, git, startWorktreeThread, worktrees } from './workspace-helpers';
 
@@ -27,12 +27,43 @@ test("a Thread in a new worktree works on its own uam/ branch, and the Project f
   expect(fs.existsSync(path.join(workdir, 'where.txt'))).toBe(false);
   expect(git(workdir, 'branch', '--show-current')).toBe('main');
 
-  await expect(page.getByRole('button', { name: `Worktree, branch ${tree.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${tree.branch}`, exact: true })).toBeVisible();
   await page.getByRole('button', { name: /^Open changes, 2 files/ }).click();
   const files = page.getByRole('complementary', { name: 'Changes' }).getByRole('navigation', { name: 'Changed files' }).getByRole('button');
   await expect(files).toHaveCount(2);
   await expect(files.nth(0)).toHaveAccessibleName(/^Go to b\.txt/);
   await expect(files.nth(1)).toHaveAccessibleName(/^Go to where\.txt/);
+});
+
+test('New worktree on an existing branch checks that branch out: its commits land there, no uam/ branch is made, and settling keeps it', async ({ page, project, model, workdir }) => {
+  git(workdir, 'branch', 'feature/x');
+  model.toolRound('work on feature x', [bash('call_fx', `echo x > x.txt && ${commit('feat: x', 'x.txt')}`)], 'Committed on feature x.');
+  await openHome(page);
+  await newThread(page, project);
+  await page.getByRole('radiogroup', { name: 'Where this Thread runs' }).getByRole('radio', { name: 'New worktree' }).click();
+  await page.getByRole('button', { name: 'Branch New branch from main', exact: true }).click();
+  const menu = page.getByRole('dialog', { name: 'Worktree branch' });
+  await expect(menu.getByRole('option').first()).toHaveText('New branch from main');
+  await menu.getByRole('option', { name: /^feature\/x/ }).click();
+  await expect(menu).toBeHidden();
+  // Local/Remote is about a new branch only.
+  await expect(page.getByRole('button', { name: /^(Local|Remote): / })).toHaveCount(0);
+  await send(page, 'work on feature x');
+  await expect(page).toHaveURL(/#task=[0-9a-f-]{36}$/);
+  await allowEach(page, 1);
+  await expect(conversation(page).getByText('Committed on feature x.')).toBeVisible();
+  await expect(threadState(page, 'Finished')).toBeVisible();
+
+  expect(worktrees(workdir)).toEqual([{ path: `${workdir}.worktrees/feature-x`, branch: 'feature/x' }]);
+  expect(git(workdir, 'log', '-1', '--format=%s', 'feature/x')).toBe('feat: x');
+  expect(git(workdir, 'branch', '--list', 'uam/*')).toBe('');
+  expect(git(workdir, 'branch', '--show-current')).toBe('main');
+  await expect(page.getByRole('button', { name: 'Worktree on feature/x', exact: true })).toBeVisible();
+
+  await settle(page);
+  await expect(threadState(page, 'Settled')).toBeVisible();
+  await expect.poll(() => worktrees(workdir)).toEqual([]);
+  expect(git(workdir, 'log', '-1', '--format=%s', 'feature/x')).toBe('feat: x');
 });
 
 test('settling a worktree Thread asks over uncommitted work; once committed it settles, removes the worktree, keeps the branch, and Reopen brings it back', async ({ page, project, model }) => {
@@ -78,7 +109,7 @@ test('settling a worktree Thread asks over uncommitted work; once committed it s
   expect(fs.readFileSync(path.join(tree.path, 'br.txt'), 'utf8')).toBe(`${tree.branch}\n${tree.path}\n`);
   expect(fs.readFileSync(path.join(tree.path, 'README.md'), 'utf8')).toBe('# Fixture\ndirty\n');
   expect(git(project.dir, 'branch', '--list', 'uam/*').split('\n')).toHaveLength(1);
-  await expect(page.getByRole('button', { name: `Worktree, branch ${tree.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${tree.branch}`, exact: true })).toBeVisible();
 });
 
 test('Settle anyway on a worktree with uncommitted work keeps its folder', async ({ page, project, model }) => {
@@ -195,7 +226,7 @@ test('Branch from here on a worktree Thread makes a new worktree on a new branch
   expect(fs.readFileSync(path.join(branched.path, 'README.md'), 'utf8')).toBe('# Fixture\ndirty\n');
   expect(fs.readFileSync(path.join(branched.path, 'u.txt'), 'utf8')).toBe('u\n');
   expect(fs.existsSync(path.join(branched.path, 'x.log'))).toBe(false);
-  await expect(page.getByRole('button', { name: `Worktree, branch ${branched.branch}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Worktree from main, branch ${branched.branch}`, exact: true })).toBeVisible();
   // The source is as it was.
   expect(git(source.path, 'rev-parse', 'HEAD')).toBe(head);
   expect(git(source.path, 'status', '--porcelain')).toBe(status);

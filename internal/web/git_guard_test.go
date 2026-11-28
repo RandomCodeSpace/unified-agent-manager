@@ -15,6 +15,8 @@ func TestGitGuard(t *testing.T) {
 		"git -C ../other add -Av",
 		"cd repo; git add *",
 		"git reset --hard origin/main",
+		"git --git-dir /tmp/x/.git reset --hard",
+		"git --work-tree ../w --git-dir ../w/.git reset --hard",
 		"/usr/bin/git reset --hard",
 		"git push -f",
 		"git push --force origin HEAD",
@@ -32,11 +34,46 @@ func TestGitGuard(t *testing.T) {
 		"git commit --no-verify -m x",
 		"git commit -n -m x",
 		"git push --no-verify",
+		"git clean -f",
+		"git clean -fd",
+		"git clean -fdx",
+		"git clean -df",
+		"git clean --force",
+		"git clean --force -d",
+		"git checkout .",
+		"git checkout ./",
+		"git checkout :/",
+		"git checkout '*'",
+		"git checkout -- .",
+		"git checkout HEAD -- .",
+		"git checkout HEAD -- :/",
+		"git restore .",
+		"git restore ./",
+		"git restore :/",
+		"git restore '*'",
+		"git restore -- .",
+		"git restore --worktree .",
+		"git restore -W .",
+		"git restore --staged --worktree .",
+		"git restore -SW .",
+		"git restore -WS -- ./",
+		"git restore --source=HEAD .",
+		"git branch -D feat",
+		"git branch -vD feat",
+		"git branch --delete --force feat",
+		"git branch --delete -f feat",
+		"git branch -d --force feat",
+		"git branch -df feat",
+		"git branch -fd feat",
+		"git worktree remove -f ../wt",
+		"git worktree remove --force ../wt",
+		"git worktree remove ../wt -f",
+		"git worktree remove --force -- ../wt",
 		"echo $(git stash)",
 		"for b in a b; do git push -f origin $b; done",
 	}
 	for _, command := range denied {
-		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}); !strings.HasPrefix(got, gitGuardLead) {
+		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}, ""); !strings.HasPrefix(got, gitGuardLead) {
 			t.Errorf("%q not refused", command)
 		}
 	}
@@ -45,6 +82,24 @@ func TestGitGuard(t *testing.T) {
 		"git add -p file.go",
 		"git commit -m 'never git add -A or git push -f'",
 		"git commit -am 'fix: say -A is refused'",
+		"git clean -n",
+		"git clean -nd",
+		"git clean --dry-run",
+		"git checkout -- file.go",
+		"git checkout HEAD -- a.go b.go",
+		"git checkout file.go",
+		"git restore file.go",
+		"git restore -- a.go b.go",
+		"git restore --staged .",
+		"git restore -S .",
+		"git restore --staged -- .",
+		"git restore -S -- :/",
+		"git restore --staged --source=HEAD~1 .",
+		"git branch -d feat",
+		"git branch --delete feat",
+		"git branch -a",
+		"git worktree list",
+		"git worktree remove ../wt",
 		"git push -u origin HEAD",
 		"git push --force-with-lease origin HEAD",
 		"git push --force-with-lease=main:abc123 origin main",
@@ -62,11 +117,11 @@ func TestGitGuard(t *testing.T) {
 		"gh pr merge 12 --squash",
 	}
 	for _, command := range allowed {
-		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}); got != "" {
+		if got := gitGuardToolUse(agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": command}}, ""); got != "" {
 			t.Errorf("%q refused: %s", command, got)
 		}
 	}
-	if got := gitGuardToolUse(agentapi.ToolUse{Tool: "edit", Args: map[string]any{"command": "git add -A"}}); got != "" {
+	if got := gitGuardToolUse(agentapi.ToolUse{Tool: "edit", Args: map[string]any{"command": "git add -A"}}, ""); got != "" {
 		t.Errorf("non-shell tool refused: %s", got)
 	}
 

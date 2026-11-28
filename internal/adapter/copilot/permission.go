@@ -29,6 +29,9 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	if d.PermissionRequest != nil {
 		in.permissionUse.PermissionKind = string(d.PermissionRequest.Kind())
 	}
+	if r, ok := d.PromptRequest.(*rpc.PermissionPromptRequestPath); ok {
+		in.PathAccess, in.Paths = string(r.AccessKind), r.Paths
+	}
 	if tool := c.tr.tools[in.ToolCallID]; tool != nil {
 		in.permissionUse.Tool = tool.Name
 		_ = json.Unmarshal([]byte(tool.Input), &in.permissionUse.Args)

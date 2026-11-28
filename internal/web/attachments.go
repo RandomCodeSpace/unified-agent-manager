@@ -430,6 +430,7 @@ func (m *Manager) sweepLoop() {
 			// settle would keep.
 			m.settleMerged()
 			m.autoSettle()
+			m.removeLandedBranches()
 		case <-h.C:
 			m.evictHistories()
 			m.closeIdleConversations()

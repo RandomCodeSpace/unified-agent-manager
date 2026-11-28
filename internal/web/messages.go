@@ -42,6 +42,9 @@ const (
 	// (a UUID) has.
 	peerRequestPrefix  = "uam-peer-"
 	replyRequestPrefix = "uam-reply-"
+	// wakeRequestPrefix marks the turn uam starts in a creator to deliver an
+	// end note (create_task.go).
+	wakeRequestPrefix = "uam-wake-"
 )
 
 // Message statuses (store.WebPeerMessage).
@@ -70,8 +73,10 @@ var sendTool = agentapi.HostTool{
 	}),
 }
 
+// isPeerRequest reports a prompt uam sent for another agent, not the owner:
+// a peer message, its reply, or a creator's wake turn.
 func isPeerRequest(reqID string) bool {
-	return strings.HasPrefix(reqID, peerRequestPrefix) || strings.HasPrefix(reqID, replyRequestPrefix)
+	return strings.HasPrefix(reqID, peerRequestPrefix) || strings.HasPrefix(reqID, replyRequestPrefix) || strings.HasPrefix(reqID, wakeRequestPrefix)
 }
 
 // sendCall runs a uam_send call of the Task taskID.

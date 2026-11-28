@@ -636,7 +636,7 @@ export interface Settings {
   output_styles?: OutputStyle[];
   /** The default style's name; absent for the provider's own. */
   output_style?: string;
-  /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
+  /** A folder servers with `worktree-folder-v1` put new Thread worktrees in; current servers only keep its worktrees listed and place new ones as the Copilot CLI does. PATCH `''` clears it; a leading `~` is the home folder. */
   worktrees_dir?: string;
 }
 
@@ -918,7 +918,7 @@ export interface SessionSummary {
   branch_link_url?: string;
   branch_link_branch?: string;
   /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
-  worktree?: { path: string; branch: string; /** Bytes on disk, once measured in the background. */ size_bytes?: number };
+  worktree?: { path: string; branch: string; /** The branch is an existing one the owner chose, not one made for the Thread. */ existing?: boolean; /** The branch it started from, when known. */ base?: string; /** Bytes on disk, once measured in the background. */ size_bytes?: number };
   /** Work in the Thread's working tree saved nowhere else, shared by every Thread in its repository: changed tracked files and commits on no remote; absent outside a repository or before the first read. */
   git_pending?: GitPending;
   conversation_id: string;
@@ -1012,11 +1012,13 @@ export interface SessionSummary {
 /**
  * Where a new Thread runs: the Project's current branch, a new `uam/…` branch in its folder, an existing `branch` the folder
  * switches to (`switch`, `branch-switch-v1`; with `remote`, a remote branch a new local branch tracks), or a new worktree
- * from `base` (HEAD when absent).
+ * from `base` (HEAD when absent; with `remote`, origin's copy of that branch, fetched first).
  */
 export interface ThreadPlace {
   mode: 'current' | 'branch' | 'switch' | 'worktree';
+  /** A new worktree's new branch starts here. */
   base?: string;
+  /** The existing branch a switch or a new worktree checks out ("origin/x" with `remote`). */
   branch?: string;
   remote?: boolean;
 }

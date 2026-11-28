@@ -1,6 +1,7 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { api } from '../../src/api';
+import { api, ApiError } from '../../src/api';
+import { RemoveProjectDialog } from '../../src/components/Projects';
 import { renderApp, sidebar, type User } from './render';
 
 async function addProjectDialog(user: User) {
@@ -230,6 +231,21 @@ describe('edit project', () => {
     const confirm = within(await screen.findByRole('alertdialog', { name: 'Remove notes-site?' }));
     expect(confirm.getByText(/threads are not archived\. Archive every thread before removing this project\./)).toBeTruthy();
     expect(confirm.getByRole('button', { name: 'Remove project' })).toHaveProperty('disabled', true);
+  });
+
+  test('a removal the server refuses shows its reason', async () => {
+    const reason = '1 worktree of this project is still on disk (/home/user/dotfiles.worktrees/uam-x). Remove it under Settings → Projects & worktrees first.';
+    const refuse = vi.spyOn(api, 'deleteProject').mockRejectedValue(new ApiError(409, reason));
+    const onRemoved = vi.fn();
+    try {
+      render(<RemoveProjectDialog open onClose={() => {}} project={{ id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: '', badge: { text: 'DF', color: 'teal' } }} tasks={[]} onRemoved={onRemoved} />);
+      const confirm = within(await screen.findByRole('alertdialog', { name: 'Remove dotfiles?' }));
+      fireEvent.click(confirm.getByRole('button', { name: 'Remove project' }));
+      expect((await confirm.findByRole('alert')).textContent).toBe(reason);
+      expect(onRemoved).not.toHaveBeenCalled();
+    } finally {
+      refuse.mockRestore();
+    }
   });
 
   test('previous sessions import one as a task and open it', async () => {

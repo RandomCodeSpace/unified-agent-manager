@@ -1641,6 +1641,10 @@ type Interaction struct {
 	// structured request: a form or a link. It is user data, never a
 	// permission, so yolo mode never answers it.
 	Elicitation *Elicitation `json:"elicitation,omitempty"`
+	// PathAccess and Paths are a request to use paths outside the
+	// workspace: the access ("read", "write" or "shell") and the paths.
+	PathAccess string   `json:"-"`
+	Paths      []string `json:"-"`
 }
 
 // Option is one permission decision.

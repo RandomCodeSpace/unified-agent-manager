@@ -581,3 +581,182 @@ func TestChildOwnerInteractionNotes(t *testing.T) {
 		t.Fatalf("history of the started thread = %+v", page)
 	}
 }
+
+// A Thread started with wake starts a turn in its idle creator to deliver its
+// end note; without wake the note waits. A busy creator is woken when its turn
+// ends, and a wake turn whose notes an earlier turn took is dropped.
+func TestChildWakesIdleCreator(t *testing.T) {
+	t.Run("idle creator", func(t *testing.T) {
+		m, prov, _ := newTestManager(t)
+		_, conv := createSession(t, m, prov)
+		target := namedProject(t, m, "Target")
+		_, child := spawnOK(t, m, prov, conv, "call-1", fmt.Sprintf(`{"project":%q,"prompt":"go","wake":true}`, target))
+		child.EmitTurn(agentapi.TurnCompleted, "")
+		if sends := waitSends(t, conv, 1); !slices.Equal(sends, []string{wakePrompt}) {
+			t.Fatalf("creator sends = %q", sends)
+		}
+		if note := conv.Request().Hooks.Prompt(t.Context()); !strings.Contains(note, "ended its turn: completed.") {
+			t.Fatalf("wake turn note = %q", note)
+		}
+	})
+	t.Run("stopped creator", func(t *testing.T) {
+		m, prov, _ := newTestManager(t)
+		caller, conv := busySession(t, m, prov)
+		target := namedProject(t, m, "Target")
+		_, child := spawnOK(t, m, prov, conv, "call-1", fmt.Sprintf(`{"project":%q,"prompt":"go","wake":true}`, target))
+		conv.EmitTurn(agentapi.TurnCancelled, "")
+		child.EmitTurn(agentapi.TurnCompleted, "")
+		waitUntil(t, "the end note", func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return len(m.sessions[caller.ID].childNotes) == 1
+		})
+		if d := detail(t, m, caller.ID); len(d.Queue) != 0 || len(conv.Sends()) != 1 {
+			t.Fatalf("a stopped creator was woken: queue %q, sends %q", queueTexts(d), conv.Sends())
+		}
+	})
+	t.Run("without wake", func(t *testing.T) {
+		m, prov, _ := newTestManager(t)
+		caller, conv := createSession(t, m, prov)
+		target := namedProject(t, m, "Target")
+		_, child := spawnOK(t, m, prov, conv, "call-1", fmt.Sprintf(`{"project":%q,"prompt":"go"}`, target))
+		child.EmitTurn(agentapi.TurnCompleted, "")
+		waitUntil(t, "the end note", func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return len(m.sessions[caller.ID].childNotes) == 1
+		})
+		if d := detail(t, m, caller.ID); len(d.Queue) != 0 || len(conv.Sends()) != 0 {
+			t.Fatalf("queue %q, sends %q", queueTexts(d), conv.Sends())
+		}
+	})
+	t.Run("busy creator", func(t *testing.T) {
+		m, prov, _ := newTestManager(t)
+		caller, conv := busySession(t, m, prov)
+		target := namedProject(t, m, "Target")
+		_, child := spawnOK(t, m, prov, conv, "call-1", fmt.Sprintf(`{"project":%q,"prompt":"go","wake":true}`, target))
+		mustSubmit(t, m, caller.ID, "second", mustUUID(t), ModeQueue, SubmissionQueued)
+		child.EmitTurn(agentapi.TurnCompleted, "")
+		waitUntil(t, "the end note", func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return len(m.sessions[caller.ID].childNotes) == 1
+		})
+		if got := queueTexts(detail(t, m, caller.ID)); got != "second" {
+			t.Fatalf("busy creator queue = %q", got)
+		}
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+		if sends := waitSends(t, conv, 2); !slices.Equal(sends, []string{"first", "second"}) {
+			t.Fatalf("creator sends = %q", sends)
+		}
+		if got := queueTexts(detail(t, m, caller.ID)); got != wakePrompt {
+			t.Fatalf("queue after the turn = %q", got)
+		}
+		// The owner's turn takes the note through the prompt hook.
+		if note := conv.Request().Hooks.Prompt(t.Context()); note == "" {
+			t.Fatal("no note for the owner's turn")
+		}
+		conv.EmitTurn(agentapi.TurnWorking, "")
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+		waitUntil(t, "the wake turn dropped", func() bool { return len(detail(t, m, caller.ID).Queue) == 0 })
+		if sends := conv.Sends(); len(sends) != 2 {
+			t.Fatalf("a wake turn without notes was sent: %q", sends)
+		}
+	})
+}
+
+// A Thread on its own branch starts its child from that branch; the child
+// is told not to push, and its end note tells the creator to merge it.
+func TestCreateTaskChildMergesIntoCreatorBranch(t *testing.T) {
+	repo := worktreeRepo(t)
+	ts := newTestServer(t, ServerConfig{})
+	useWorktreeRoot(t, ts.m)
+	project := addProject(t, ts.m, repo)
+	caller, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: project, Name: "Parent", Place: &PlaceRequest{Mode: placeWorktree}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := ts.prov.Last()
+	parent := caller.Worktree.Branch
+
+	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "child", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, project))})
+	if res.Failed || !strings.Contains(res.Text, "Its branch starts from yours ("+parent+")") {
+		t.Fatalf("spawn = %+v", res)
+	}
+	sum, err := ts.m.Summary(startedTask.FindStringSubmatch(res.Text)[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := taskConv(t, ts.prov, sum.ID)
+	ts.m.mu.Lock()
+	base := ts.m.sessions[sum.ID].place.Base
+	ts.m.mu.Unlock()
+	instr := child.Request().Instructions
+	if base != parent || !strings.Contains(instr, "Do not push, open a pull or merge request") || !strings.Contains(instr, "merges "+sum.Worktree.Branch+" into "+parent) {
+		t.Fatalf("child base %q, instructions %q", base, instr)
+	}
+
+	child.EmitTurn(agentapi.TurnCompleted, "")
+	var note string
+	waitUntil(t, "the end note", func() bool {
+		ts.m.mu.Lock()
+		defer ts.m.mu.Unlock()
+		if s := ts.m.sessions[caller.ID]; len(s.childNotes) > 0 {
+			note = s.childNotes[0].text
+		}
+		return note != ""
+	})
+	if !strings.Contains(note, "run `git merge "+sum.Worktree.Branch+"` in your folder") {
+		t.Fatalf("end note = %q", note)
+	}
+
+	explicit, _ := spawnOK(t, ts.m, ts.prov, conv, "explicit", fmt.Sprintf(`{"project":%q,"prompt":"p","base":"feature"}`, project))
+	if ins := taskConv(t, ts.prov, explicit.ID).Request().Instructions; strings.Contains(ins, "Do not push,") {
+		t.Fatalf("an explicit base still merges into the creator: %q", ins)
+	}
+
+	wantDeny := fmt.Sprintf("uam: this thread's branch %s is merged by the thread that started it, so it is not pushed; commit and say what you committed.", sum.Worktree.Branch)
+	ts.m.mu.Lock()
+	childSession := ts.m.sessions[sum.ID]
+	explicitSession := ts.m.sessions[explicit.ID]
+	ts.m.mu.Unlock()
+
+	for _, cmd := range []string{
+		"git push",
+		"git push -u origin HEAD",
+		"git -C . push origin HEAD",
+		"git push --force-with-lease origin HEAD",
+		"git commit -m ok && git push",
+		"echo $(git push)",
+		"gh pr create --title x --body y",
+		"/usr/bin/gh pr create",
+		"gh -R org/repo pr create",
+		"gh pr -R org/repo create",
+		"glab mr create --fill",
+		"glab -R grp/proj mr create",
+		"glab mr --repo=grp/proj create",
+	} {
+		got := ts.m.preToolUse(t.Context(), childSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}})
+		if got.Deny != wantDeny {
+			t.Errorf("child %q: deny = %q, want %q", cmd, got.Deny, wantDeny)
+		}
+	}
+	for _, cmd := range []string{
+		"git status",
+		"git commit -m 'never git push or gh pr create'",
+		"gh pr view 12",
+		"gh pr list",
+		"glab mr view 12",
+		"glab mr list",
+		"echo git push",
+	} {
+		if got := ts.m.preToolUse(t.Context(), childSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}}); got.Deny != "" {
+			t.Errorf("child %q unexpectedly refused: %s", cmd, got.Deny)
+		}
+	}
+	for _, cmd := range []string{"git push -u origin HEAD", "gh pr create --fill"} {
+		if got := ts.m.preToolUse(t.Context(), explicitSession, agentapi.ToolUse{Tool: "bash", Args: map[string]any{"command": cmd}}); got.Deny != "" {
+			t.Errorf("explicit-base child %q refused: %s", cmd, got.Deny)
+		}
+	}
+}

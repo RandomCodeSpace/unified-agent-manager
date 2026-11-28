@@ -269,6 +269,9 @@ type webSession struct {
 	// spawnedBy is the Task whose uam_create_task call created this one. It
 	// never changes, and such a Task does not get the tool itself.
 	spawnedBy string
+	// wakeCreator is set when that call asked for a turn in its creator to
+	// deliver this Task's end notes when the creator is not running.
+	wakeCreator bool
 	// childNotes are the end notes of the Tasks this one created, and their
 	// questions to the owner, waiting for its agent's next tool call or turn
 	// (create_task.go).
