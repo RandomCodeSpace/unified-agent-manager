@@ -1431,7 +1431,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   passes `worktree: false` or the Project is outside git. Without `base`,
   a calling Thread on its own branch in the same Project gives that branch:
   the new Thread is told to commit, not to push, open a pull or merge
-  request or merge, and its end notes tell the caller to run
+  request or merge (and uam refuses `git push`, `gh pr create` and
+  `glab mr create` for it), and its end notes tell the caller to run
   `git merge <its branch>` in its own folder, so the work leaves once,
   with the caller's branch.
   A name several Projects share is refused with
@@ -1526,6 +1527,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   newest 20 messages of each, and refuses a send when the other Thread is not
   active, is at its spending limit, has a full queue, already runs or queues
   3 of the sender's messages, or 32 messages wait across uam.
+- **Git guard**: uam refuses literal shell calls that run risky git commands
+  — staging everything (`git add -A`, `.`, `./`, `:/`, `*`, `--all`),
+  `git reset --hard`, `git clean` with force (`-f`, `--force`),
+  `git checkout` or `git restore` with a blanket pathspec (`.`, `./`, `:/`,
+  `*`; `git restore --staged .` alone stays allowed), `git branch -D` /
+  `--delete --force` / `-df`, `git worktree remove -f` / `--force`,
+  `git switch`, a force push without `--force-with-lease`, an unnamed or
+  top-of-stack `git stash`, and `--no-verify` — naming the safe alternative
+  in each refusal.
 - **Edits stay in the Thread's folder**: uam refuses an `edit`, `create` or
   `apply_patch` call that writes outside the Thread's folder (its worktree
   for a Thread in one), its Copilot session folder or the temporary
