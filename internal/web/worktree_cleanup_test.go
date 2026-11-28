@@ -373,8 +373,9 @@ func TestAWorktreeOffItsBranchIsKept(t *testing.T) {
 			}
 			// What settling runs, called here so the refusal does not depend on timing.
 			refused("removal on settling", removeWorktree(t.Context(), path, branch, false))
+			// Taking the lock waits for the settle's own removal to finish.
 			ts.m.worktrees.ops.Lock()
-			ts.m.worktrees.ops.Unlock()
+			ts.m.worktrees.ops.Unlock() //nolint:staticcheck // SA2001: the empty section is the wait
 			if worktreeGone(path) || gitOutput(t, path, "rev-parse", "HEAD") != commit || len(ts.m.removedLog()) != 0 {
 				t.Fatalf("worktree gone %v, removed %+v", worktreeGone(path), ts.m.removedLog())
 			}

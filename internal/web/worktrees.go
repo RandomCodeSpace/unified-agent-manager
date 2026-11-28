@@ -1063,11 +1063,16 @@ func (s *Server) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 // loadedPlace is a stored place, or nil when it is not one this version
 // can act on.
 func loadedPlace(p *store.WebPlace) *store.WebPlace {
-	if p == nil || (p.Mode != placeBranch && p.Mode != placeWorktree) || !strings.HasPrefix(p.Branch, branchPrefix) && !(p.Existing && p.Mode == placeWorktree) {
+	if p == nil {
 		return nil
 	}
-	clone := *p
-	return &clone
+	// A branch uam made, in either mode, or one the owner chose for a worktree.
+	made := strings.HasPrefix(p.Branch, branchPrefix)
+	if p.Mode == placeBranch && made || p.Mode == placeWorktree && (made || p.Existing) {
+		clone := *p
+		return &clone
+	}
+	return nil
 }
 
 func (s *webSession) clonedPlace() *store.WebPlace {
